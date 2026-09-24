@@ -32,6 +32,21 @@ FILES="README.md AGENTS.md docs/*.md docs/adr/*.md skills/stride/SKILL.md"
 MIN_REFS=79
 MIN_DOCS=9
 
+# The file COUNT is pinned exactly: FILES reaches most of the corpus through globs, and
+# a deleted globbed file simply leaves the expansion — the per-file readability guard
+# below never sees it, and every floor above has slack enough to absorb one file. A new
+# doc bumps this deliberately; a silent drop is the failure this exists to catch.
+EXPECTED_NFILES=26
+
+# ...and the reference-heavy files carry their own floors, because the global MIN_REFS
+# has enough slack that a single file's coverage can collapse entirely inside it (a
+# de-fenced or de-backticked docs/commands.md leaves the gate green on the corpus
+# total). Floors, not equalities, same rationale as MIN_REFS; measured from extractor
+# output, set ~15% under the current contribution.
+FILE_FLOORS='docs/commands.md=28
+skills/stride/SKILL.md=38
+README.md=14'
+
 # Every `command-claims: quoting` marker, pinned so a new one is deliberate — same
 # mechanism as issue-claims, but LINE-scoped (a reference is a line-level fact). A doc
 # truthfully saying a command does NOT exist needs the marker or it fails on a true
@@ -130,8 +145,11 @@ fi
 
 # Trap FIRST: installed after the block, a mid-block mktemp failure leaks the ones
 # already created. `rm -f ""` is a free no-op for the unset placeholders.
-NAMED=; REAL=; HELP=; ARGS=; QUOTED=; UNPARSED=; SIGA=; SIGB=
-trap 'rm -f "$NAMED" "$REAL" "$HELP" "$ARGS" "$QUOTED" "$UNPARSED" "$SIGA" "$SIGB"' EXIT
+NAMED=; REAL=; HELP=; ARGS=; QUOTED=; UNPARSED=; SIGA=; SIGB=; UNPLIST=; HUMANHELP=; HEADS=
+trap 'rm -f "$NAMED" "$REAL" "$HELP" "$ARGS" "$QUOTED" "$UNPARSED" "$SIGA" "$SIGB" "$UNPLIST" "$HUMANHELP" "$HEADS"' EXIT
+UNPLIST=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
+HUMANHELP=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
+HEADS=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
 NAMED=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
 REAL=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
 HELP=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
@@ -160,6 +178,54 @@ jq -r '.data.commands[].name' < "$HELP" > "$REAL" \
 jq -r '.data.commands[] | .name + "\t" + ([.args[]? | (if .required then "!" else "" end) + .name] | join(" "))' < "$HELP" > "$ARGS" \
   || { echo "command-claims: the help payload has no .data.commands[].args — the TABLE is broken, not the docs" >&2; exit 3; }
 
+# ----------------------------- the human help names every command the table declares
+#
+# The bare `--help` screen is a hand-maintained literal; only the JSON help is
+# generated from Command.specs, and they drift in the silent direction: the parser
+# accepts a command, the JSON lists it, and the screen a human actually reads omits
+# it (#376). Two rules, because the screen presents two kinds of name. A command
+# gets its own usage row, so the check is against the set of INVOCATION HEADS — the
+# leading command words of each indented row, cut before the first argument or the
+# column gap. A bare substring search cannot do this job: a parent like `config` is
+# a substring of its sub-verb rows, and a two-letter alias like `cs` is a substring
+# of English words (`analytics`, `metrics`), so either survives losing its own text.
+# ALIAS_MENTIONS is the pinned exception set: names presented parenthetically inside
+# their parent's row rather than as a row of their own. Those are held to a
+# whole-word mention — boundaries exclude [alnum_-], so `cs` inside `analytics` or
+# `-h` inside `--help` cannot satisfy it.
+ALIAS_MENTIONS="cs pc pz"
+"$STRIDE" --help > "$HUMANHELP" 2>/dev/null \
+  || { echo "command-claims: \`$STRIDE --help\` failed — cannot read the human help screen" >&2; exit 3; }
+[ -s "$HUMANHELP" ] || { echo "command-claims: \`$STRIDE --help\` printed nothing — the human help cannot be checked, refusing to pass" >&2; exit 3; }
+# usage rows are indented four spaces and start with a lowercase command word;
+# flag rows (`--json`), prose (capitalised), and deeper continuation lines all
+# fall outside the pattern. The head may hold extras the table does not declare
+# (`stride` from the USAGE stanza) — the requirement is one-directional.
+awk '/^    [a-z]/ {
+  line = substr($0, 5)
+  sub(/  +.*$/, "", line)
+  n = split(line, t, / +/)
+  head = ""
+  for (i = 1; i <= n; i++) {
+    if (t[i] ~ /^[a-z][a-z0-9-]*$/) { head = (head == "" ? t[i] : head " " t[i]) } else { break }
+  }
+  if (head != "") print head
+}' "$HUMANHELP" > "$HEADS" \
+  || { echo "command-claims: the usage-head extraction failed — the human help cannot be checked, refusing to pass" >&2; exit 6; }
+[ -s "$HEADS" ] || { echo "command-claims: no usage rows found on the help screen — the head extractor and the screen's layout disagree, refusing to pass" >&2; exit 6; }
+helpmiss=0
+while IFS= read -r _c; do
+  case " $ALIAS_MENTIONS " in
+    *" $_c "*)
+      grep -qE "(^|[^[:alnum:]_-])$_c([^[:alnum:]_-]|$)" "$HUMANHELP" \
+        || { echo "command-claims: the human help screen never mentions the alias \`$_c\` as a word while the command table declares it — the help_text literal drifted from Command.specs" >&2; helpmiss=1; } ;;
+    *)
+      grep -qxF -e "$_c" "$HEADS" \
+        || { echo "command-claims: the human help screen has no usage row headed \`$_c\` while the command table declares it — the help_text literal drifted from Command.specs" >&2; helpmiss=1; } ;;
+  esac
+done < "$REAL"
+if [ "$helpmiss" != "0" ]; then exit 8; fi
+
 # --------------------------------------------------------------- the corpus: the docs
 #
 # Checked BEFORE awk runs: macOS awk ABORTS its remaining argument list on a missing
@@ -170,6 +236,13 @@ for f in $FILES; do
   [ -f "$f" ] || { echo "command-claims: $f is not a readable file — refusing to scan a shrunken corpus" >&2; exit 5; }
   nfiles=$((nfiles + 1))
 done
+# The readability loop cannot see a deleted GLOBBED file — it never enters the
+# expansion — so the count itself is pinned. Exact, not a floor: a new doc is a
+# deliberate bump, a drop is the silent-shrink this catches (#376).
+if [ "$nfiles" != "$EXPECTED_NFILES" ]; then
+  echo "command-claims: the corpus holds $nfiles files, expected exactly $EXPECTED_NFILES — grown means a doc was added (bump EXPECTED_NFILES deliberately), shrunk means a globbed file vanished without tripping the per-file guard" >&2
+  exit 5
+fi
 
 # TWO extraction rules. Rule A: an inline code span — the backtick separates a
 # reference from the English word "stride". Rule B: a fenced INVOCATION line, anchored
@@ -179,7 +252,7 @@ done
 # STRINGS, not /…/ literals: a regex literal as a function argument evaluates to
 # `$0 ~ /…/` and match() gets the pattern "0" — a SILENT zero; the floors catch it, and
 # `RLENGTH < 1` covers zero-width hangs.
-awk -v Q="$QUOTED" -v U="$UNPARSED" '
+awk -v Q="$QUOTED" -v U="$UNPARSED" -v UP="$UNPLIST" '
   function tokens(s) {
     if (match(s, /^[a-z][a-z-]*( [a-z][a-z-]*)?/)) return substr(s, RSTART, RLENGTH)
     return ""
@@ -219,7 +292,13 @@ awk -v Q="$QUOTED" -v U="$UNPARSED" '
     # SEEN BUT NOT PARSED: genuine prose and a claim in an unread shape are
     # indistinguishable here, so this is a pinned count, not a failure — it turns "the
     # extractor stopped seeing a shape" loud. New shape -> new rule; new prose -> bump.
-    if (emitted == n_before && $0 ~ /stride[[:space:]]+[a-z]/) unparsed++
+    # Each line is also RECORDED by location, so a pin mismatch names what it could not
+    # resolve — a message that only says "bump the pin" makes bumping the path of least
+    # resistance, and that path admits a bogus command permanently (#376).
+    if (emitted == n_before && $0 ~ /stride[[:space:]]+[a-z]/) {
+      unparsed++
+      print FILENAME ":" FNR ": " substr($0, 1, 140) > UP
+    }
   }
   END { print (quoting + 0) > Q; print (unparsed + 0) > U }
 ' $FILES > "$NAMED" \
@@ -260,12 +339,34 @@ if [ "$ndocs" -lt "$MIN_DOCS" ]; then
   echo "command-claims: references came from $ndocs docs, floor is $MIN_DOCS — the scan is reading fewer documents than it did; awk may have aborted mid-list. Confirm and lower MIN_DOCS." >&2
   exit 2
 fi
+# per-file floors for the reference-heavy docs (FILE_FLOORS above): computed from the
+# same extractor output the global floors read, so the two cannot disagree about what
+# counts as a reference.
+ffail=0
+old_ifs="$IFS"; IFS='
+'
+for _row in $FILE_FLOORS; do
+  IFS="$old_ifs"
+  _ff="${_row%%=*}"; _fmin="${_row##*=}"
+  _fgot=$(awk -F'\t' -v f="$_ff" '$1 == f { c++ } END { print c + 0 }' "$NAMED")
+  case "$_fgot" in ''|*[!0-9]*) echo "command-claims: could not count $_ff's references (got '$_fgot')" >&2; exit 2 ;; esac
+  if [ "$_fgot" -lt "$_fmin" ]; then
+    echo "command-claims: $_ff contributed $_fgot references, its floor is $_fmin — that file's coverage collapsed while the corpus total absorbed it. Confirm the loss is deliberate and lower its floor in FILE_FLOORS." >&2
+    ffail=1
+  fi
+  IFS='
+'
+done
+IFS="$old_ifs"
+if [ "$ffail" != "0" ]; then exit 2; fi
 if [ "$nquot" != "$EXPECTED_QUOTING" ]; then
   echo "command-claims: $nquot quoting markers, expected $EXPECTED_QUOTING — an opt-out was added or removed; confirm it is deliberate and update EXPECTED_QUOTING" >&2
   exit 4
 fi
 if [ "$nunp" != "$EXPECTED_UNPARSED" ]; then
-  echo "command-claims: $nunp lines mention a stride command but yielded no reference, expected $EXPECTED_UNPARSED — either a doc uses a shape neither rule reads (a fence dialect, an indented block: teach the extractor) or it is new prose (bump EXPECTED_UNPARSED). \`grep -n 'stride [a-z]' \$FILES\` against the report above shows which." >&2
+  echo "command-claims: $nunp lines mention a stride command but yielded no reference, expected $EXPECTED_UNPARSED. The unresolved lines are:" >&2
+  sed 's/^/  /' "$UNPLIST" >&2
+  echo "command-claims: for each NEW line above, decide which it is: a claim in a shape neither rule reads (a fence dialect, an indented block, bare prose naming a real command — teach the extractor or backtick it) or genuine prose (then bump EXPECTED_UNPARSED). Bumping the pin without reading the list is how a bogus command gets admitted permanently. A count BELOW the pin means lines were resolved or removed — lower EXPECTED_UNPARSED to $nunp." >&2
   exit 4
 fi
 
