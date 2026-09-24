@@ -439,6 +439,12 @@ viz:
 
 # type-check the viz without opening a window
 viz-check:
+    ROC="{{roc_viz}}" sh tools/roc-viz.sh check src/viz/main.roc
+
+# the raw check, without the wrapper that tolerates roc-ray's pin-mismatch
+# warning — plain roc exits non-zero on ANY warning, so this false-fails
+# until roc-ray declares the pinned compiler; kept for the day it does
+viz-check-strict:
     {{roc_viz}} check src/viz/main.roc
 
 # Run the viz's pure expects (picker filters, ghost rules, axis steps): the
@@ -453,6 +459,10 @@ viz-test:
 # ADR 0016: every engine import points down the layer table; viz stays behind the DB
 layer-check:
     bash tools/layer-check.sh
+
+# every workflow nightly-tag site agrees with the two compiler pins (engine + viz)
+pin-check:
+    sh tools/pin-check.sh
 
 # build the viz window as a macOS app in ~/Applications (Launchpad/Dock/Spotlight)
 viz-app:
