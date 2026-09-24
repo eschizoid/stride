@@ -94,6 +94,38 @@ Schema :: [].{
         \\  value TEXT
         \\)
 
+    # mirror tier, the streams pattern: one row per strength-family activity
+    # whose DESCRIPTION sync has fetched. Row presence retires the id from the
+    # notes drain queue, so an activity with no description stores '' the way
+    # a 404'd stream stores an empty marker — fetched and empty are the same
+    # durable fact, absent means not yet asked. The description is where a
+    # strength app's share summary lives (Strava's public API carries no
+    # per-exercise sets), and it is re-pullable, so replace-on-sync is safe.
+    strength_notes =
+        \\CREATE TABLE IF NOT EXISTS strength_notes (
+        \\  activity_id INTEGER PRIMARY KEY REFERENCES activities(id),
+        \\  description TEXT
+        \\)
+
+    # computed tier: the parsed set rows behind the tonnage spine, rebuilt
+    # from strength_notes on every analyze (like activity_segments, deletable
+    # at will). `weight_kg` is the mass one rep MOVES — the /side variants are
+    # resolved at parse time — so tonnage is sets * reps * weight_kg. `source`
+    # records provenance per row ('description' today; a structured upstream
+    # source would write its own name), the load_coverage discipline applied
+    # to sets: unequal sources must stay distinguishable, not flattened.
+    strength_sets =
+        \\CREATE TABLE IF NOT EXISTS strength_sets (
+        \\  activity_id INTEGER REFERENCES activities(id),
+        \\  ordinal     INTEGER,
+        \\  exercise    TEXT,
+        \\  sets        INTEGER,
+        \\  reps        INTEGER,
+        \\  weight_kg   REAL,
+        \\  source      TEXT,
+        \\  PRIMARY KEY (activity_id, ordinal)
+        \\)
+
     # the judgment tier: user-entered effort ratings (Borg CR10 session-RPE).
     # NEVER a column on activities — that table is a replace-on-sync mirror,
     # and a re-sync would silently wipe anything a human typed into it.
@@ -252,6 +284,19 @@ Schema :: [].{
         \\                AND COALESCE(a2.sport_family, a2.sport_type) = COALESCE(a.sport_family, a.sport_type)
         \\                AND substr(CAST(a2.start_local AS TEXT), 1, 7) = substr(CAST(a.start_local AS TEXT), 1, 7)
         \\              ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)
+        \\-- tonnage is not a threshold: this view is the monthly SPINE series,
+        \\-- keyed by kind, and the strength arm sums a month's lifted mass
+        \\-- (kg) per family. The view keeps its threshold-era name because the
+        \\-- window's spine discovery query reads it by name across a second
+        \\-- binary and platform; the rename is deferred deliberately, not
+        \\-- forgotten.
+        \\UNION ALL
+        \\SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month,
+        \\       CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS fam,
+        \\       'tonnage' AS kind,
+        \\       CAST(SUM(s.sets * s.reps * s.weight_kg) AS REAL) AS value
+        \\FROM activities a JOIN strength_sets s ON s.activity_id = a.id
+        \\GROUP BY substr(CAST(a.start_local AS TEXT), 1, 7), COALESCE(a.sport_family, a.sport_type)
 
     # the FTP the engine scored each month's LAST power-scored Ride-family
     # activity with. Deliberately NOT season's ftp_end - that is a

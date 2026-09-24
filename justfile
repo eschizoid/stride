@@ -20,6 +20,8 @@ list429_port := env("LIST429_PORT", "8794")
 list429p_port := env("LIST429P_PORT", "8793")
 # fourth instance, 401ing forever on one id (the token-refresh retry bound, #232)
 auth401_port := env("AUTH401_PORT", "8796")
+# eighth instance, listing a strength Workout + serving its description (the notes drain, #478)
+strength_port := env("STRENGTH_PORT", "8792")
 
 default: test
 
@@ -52,6 +54,7 @@ test:
     {{roc}} test --main=src/main.roc src/Command.roc
     {{roc}} test --main=src/main.roc src/Config.roc
     {{roc}} test --main=src/main.roc src/Streams.roc
+    {{roc}} test --main=src/main.roc src/Strength.roc
     just build
     just e2e
 
@@ -381,6 +384,12 @@ e2e-sync: build
     L429P=$!
     trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK $P5MOCK $L429MOCK $L429P 2>/dev/null' EXIT
     E2E_MODE=stops E2E_EXPECT_LIST_429=1 E2E_LIST_PARTIAL_BASE=http://127.0.0.1:{{list429p_port}} STRIDE_API_BASE=http://127.0.0.1:{{list429_port}} ./e2e || exit 1
+    # the notes drain (#478): a listing with a strength Workout, whose detail
+    # endpoint serves the pasted set breakdown
+    E2E_MODE=mock E2E_STRENGTH=1 MOCK_PORT={{strength_port}} ./e2e &
+    STRMOCK=$!
+    trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK $P5MOCK $L429MOCK $L429P $STRMOCK 2>/dev/null' EXIT
+    E2E_MODE=notes STRIDE_API_BASE=http://127.0.0.1:{{strength_port}} ./e2e || exit 1
 
 # build + refresh the ~/.local/bin symlink
 install: build
