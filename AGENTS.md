@@ -56,6 +56,7 @@ sh tools/blob-safety.sh    # every TEXT decode is projected through CAST(... AS 
 sh tools/command-claims.sh # commands the docs name vs the binary's own table (needs ./stride)
 just layer-check           # every engine import points down the layer table (ADR 0016)
 just pin-check             # every workflow nightly-tag site agrees with the two compiler pins
+just viz-check             # type-check the window through the pin-warning-tolerant wrapper
 just viz-test              # the window's expects + assertion-count pins, on the viz nightly
 just issue-claims          # issue-state claims in comments (needs `gh` auth)
 ```
