@@ -811,7 +811,7 @@ run_notes! = || {
     # moving one side's 25 lbs = 11.33980925 kg (asserted at mm-of-kg precision
     # through an integer, floats having no Eq in SQL any more than in Roc)
     check!("...with the /side semantics resolved at parse time", Str.trim(sql!(db, "SELECT sets || '/' || reps || '/' || CAST(ROUND(weight_kg * 1000) AS INTEGER) FROM strength_sets WHERE activity_id = 503 AND ordinal = 1;")) == "3/16/11340")?
-    check!("...each row naming its provenance", Str.trim(sql!(db, "SELECT COUNT(DISTINCT source) || ':' || MIN(source) FROM strength_sets WHERE activity_id = 503;")) == "1:description")?
+    check!("...each row naming its provenance", Str.trim(sql!(db, "SELECT COUNT(DISTINCT source) || ':' || MIN(source) FROM strength_sets WHERE activity_id = 503;")) == "1:peloton")?
     check!("...while the null-description session contributes no rows — the honest gap", Str.trim(sql!(db, "SELECT COUNT(*) FROM strength_sets WHERE activity_id = 505;")) == "0")?
     # 3*8*27.2155 + 3*16*11.3398 = 1197.48… in 503's July; 504's month carries
     # its own 2*10*9.0718 = 181.4 — two months, each the sum of ITS sessions,

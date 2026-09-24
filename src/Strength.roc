@@ -1,8 +1,26 @@
 Strength :: [].{
-    # ── the strength-notes parser: Peloton share text → set rows ────────
+    # ── the strength-notes parsers: share text → set rows, per app ──────
     # Strava's public API carries no per-exercise sets; what exists for these
-    # sessions is the activity DESCRIPTION, where the athlete pastes the
-    # Peloton share summary (#478). Its grammar is regular:
+    # sessions is the activity DESCRIPTION, where the athlete pastes their
+    # strength app's share summary (#478). Different apps write different
+    # grammars, so the parser is an ADAPTER PACK: one pure function per
+    # format, tried in order, and the first to yield rows names the row's
+    # provenance — a description comes from ONE app, so first-non-empty is
+    # format detection, not a merge. Everything downstream (the notes drain,
+    # the strength_sets rebuild, the tonnage view, the career spine) is
+    # format-blind: supporting another athlete's app is one function in this
+    # file, its expects, and a row in `adapters` — no sync, schema, or viz
+    # change.
+    #
+    # The adapter contract, which every entry must keep: pure Str ->
+    # List(SetRow); TOLERANT (junk yields no rows, never an error — the
+    # source is a human paste); and SILENT on formats it does not recognize
+    # (the empty list is what lets the next adapter speak). A SetRow's
+    # weight_kg is the mass one rep MOVES, with any per-side bookkeeping
+    # already resolved, so tonnage stays sets × reps × weight_kg whatever
+    # the format wrote.
+    #
+    # ── peloton: the share summary grammar ──────────────────────────────
     #
     #     Block 1
     #     Dumbbell Crush Press
@@ -12,11 +30,11 @@ Strength :: [].{
     #
     # An exercise NAME line is followed by a SET line `S × R • W <unit>`, with
     # `reps/side` and `<unit>/side` variants and `Block N` section headers
-    # between groups. The source is a human paste, so the contract is
-    # tolerance: any line that is not a well-formed set line is skipped, a set
-    # line with no preceding exercise name is skipped, and an empty or absent
-    # description parses to no rows — a set-less strength session counts for
-    # load and streak but not tonnage, an honest gap rather than a failure.
+    # between groups. Any line that is not a well-formed set line is skipped,
+    # a set line with no preceding exercise name is skipped, and an empty or
+    # absent description parses to no rows — a set-less strength session
+    # counts for load and streak but not tonnage, an honest gap rather than
+    # a failure.
     #
     # Side semantics decide what a rep MOVES, so tonnage is mass actually
     # lifted rather than a label sum. This is a reading of how the app
@@ -37,11 +55,33 @@ Strength :: [].{
 
     SetRow : { exercise : Str, sets : I64, reps : I64, weight_kg : F64 }
 
+    # what one description parses to: the rows, and the NAME of the adapter
+    # that read them — stored per row (strength_sets.source) so a career of
+    # mixed apps stays distinguishable, the load_coverage discipline applied
+    # to sets. "" with no rows means no adapter recognized the text.
+    Parsed : { source : Str, rows : List(SetRow) }
+
+    adapters : List({ name : Str, parse : Str -> List(SetRow) })
+    adapters = [{ name: "peloton", parse: parse_peloton }]
+
+    parse : Str -> Parsed
+    parse = |text| first_recognized(adapters, text)
+
+    first_recognized : List({ name : Str, parse : Str -> List(SetRow) }), Str -> Parsed
+    first_recognized = |ads, text|
+        match ads {
+            [] => { source: "", rows: [] }
+            [a, .. as rest] => {
+                rows = (a.parse)(text)
+                if List.is_empty(rows) first_recognized(rest, text) else { source: a.name, rows }
+            }
+        }
+
     lb_kg : F64
     lb_kg = 0.45359237
 
-    parse : Str -> List(SetRow)
-    parse = |text| {
+    parse_peloton : Str -> List(SetRow)
+    parse_peloton = |text| {
         lines = List.map(Str.split_on(text, "\n"), |l| Str.trim(l))
         walk = List.fold(lines, { exercise: "", rows: [] }, |acc, line| {
             match parse_set_line(line) {
@@ -146,7 +186,7 @@ Strength :: [].{
 
 # the issue's verbatim sample: two exercises, both /side variants
 expect {
-    rows = Strength.parse("Block 1\nDumbbell Crush Press\n3 × 8 • 30 lbs/side\nDumbbell Snatch Push Press\n3 × 8 reps/side • 25 lbs/side")
+    rows = Strength.parse_peloton("Block 1\nDumbbell Crush Press\n3 × 8 • 30 lbs/side\nDumbbell Snatch Push Press\n3 × 8 reps/side • 25 lbs/side")
     match rows {
         [a, b] =>
             a.exercise == "Dumbbell Crush Press"
@@ -165,13 +205,13 @@ expect {
 
 # tonnage is the product sum: 3×8×27.2155… + 3×16×11.3398… = 1197.48…
 expect {
-    rows = Strength.parse("A\n3 × 8 • 30 lbs/side\nB\n3 × 8 reps/side • 25 lbs/side")
+    rows = Strength.parse_peloton("A\n3 × 8 • 30 lbs/side\nB\n3 × 8 reps/side • 25 lbs/side")
     (Strength.tonnage_kg(rows) - 1197.4838568).abs() < 0.01
 }
 
 # kg passes through unconverted; decimal weights parse; ASCII x accepted
 expect {
-    rows = Strength.parse("Goblet Squat\n4 x 10 • 22.5 kg")
+    rows = Strength.parse_peloton("Goblet Squat\n4 x 10 • 22.5 kg")
     match rows {
         [a] => a.sets == 4 and a.reps == 10 and (a.weight_kg - 22.5).abs() < 0.001
         _ => False
@@ -180,7 +220,7 @@ expect {
 
 # plain totals: no /side anywhere means the stated numbers stand
 expect {
-    rows = Strength.parse("Barbell Bench Press\n5 × 5 • 135 lbs")
+    rows = Strength.parse_peloton("Barbell Bench Press\n5 × 5 • 135 lbs")
     match rows {
         [a] => a.sets == 5 and a.reps == 5 and (a.weight_kg - 61.23496995).abs() < 0.001
         _ => False
@@ -190,7 +230,7 @@ expect {
 # tolerance: junk lines skip, a set line before any exercise name skips,
 # Block headers and blank lines do not become exercise names
 expect {
-    rows = Strength.parse("3 × 8 • 30 lbs\nBlock 2\n\nsome prose that is not a set\nCurl\n2 × 12 • 15 lbs")
+    rows = Strength.parse_peloton("3 × 8 • 30 lbs\nBlock 2\n\nsome prose that is not a set\nCurl\n2 × 12 • 15 lbs")
     match rows {
         [a] => a.exercise == "Curl" and a.sets == 2 and a.reps == 12
         _ => False
@@ -200,7 +240,7 @@ expect {
 # a bodyweight line (no bullet) is not a set line; the exercise keeps its
 # name for a later weighted line, matching the share format's superset layout
 expect {
-    rows = Strength.parse("Push Up\n3 × 15\nDumbbell Row\n3 × 10 • 40 lbs")
+    rows = Strength.parse_peloton("Push Up\n3 × 15\nDumbbell Row\n3 × 10 • 40 lbs")
     match rows {
         [a] => a.exercise == "Dumbbell Row" and a.sets == 3 and a.reps == 10
         _ => False
@@ -208,14 +248,26 @@ expect {
 }
 
 # empty and absent parse to nothing — the honest-gap contract
-expect List.is_empty(Strength.parse(""))
-expect List.is_empty(Strength.parse("a ride description with no sets at all"))
+expect List.is_empty(Strength.parse_peloton(""))
+expect List.is_empty(Strength.parse_peloton("a ride description with no sets at all"))
 
 # zero and negative magnitudes are refused, not stored: a row claiming 0 sets
 # or a negative weight is paste damage, and tonnage built on it would be a
 # confident wrong number
-expect List.is_empty(Strength.parse("Curl\n0 × 12 • 15 lbs"))
-expect List.is_empty(Strength.parse("Curl\n3 × 12 • -15 lbs"))
+expect List.is_empty(Strength.parse_peloton("Curl\n0 × 12 • 15 lbs"))
+expect List.is_empty(Strength.parse_peloton("Curl\n3 × 12 • -15 lbs"))
 
 # an unrecognised unit is not a set line — prose with a bullet stays prose
-expect List.is_empty(Strength.parse("Curl\n3 × 12 • 15 stone"))
+expect List.is_empty(Strength.parse_peloton("Curl\n3 × 12 • 15 stone"))
+
+# the dispatcher: the first adapter to yield rows names the provenance, and
+# unrecognized text is "" with no rows — the honest-gap contract at the pack
+# level, not just per adapter
+expect {
+    p = Strength.parse("A\n3 × 8 • 30 lbs")
+    p.source == "peloton" and List.len(p.rows) == 1
+}
+expect {
+    p = Strength.parse("a ride description no adapter recognizes")
+    p.source == "" and List.is_empty(p.rows)
+}

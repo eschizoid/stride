@@ -1131,21 +1131,22 @@ Analyze :: [].{
         match notes {
             [] => Ok({})
             [n, .. as rest] => {
-                _ = insert_set_rows!(path, n.aid, Strength.parse(n.d), 0)?
+                parsed = Strength.parse(n.d)
+                _ = insert_set_rows!(path, n.aid, parsed.source, parsed.rows, 0)?
                 insert_note_sets!(path, rest)
             }
         }
-    insert_set_rows! : Str, I64, List(Strength.SetRow), I64 => Try({}, _)
-    insert_set_rows! = |path, aid, rows, ord|
+    insert_set_rows! : Str, I64, Str, List(Strength.SetRow), I64 => Try({}, _)
+    insert_set_rows! = |path, aid, source, rows, ord|
         match rows {
             [] => Ok({})
             [r, .. as rest] => {
-                # 'description' names the provenance: these rows came from the
-                # pasted share text, not a structured upstream source — readers
+                # provenance is the ADAPTER that read the paste ('peloton', ...),
+                # so a career of mixed apps stays distinguishable and a reader
                 # can qualify a tonnage trend built on unequal sources
                 Sqlite.execute!({
                     path: Path.utf8(path),
-                    query: "INSERT OR REPLACE INTO strength_sets (activity_id, ordinal, exercise, sets, reps, weight_kg, source) VALUES (:aid, :ord, :ex, :sets, :reps, :w, 'description')",
+                    query: "INSERT OR REPLACE INTO strength_sets (activity_id, ordinal, exercise, sets, reps, weight_kg, source) VALUES (:aid, :ord, :ex, :sets, :reps, :w, :src)",
                     bindings: [
                         { name: ":aid", value: Integer(aid) },
                         { name: ":ord", value: Integer(ord) },
@@ -1153,9 +1154,10 @@ Analyze :: [].{
                         { name: ":sets", value: Integer(r.sets) },
                         { name: ":reps", value: Integer(r.reps) },
                         { name: ":w", value: Real(r.weight_kg) },
+                        { name: ":src", value: String(source) },
                     ],
                 })?
-                insert_set_rows!(path, aid, rest, ord + 1)
+                insert_set_rows!(path, aid, source, rest, ord + 1)
             }
         }
 

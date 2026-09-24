@@ -111,9 +111,10 @@ Schema :: [].{
     # from strength_notes on every analyze (like activity_segments, deletable
     # at will). `weight_kg` is the mass one rep MOVES — the /side variants are
     # resolved at parse time — so tonnage is sets * reps * weight_kg. `source`
-    # records provenance per row ('description' today; a structured upstream
-    # source would write its own name), the load_coverage discipline applied
-    # to sets: unequal sources must stay distinguishable, not flattened.
+    # records provenance per row: the name of the ADAPTER that read the paste
+    # ('peloton' today; a structured upstream source would write its own
+    # name) — the load_coverage discipline applied to sets, so a career of
+    # mixed apps and unequal sources stays distinguishable, never flattened.
     strength_sets =
         \\CREATE TABLE IF NOT EXISTS strength_sets (
         \\  activity_id INTEGER REFERENCES activities(id),
