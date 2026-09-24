@@ -1491,10 +1491,14 @@ scene! = |model, frame| {
 # geometry over the tick - no asset, nothing to load before the loader.
 splash! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
 splash! = |model, frame| {
-	# the splash clears to the TILE's own ground - RGB(1, 2, 9), sampled
-	# across the interior of img/stride-icon.png away from the mark - so
-	# the logo sits on a field of its own color rather than framing itself
-	# in a slightly different black. The asset is RGB with no alpha channel
+	# the splash clears to the TILE's own ground - RGB(1, 2, 9), a
+	# representative pick from the interior of img/stride-icon.png away
+	# from the mark - so the logo sits on a field of its own color rather
+	# than framing itself in a slightly different black. The interior is a
+	# DISTRIBUTION (the tile bakes a faint topo texture), so re-measuring
+	# it is a judgement call clustered near (0, 2, 8); the corner padding
+	# below is one exact value, and only that half re-measures
+	# deterministically. The asset is RGB with no alpha channel
 	# and carries TWO grounds: the tile's, and a lighter corner padding
 	# outside the rounded corners, which a single clear cannot also match -
 	# those four faint wedges are the residual #508 carries until the mark
