@@ -851,7 +851,7 @@ run_notes! = || {
     check!("the strength payload conforms to its schema", Str.trim(sh!("jq '.data' '${sto}' 2>&1 | jq -r --slurpfile schema schemas/v3/strength.json -f tools/validate.jq 2>&1")) == "")?
     # 30 lbs/side both-hands = 27.2155422 kg top; 3*8*27.2155… = 653.17 kg·reps
     check!("a per-exercise point carries the day's top set and kg-reps", stq!("[.data.exercises[] | select(.exercise == \"Dumbbell Crush Press\") | .points[0] | ((.top_kg * 1000) | round), (.kg_reps | round)] | join(\"/\")") == "27216/653")?
-    check!("a drawing month reports its tonnage with its denominators", stq!("[.data.monthly[] | select(.month == \"2026-07\") | (.kg | round), (if .tonnage_known then 1 else 0 end), .covered, .total] | join(\"/\")") == "1197/1/1/2")?
+    check!("a drawing month reports its tonnage with its denominators", stq!("[.data.monthly[] | select(.month == \"2026-07\") | (.kg | round), (if .tonnage_known == true then 1 else 0 end), .covered, .total] | join(\"/\")") == "1197/1/1/2")?
     check!("the session counts split the gaps into their kinds", stq!("[.data.sessions.total, .data.sessions.with_sets, .data.sessions.pasted_unparsed] | join(\"/\")") == "3/2/0")?
     # a paste that parsed to NOTHING is a different fact from no paste, and
     # the count sees it without an analyze: it reads notes against sets
@@ -863,7 +863,7 @@ run_notes! = || {
     # a table can qualify a number where a curve cannot
     _ = sql!(db, "INSERT INTO activities (id, name, sport_type, start_local, moving_time) VALUES (506, 'coverage probe class', 'Workout', '2026-07-31T09:00:00Z', 2700), (507, 'coverage probe class 2', 'Workout', '2026-07-31T10:00:00Z', 2700);")
     _ = sh!("HOME='${home}' STRIDE_FORMAT=json '${bin}' strength >'${sto}' 2>/dev/null")
-    check!("a withheld month still appears, kg an impossible-zero behind its flag", stq!("[.data.monthly[] | select(.month == \"2026-07\") | (.kg | round), (if .tonnage_known then 1 else 0 end), .covered, .total] | join(\"/\")") == "0/0/1/4")?
+    check!("a withheld month still appears, kg an impossible-zero behind its flag", stq!("[.data.monthly[] | select(.month == \"2026-07\") | (.kg | round), (if .tonnage_known == true then 1 else 0 end), .covered, .total] | join(\"/\")") == "0/0/1/4")?
     sthuman = Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=human '${bin}' strength 2>/dev/null"))
     check!("the human table names the gap and the capability in one line", Str.contains(sthuman, "3 of 5 strength sessions have no recorded sets") and Str.contains(sthuman, "paste the set breakdown into the activity description"))?
     check!("...renders the withheld month as a stated refusal, with its legend", Str.contains(sthuman, "no tonnage is claimed"))?
