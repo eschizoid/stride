@@ -41,6 +41,7 @@ test:
     {{roc}} test src/core/Fmt.roc
     {{roc}} test src/core/Sports.roc
     {{roc}} test src/core/Units.roc
+    {{roc}} test src/core/Series.roc
     # every engine module takes --main: core is imported TRANSITIVELY (Command
     # reaches it through Metrics), and a bare module run carries no package
     # map, so every expect below the import fails to resolve

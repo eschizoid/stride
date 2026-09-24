@@ -151,7 +151,8 @@ load_model! = |font, curve_days, boot| {
 				# this boot task, so every later switch and ghost summon is a
 				# memory read, not a task round-trip - the trace view answers
 				# keys instantly
-				tcache = load_tcache!(db, tids)
+				un = Db.units!(db)
+				tcache = load_tcache!(db, un, tids)
 				tr = match List.first(tcache) { Ok(t0) => t0.tr
 					Err(_) => [] }
 				sg = match List.first(tcache) { Ok(t0) => t0.sg
@@ -173,7 +174,6 @@ load_model! = |font, curve_days, boot| {
 				rw = Db.load_ramp_weeks!(db)
 				prs = Db.load_prs!(db)
 				nts = Db.load_day_notes!(db)
-				un = Db.units!(db)
 				cpv = Db.load_curve_prev!(db, curve_days)
 				{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, rw, csp, cs, prs, tcache, un }
 			}
@@ -457,8 +457,8 @@ ghost_task! = |home, ids, gsel|
 # Same task lane, the live session: re-reads one session's trace, segments
 # and duration and reports back as a message. Any failure keeps the session
 # the window already had.
-trace_task! : Str, List(TraceId), U64 => Msg
-trace_task! = |home, ids, sel|
+trace_task! : Str, [Metric, Imperial], List(TraceId), U64 => Msg
+trace_task! = |home, units, ids, sel|
 	if home == "" TraceSwitchFailed
 	else match List.get(ids, sel) {
 		Err(_) => TraceSwitchFailed
@@ -469,7 +469,7 @@ trace_task! = |home, ids, sel|
 					tr = Db.load_trace!(db, entry.id, entry.chan)
 					sg = Db.load_segs!(db, entry.id)
 					du = Db.load_dur!(db, entry.id)
-					TraceSwitched({ tr, sg, du, sel, day: entry.day, un: Db.trace_unit(entry.chan) })
+					TraceSwitched({ tr, sg, du, sel, day: entry.day, un: Db.trace_unit(entry.chan, units) })
 				}
 			}
 	}
@@ -750,7 +750,7 @@ refusals_for = |dv, cdir, wsel, cur_sel, ids| {
 			live6 = entry_at(ids, wsel)
 			gh6 = List.fold(ids, live6, |acc, g6| if g6.day == dv.ghost_day g6 else acc)
 			if gh6.sport != live6.sport ("ghost_day ${dv.ghost_day} is ${gh6.sport}, the session is ${live6.sport}")
-			else "ghost_day ${dv.ghost_day} is ${Db.trace_unit(gh6.chan)}, the session is ${Db.trace_unit(live6.chan)}"
+			else "ghost_day ${dv.ghost_day} is ${Db.chan_name(gh6.chan)}, the session is ${Db.chan_name(live6.chan)}"
 		} else ""),
 	], |s9| s9 != "")
 	Str.join_with(segs, "; ")
@@ -829,8 +829,8 @@ nav_width = |w, n| if nav_iconic(w, n) 80.0 else 68.0
 # One entry per pickable session, loaded eagerly: switching and ghost
 # summons read this list instead of a task round-trip per keypress.
 # Recursion because an effectful body cannot reassign an outer var.
-load_tcache! : Sqlite.Db, List(TraceId) => List({ tr : List(F32), sg : List(Db.Seg), du : F32, un : Str })
-load_tcache! = |db, ids|
+load_tcache! : Sqlite.Db, [Metric, Imperial], List(TraceId) => List({ tr : List(F32), sg : List(Db.Seg), du : F32, un : Str })
+load_tcache! = |db, units, ids|
 	match List.first(ids) {
 		Err(_) => []
 		Ok(te) => {
@@ -840,7 +840,7 @@ load_tcache! = |db, ids|
 			# the unit travels with the samples so a cache read needs no second
 			# lookup into the picker row; prepend so picker order survives
 			# without List.reverse, which this stdlib lacks
-			List.prepend(load_tcache!(db, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9, un: Db.trace_unit(te.chan) })
+			List.prepend(load_tcache!(db, units, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9, un: Db.trace_unit(te.chan, units) })
 		}
 	}
 
@@ -1140,8 +1140,9 @@ update! = |model0, program_input| {
 			Err(_) => Bool.True }) {
 			# cache miss only - the normal path answers from memory this frame
 			home2 = model.home
+			units2 = model.units
 			ids2 = model.trace_ids
-			Task.spawn!(program_input, || trace_task!(home2, ids2, want_sel2))
+			Task.spawn!(program_input, || trace_task!(home2, units2, ids2, want_sel2))
 		}
 		# the trace camera: wheel zooms anchored at the cursor's moment, a held
 		# left drag pans, 0 resets - and a session switch resets (the window
@@ -1226,7 +1227,7 @@ update! = |model0, program_input| {
 		# never label a heart-rate trace in watts while the samples load
 		trace_unit2 =
 			if switching {
-				match List.get(model.trace_ids, want_sel2) { Ok(se) => Db.trace_unit(se.chan)
+				match List.get(model.trace_ids, want_sel2) { Ok(se) => Db.trace_unit(se.chan, model.units)
 					Err(_) => model.trace_unit }
 			} else model.trace_unit
 		_ = if want_days != model.curve_days or d.key_pressed(KeyR) {
