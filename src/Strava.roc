@@ -303,9 +303,10 @@ Strava :: [].{
                 # the work is outstanding, it just cannot be done today.
                 if day_spent!(path)? {
                     pend0 = pending_streams!(path)?
+                    pendn0 = pending_notes!(path)?
                     cap_stop = FromDrain(DailyCapReached)
-                    cap_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
-                    cap_payload = { synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pend0, stopped: Drain.sync_stopped_label(cap_stop), resumable: True }
+                    cap_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, stopped : Str, resumable : Bool }
+                    cap_payload = { synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pend0, notes_fetched: 0, notes_skipped: 0, pending_notes: pendn0, stopped: Drain.sync_stopped_label(cap_stop), resumable: True }
                     Output.out!(cap_payload, |p| Render.sync_screen(p, cap_stop, all))
                 } else {
                 counts = fetch_pages!(path, token, after_param, started, 1, { relisted: 0, new_n: 0, updated_n: 0, rate_limited: False })?
@@ -334,6 +335,7 @@ Strava :: [].{
                     # field's definition widens to "something is still owed", and the queue is
                     # only one of the things that can owe it.
                     pending = pending_streams!(path)?
+                    pending_n = pending_notes!(path)?
                     # BOUND once, then used twice: the payload's string and the screen's tag must
                     # describe the same run, and writing the tag at both spots made that a
                     # coincidence. (Above the annotation — Roc reads a separated annotation as a
@@ -345,13 +347,22 @@ Strava :: [].{
                     # one of them forces Render to guess the other from `pending_streams`, which is
                     # what this type was introduced to stop.
                     rl_stop = if day_spent!(path)? ListDailyCapReached else ListRateLimited
-                    rl_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
-                    rl_payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pending, stopped: Drain.sync_stopped_label(rl_stop), resumable: True }
+                    rl_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, stopped : Str, resumable : Bool }
+                    rl_payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pending, notes_fetched: 0, notes_skipped: 0, pending_notes: pending_n, stopped: Drain.sync_stopped_label(rl_stop), resumable: True }
                     Output.out!(rl_payload, |p| Render.sync_screen(p, rl_stop, all))
                 } else {
                 pruned = prune_deleted!(path, started, window_start)?
                 Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
-                pull = drain_missing_streams!(path, token)?
+                pull = drain_missing!(path, token, Streams)?
+                # notes drain only after a COMPLETE streams drain: both draw on the
+                # one read budget, and a run that stopped on it would spend its
+                # refusal a second time. The queue is still measured, so resumable
+                # and pending_notes stay true while the work waits its turn.
+                notes =
+                    match pull.stopped {
+                        Complete => drain_missing!(path, token, Notes)?
+                        _ => { stored: 0, skipped: 0, pending: pending_notes!(path)?, stopped: pull.stopped }
+                    }
                 # `synced` keeps its meaning (rows re-listed) so existing consumers are
                 # untouched; new/updated/streams_skipped are ADDITIVE (#112, #224). `stopped` and
                 # `resumable` moved here from the retired `backfill` (#232): "should I run it
@@ -363,9 +374,12 @@ Strava :: [].{
                 # which infers an OPEN record — without this line a new payload key compiles
                 # clean and ships undeclared in schemas/v3/sync.json (ADR 0000 s9c).
                 # BOUND once — see the note at the rate-limited payload above.
-                stop = FromDrain(pull.stopped)
-                payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }
-                payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: pull.stored, streams_skipped: pull.skipped, pending_streams: pull.pending, stopped: Drain.sync_stopped_label(stop), resumable: pull.pending > 0 }
+                # the run's terminal reason is whichever drain stopped it: the notes
+                # arm inherits the streams stop when it never ran, so this is the
+                # LAST stop either way
+                stop = FromDrain(notes.stopped)
+                payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, stopped : Str, resumable : Bool }
+                payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: pull.stored, streams_skipped: pull.skipped, pending_streams: pull.pending, notes_fetched: notes.stored, notes_skipped: notes.skipped, pending_notes: notes.pending, stopped: Drain.sync_stopped_label(stop), resumable: pull.pending > 0 or notes.pending > 0 }
                 Output.out!(payload, |p| Render.sync_screen(p, stop, all))
                 }
                 }
@@ -398,19 +412,49 @@ Strava :: [].{
     # newest first; pacing bounds the run (see read_limits!). altitude + distance are
     # requested EXPLICITLY — they feed grade-adjusted pace / NGP (ADR 0003). To force
     # a re-pull, DELETE FROM streams (mirror tier) and let the next sync refetch.
-    drain_missing_streams! : Str, Str => Try(DrainOutcome, _)
-    drain_missing_streams! = |path, token| {
-        ids = Sqlite.query_many!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT a.id AS id FROM activities a
-                \\LEFT JOIN streams s ON s.activity_id = a.id
-                \\WHERE s.activity_id IS NULL AND a.moving_time > 0
-                \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}
-            ,
-            bindings: [],
-            rows: Sqlite.i64("id"),
-        })?
+    drain_missing! : Str, Str, DrainKind => Try(DrainOutcome, _)
+    drain_missing! = |path, token, kind| {
+        ids =
+            match kind {
+                Streams =>
+                    Sqlite.query_many!({
+                        path: Path.utf8(path),
+                        query:
+                            \\SELECT a.id AS id FROM activities a
+                            \\LEFT JOIN streams s ON s.activity_id = a.id
+                            \\WHERE s.activity_id IS NULL AND a.moving_time > 0
+                            \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}
+                        ,
+                        bindings: [],
+                        rows: Sqlite.i64("id"),
+                    })?
+                Notes =>
+                    # WIDER than pending_notes! on purpose, where the Streams queue
+                    # mirrors its pending count exactly. A description is written
+                    # AFTER the activity — the athlete finishes, syncs, and pastes
+                    # the breakdown that evening — and can be edited any time, so a
+                    # stored copy inside the rolling window the listing re-checks is
+                    # re-read every run and an edit self-heals (#519). Outside the
+                    # window a stored row is permanent, like a stream; deleting a
+                    # strength_notes row stays a safe manual refresh, since the
+                    # authoritative copy is on Strava. The re-reads are maintenance
+                    # this run performs, not work the next run is owed, which is
+                    # why pending_notes! counts only never-asked rows. The extra
+                    # day on the window absorbs the UTC-vs-local skew in
+                    # start_local, the same margin the prune takes.
+                    Sqlite.query_many!({
+                        path: Path.utf8(path),
+                        query:
+                            \\SELECT a.id AS id FROM activities a
+                            \\LEFT JOIN strength_notes n ON n.activity_id = a.id
+                            \\WHERE COALESCE(a.sport_family, a.sport_type) = 'WeightTraining'
+                            \\  AND (n.activity_id IS NULL OR a.start_local >= datetime('now', '-31 days'))
+                            \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}
+                        ,
+                        bindings: [],
+                        rows: Sqlite.i64("id"),
+                    })?
+            }
         total = List.len(ids)
         # No `total == 0` short-circuit. One existed, returning a hardcoded `pending: 0`
         # that was right only because this query's WHERE clause is character-identical to
@@ -425,10 +469,14 @@ Strava :: [].{
             # of a message longer than the bar stays welded to the right of it
             # for the whole drain. That is the failure bar_done!'s comment names, and it
             # shipped because nothing asserts on stderr framing.
-            Output.say!("draining ${U64.to_str(total)} activities' streams — Strava caps reads per 15-minute window, so a large first pull takes several runs; every stream stored is kept")?
+            _ =
+                match kind {
+                    Streams => Output.say!("draining ${U64.to_str(total)} activities' streams — Strava caps reads per 15-minute window, so a large first pull takes several runs; every stream stored is kept")?
+                    Notes => Output.say!("fetching ${U64.to_str(total)} strength sessions' descriptions — the pasted set breakdown lives there; same read budget as the streams")?
+                }
             # an immediate 0/total frame BEFORE the first request: narrating only after a
             # response returns shows nothing for exactly as long as a stall lasts
-            Output.narrate!("fetching streams", 0, total)?
+            Output.narrate!(drain_label(kind), 0, total)?
         } else {
             {}
         }
@@ -438,11 +486,11 @@ Strava :: [].{
         # it needs no scheduled job.
         day0 = Db.utc_today_days!({})
         today0 = reads_today!(path, day0)?
-        match drain_streams!(path, token, ids, { window: 0, day: day0, today: today0, stored: 0, skipped: 0, total, refreshes: 0 }) {
+        match drain_queue!(path, token, kind, ids, { window: 0, day: day0, today: today0, stored: 0, skipped: 0, total, refreshes: 0 }) {
             Ok(o) => Ok(o)
             Err(e) => {
                 # ONE place covering every propagating `?` in the drain — the token refresh, the
-                # terminal pending_streams! read and the narration calls were all uncovered, and
+                # terminal pending read and the narration calls were all uncovered, and
                 # the refresh is the realistic one: the mid-run network call on a long drain.
                 # Nothing here uses `?`: this runs on the way out of a failure already being
                 # reported, so a broken stderr must not replace that error with its own.
@@ -451,6 +499,27 @@ Strava :: [].{
             }
         }
     }
+
+    drain_label : DrainKind -> Str
+    drain_label = |kind|
+        match kind {
+            Streams => "fetching streams"
+            Notes => "fetching descriptions"
+        }
+
+    pending_for! : Str, DrainKind => Try(I64, _)
+    pending_for! = |path, kind|
+        match kind {
+            Streams => pending_streams!(path)
+            Notes => pending_notes!(path)
+        }
+
+    store_response! : Str, DrainKind, I64, Response.Response => Try([Stored, SkippedNonUtf8], _)
+    store_response! = |path, kind, id, resp|
+        match kind {
+            Streams => store_stream_response!(path, id, resp)
+            Notes => store_note_response!(path, id, resp)
+        }
 
     # what the drain durably stored is not knowable from here, so report the queue it was
     # working and point at the command that continues it. The counts live in the payload
@@ -487,6 +556,74 @@ Strava :: [].{
             ,
             bindings: [],
             row: Sqlite.i64("n"),
+        })
+
+    # the notes twin — but NARROWER than the Notes queue, where the streams
+    # pair mirror each other exactly: pending is work the next run is OWED,
+    # and only a never-asked activity qualifies. The queue also re-reads
+    # stored in-window descriptions (#519); counting those here would make
+    # every steady-state sync report itself resumable about maintenance it
+    # just performed.
+    pending_notes! : Str => Try(I64, _)
+    pending_notes! = |path|
+        Sqlite.query!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT COUNT(*) AS n FROM activities a
+                \\LEFT JOIN strength_notes n2 ON n2.activity_id = a.id
+                \\WHERE n2.activity_id IS NULL
+                \\  AND COALESCE(a.sport_family, a.sport_type) = 'WeightTraining'
+            ,
+            bindings: [],
+            row: Sqlite.i64("n"),
+        })
+
+    # THE note-response policy, the stream policy one endpoint over: 404 => ''
+    # marker (nothing visible there; don't refetch), 2xx => the detail's
+    # description — '' when Strava sends null or omits the field, because
+    # fetched-and-empty is a durable fact the queue must retire — and a
+    # non-utf8 body => skip WITHOUT storing, so it retries next run.
+    store_note_response! = |path, id, resp|
+        if Response.status(resp) == 404 {
+            store_note!(path, id, "")?
+            Ok(Stored)
+        } else if Response.status(resp) < 300 {
+            match Str.from_utf8(Response.body(resp)) {
+                Ok(text) => {
+                    decoded : Try({ description : Str }, _)
+                    decoded = Json.parse(text)
+                    desc =
+                        match decoded {
+                            Ok(d) => d.description
+                            # a 200 whose JSON carries no string description IS the
+                            # empty case (Strava writes null for a blank one) — not
+                            # a retry, which would refetch the same null forever
+                            Err(_) => ""
+                        }
+                    store_note!(path, id, desc)?
+                    Ok(Stored)
+                }
+                Err(_) => Ok(SkippedNonUtf8)
+            }
+        } else {
+            text = Str.from_utf8(Response.body(resp)).ok_or("<non-utf8 body>")
+            Err(HttpStatus(Response.status(resp), text))
+        }
+
+    # no invalidation on store: strength_sets rebuilds wholesale on every
+    # analyze, so a newly arrived note is picked up by the next run with no
+    # per-row bookkeeping — the opposite tradeoff from store_streams!, whose
+    # metrics invalidation exists because metrics rows are converged, not
+    # rebuilt
+    store_note! : Str, I64, Str => Try({}, _)
+    store_note! = |path, id, desc|
+        Sqlite.execute!({
+            path: Path.utf8(path),
+            query: "INSERT OR REPLACE INTO strength_notes (activity_id, description) VALUES (:id, :d)",
+            bindings: [
+                { name: ":id", value: Integer(id) },
+                { name: ":d", value: String(desc) },
+            ],
         })
 
     store_streams! : Str, I64, Str => Try({}, _)
@@ -741,8 +878,15 @@ Strava :: [].{
     # lives on Drain.SyncStop, and sync! wraps this outcome in FromDrain.
     DrainOutcome : { stored : I64, skipped : I64, pending : I64, stopped : Drain.StopReason }
 
-    drain_streams! : Str, Str, List(I64), DrainState => Try(DrainOutcome, _)
-    drain_streams! = |path, token, ids, st_in| {
+    # what one queue item asks Strava for, and what storing the answer means.
+    # ONE loop serves both kinds — the pacing, refresh, 429 and skip policies
+    # are shared by construction, which is the anti-drift rule the loop's own
+    # comment states. Streams fetch the five analysis streams; Notes fetch the
+    # activity DETAIL for its description (the strength share text, #478).
+    DrainKind : [Streams, Notes]
+
+    drain_queue! : Str, Str, DrainKind, List(I64), DrainState => Try(DrainOutcome, _)
+    drain_queue! = |path, token, kind, ids, st_in| {
         # RE-READ each iteration, not captured once: a drain can outlive UTC midnight,
         # and when it does the allowance has genuinely reset. Carrying the old day
         # advised "come back tomorrow" sixty seconds after the reset and stamped the
@@ -753,10 +897,14 @@ Strava :: [].{
         match ids {
             [] => {
                 bar_done!(st)
-                Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: Complete })
+                Ok({ stored: st.stored, skipped: st.skipped, pending: pending_for!(path, kind)?, stopped: Complete })
             }
             [id, .. as rest] => {
-                uri = "${api_base!({})}/api/v3/activities/${I64.to_str(id)}/streams?keys=time,heartrate,watts,altitude,distance&key_by_type=true"
+                uri =
+                    match kind {
+                        Streams => "${api_base!({})}/api/v3/activities/${I64.to_str(id)}/streams?keys=time,heartrate,watts,altitude,distance&key_by_type=true"
+                        Notes => "${api_base!({})}/api/v3/activities/${I64.to_str(id)}"
+                    }
                 resp = send_bearer!(uri, token)?
                 match Drain.decide({ status: Response.status(resp), window: st.window, today: st.today }, read_limits!({})) {
                     Refresh => {
@@ -787,7 +935,7 @@ Strava :: [].{
                                 # and not the running total would leave `decide` comparing
                                 # a stale count on the retry — the disk and the loop would
                                 # disagree about how much of the day is left.
-                                drain_streams!(path, fresh, ids, { ..st, today: st.today + 1, refreshes: st.refreshes + 1 })
+                                drain_queue!(path, fresh, kind, ids, { ..st, today: st.today + 1, refreshes: st.refreshes + 1 })
                             }
                         }
                     }
@@ -805,12 +953,12 @@ Strava :: [].{
                         # the moment it needs to be true.
                         _ = save_reads_for_day!(path, st.day, st.today + 1)?
                         bar_done!(st)
-                        Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: DailyCapReached })
+                        Ok({ stored: st.stored, skipped: st.skipped, pending: pending_for!(path, kind)?, stopped: DailyCapReached })
                     }
                     RateLimited => {
                         _ = save_reads_for_day!(path, st.day, st.today + 1)?
                         bar_done!(st)
-                        Ok({ stored: st.stored, skipped: st.skipped, pending: pending_streams!(path)?, stopped: RateLimited })
+                        Ok({ stored: st.stored, skipped: st.skipped, pending: pending_for!(path, kind)?, stopped: RateLimited })
                     }
                     Store({ window, today, after }) => {
                         save_reads_for_day!(path, st.day, today)?
@@ -821,7 +969,7 @@ Strava :: [].{
                         # clean one — a bug that had to be fixed twice (#218, #224) back when
                         # this loop had a twin.
                         counted =
-                            match store_stream_response!(path, id, resp)? {
+                            match store_response!(path, kind, id, resp)? {
                                 Stored => { stored: st.stored + 1, skipped: st.skipped }
                                 SkippedNonUtf8 => {
                                     bar_done!(st)
@@ -832,24 +980,24 @@ Strava :: [].{
                         # narrate on the id just RETIRED, counting attempts: a 404 or an
                         # undecodable body is progress through the queue too, so counting
                         # only stores would stall the bar on a run full of skips.
-                        _ = if st.total > 0 { Output.narrate!("fetching streams", st.total - List.len(rest), st.total)? } else { {} }
+                        _ = if st.total > 0 { Output.narrate!(drain_label(kind), st.total - List.len(rest), st.total)? } else { {} }
                         match after {
                             # the 15-minute window is full. Stop and let the next run
                             # continue — this is the arm a real drain always takes, so
                             # the message it produces is the one users actually read.
                             WindowFull => {
                                 bar_done!(st)
-                                Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_streams!(path)?, stopped: BudgetReached })
+                                Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_for!(path, kind)?, stopped: BudgetReached })
                             }
                             # the DAILY allowance, which is a different stop with a
                             # different remedy: the window clears in fifteen minutes, this
                             # one clears at UTC midnight.
                             DayFull => {
                                 bar_done!(st)
-                                Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_streams!(path)?, stopped: DailyCapReached })
+                                Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_for!(path, kind)?, stopped: DailyCapReached })
                             }
                             Continue =>
-                                drain_streams!(path, token, rest, { ..st, window, today, stored: counted.stored, skipped: counted.skipped })
+                                drain_queue!(path, token, kind, rest, { ..st, window, today, stored: counted.stored, skipped: counted.skipped })
 
                         }
                     }

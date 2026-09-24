@@ -82,6 +82,11 @@ init! = ||
                 Ok(_) => Err(Exit(0))
                 Err(_) => Err(Exit(1))
             }
+        "notes" =>
+            match run_notes!() {
+                Ok(_) => Err(Exit(0))
+                Err(_) => Err(Exit(1))
+            }
         # default: run the offline suite, then exit (never listens)
         _ =>
             match run_all!() {
@@ -152,9 +157,20 @@ respond! = |req, _ctx| {
                 Ok(Server.respond(Response.from_status(429).with_body(Str.to_utf8("rate limited"))))
             }
         } else if page_is(uri, 1) {
+            # under the strength flag the page carries two MORE activities, both
+            # Workouts: 503 dated outside the 31-day description window (its
+            # stored note is permanent, the retire direction) and 504 dated two
+            # days ago (inside it, the re-read direction). The standard page
+            # stays two rows because every count the other drivers pin depends
+            # on it.
             body =
-                \\[{"id":501,"name":"Mock Power Ride","sport_type":"Ride","start_date_local":"2026-07-28T10:00:00Z","moving_time":3600,"distance":30000.0,"total_elevation_gain":100.0,"average_watts":200.0,"weighted_average_watts":205.0},
-                \\ {"id":502,"name":"Mock HR Row","sport_type":"Rowing","start_date_local":"2026-07-29T10:00:00Z","moving_time":1800,"distance":5000.0,"total_elevation_gain":0.0,"average_heartrate":150.0}]
+                if env_or!("E2E_STRENGTH", "") == "1" {
+                    recent = Str.trim(sh!("date -u -v-2d +%F 2>/dev/null || date -u -d '2 days ago' +%F"))
+                    "[{\"id\":501,\"name\":\"Mock Power Ride\",\"sport_type\":\"Ride\",\"start_date_local\":\"2026-07-28T10:00:00Z\",\"moving_time\":3600,\"distance\":30000.0,\"total_elevation_gain\":100.0,\"average_watts\":200.0,\"weighted_average_watts\":205.0}, {\"id\":502,\"name\":\"Mock HR Row\",\"sport_type\":\"Rowing\",\"start_date_local\":\"2026-07-29T10:00:00Z\",\"moving_time\":1800,\"distance\":5000.0,\"total_elevation_gain\":0.0,\"average_heartrate\":150.0}, {\"id\":503,\"name\":\"Mock Strength\",\"sport_type\":\"Workout\",\"start_date_local\":\"2026-07-30T10:00:00Z\",\"moving_time\":2400,\"distance\":0.0,\"total_elevation_gain\":0.0}, {\"id\":504,\"name\":\"Mock Recent Strength\",\"sport_type\":\"Workout\",\"start_date_local\":\"${recent}T10:00:00Z\",\"moving_time\":2400,\"distance\":0.0,\"total_elevation_gain\":0.0}]"
+                } else {
+                    \\[{"id":501,"name":"Mock Power Ride","sport_type":"Ride","start_date_local":"2026-07-28T10:00:00Z","moving_time":3600,"distance":30000.0,"total_elevation_gain":100.0,"average_watts":200.0,"weighted_average_watts":205.0},
+                    \\ {"id":502,"name":"Mock HR Row","sport_type":"Rowing","start_date_local":"2026-07-29T10:00:00Z","moving_time":1800,"distance":5000.0,"total_elevation_gain":0.0,"average_heartrate":150.0}]
+                }
             Ok(mock_json(body))
         } else {
             Ok(mock_json("[]"))
@@ -201,6 +217,19 @@ respond! = |req, _ctx| {
             # 404 = "no streams recorded" — exercises the {} marker path
             Ok(mock_not_found("{}"))
         }
+    } else if Str.contains(uri, "/api/v3/activities/503") {
+        # the DETAIL endpoint — no /streams suffix, so the streams branch above
+        # never claims it. The description is the issue's verbatim Peloton share
+        # sample (JSON \n escapes; the × and • are the real multibyte glyphs).
+        # Detail for any OTHER id falls to the 404 arm at the bottom, which is
+        # itself a path the notes drain must survive (the '' marker).
+        body = "{\"id\":503,\"description\":\"Block 1\\nDumbbell Crush Press\\n3 × 8 • 30 lbs/side\\nDumbbell Snatch Push Press\\n3 × 8 reps/side • 25 lbs/side\"}"
+        Ok(mock_json(body))
+    } else if Str.contains(uri, "/api/v3/activities/504") {
+        # the in-window strength session: one plain-total line, so its tonnage
+        # (2 × 10 × 20 lbs = 181.4 kg) is distinguishable from 503's
+        body = "{\"id\":504,\"description\":\"Kettlebell Swing\\n2 × 10 • 20 lbs\"}"
+        Ok(mock_json(body))
     } else if Str.contains(uri, "/api/v3/athlete") {
         # PUT ftp update (and GET athlete) — echo success
         body =
@@ -693,6 +722,10 @@ run_skips! = || {
     _ = sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null")
     human = Str.trim(sh!("cat '${bo}'"))
     check!("humans are told the data was unreadable", Str.contains(human, "unreadable stream data"))?
+    # this mock lists no strength activities, so both notes counts are 0 and
+    # the clause must not appear — a standing "0 descriptions" would be noise
+    # about a feature this athlete does not use
+    check!("...and nothing about strength descriptions, which do not exist here", !(Str.contains(human, "strength descriptions")))?
     # Re-pointed. This asserted the absence of `"all streams present"`, which was meaningful
     # while that string existed and the pending guard suppressed it — and became VACUOUS the
     # moment this branch deleted the string, because a `contains` on text no producer can
@@ -707,6 +740,74 @@ run_skips! = || {
     tally_is_scoped!({})?
     checks_ran_at_least!(20)?
     Stdout.line!("SKIPS E2E CHECKS PASS")
+}
+
+# ── the notes drain: a strength session's pasted set breakdown (#478) ────────
+# Against a mock whose page carries a Workout (id 503) and whose detail endpoint
+# serves the issue's verbatim Peloton share text. The chain under test spans
+# three stages that only agree end-to-end: sync stores the description (and
+# retires the id), analyze parses it into strength_sets with the /side
+# semantics resolved, and the monthly_threshold view then carries a tonnage
+# row the career spine can draw.
+run_notes! : () => Try({}, _)
+run_notes! = || {
+    reset_checks!({})?
+    reset_sqlite_errors!({})
+    bin = env_or!("STRIDE_BIN", "./stride")
+    base = env_or!("STRIDE_API_BASE", "http://127.0.0.1:8792")
+    home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+    db = "${home}/.stride/db.sqlite"
+    _ = wait_ready!(base, 50)
+    check!("strength mock came up on ${base}", mock_up!(base))?
+    _ = sync_stride!(bin, home, base, ["init"])
+    # zone bounds included: analyze refuses to run without them, and this
+    # driver's last stage is an analyze
+    _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','mock-access'),('strava_refresh_token','mock-refresh'),('strava_expires_at','9999999999'),('hr_z1_max','120'),('hr_z2_max','140'),('hr_z3_max','160'),('hr_z4_max','175');")
+    so = "${home}/sync.out"
+    sq! = |filter| Str.trim(sh!("jq -r '${filter}' '${so}' 2>&1"))
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${so}' 2>/dev/null")
+    check!("both strength sessions' descriptions are fetched", sq!(".data.notes_fetched") == "2")?
+    check!("...leaving no notes pending and none skipped", sq!(".data.pending_notes") == "0" and sq!(".data.notes_skipped") == "0")?
+    check!("...with the run complete and not resumable", sq!(".data.stopped") == "complete" and sq!(".data.resumable") == "false")?
+    check!("the sync payload conforms to its schema with the notes keys", Str.trim(sh!("jq '.data' '${so}' 2>&1 | jq -r --slurpfile schema schemas/v3/sync.json -f tools/validate.jq 2>&1")) == "")?
+    check!("the stored note carries the pasted text", Str.contains(sql!(db, "SELECT description FROM strength_notes WHERE activity_id = 503;"), "Dumbbell Crush Press"))?
+    # the two directions of the cache policy in one run (#519): a description is
+    # written AFTER the activity, so a stored copy inside the listing's rolling
+    # window re-reads every sync, while one outside it is permanent
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${so}' 2>/dev/null")
+    check!("a second run re-reads only the in-window description — the aged row is retired", sq!(".data.notes_fetched") == "1" and sq!(".data.pending_notes") == "0")?
+    check!("...and stays not resumable: the re-read is maintenance, not owed work", sq!(".data.resumable") == "false")?
+    # an EDIT lands: tamper the stored copy and let the re-read overwrite it —
+    # the failure #519 reproduces is a paste that never counts because the
+    # first fetch cached an empty description forever
+    _ = sql!(db, "UPDATE strength_notes SET description = 'stale by hand' WHERE activity_id = 504;")
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${so}' 2>/dev/null")
+    check!("an edited description reaches the store on the next sync", Str.contains(sql!(db, "SELECT description FROM strength_notes WHERE activity_id = 504;"), "Kettlebell Swing"))?
+    check!("the human line names what the steady-state run fetched", Str.contains(Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' sync 2>/dev/null")), "fetched 1 strength descriptions"))?
+    # the manual refresh #519 requires stays safe: deleting a row is the
+    # not-yet-fetched state, and the next run refetches it (plus the in-window
+    # re-read — two rows, which is what tells this apart from the steady state)
+    _ = sql!(db, "DELETE FROM strength_notes WHERE activity_id = 503;")
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${so}' 2>/dev/null")
+    check!("deleting a stored row re-queues it, out-of-window or not", sq!(".data.notes_fetched") == "2")?
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json '${bin}' analyze >/dev/null 2>&1")
+    check!("analyze parses the note into two set rows", Str.trim(sql!(db, "SELECT COUNT(*) FROM strength_sets WHERE activity_id = 503;")) == "2")?
+    # ordinal 1 is the reps/side • lbs/side line: 8 reps/side -> 16 total, each
+    # moving one side's 25 lbs = 11.33980925 kg (asserted at mm-of-kg precision
+    # through an integer, floats having no Eq in SQL any more than in Roc)
+    check!("...with the /side semantics resolved at parse time", Str.trim(sql!(db, "SELECT sets || '/' || reps || '/' || CAST(ROUND(weight_kg * 1000) AS INTEGER) FROM strength_sets WHERE activity_id = 503 AND ordinal = 1;")) == "3/16/11340")?
+    check!("...each row naming its provenance", Str.trim(sql!(db, "SELECT COUNT(DISTINCT source) || ':' || MIN(source) FROM strength_sets WHERE activity_id = 503;")) == "1:description")?
+    # 3*8*27.2155 + 3*16*11.3398 = 1197.48… in 503's July; 504's month carries
+    # its own 2*10*9.0718 = 181.4 — two months, each the sum of ITS sessions,
+    # which is what makes the spine an arc rather than a total
+    check!("the aged month earns a tonnage spine row", Str.trim(sql!(db, "SELECT kind || '/' || fam || '/' || CAST(ROUND(value) AS INTEGER) FROM monthly_threshold WHERE kind = 'tonnage' AND month = '2026-07';")) == "tonnage/WeightTraining/1197")?
+    check!("...and the recent month its own", Str.trim(sql!(db, "SELECT CAST(ROUND(value) AS INTEGER) FROM monthly_threshold WHERE kind = 'tonnage' AND month <> '2026-07';")) == "181")?
+    _ = sh!("rm -rf '${home}'")
+    check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
+    reset_sqlite_errors!({})
+    tally_is_scoped!({})?
+    checks_ran_at_least!(12)?
+    Stdout.line!("NOTES E2E CHECKS PASS")
 }
 
 # ── the two non-complete stop reasons (#218) ─────────────────────────────────

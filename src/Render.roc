@@ -936,7 +936,7 @@ Render :: [].{
     # caller CAN pass a mismatched pair. All three producer sites bind the tag once and
     # derive `stopped:` from that binding — that is discipline, not enforcement, and a
     # fourth caller has to keep it.
-    sync_screen : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, stopped : Str, resumable : Bool }, Drain.SyncStop, Bool -> Str
+    sync_screen : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, stopped : Str, resumable : Bool }, Drain.SyncStop, Bool -> Str
     sync_screen = |p, stop, all| {
         prune_note = if p.pruned > 0 " (pruned ${U64.to_str(p.pruned)} removed on Strava)" else ""
         # Said plainly rather than folded into the pending count: unreadable is not
@@ -1022,11 +1022,26 @@ Render :: [].{
         # `--all` re-listed the ENTIRE account, so naming the rolling window there would
         # describe a bound the run did not have.
         window_note = if all "" else " in the 30-day window"
+        # Silent when nothing happened AND nothing waits: strength descriptions only
+        # exist for strength-family activities, so for most syncs both counts are 0
+        # and a standing "0 descriptions" clause would be noise about a feature the
+        # athlete does not use. Either count non-zero is worth a clause — a fetched
+        # note is work done, a pending one is work owed.
+        notes_note =
+            if p.notes_fetched > 0 and p.pending_notes > 0 {
+                ", fetched ${I64.to_str(p.notes_fetched)} strength descriptions (${I64.to_str(p.pending_notes)} still queued)"
+            } else if p.notes_fetched > 0 {
+                ", fetched ${I64.to_str(p.notes_fetched)} strength descriptions"
+            } else if p.pending_notes > 0 {
+                ", ${I64.to_str(p.pending_notes)} strength descriptions queued"
+            } else {
+                ""
+            }
         # New and updated FIRST, re-checked in parentheses behind them: the old line led
         # with the re-listed count, which is a function of how often you train rather than
         # of this sync, and reading "synced 22 activities" as 22 NEW ones is the question
         # it kept provoking (#112).
-        "synced ${U64.to_str(p.new_activities)} new, ${U64.to_str(p.updated_activities)} updated (${U64.to_str(p.synced)} re-checked${window_note})${prune_note}, fetched streams for ${I64.to_str(p.streams_fetched)}${skip_note}${tail}"
+        "synced ${U64.to_str(p.new_activities)} new, ${U64.to_str(p.updated_activities)} updated (${U64.to_str(p.synced)} re-checked${window_note})${prune_note}, fetched streams for ${I64.to_str(p.streams_fetched)}${notes_note}${skip_note}${tail}"
     }
 
     # ── load command screen ─────────────────────────────────────────────
@@ -2482,7 +2497,7 @@ expect {
         stops,
         |t| {
             lbl = Drain.sync_stopped_label(t)
-            row = |pending| { synced: 3, new_activities: 1, updated_activities: 0, pruned: 0, streams_fetched: 2, streams_skipped: 0, pending_streams: pending, stopped: lbl, resumable: pending > 0 }
+            row = |pending| { synced: 3, new_activities: 1, updated_activities: 0, pruned: 0, streams_fetched: 2, streams_skipped: 0, pending_streams: pending, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: lbl, resumable: pending > 0 }
             !(Str.contains(Render.sync_screen(row(9), t, False), lbl))
             and !(Str.contains(Render.sync_screen(row(0), t, False), lbl))
         },
@@ -2505,11 +2520,11 @@ expect {
         Render.drain_note(DailyCapReached, 40),
         # the list-refusal sentence is a prose surface of its own — it does not come
         # through drain_note, so a sweep over drain_note's arms alone would miss it.
-        Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False),
-        Render.sync_screen({ synced: 100, new_activities: 100, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 100, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False),
+        Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False),
+        Render.sync_screen({ synced: 100, new_activities: 100, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 100, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False),
         # ...and the list-plus-spent-day sentence, which is a fourth prose surface this
         # branch added and which joined neither sweep until review counted them.
-        Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, stopped: Drain.sync_stopped_label(ListDailyCapReached), resumable: True }, ListDailyCapReached, False),
+        Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: Drain.sync_stopped_label(ListDailyCapReached), resumable: True }, ListDailyCapReached, False),
         # freshness_note is a prose surface too, and ADR 0012's own consequences say the
         # sweep is where a new one joins. Every arm, including the empty one: an arm that
         # is only exercised on a broken config is exactly the one nobody would think to
@@ -2590,7 +2605,7 @@ expect
 # literals: review deleted EVERY number from the format string and it still passed.
 # These pin each forwarded value, so a hardcoded or dropped field fails here.
 expect
-    Render.sync_screen({ synced: 22, new_activities: 2, updated_activities: 1, pruned: 0, streams_fetched: 5, streams_skipped: 0, pending_streams: 0, stopped: "complete", resumable: False }, FromDrain(Complete), False)
+    Render.sync_screen({ synced: 22, new_activities: 2, updated_activities: 1, pruned: 0, streams_fetched: 5, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: "complete", resumable: False }, FromDrain(Complete), False)
     == "synced 2 new, 1 updated (22 re-checked in the 30-day window), fetched streams for 5"
 
 # A refused LIST says so, and says it about the LIST. Full-string, because a `contains`
@@ -2599,14 +2614,14 @@ expect
 # than hand-typed: these are the only expects covering the new arm, so typing the literal
 # here would have checked Render against itself and passed straight through a rename.
 expect
-    Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False)
+    Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False)
     == "synced 0 new, 0 updated (0 re-checked in the 30-day window), fetched streams for 0 — Strava rate-limited the activity list, so it is incomplete; nothing was pruned. Run `stride sync` again in ~15 minutes"
 
 # ...and it still says it with a FULL queue, which is the first-run shape the earlier
 # version got wrong: pending at its maximum, drain_note winning, and the sentence blaming
 # the drain for a list refusal.
 expect
-    Render.sync_screen({ synced: 100, new_activities: 100, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 100, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False)
+    Render.sync_screen({ synced: 100, new_activities: 100, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 100, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False)
     == "synced 100 new, 0 updated (100 re-checked in the 30-day window), fetched streams for 0 — Strava rate-limited the activity list, so it is incomplete; nothing was pruned. Run `stride sync` again in ~15 minutes"
 
 # the prune claim comes from `pruned`, not from `stopped`. Strava.sync! returns before
@@ -2615,39 +2630,39 @@ expect
 # and the sentence would go silently false the day it moves. Hardcoding "nothing was
 # pruned" fails here; reading the field passes on both shapes.
 expect
-    Render.sync_screen({ synced: 4, new_activities: 0, updated_activities: 0, pruned: 2, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False)
+    Render.sync_screen({ synced: 4, new_activities: 0, updated_activities: 0, pruned: 2, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False)
     == "synced 0 new, 0 updated (4 re-checked in the 30-day window) (pruned 2 removed on Strava), fetched streams for 0 — Strava rate-limited the activity list, so it is incomplete. Run `stride sync` again in ~15 minutes"
 
 # ...while a DRAIN rate limit still gets drain_note's wording, so the new arm did not
 # swallow the case it sits in front of.
 expect
-    Render.sync_screen({ synced: 3, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 5, streams_skipped: 0, pending_streams: 7, stopped: "rate_limited", resumable: True }, FromDrain(RateLimited), False)
+    Render.sync_screen({ synced: 3, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 5, streams_skipped: 0, pending_streams: 7, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: "rate_limited", resumable: True }, FromDrain(RateLimited), False)
     == "synced 0 new, 0 updated (3 re-checked in the 30-day window), fetched streams for 5 — Strava rate-limited this run — 7 to go, try again in ~15 minutes"
 
 # ...and a COMPLETE run with nothing pending still says nothing, which is the arm the
 # clause above must not have swallowed.
 expect
-    Render.sync_screen({ synced: 3, new_activities: 1, updated_activities: 0, pruned: 0, streams_fetched: 2, streams_skipped: 0, pending_streams: 0, stopped: "complete", resumable: False }, FromDrain(Complete), False)
+    Render.sync_screen({ synced: 3, new_activities: 1, updated_activities: 0, pruned: 0, streams_fetched: 2, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: "complete", resumable: False }, FromDrain(Complete), False)
     == "synced 1 new, 0 updated (3 re-checked in the 30-day window), fetched streams for 2"
 
 # `--all` re-listed everything, so the window clause must be absent
 expect
-    Render.sync_screen({ synced: 22, new_activities: 2, updated_activities: 1, pruned: 0, streams_fetched: 5, streams_skipped: 0, pending_streams: 0, stopped: "complete", resumable: False }, FromDrain(Complete), True)
+    Render.sync_screen({ synced: 22, new_activities: 2, updated_activities: 1, pruned: 0, streams_fetched: 5, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: "complete", resumable: False }, FromDrain(Complete), True)
     == "synced 2 new, 1 updated (22 re-checked), fetched streams for 5"
 
 expect
-    Render.sync_screen({ synced: 3, new_activities: 0, updated_activities: 0, pruned: 2, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, stopped: "complete", resumable: False }, FromDrain(Complete), False)
+    Render.sync_screen({ synced: 3, new_activities: 0, updated_activities: 0, pruned: 2, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: "complete", resumable: False }, FromDrain(Complete), False)
     == "synced 0 new, 0 updated (3 re-checked in the 30-day window) (pruned 2 removed on Strava), fetched streams for 0"
 
 # a budget stop states the reason AND supplements it with the skip count
 expect
-    Render.sync_screen({ synced: 9, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 12, streams_skipped: 1, pending_streams: 40, stopped: "budget_reached", resumable: True }, FromDrain(BudgetReached), False)
+    Render.sync_screen({ synced: 9, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 12, streams_skipped: 1, pending_streams: 40, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: "budget_reached", resumable: True }, FromDrain(BudgetReached), False)
     == "synced 0 new, 0 updated (9 re-checked in the 30-day window), fetched streams for 12 (1 had unreadable stream data) — filled Strava's 15-minute read window — 40 to go, run `stride sync` again in ~15 minutes"
 
 # a COMPLETE run with skips states the fact ONCE — drain_note owns it there;
 # stating it twice in two wordings is the duplication this suppresses
 expect
-    Render.sync_screen({ synced: 2, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 1, streams_skipped: 1, pending_streams: 1, stopped: "complete", resumable: True }, FromDrain(Complete), False)
+    Render.sync_screen({ synced: 2, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 1, streams_skipped: 1, pending_streams: 1, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: "complete", resumable: True }, FromDrain(Complete), False)
     == "synced 0 new, 0 updated (2 re-checked in the 30-day window), fetched streams for 1 — 1 had unreadable stream data — they retry next sync"
 
 

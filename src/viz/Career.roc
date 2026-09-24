@@ -46,9 +46,21 @@ Career :: [].{
 	# Units.pace_from_speed - the same body the CLI renders with, so the two
 	# surfaces cannot disagree on a label by a rounding mode or a constant -
 	# and the fixed-distance families round the same way beside it.
+	# Tonnage is mass lifted in a month (kg, from strength_sets): under a
+	# tonne it reads as whole kg, above as tonnes to one decimal - integer
+	# arithmetic on the tenths-of-kg value, so no float rounding mode can
+	# disagree between the axis and the peak label.
 	spine_label : [Metric, Imperial], I64, Str, Str -> Str
 	spine_label = |units, v10, kind, fam|
 		if kind == "power" "${I64.to_str(v10 // 10)}w"
+		else if kind == "tonnage" {
+			kg = v10 // 10
+			if kg < 1000 "${I64.to_str(kg)}kg"
+			else {
+				tenths_t = (v10 + 500) // 1000
+				"${I64.to_str(tenths_t // 10)}.${I64.to_str(tenths_t % 10)}t"
+			}
+		}
 		else {
 			spd = I64.to_f64(v10) / 10.0
 			if fam == "Rowing" or fam == "Swim" {
@@ -119,7 +131,10 @@ Career :: [].{
 		months = cur.rows
 		n = List.len(months)
 		sp = { fam: cur.fam, kind: cur.kind }
-		unit_note = if sp.kind == "power" "threshold watts" else "threshold pace${Sports.pace_label_for(model.units, sp.fam)}"
+		unit_note =
+			if sp.kind == "power" "threshold watts"
+			else if sp.kind == "tonnage" "monthly tonnage (kg lifted)"
+			else "threshold pace${Sports.pace_label_for(model.units, sp.fam)}"
 		switch_note = if nspines > 1 "   F  next sport" else ""
 		subtitle = if sp.fam == "" "career - every month since the first session" else "career - ${Str.with_ascii_lowercased(sp.fam)} ${unit_note}${switch_note}"
 		Text.from(subtitle, model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
@@ -401,3 +416,9 @@ Career :: [].{
 		Ok({})
 	}
 }
+
+# the tonnage label's two regimes and the boundary between them: whole kg
+# under a tonne, tonnes to one decimal above - the rounding is integer on
+# tenths-of-kg, so 1197 kg carries to 1.2t
+expect Career.spine_label(Metric, 11970, "tonnage", "WeightTraining") == "1.2t"
+expect Career.spine_label(Metric, 8500, "tonnage", "WeightTraining") == "850kg"

@@ -8,6 +8,7 @@ import Metrics
 import core.Sports
 import Render
 import Streams
+import Strength
 
 Analyze :: [].{
 
@@ -42,6 +43,7 @@ Analyze :: [].{
                 res = passes?
                 Output.say!("rebuilding daily load…")?
                 rebuild_daily_load!(path)?
+                rebuild_strength_sets!(path)?
                 # The last 10 days, not just today: the verdict now carries the weekly
                 # delta (#111), which needs the value 7 days back. query_many rather than
                 # query! because an empty daily_load is a normal state (nothing analyzed
@@ -1100,6 +1102,61 @@ Analyze :: [].{
                 ],
             })?
             walk_days!(path, by_day, day + 1, last_day, step.ctl, step.atl)
+        }
+
+    # ── the tonnage spine's computed half (#478) ────────────────────────
+    # Parse every stored strength note into set rows. Full replace on every
+    # analyze — strength_sets is computed tier (the activity_segments
+    # discipline), the corpus is one short note per strength session, and a
+    # parser improvement then needs no invalidation story: the next analyze
+    # IS the recompute. Runs unconditionally, like rebuild_daily_load! beside
+    # it, so a deleted or stale row cannot outlive one analyze.
+    rebuild_strength_sets! : Str => Try({}, _)
+    rebuild_strength_sets! = |path| {
+        notes = Sqlite.query_many!({
+            path: Path.utf8(path),
+            query: "SELECT activity_id AS aid, COALESCE(CAST(description AS TEXT), '') AS d FROM strength_notes",
+            bindings: [],
+            rows: |cols| |stmt| {
+                aid = Sqlite.i64("aid")(cols)(stmt)?
+                d = Sqlite.str("d")(cols)(stmt)?
+                Ok({ aid, d })
+            },
+        })?
+        Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM strength_sets", bindings: [] })?
+        insert_note_sets!(path, notes)
+    }
+    insert_note_sets! : Str, List({ aid : I64, d : Str }) => Try({}, _)
+    insert_note_sets! = |path, notes|
+        match notes {
+            [] => Ok({})
+            [n, .. as rest] => {
+                _ = insert_set_rows!(path, n.aid, Strength.parse(n.d), 0)?
+                insert_note_sets!(path, rest)
+            }
+        }
+    insert_set_rows! : Str, I64, List(Strength.SetRow), I64 => Try({}, _)
+    insert_set_rows! = |path, aid, rows, ord|
+        match rows {
+            [] => Ok({})
+            [r, .. as rest] => {
+                # 'description' names the provenance: these rows came from the
+                # pasted share text, not a structured upstream source — readers
+                # can qualify a tonnage trend built on unequal sources
+                Sqlite.execute!({
+                    path: Path.utf8(path),
+                    query: "INSERT OR REPLACE INTO strength_sets (activity_id, ordinal, exercise, sets, reps, weight_kg, source) VALUES (:aid, :ord, :ex, :sets, :reps, :w, 'description')",
+                    bindings: [
+                        { name: ":aid", value: Integer(aid) },
+                        { name: ":ord", value: Integer(ord) },
+                        { name: ":ex", value: String(r.exercise) },
+                        { name: ":sets", value: Integer(r.sets) },
+                        { name: ":reps", value: Integer(r.reps) },
+                        { name: ":w", value: Real(r.weight_kg) },
+                    ],
+                })?
+                insert_set_rows!(path, aid, rest, ord + 1)
+            }
         }
 
     # bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
