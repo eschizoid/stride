@@ -166,7 +166,7 @@ respond! = |req, _ctx| {
             body =
                 if env_or!("E2E_STRENGTH", "") == "1" {
                     recent = Str.trim(sh!("date -u -v-2d +%F 2>/dev/null || date -u -d '2 days ago' +%F"))
-                    "[{\"id\":501,\"name\":\"Mock Power Ride\",\"sport_type\":\"Ride\",\"start_date_local\":\"2026-07-28T10:00:00Z\",\"moving_time\":3600,\"distance\":30000.0,\"total_elevation_gain\":100.0,\"average_watts\":200.0,\"weighted_average_watts\":205.0}, {\"id\":502,\"name\":\"Mock HR Row\",\"sport_type\":\"Rowing\",\"start_date_local\":\"2026-07-29T10:00:00Z\",\"moving_time\":1800,\"distance\":5000.0,\"total_elevation_gain\":0.0,\"average_heartrate\":150.0}, {\"id\":503,\"name\":\"Mock Strength\",\"sport_type\":\"Workout\",\"start_date_local\":\"2026-07-30T10:00:00Z\",\"moving_time\":2400,\"distance\":0.0,\"total_elevation_gain\":0.0}, {\"id\":504,\"name\":\"Mock Recent Strength\",\"sport_type\":\"Workout\",\"start_date_local\":\"${recent}T10:00:00Z\",\"moving_time\":2400,\"distance\":0.0,\"total_elevation_gain\":0.0}]"
+                    "[{\"id\":501,\"name\":\"Mock Power Ride\",\"sport_type\":\"Ride\",\"start_date_local\":\"2026-07-28T10:00:00Z\",\"moving_time\":3600,\"distance\":30000.0,\"total_elevation_gain\":100.0,\"average_watts\":200.0,\"weighted_average_watts\":205.0}, {\"id\":502,\"name\":\"Mock HR Row\",\"sport_type\":\"Rowing\",\"start_date_local\":\"2026-07-29T10:00:00Z\",\"moving_time\":1800,\"distance\":5000.0,\"total_elevation_gain\":0.0,\"average_heartrate\":150.0}, {\"id\":503,\"name\":\"Mock Strength\",\"sport_type\":\"Workout\",\"start_date_local\":\"2026-07-30T10:00:00Z\",\"moving_time\":2400,\"distance\":0.0,\"total_elevation_gain\":0.0}, {\"id\":504,\"name\":\"Mock Recent Strength\",\"sport_type\":\"Workout\",\"start_date_local\":\"${recent}T10:00:00Z\",\"moving_time\":2400,\"distance\":0.0,\"total_elevation_gain\":0.0}, {\"id\":505,\"name\":\"Mock Class Strength\",\"sport_type\":\"Workout\",\"start_date_local\":\"2026-07-29T09:00:00Z\",\"moving_time\":2700,\"distance\":0.0,\"total_elevation_gain\":0.0}]"
                 } else {
                     \\[{"id":501,"name":"Mock Power Ride","sport_type":"Ride","start_date_local":"2026-07-28T10:00:00Z","moving_time":3600,"distance":30000.0,"total_elevation_gain":100.0,"average_watts":200.0,"weighted_average_watts":205.0},
                     \\ {"id":502,"name":"Mock HR Row","sport_type":"Rowing","start_date_local":"2026-07-29T10:00:00Z","moving_time":1800,"distance":5000.0,"total_elevation_gain":0.0,"average_heartrate":150.0}]
@@ -229,6 +229,13 @@ respond! = |req, _ctx| {
         # the in-window strength session: one plain-total line, so its tonnage
         # (2 × 10 × 20 lbs = 181.4 kg) is distinguishable from 503's
         body = "{\"id\":504,\"description\":\"Kettlebell Swing\\n2 × 10 • 20 lbs\"}"
+        Ok(mock_json(body))
+    } else if Str.contains(uri, "/api/v3/activities/505") {
+        # Strava's spelling of a BLANK description — null, not absent, not "".
+        # The common real shape (most strength sessions have no paste), and the
+        # one that must store the '' marker rather than skip: a skip here would
+        # hold the id in pending forever with no error anywhere.
+        body = "{\"id\":505,\"description\":null}"
         Ok(mock_json(body))
     } else if Str.contains(uri, "/api/v3/athlete") {
         # PUT ftp update (and GET athlete) — echo success
@@ -766,7 +773,11 @@ run_notes! = || {
     so = "${home}/sync.out"
     sq! = |filter| Str.trim(sh!("jq -r '${filter}' '${so}' 2>&1"))
     _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${so}' 2>/dev/null")
-    check!("both strength sessions' descriptions are fetched", sq!(".data.notes_fetched") == "2")?
+    check!("all three strength sessions' descriptions are fetched", sq!(".data.notes_fetched") == "3")?
+    # the null-description session stored the '' marker — Strava's spelling of
+    # a blank one — and, being out of window, is retired by it: the second-run
+    # count below is what proves it does not re-read and does not stay pending
+    check!("a null description stores the empty marker", Str.trim(sql!(db, "SELECT COUNT(*) || '/' || COALESCE((SELECT length(description) FROM strength_notes WHERE activity_id = 505), -1) FROM strength_notes WHERE activity_id = 505;")) == "1/0")?
     check!("...leaving no notes pending and none skipped", sq!(".data.pending_notes") == "0" and sq!(".data.notes_skipped") == "0")?
     check!("...with the run complete and not resumable", sq!(".data.stopped") == "complete" and sq!(".data.resumable") == "false")?
     check!("the sync payload conforms to its schema with the notes keys", Str.trim(sh!("jq '.data' '${so}' 2>&1 | jq -r --slurpfile schema schemas/v3/sync.json -f tools/validate.jq 2>&1")) == "")?
@@ -787,7 +798,7 @@ run_notes! = || {
     # --all drops the window: an edit to a description OLDER than the window
     # is reachable from the CLI, without the raw-SQL delete
     _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync --all >'${so}' 2>/dev/null")
-    check!("sync --all re-reads every stored description, window or not", sq!(".data.notes_fetched") == "2")?
+    check!("sync --all re-reads every stored description, window or not", sq!(".data.notes_fetched") == "3")?
     # the manual refresh #519 requires stays safe: deleting a row is the
     # not-yet-fetched state, and the next run refetches it (plus the in-window
     # re-read — two rows, which is what tells this apart from the steady state)
@@ -801,6 +812,7 @@ run_notes! = || {
     # through an integer, floats having no Eq in SQL any more than in Roc)
     check!("...with the /side semantics resolved at parse time", Str.trim(sql!(db, "SELECT sets || '/' || reps || '/' || CAST(ROUND(weight_kg * 1000) AS INTEGER) FROM strength_sets WHERE activity_id = 503 AND ordinal = 1;")) == "3/16/11340")?
     check!("...each row naming its provenance", Str.trim(sql!(db, "SELECT COUNT(DISTINCT source) || ':' || MIN(source) FROM strength_sets WHERE activity_id = 503;")) == "1:description")?
+    check!("...while the null-description session contributes no rows — the honest gap", Str.trim(sql!(db, "SELECT COUNT(*) FROM strength_sets WHERE activity_id = 505;")) == "0")?
     # 3*8*27.2155 + 3*16*11.3398 = 1197.48… in 503's July; 504's month carries
     # its own 2*10*9.0718 = 181.4 — two months, each the sum of ITS sessions,
     # which is what makes the spine an arc rather than a total

@@ -68,7 +68,7 @@
     },
     "resumable": {
       "type": "boolean",
-      "description": "Whether anything is still missing, so the run should be repeated. Usually `pending_streams > 0 or pending_notes > 0`, re-measured from the database in every arm. It is also true when `stopped` is `list_rate_limited` or `list_daily_cap_reached` even with an empty queue, because what was left undone there is the LISTING, not the stream backlog — a run refused on page one has nothing pending and absolutely must be repeated. And true for `daily_cap_reached` reached through the pre-flight refusal, where no request was made at all: an empty queue there describes a run that never looked, not a queue that is genuinely drained."
+      "description": "Whether anything is still missing, so the run should be repeated. Usually `pending_streams > 0 or pending_notes > 0`, re-measured from the database in every arm. It is also true when `stopped` is `list_rate_limited` or `list_daily_cap_reached` even with an empty queue, because what was left undone there is the LISTING, not the stream backlog — a run refused on page one has nothing pending and absolutely must be repeated. And true for `daily_cap_reached` reached through the pre-flight refusal, where no request was made at all: an empty queue there describes a run that never looked, not a queue that is genuinely drained. One scope caveat: under `--all` the description re-read covers the WHOLE history, and a run that stops on the read budget leaves the un-re-read remainder for the next `--all`, not the next plain sync — the plain queue is windowed, so `resumable: false` there means no work is owed, not that every old description was re-read."
     }
   }
 }

@@ -416,6 +416,9 @@ Strava :: [].{
     drain_missing! = |path, token, kind, all| {
         ids =
             match kind {
+                # the Streams arm ignores `all` on purpose: a stored stream is
+                # immutable — the ride happened once — so a wider scope has
+                # nothing to re-read; a forced re-pull stays DELETE FROM streams
                 Streams =>
                     Sqlite.query_many!({
                         path: Path.utf8(path),
@@ -621,6 +624,15 @@ Strava :: [].{
                         # would overwrite a real stored description on every run,
                         # silently. Unreadable skips without storing, so the row
                         # keeps whatever it had and the id retries.
+                        #
+                        # The substring test is sound only because the Ok arm has
+                        # already taken every case where description IS a string —
+                        # a description whose content contains this literal decodes
+                        # fine and never reaches here. The two spellings are the
+                        # observed compact and single-space forms; any other
+                        # (pretty-printed, spaced colon) falls to the skip arm,
+                        # which never erases but does retry forever — widen the
+                        # match if a new spelling is ever observed.
                         Err(_) =>
                             if Str.contains(text, "\"description\":null") or Str.contains(text, "\"description\": null") or !(Str.contains(text, "\"description\"")) {
                                 store_note!(path, id, "")?

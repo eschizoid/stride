@@ -52,8 +52,12 @@ Never do training math yourself: read stride's numbers, add judgment.
    covers both queues. Descriptions inside the listing's rolling window are
    re-read every sync, so the ordinary habit — finish, sync, paste the breakdown
    that evening — lands on the next run without any command; an edit heals the
-   same way. A session whose window passed with no paste keeps its empty marker
-   and simply never contributes tonnage; nothing fails on unparseable text.
+   same way. `stride sync --all` drops the window and re-reads every stored
+   description, which is how an edit OLDER than the window gets in — and if that
+   run stops on the read budget, the remainder waits for the next `--all`, not
+   the next plain sync. A session whose window passed with no paste keeps its
+   empty marker and simply never contributes tonnage; nothing fails on
+   unparseable text.
    **Do not loop on `resumable` alone. The rule is `streams_fetched == 0` with
    `resumable: true`. Stop and report.** That one condition covers both ways a
    run can do nothing and still ask for another: unreadable bodies
