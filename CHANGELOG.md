@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.16.0](https://github.com/eschizoid/stride/compare/v0.15.0...v0.16.0) (2026-09-24)
+
+
+### Features
+
+* a pace session carries its splits panel in the window ([#512](https://github.com/eschizoid/stride/issues/512)) ([6983102](https://github.com/eschizoid/stride/commit/6983102c6cdd9e67bf72fab07f7e736606bf8f86))
+* a tonnage month states its coverage, and a thin one is a gap ([2fc39b1](https://github.com/eschizoid/stride/commit/2fc39b1f09fe744410554980b86c01c395e63b50))
+* an aged rest day the athlete in fact rested stops reading as debt ([3961d22](https://github.com/eschizoid/stride/commit/3961d22776c732431ecbcb48c2e3253875e563f2))
+* improve desktop readability with adjustable UI scaling ([#502](https://github.com/eschizoid/stride/issues/502)) ([5f017b1](https://github.com/eschizoid/stride/commit/5f017b10deb2229a826520fc5186a9eb7de63611))
+* stride strength answers "am I stronger" per exercise, not per kilogram summed ([fb66de9](https://github.com/eschizoid/stride/commit/fb66de97b51b1cf1dbf299f7374feea1d79b51bc))
+* the career strength arc gets its tonnage spine ([fcb3e10](https://github.com/eschizoid/stride/commit/fcb3e10bbeadf47fb33c416e7f4adf2acd9686bc))
+* the power view argues with the previous window, not the record book ([#509](https://github.com/eschizoid/stride/issues/509)) ([bd6ed73](https://github.com/eschizoid/stride/commit/bd6ed733d21ece1a32e62bd882668b06ca952c5e))
+* the trace view speaks pace, in the athlete's own units ([#511](https://github.com/eschizoid/stride/issues/511)) ([6786d2e](https://github.com/eschizoid/stride/commit/6786d2eeb810e1bf4fb1434f254218dcf67d788a))
+* the window renders distance and pace in the athlete's own units ([#503](https://github.com/eschizoid/stride/issues/503)) ([33b9479](https://github.com/eschizoid/stride/commit/33b947946855ad9db65fd6e8b82052bfc9929539))
+
+
+### Bug Fixes
+
+* command-claims pins the corpus and reads the human help screen ([928e16c](https://github.com/eschizoid/stride/commit/928e16c4ffffe2de3d707594e783eab389f9a58a))
+* every nav pill carries its icon - the width switch is gone ([#513](https://github.com/eschizoid/stride/issues/513)) ([d0e83c9](https://github.com/eschizoid/stride/commit/d0e83c994ad22bc9b18fb2f755680727be2727d4))
+* refuse a power or pace intensity no athlete can produce ([#507](https://github.com/eschizoid/stride/issues/507)) ([6915c18](https://github.com/eschizoid/stride/commit/6915c18a2e074efb6213576548cb44903385a519))
+* the splash clears to the artwork's own ground ([#514](https://github.com/eschizoid/stride/issues/514)) ([8d70fb6](https://github.com/eschizoid/stride/commit/8d70fb60227d25cc00c6124fe6b5aa46840551c7))
+* the splash is the artwork on a flat field of its own ground ([#515](https://github.com/eschizoid/stride/issues/515)) ([75d7b70](https://github.com/eschizoid/stride/commit/75d7b7000f0e3a4814f6b04fb597366b96357642))
+
 ## [0.15.0](https://github.com/eschizoid/stride/compare/v0.14.0...v0.15.0) (2026-09-19)
 
 
