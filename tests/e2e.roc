@@ -226,9 +226,11 @@ respond! = |req, _ctx| {
         body = "{\"id\":503,\"description\":\"Block 1\\nDumbbell Crush Press\\n3 × 8 • 30 lbs/side\\nDumbbell Snatch Push Press\\n3 × 8 reps/side • 25 lbs/side\"}"
         Ok(mock_json(body))
     } else if Str.contains(uri, "/api/v3/activities/504") {
-        # the in-window strength session: one plain-total line, so its tonnage
-        # (2 × 10 × 20 lbs = 181.4 kg) is distinguishable from 503's
-        body = "{\"id\":504,\"description\":\"Kettlebell Swing\\n2 × 10 • 20 lbs\"}"
+        # the in-window strength session: a plain-total swing plus a HEAVIER
+        # repeat of 503's Crush Press. The repeat, on a second day, is what
+        # gives the strength report a progression pair to publish — a single
+        # day per exercise has no first-vs-latest to compare.
+        body = "{\"id\":504,\"description\":\"Kettlebell Swing\\n2 × 10 • 20 lbs\\nDumbbell Crush Press\\n3 × 8 • 35 lbs\"}"
         Ok(mock_json(body))
     } else if Str.contains(uri, "/api/v3/activities/505") {
         # Strava's spelling of a BLANK description — null, not absent, not "".
@@ -813,13 +815,14 @@ run_notes! = || {
     check!("...with the /side semantics resolved at parse time", Str.trim(sql!(db, "SELECT sets || '/' || reps || '/' || CAST(ROUND(weight_kg * 1000) AS INTEGER) FROM strength_sets WHERE activity_id = 503 AND ordinal = 1;")) == "3/16/11340")?
     check!("...each row naming its provenance", Str.trim(sql!(db, "SELECT COUNT(DISTINCT source) || ':' || MIN(source) FROM strength_sets WHERE activity_id = 503;")) == "1:peloton")?
     check!("...while the null-description session contributes no rows — the honest gap", Str.trim(sql!(db, "SELECT COUNT(*) FROM strength_sets WHERE activity_id = 505;")) == "0")?
-    # 3*8*27.2155 + 3*16*11.3398 = 1197.48… in 503's July; 504's month carries
-    # its own 2*10*9.0718 = 181.4 — two months, each the sum of ITS sessions,
-    # which is what makes the spine an arc rather than a total. July is 1 of 2
+    # 3*8*27.2155 + 3*16*11.3398 = 1197.48… in 503's July; 504's month sums
+    # its swing and its heavier Crush repeat to 562.45 — two months, each the
+    # sum of ITS sessions, which is what makes the spine an arc rather than a
+    # total. July is 1 of 2
     # covered (503 carries sets, 505's null description never can) — above the
     # one-third bar, so it draws; the bar itself is pinned by the probes below.
     check!("the aged month earns a tonnage spine row", Str.trim(sql!(db, "SELECT kind || '/' || fam || '/' || CAST(ROUND(value) AS INTEGER) FROM monthly_threshold WHERE kind = 'tonnage' AND month = '2026-07';")) == "tonnage/WeightTraining/1197")?
-    check!("...and the recent month its own, at full coverage", Str.trim(sql!(db, "SELECT CAST(ROUND(value) AS INTEGER) FROM monthly_threshold WHERE kind = 'tonnage' AND month <> '2026-07';")) == "181")?
+    check!("...and the recent month its own, at full coverage", Str.trim(sql!(db, "SELECT CAST(ROUND(value) AS INTEGER) FROM monthly_threshold WHERE kind = 'tonnage' AND month <> '2026-07';")) == "562")?
     check!("...with the coverage view stating both denominators", Str.trim(sql!(db, "SELECT covered || '/' || total FROM strength_coverage WHERE month = '2026-07';")) == "1/2")?
     # the one-third bar, pinned from BOTH sides: a third July session that
     # never carries sets makes 1 of 3 — exactly a third, the month that must
@@ -838,6 +841,34 @@ run_notes! = || {
     check!("...while the fully covered month keeps its row", Str.trim(sql!(db, "SELECT COUNT(*) FROM monthly_threshold WHERE kind = 'tonnage' AND month <> '2026-07';")) == "1")?
     _ = sql!(db, "DELETE FROM activities WHERE id IN (506, 507);")
     check!("...and returns when the coverage does", Str.trim(sql!(db, "SELECT COUNT(*) FROM monthly_threshold WHERE kind = 'tonnage' AND month = '2026-07';")) == "1")?
+    # ── the strength report reads the same truths back (#522) ──────────
+    # per-exercise points, the monthly table INCLUDING withheld months, and
+    # the session counts that make the gaps visible — each against values
+    # this driver planted, so a report drifting from its views fails here
+    sto = "${home}/strength.out"
+    stq! = |filter| Str.trim(sh!("jq -r '${filter}' '${sto}' 2>&1"))
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json '${bin}' strength >'${sto}' 2>/dev/null")
+    check!("the strength payload conforms to its schema", Str.trim(sh!("jq '.data' '${sto}' 2>&1 | jq -r --slurpfile schema schemas/v3/strength.json -f tools/validate.jq 2>&1")) == "")?
+    # 30 lbs/side both-hands = 27.2155422 kg top; 3*8*27.2155… = 653.17 kg·reps
+    check!("a per-exercise point carries the day's top set and kg-reps", stq!("[.data.exercises[] | select(.exercise == \"Dumbbell Crush Press\") | .points[0] | ((.top_kg * 1000) | round), (.kg_reps | round)] | join(\"/\")") == "27216/653")?
+    check!("a drawing month reports its tonnage with its denominators", stq!("[.data.monthly[] | select(.month == \"2026-07\") | (.kg | round), (.tonnage_known | tostring), .covered, .total] | join(\"/\")") == "1197/true/1/2")?
+    check!("the session counts split the gaps into their kinds", stq!("[.data.sessions.total, .data.sessions.with_sets, .data.sessions.pasted_unparsed] | join(\"/\")") == "3/2/0")?
+    # a paste that parsed to NOTHING is a different fact from no paste, and
+    # the count sees it without an analyze: it reads notes against sets
+    _ = sql!(db, "UPDATE strength_notes SET description = 'total garbage no adapter reads' WHERE activity_id = 505;")
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json '${bin}' strength >'${sto}' 2>/dev/null")
+    check!("an unparsed paste is counted as its own kind of gap", stq!(".data.sessions.pasted_unparsed") == "1")?
+    _ = sql!(db, "UPDATE strength_notes SET description = '' WHERE activity_id = 505;")
+    # a month the spine refuses still appears HERE, flagged not measured —
+    # a table can qualify a number where a curve cannot
+    _ = sql!(db, "INSERT INTO activities (id, name, sport_type, start_local, moving_time) VALUES (506, 'coverage probe class', 'Workout', '2026-07-31T09:00:00Z', 2700), (507, 'coverage probe class 2', 'Workout', '2026-07-31T10:00:00Z', 2700);")
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json '${bin}' strength >'${sto}' 2>/dev/null")
+    check!("a withheld month still appears, kg an impossible-zero behind its flag", stq!("[.data.monthly[] | select(.month == \"2026-07\") | (.kg | round), (.tonnage_known | tostring), .covered, .total] | join(\"/\")") == "0/false/1/4")?
+    sthuman = Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=human '${bin}' strength 2>/dev/null"))
+    check!("the human table names the gap and the capability in one line", Str.contains(sthuman, "3 of 5 strength sessions have no recorded sets") and Str.contains(sthuman, "paste the set breakdown into the activity description"))?
+    check!("...renders the withheld month as a stated refusal, with its legend", Str.contains(sthuman, "no tonnage is claimed"))?
+    check!("...and the progression table carries the exercise by name", Str.contains(sthuman, "Dumbbell Crush Press"))?
+    _ = sql!(db, "DELETE FROM activities WHERE id IN (506, 507);")
     _ = sh!("rm -rf '${home}'")
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     reset_sqlite_errors!({})
@@ -1482,7 +1513,7 @@ b_init_config! = |ctx| {
     # here is the deliberate-bump discipline: adding a properly described command still
     # has to change a number a reader sees.
     overlap = Str.trim(sh!("LC_ALL=C comm -12 '${verbs_dir}/parser' '${verbs_dir}/spec' | wc -l | tr -d ' '"))
-    check!("...and the two lists genuinely overlap on all 34 verbs (got ${overlap})", overlap == "34")?
+    check!("...and the two lists genuinely overlap on all 35 verbs (got ${overlap})", overlap == "35")?
     _ = sh!("rm -rf '${verbs_dir}'")
 
     # ...and the HUMAN help names every command the table declares. `help_text` is a
@@ -1500,7 +1531,7 @@ b_init_config! = |ctx| {
     _ = sh!("rm -rf '${help_dir}' && mkdir -p '${help_dir}' && ${spec_names} > '${help_dir}/spec' && ${human_help} > '${help_dir}/human'")
     # Fail-closed: an empty extraction on either side would make the loop below vacuous.
     help_sizes = Str.trim(sh!("wc -l < '${help_dir}/spec' | tr -d ' '"))
-    check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "40")?
+    check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "41")?
     missing_from_help = Str.trim(sh!("while IFS= read -r c; do grep -qw -- \"\$c\" '${help_dir}/human' || printf '%s ' \"\$c\"; done < '${help_dir}/spec'"))
     check!("every command in the table is named in `stride --help` (missing: ${missing_from_help})", missing_from_help == "")?
     _ = sh!("rm -rf '${help_dir}'")

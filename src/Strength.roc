@@ -1,3 +1,5 @@
+import core.Units
+
 Strength :: [].{
     # ── the strength-notes parsers: share text → set rows, per app ──────
     # Strava's public API carries no per-exercise sets; what exists for these
@@ -47,7 +49,7 @@ Strength :: [].{
     #   weight/side alone        → both hands loaded simultaneously: each rep
     #                              moves BOTH sides' mass (2 × W).
     #   neither                  → the stated numbers are already totals.
-    # Units: lbs (Peloton's default) converted at 0.45359237 kg/lb; kg as-is.
+    # Units: lbs (Peloton's default) converted through Units.lb_kg; kg as-is.
     #
     # A row is what one exercise line prescribes: `sets` × `reps` at
     # `weight_kg` per rep, so tonnage is their product. Pure, expects below;
@@ -85,9 +87,6 @@ Strength :: [].{
                 if List.is_empty(rows) first_recognized(rest, text) else { source: a.name, rows }
             }
         }
-
-    lb_kg : F64
-    lb_kg = 0.45359237
 
     parse_peloton : Str -> List(SetRow)
     parse_peloton = |text| {
@@ -174,7 +173,7 @@ Strength :: [].{
                 base = Str.replace_each(unit, "/side", "")
                 kg =
                     match base {
-                        "lbs" | "lb" => Ok(n * lb_kg)
+                        "lbs" | "lb" => Ok(n * Units.lb_kg)
                         "kg" => Ok(n)
                         _ => Err(NotASetLine)
                     }?
