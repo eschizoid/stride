@@ -53,6 +53,7 @@ import Strava
 import Analyze
 import Report
 import ReportHealth
+import ReportStrength
 import ReportSeason
 import ReportSessions
 import Plan
@@ -102,6 +103,8 @@ help_text =
         \\                                latest by default, oldest-first — desc reverses
         \\    compare [week|month]        this period vs the one before it (default week)
         \\    season                      training blocks, monthly load, polarization, FTP
+        \\    strength                    per-exercise top-set progression + monthly
+        \\                                tonnage, each with its coverage stated
         \\    top <metric> [n] [sport]    best sessions by a metric — hr, tss, power,
         \\                                intensity, distance, time or output
         \\
@@ -390,6 +393,7 @@ dispatch! = |cmd|
         Command.Plan => Plan.plan_bundle!({})
         Command.Doctor => ReportHealth.doctor!({})
         Command.Zones => ReportHealth.pz!({})
+        Command.Strength => ReportStrength.strength!({})
         Command.VizCaps => ReportHealth.viz_caps!({})
         # a machine calls this alongside schema_version to negotiate, so it
         # answers in the envelope like every other query (#182)

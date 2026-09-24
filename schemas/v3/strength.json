@@ -1,0 +1,106 @@
+{
+  "title": "strength",
+  "description": "Per-exercise progression plus monthly tonnage, each with the fact that qualifies it. Tonnage is VOLUME, not strength: it falls when pull work gives way to isolation whatever happened to capacity, so the figure that answers \"am I getting stronger\" is each repeated exercise's working weight over time. The engine publishes numbers only — whether a trend is good is the coach's sentence to write (ADR 0012).",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "exercises",
+    "monthly",
+    "sessions"
+  ],
+  "properties": {
+    "exercises": {
+      "type": "array",
+      "description": "One entry per exercise name the parsed sets contain, exact-name matched (Twisting Curl and Zottman Curl are distinct movements; nothing fuzzy). Points are per DAY: the heaviest weight one rep moved that day, and the day's summed kg·reps for the exercise — two numbers because when the weight drops and the reps rise, the product is the only one that says whether work went up.",
+      "items": {
+        "type": "object",
+        "required": [
+          "exercise",
+          "points"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "exercise": {
+            "type": "string"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "date",
+                "top_kg",
+                "kg_reps"
+              ],
+              "additionalKeys": false,
+              "properties": {
+                "date": {
+                  "type": "string"
+                },
+                "top_kg": {
+                  "type": "number"
+                },
+                "kg_reps": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "monthly": {
+      "type": "array",
+      "description": "Every strength month from strength_coverage, INCLUDING the months the career spine refuses — a table can qualify a number where a curve cannot. `known` is the both-possible flag (ADR 0009): 0 means the month sits under the coverage bar and no tonnage is claimed for it (kg is 0 there, an impossible-zero behind the flag), 1 means kg is the month's summed lifted mass. covered/total is the denominator that keeps a coverage shift from reading as a training trend.",
+      "items": {
+        "type": "object",
+        "required": [
+          "month",
+          "kg",
+          "known",
+          "covered",
+          "total"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "month": {
+            "type": "string"
+          },
+          "kg": {
+            "type": "number"
+          },
+          "known": {
+            "type": "integer"
+          },
+          "covered": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "sessions": {
+      "type": "object",
+      "description": "The gaps themselves, made visible: with_sets parsed into rows; pasted_unparsed carried a non-empty description that yielded nothing (a format stride does not read — a different fact from never pasted); the remainder of total never had a paste to read. Deliberate omissions are omissions the report can name because these counts exist.",
+      "required": [
+        "total",
+        "with_sets",
+        "pasted_unparsed"
+      ],
+      "additionalKeys": false,
+      "properties": {
+        "total": {
+          "type": "integer"
+        },
+        "with_sets": {
+          "type": "integer"
+        },
+        "pasted_unparsed": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

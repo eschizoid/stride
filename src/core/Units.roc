@@ -117,4 +117,24 @@ Units :: [].{
     expect pace_from_speed(Metric, 2.5) == "6:40"
     expect pace_from_speed(Imperial, 2.2352) == "12:00"
     expect pace_from_speed(Metric, 0.0) == "-"
+
+    # 0.45359237 is the international avoirdupois pound in kilograms, exact
+    # by definition. Storage stays kg (strength_sets.weight_kg); this is the
+    # display conversion, like every neighbour above.
+    lb_kg : F64
+    lb_kg = 0.45359237
+
+    # A MASS for display, in the athlete's units: kilograms for Metric,
+    # pounds for Imperial - the unit strength work is prescribed in there.
+    # One decimal through Fmt.tenths, so every surface rounds the same way.
+    mass_label : [Metric, Imperial], F64 -> Str
+    mass_label = |units, kg|
+        match units {
+            Metric => "${Fmt.tenths((kg * 10.0).round_to_i64_try().ok_or(0))} kg"
+            Imperial => "${Fmt.tenths((kg / lb_kg * 10.0).round_to_i64_try().ok_or(0))} lb"
+        }
+
+    expect mass_label(Metric, 27.2155422) == "27.2 kg"
+    expect mass_label(Imperial, 27.2155422) == "60.0 lb"
+    expect mass_label(Metric, 0.0) == "0.0 kg"
 }

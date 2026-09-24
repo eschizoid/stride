@@ -131,6 +131,10 @@ _What's my pace at every duration?_ The pace twin of the power curve — best gr
 
 _What has my training actually looked like, block by block?_ (the whole history, not a calendar year) Training blocks, monthly load, polarization and FTP over time. A block is a run of training weeks closed by two or more weeks off — the only boundary in the data that is not a judgment call — and each one is described by its measured load trend rather than labelled a phase. See ADR 0011.
 
+### `stride strength`
+
+_Am I getting stronger?_ Per-exercise top-set progression — the first and latest day each repeated exercise was lifted, from the set breakdowns pasted into strength sessions' descriptions — beside monthly tonnage, each figure with its coverage stated (`3 of 7 sessions` carry sets, and a month under a third coverage claims no tonnage at all). Tonnage is volume, not strength: it falls when pull work gives way to isolation whatever happened to capacity, which is exactly the misreading the per-exercise series exists to prevent. Sessions with nothing to parse are counted out loud, and the report says how to change that.
+
 ### `stride tte <watts>`
 
 _How long could I hold this?_ Time to exhaustion at a power you name, from a Critical Power model fitted on your **ride** history over the trailing 90 days, from the 5/10/20-minute bests on record. (Not identical to `power-curve`'s fit: that one spans every power sport and includes today; this one is rides-only and excludes today. `tte` takes no sport argument.) Every answer carries what qualifies it: which band of the model it falls in, and the longest effort at or above that power you already have on record — when the model predicts less than your own file proves, it says so.

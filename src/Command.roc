@@ -17,6 +17,7 @@ Command := [
 	Plan,
 	Doctor,
 	Zones,
+	Strength,
 	Version,
 	## the window's self-published bus capabilities (#439): views, directive
 	## fields, staleness - served from the database the window wrote them to
@@ -138,6 +139,7 @@ Command := [
 					Err(Usage("reps [YYYY-MM-DD] — '${date}' is not a date"))
 				}
 			[_, "zones"] => Ok(Zones)
+			[_, "strength"] => Ok(Strength)
 			[_, "viz"] => Ok(VizCaps)
 			[_, "pz"] => Ok(Zones)
 			# a bare asc/desc is a sort on the latest anchor, not a date named "desc"
@@ -460,6 +462,10 @@ Command := [
 		## capability tables is the window never having run, an answer with a code
 		errs(reads("viz", [], "viz.json"), ["no_viz_capabilities"]),
 		errs(reads("zones", [], "zones.json"), ["no_power_data"]),
+		## per-exercise progression + monthly tonnage with coverage (#522);
+		## empty states are payload facts, not errors, so no codes beyond
+		## the universal set
+		reads("strength", [], "strength.json"),
 		errs(reads("pz", [], "zones.json"), ["no_power_data"]),
 		errs(reads("compare", [opt("<week|month>")], "compare.json"), ["bad_period", "no_data", "unreadable_activity_date", "unreadable_daily_load_day"]),
 		errs(reads("activities", [opt_ex("<limit>", "5"), opt_ex("<sport>", "Ride")], "activities.json"), ["bad_count"]),

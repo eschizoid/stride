@@ -61,6 +61,11 @@ skip.json	kept_substitute,reason,released_substitute,released_substitute_of,skip
 stats.json	all_time,ytd,ytd_year	all_time,ytd,ytd_year	-	$
 stats.json	hours,km,sessions,sport	hours,km,sessions,sport	doc	properties.all_time.items
 stats.json	hours,km,sessions,sport	hours,km,sessions,sport	doc	properties.ytd.items
+strength.json	covered,kg,known,month,total	covered,kg,known,month,total	doc	properties.monthly.items
+strength.json	date,kg_reps,top_kg	date,kg_reps,top_kg	doc	properties.exercises.items.properties.points.items
+strength.json	exercise,points	exercise,points	doc	properties.exercises.items
+strength.json	exercises,monthly,sessions	exercises,monthly,sessions	doc	$
+strength.json	pasted_unparsed,total,with_sets	pasted_unparsed,total,with_sets	doc	properties.sessions
 summary.json	as_of,ctl_warming_up,fatigue_atl,fitness_ctl,form_band_days,form_band_days_capped,form_coverage_90d,form_delta_7d,form_delta_known,form_state,form_tsb,ftp,hard_days,hr_zones,last_28d,last_7d,last_hard_session_date,load_days,load_windows,pending_sessions,ramp_28d_avg,ramp_7d,sports_28d	as_of,ctl_warming_up,fatigue_atl,fitness_ctl,form_band_days,form_band_days_capped,form_coverage_90d,form_delta_7d,form_delta_known,form_state,form_tsb,ftp,hard_days,hr_zones,last_28d,last_7d,last_hard_session_date,load_days,load_windows,pending_sessions,ramp_28d_avg,ramp_7d,sports_28d	-	$
 summary.json	best_20min_w_60d,estimated_ftp_w,prior_60d_best_20min_w,prior_60d_known	best_20min_w_60d,estimated_ftp_w,prior_60d_best_20min_w,prior_60d_known	doc	properties.ftp
 summary.json	d14,d28,days_since_known,days_since_last,spacing_known,spacing_median_days_28d	d14,d28,days_since_known,days_since_last,spacing_known,spacing_median_days_28d	doc	properties.hard_days
