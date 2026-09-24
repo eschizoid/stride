@@ -50,12 +50,19 @@ except `issue-claims`, which reads the tracker:
 
 ```bash
 roc check src/main.roc      # CI runs this on three OSes before anything else
-just e2e-sync              # mock-backed sync/skips/stops drivers; no network
+just e2e-sync              # mock-backed sync/skips/stops/notes drivers; no network
 sh tools/skill-shapes.sh   # the coach skill's payload keys vs schemas/v3
 sh tools/blob-safety.sh    # every TEXT decode is projected through CAST(... AS TEXT)
 sh tools/command-claims.sh # commands the docs name vs the binary's own table (needs ./stride)
+just layer-check           # every engine import points down the layer table (ADR 0016)
+just pin-check             # every workflow nightly-tag site agrees with the two compiler pins
+just viz-test              # the window's expects + assertion-count pins, on the viz nightly
 just issue-claims          # issue-state claims in comments (needs `gh` auth)
 ```
+
+A NEW MODULE needs a row in `tools/layer-check.sh`'s table before CI will take it —
+`roc check` and the whole suite pass without one, so the layer gate is the check
+nothing else reminds you of.
 
 Prerequisites for everything above: `just`, `jq`, `sqlite3`, `gh`, and the Roc
 nightlies: the ENGINE pin is the default in `.github/actions/setup-roc/action.yml`

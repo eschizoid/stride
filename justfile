@@ -454,6 +454,10 @@ viz-test:
 layer-check:
     bash tools/layer-check.sh
 
+# every workflow nightly-tag site agrees with the two compiler pins (engine + viz)
+pin-check:
+    sh tools/pin-check.sh
+
 # build the viz window as a macOS app in ~/Applications (Launchpad/Dock/Spotlight)
 viz-app:
     ROC_VIZ="{{roc_viz}}" bash tools/make-viz-app.sh
