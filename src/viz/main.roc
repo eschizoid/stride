@@ -1491,16 +1491,21 @@ scene! = |model, frame| {
 # geometry over the tick - no asset, nothing to load before the loader.
 splash! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
 splash! = |model, frame| {
-	# the splash clears to the ARTWORK's own ground - RGB(5, 6, 9), measured
-	# at all four corners of img/stride-icon.png - not Theme.bg (0x0b0b0e).
-	# Corners are the ground; the centre is the mark itself and reads
-	# differently, so a re-measure samples corners. The asset is RGB with no
-	# alpha channel - the ground is baked in at the format level - and
-	# nothing at runtime can read a texture's pixels back, so a mismatched
-	# clear frames the tile in a slightly different black. A re-exported
-	# asset needs a re-measure or the seam returns; the app views still
-	# clear to Theme.bg.
-	frame.rectangle!({ x: 0.0, y: 0.0, width: model.win.w, height: model.win.h, style: Draw.filled(Color.rgb(5, 6, 9)) })
+	# the splash clears to the TILE's own ground - RGB(1, 2, 9), a
+	# representative pick from the interior of img/stride-icon.png away
+	# from the mark - so the logo sits on a field of its own color rather
+	# than framing itself in a slightly different black. The interior is a
+	# DISTRIBUTION (the tile bakes a faint topo texture), so re-measuring
+	# it is a judgement call clustered near (0, 2, 8); the corner padding
+	# below is one exact value, and only that half re-measures
+	# deterministically. The asset is RGB with no alpha channel
+	# and carries TWO grounds: the tile's, and a lighter corner padding
+	# outside the rounded corners, which a single clear cannot also match -
+	# those four faint wedges are the residual #508 carries until the mark
+	# ships as a transparent export. Nothing at runtime can read a
+	# texture's pixels back, so a re-exported asset needs a re-measure.
+	# The app views still clear to Theme.bg.
+	frame.rectangle!({ x: 0.0, y: 0.0, width: model.win.w, height: model.win.h, style: Draw.filled(Color.rgb(1, 2, 9)) })
 	cx = model.win.w / 2.0
 	cy = model.win.h / 2.0 - 30.0
 	pi = 3.14159265
@@ -1522,13 +1527,9 @@ splash! = |model, frame| {
 			Color.rgb(lerp(79.0, 166.0, k), lerp(142.0, 107.0, k), lerp(247.0, 250.0, k))
 		}
 	}
-	# the topographic contours the logo's ground carries, faint and still
-	List.for_each!([{ y0: -120.0, ph: 0.0 }, { y0: -55.0, ph: 2.1 }, { y0: 10.0, ph: 4.3 }, { y0: 75.0, ph: 1.2 }, { y0: 140.0, ph: 3.4 }], |ct|
-		List.for_each!(List.map_with_index(List.repeat({}, 44.U64), |_u, i| i), |i| {
-			fx = |k| cx - 264.0 + U64.to_f32(k) * 12.0
-			fy = |k| cy + ct.y0 + 14.0 * F32.sin(U64.to_f32(k) * 0.31 + ct.ph) + 7.0 * F32.sin(U64.to_f32(k) * 0.73 + ct.ph * 2.0)
-			frame.line!({ start: { x: fx(i), y: fy(i) }, end: { x: fx(i + 1), y: fy(i + 1) }, stroke: Draw.stroke(Color.with_alpha(Theme.ink_faint, 22), 1) })
-		}))
+	# no drawn backdrop texture: the ground stays a flat field of the tile's
+	# own color, so nothing competes with the mark or reads as stray lines
+	# ending at an invisible edge
 	_ = match model.logo {
 		Logo(lt) => {
 			# the authored mark itself - hand-drawn approximations kept
