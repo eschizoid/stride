@@ -2260,7 +2260,7 @@ b_seed_analyze! = |ctx| {
     # zero lines carrying a hardcoded metric unit string, the regression that
     # motivated the sweep. Comment lines are skipped the same way as above.
     viz_units_static = Str.trim(sh!("s=0; l=0; for f in src/viz/*.roc; do while read -r ln; do case \"$ln\" in \\#*) continue;; esac; case \"$ln\" in *'Units.dist_value('*|*'Units.dist_unit('*|*'Units.pace_from_speed('*|*'pace_label_for('*) s=$((s+1));; esac; case \"$ln\" in *'km\"'*|*'\" km'*|*'/km'*|*'min/km'*) l=$((l+1));; esac; done < $f; done; echo \"sites=$s literals=$l\""))
-    check!("the window names distance and pace units through core.Units, never a literal", viz_units_static == "sites=7 literals=0")?
+    check!("the window names distance and pace units through core.Units, never a literal", viz_units_static == "sites=8 literals=0")?
     check!("coverage tiers discriminate (high and medium both live)", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct > 0) and (.medium_pct > 0)") == "true")?
     check!("form coverage carries the 90d window", strjq!(ctx, ["summary"], ".data.form_coverage_90d | (.high_pct + .medium_pct + .low_pct == 100) and ((.known | type) == \"boolean\")") == "true")?
     # with fixtures loaded TSB is known, so the enum arm is required here; the

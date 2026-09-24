@@ -130,7 +130,11 @@ otherwise. A pace axis labels its gridlines as pace in the athlete's units
 while the samples stay SI, and faster sits higher — "up is better" holds on
 every channel. The detector's blocks shade behind whichever channel draws,
 and the ghost's same-kind rule compares channels, so a pace session ghosts
-only against pace.
+only against pace. A pace session also carries its SPLITS panel on the
+right — the same `core.Series` rows the CLI's activity screen prints,
+segmented at the athlete's split length (km or mile) with each row's pace
+in their units; long runs cap at what fits and say how many rows they
+hold back.
 
 ## Running it
 

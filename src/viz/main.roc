@@ -23,6 +23,8 @@ import rr.Sqlite
 import rr.Task
 import rr.Text
 import rr.Texture
+import core.Series
+import core.Units
 import Board
 import Heat
 import Plan
@@ -274,6 +276,10 @@ load_model! = |font, curve_days, boot| {
 				Ok(t1) => t1.un
 				Err(_) => "W"
 			},
+			trace_splits: match List.first(loaded.tcache) {
+				Ok(t2) => t2.sp
+				Err(_) => []
+			},
 			units: loaded.un,
 			trace_sport: "",
 			curve_hint: mk!("1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      V  record      ESC quit", 13)?,
@@ -469,7 +475,8 @@ trace_task! = |home, units, ids, sel|
 					tr = Db.load_trace!(db, entry.id, entry.chan)
 					sg = Db.load_segs!(db, entry.id)
 					du = Db.load_dur!(db, entry.id)
-					TraceSwitched({ tr, sg, du, sel, day: entry.day, un: Db.trace_unit(entry.chan, units) })
+					sp = if entry.chan == Db.pace_chan (Db.load_splits!(db, entry.id, Units.split_len(units))) else []
+					TraceSwitched({ tr, sg, du, sel, day: entry.day, un: Db.trace_unit(entry.chan, units), sp })
 				}
 			}
 	}
@@ -804,7 +811,7 @@ Msg : [
 	MarkDone({}),
 	Reloaded(Ui.Model),
 	ReloadFailed,
-	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, sel : U64, day : Str, un : Str }),
+	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, sel : U64, day : Str, un : Str, sp : List(Series.Split) }),
 	TraceSwitchFailed,
 	Directive({ dv : Db.Directive, note : Str }),
 	Polled(Str),
@@ -829,7 +836,7 @@ nav_width = |w, n| if nav_iconic(w, n) 80.0 else 68.0
 # One entry per pickable session, loaded eagerly: switching and ghost
 # summons read this list instead of a task round-trip per keypress.
 # Recursion because an effectful body cannot reassign an outer var.
-load_tcache! : Sqlite.Db, [Metric, Imperial], List(TraceId) => List({ tr : List(F32), sg : List(Db.Seg), du : F32, un : Str })
+load_tcache! : Sqlite.Db, [Metric, Imperial], List(TraceId) => List({ tr : List(F32), sg : List(Db.Seg), du : F32, un : Str, sp : List(Series.Split) })
 load_tcache! = |db, units, ids|
 	match List.first(ids) {
 		Err(_) => []
@@ -837,10 +844,13 @@ load_tcache! = |db, units, ids|
 			tr9 = Db.load_trace!(db, te.id, te.chan)
 			sg9 = Db.load_segs!(db, te.id)
 			du9 = Db.load_dur!(db, te.id)
+			# splits only where a pace trace draws them - the panel is the
+			# pace channel's companion, and the arrays are only read once
+			sp9 = if te.chan == Db.pace_chan (Db.load_splits!(db, te.id, Units.split_len(units))) else []
 			# the unit travels with the samples so a cache read needs no second
 			# lookup into the picker row; prepend so picker order survives
 			# without List.reverse, which this stdlib lacks
-			List.prepend(load_tcache!(db, units, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9, un: Db.trace_unit(te.chan, units) })
+			List.prepend(load_tcache!(db, units, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9, un: Db.trace_unit(te.chan, units), sp: sp9 })
 		}
 	}
 
@@ -902,7 +912,7 @@ update! = |model0, program_input| {
 			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" } }
 			Directive(d2) => { ..acc, bus_note: d2.note }
 			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim }
-			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day, trace_unit: sw.un }
+			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day, trace_unit: sw.un, trace_splits: sw.sp }
 		})
 	# the coach's word arrives beside the human's input and steers only what
 	# it names: view, range, a day for the crosshair, a session for the trace
@@ -1215,6 +1225,8 @@ update! = |model0, program_input| {
 			Err(_) => if switching ([]) else model.trace }
 		segs2m = match switched { Ok(sc) => sc.sg
 			Err(_) => if switching ([]) else model.segs }
+		trace_splits2 = match switched { Ok(sc) => sc.sp
+			Err(_) => if switching ([]) else model.trace_splits }
 		trace_dur2 = match switched { Ok(sc) => sc.du
 			Err(_) => if switching (1.0) else model.trace_dur }
 		trace_day2 =
@@ -1326,7 +1338,7 @@ update! = |model0, program_input| {
 				Unavailable(u9) => if u9.gw == pixels.w and u9.gh == pixels.h (model.glow) else build_glow!(pixels)
 			}
 		glow_on2 = if d.key_pressed(KeyG) (!model.glow_on) else model.glow_on
-		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 

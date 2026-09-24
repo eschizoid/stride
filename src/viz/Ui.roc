@@ -1,3 +1,4 @@
+import core.Series
 import rr.Capture
 import rr.Draw
 import rr.Text
@@ -60,6 +61,10 @@ Ui :: [].{
 		# the athlete's unit preference, read once at load; every surface
 		# converts at the last moment through core.Units, never in SQL
 		units : [Metric, Imperial],
+		# the SELECTED session's distance splits, present only for the pace
+		# channel - the same core.Series rows the CLI prints, segmented at
+		# the athlete's split length
+		trace_splits : List(Series.Split),
 		# the picker's sport filter; "" offers every sport. [ and ] step to
 		# the next session this filter admits, so the selection index still
 		# addresses the full menu and every cache lookup stays valid
@@ -73,7 +78,7 @@ Ui :: [].{
 		trace_pan : F32,
 		# every pickable session, loaded once - switching and ghosts read this
 		# instead of a task round-trip per keypress
-		trace_cache : List({ tr : List(F32), sg : List(Db.Seg), du : F32, un : Str }),
+		trace_cache : List({ tr : List(F32), sg : List(Db.Seg), du : F32, un : Str, sp : List(Series.Split) }),
 		curve_days : I64,
 		fit_cp : F32,
 		# the fit's own quality, carried so the CP line can dim when the fit

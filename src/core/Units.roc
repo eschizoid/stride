@@ -21,6 +21,19 @@ Units :: [].{
     expect units_of("") == Metric
     expect units_of("nonsense") == Metric
 
+    # The distance one split covers: the kilometre, or the international
+    # mile (1609.344 m, exact by definition) - the length a splits table
+    # segments at, in the athlete's own culture.
+    split_len : [Metric, Imperial] -> F64
+    split_len = |units|
+        match units {
+            Metric => 1000.0
+            Imperial => 1609.344
+        }
+
+    expect split_len(Metric) == 1000.0
+    expect split_len(Imperial) == 1609.344
+
     # 1609.344 is the international mile in metres, exact by definition.
     dist_value : [Metric, Imperial], F64 -> F64
     dist_value = |units, m|
