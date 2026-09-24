@@ -827,12 +827,13 @@ run_notes! = || {
     # biased sample must vanish from the spine rather than read as a decline,
     # while the other month, untouched, keeps its row. The refusal lives in
     # the VIEW, so these assertions cover the CLI and the window at once.
-    # sport_family set explicitly: sync writes it on upsert, and a raw insert
-    # without it would file the probe under a different family and never
-    # touch July's coverage — a mutation that cannot land
-    _ = sql!(db, "INSERT INTO activities (id, name, sport_type, sport_family, start_local, moving_time) VALUES (506, 'coverage probe class', 'Workout', 'WeightTraining', '2026-07-31T09:00:00Z', 2700);")
+    # no sport_family on the inserts: the activities family trigger
+    # canonicalizes it from sport_type on every insert (Workout is a member
+    # of the WeightTraining family), so the probes land in July's coverage
+    # by the same mechanism a synced row does
+    _ = sql!(db, "INSERT INTO activities (id, name, sport_type, start_local, moving_time) VALUES (506, 'coverage probe class', 'Workout', '2026-07-31T09:00:00Z', 2700);")
     check!("a month at exactly a third coverage still draws", Str.trim(sql!(db, "SELECT COUNT(*) || '/' || (SELECT covered || '/' || total FROM strength_coverage WHERE month = '2026-07') FROM monthly_threshold WHERE kind = 'tonnage' AND month = '2026-07';")) == "1/1/3")?
-    _ = sql!(db, "INSERT INTO activities (id, name, sport_type, sport_family, start_local, moving_time) VALUES (507, 'coverage probe class 2', 'Workout', 'WeightTraining', '2026-07-31T10:00:00Z', 2700);")
+    _ = sql!(db, "INSERT INTO activities (id, name, sport_type, start_local, moving_time) VALUES (507, 'coverage probe class 2', 'Workout', '2026-07-31T10:00:00Z', 2700);")
     check!("a month tipped under a third leaves the spine", Str.trim(sql!(db, "SELECT COUNT(*) FROM monthly_threshold WHERE kind = 'tonnage' AND month = '2026-07';")) == "0")?
     check!("...while the fully covered month keeps its row", Str.trim(sql!(db, "SELECT COUNT(*) FROM monthly_threshold WHERE kind = 'tonnage' AND month <> '2026-07';")) == "1")?
     _ = sql!(db, "DELETE FROM activities WHERE id IN (506, 507);")

@@ -275,6 +275,11 @@ Schema :: [].{
     # sample reads as a trend (#521). One row per strength month: how many of
     # its sessions contributed sets, out of how many the family trained.
     # Shared as a view so every surface states the same denominator.
+    # COUPLED to the notes drain's family gate: this WHERE and the tonnage
+    # arm's inner join both assume strength_sets rows only ever belong to
+    # the WeightTraining family, which is true because the drain fetches
+    # descriptions for exactly that family — widening one without the other
+    # makes a new family's tonnage vanish silently at the join.
     strength_coverage_drop =
         \\DROP VIEW IF EXISTS strength_coverage
     strength_coverage =
