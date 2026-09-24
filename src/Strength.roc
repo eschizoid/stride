@@ -19,7 +19,10 @@ Strength :: [].{
     # load and streak but not tonnage, an honest gap rather than a failure.
     #
     # Side semantics decide what a rep MOVES, so tonnage is mass actually
-    # lifted rather than a label sum:
+    # lifted rather than a label sum. This is a reading of how the app
+    # producing these pastes writes them — no published contract backs it, so
+    # a share format that spells single-side work differently falsifies the
+    # rule, not the parser:
     #   weight/side + reps/side  → single-side work (alternating): each rep
     #                              moves ONE side's mass, and the rep count
     #                              doubles (R per side).

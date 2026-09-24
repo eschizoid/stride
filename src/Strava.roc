@@ -353,14 +353,14 @@ Strava :: [].{
                 } else {
                 pruned = prune_deleted!(path, started, window_start)?
                 Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
-                pull = drain_missing!(path, token, Streams)?
+                pull = drain_missing!(path, token, Streams, all)?
                 # notes drain only after a COMPLETE streams drain: both draw on the
                 # one read budget, and a run that stopped on it would spend its
                 # refusal a second time. The queue is still measured, so resumable
                 # and pending_notes stay true while the work waits its turn.
                 notes =
                     match pull.stopped {
-                        Complete => drain_missing!(path, token, Notes)?
+                        Complete => drain_missing!(path, token, Notes, all)?
                         _ => { stored: 0, skipped: 0, pending: pending_notes!(path)?, stopped: pull.stopped }
                     }
                 # `synced` keeps its meaning (rows re-listed) so existing consumers are
@@ -412,8 +412,8 @@ Strava :: [].{
     # newest first; pacing bounds the run (see read_limits!). altitude + distance are
     # requested EXPLICITLY — they feed grade-adjusted pace / NGP (ADR 0003). To force
     # a re-pull, DELETE FROM streams (mirror tier) and let the next sync refetch.
-    drain_missing! : Str, Str, DrainKind => Try(DrainOutcome, _)
-    drain_missing! = |path, token, kind| {
+    drain_missing! : Str, Str, DrainKind, Bool => Try(DrainOutcome, _)
+    drain_missing! = |path, token, kind, all| {
         ids =
             match kind {
                 Streams =>
@@ -437,18 +437,27 @@ Strava :: [].{
                     # re-read every run and an edit self-heals (#519). Outside the
                     # window a stored row is permanent, like a stream; deleting a
                     # strength_notes row stays a safe manual refresh, since the
-                    # authoritative copy is on Strava. The re-reads are maintenance
+                    # authoritative copy is on Strava. `--all` drops the window
+                    # entirely, so an edit to a description OLDER than the window
+                    # is reachable from the CLI rather than only by deleting the
+                    # row by hand. The re-reads are maintenance
                     # this run performs, not work the next run is owed, which is
                     # why pending_notes! counts only never-asked rows. The extra
                     # day on the window absorbs the UTC-vs-local skew in
-                    # start_local, the same margin the prune takes.
+                    # start_local, the same margin the prune takes — and the
+                    # comparison itself adds a second slack in the same safe
+                    # direction: start_local's 'T' separator sorts above
+                    # datetime()'s space, so on the boundary DATE the whole day is
+                    # admitted regardless of time. Over-including costs a read;
+                    # "tidying" this to date()-vs-date() would not be inert, it
+                    # would narrow the window.
                     Sqlite.query_many!({
                         path: Path.utf8(path),
                         query:
                             \\SELECT a.id AS id FROM activities a
                             \\LEFT JOIN strength_notes n ON n.activity_id = a.id
                             \\WHERE COALESCE(a.sport_family, a.sport_type) = 'WeightTraining'
-                            \\  AND (n.activity_id IS NULL OR a.start_local >= datetime('now', '-31 days'))
+                            \\  AND (${if all "1=1" else "n.activity_id IS NULL OR a.start_local >= datetime('now', '-31 days')"})
                             \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}
                         ,
                         bindings: [],
@@ -592,16 +601,30 @@ Strava :: [].{
                 Ok(text) => {
                     decoded : Try({ description : Str }, _)
                     decoded = Json.parse(text)
-                    desc =
-                        match decoded {
-                            Ok(d) => d.description
-                            # a 200 whose JSON carries no string description IS the
-                            # empty case (Strava writes null for a blank one) — not
-                            # a retry, which would refetch the same null forever
-                            Err(_) => ""
+                    match decoded {
+                        Ok(d) => {
+                            store_note!(path, id, d.description)?
+                            Ok(Stored)
                         }
-                    store_note!(path, id, desc)?
-                    Ok(Stored)
+                        # The one-field decode fails for exactly three body shapes,
+                        # and they mean two different things. `"description":null`
+                        # (Strava's spelling of a blank one) and an ABSENT key are
+                        # the empty case — store the '' marker, or an in-window
+                        # blank re-reads forever and a never-pasted session never
+                        # leaves pending. A PRESENT key the decoder still cannot
+                        # read is not empty, it is unreadable — and because
+                        # in-window rows are re-read every sync, storing '' there
+                        # would overwrite a real stored description on every run,
+                        # silently. Unreadable skips without storing, so the row
+                        # keeps whatever it had and the id retries.
+                        Err(_) =>
+                            if Str.contains(text, "\"description\":null") or Str.contains(text, "\"description\": null") or !(Str.contains(text, "\"description\"")) {
+                                store_note!(path, id, "")?
+                                Ok(Stored)
+                            } else {
+                                Ok(SkippedNonUtf8)
+                            }
+                    }
                 }
                 Err(_) => Ok(SkippedNonUtf8)
             }

@@ -284,6 +284,12 @@ Schema :: [].{
         \\                AND COALESCE(a2.sport_family, a2.sport_type) = COALESCE(a.sport_family, a.sport_type)
         \\                AND substr(CAST(a2.start_local AS TEXT), 1, 7) = substr(CAST(a.start_local AS TEXT), 1, 7)
         \\              ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)
+        \\-- tonnage is not a threshold: this view is the monthly SPINE series,
+        \\-- keyed by kind, and the strength arm sums a month's lifted mass
+        \\-- (kg) per family. The view keeps its threshold-era name because the
+        \\-- window's spine discovery query reads it by name across a second
+        \\-- binary and platform; the rename is deferred deliberately, not
+        \\-- forgotten.
         \\UNION ALL
         \\SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month,
         \\       CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS fam,
