@@ -827,7 +827,7 @@ Msg : [
 # - at the 150% scale default its threshold asked for more logical width
 # than common laptop displays report - so the pill grew to hold both
 # instead. The constants are shared by the render and both hit-tests; at
-# the 980 logical floor nine pills span x 260-936, clear of the title
+# the 980 logical floor nine pills span x 260-938, clear of the title
 # row's scale chip by ~15px at its widest rendering.
 nav_pitch : F32
 nav_pitch = 76.0
