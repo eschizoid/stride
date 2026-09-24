@@ -128,12 +128,28 @@ Career :: [].{
 			Ok(c) => c
 			Err(_) => { fam: "", kind: "", rows: [] }
 		}
-		months = cur.rows
+		# a spine needs a series before it is a trajectory: with fewer than
+		# three measured months the tonnage arc withholds its stroke — one
+		# point is a dot the athlete reads as a verdict, two a line segment,
+		# not a career — and the view says what it is waiting for instead.
+		# Zeroing the values here makes every downstream reader (stroke,
+		# bridge, milestones, the gold celebration) take its existing
+		# no-measurement branch: one gate instead of five. Threshold kinds
+		# keep their behavior — their histories are long where tonnage's is
+		# young, which is the evidence this gate was sized on.
+		raw_measured = List.len(List.keep_if(cur.rows, |m| m.ftp10 > 0))
+		spine_ready = cur.kind != "tonnage" or raw_measured >= 3
+		months = if spine_ready cur.rows else List.map(cur.rows, |m| { ..m, ftp10: 0 })
 		n = List.len(months)
 		sp = { fam: cur.fam, kind: cur.kind }
 		unit_note =
 			if sp.kind == "power" "threshold watts"
-			else if sp.kind == "tonnage" "monthly tonnage (kg lifted)"
+			# the withheld months are the honest gaps: a month where under a
+			# third of the sessions carry sets is a biased sample, and the view
+			# refuses to draw it (the rule lives in monthly_threshold's
+			# tonnage arm; a refused month bridges with dashes like any
+			# unmeasured one)
+			else if sp.kind == "tonnage" "monthly tonnage (kg lifted; thin months bridge as gaps)"
 			else "threshold pace${Sports.pace_label_for(model.units, sp.fam)}"
 		switch_note = if nspines > 1 "   F  next sport" else ""
 		subtitle = if sp.fam == "" "career - every month since the first session" else "career - ${Str.with_ascii_lowercased(sp.fam)} ${unit_note}${switch_note}"
@@ -213,14 +229,25 @@ Career :: [].{
 			yf = |f10| line_bot - (I64.to_f32(f10 - fmin) / frange) * (line_bot - line_top)
 			lmax = List.fold(months, 1.I64, |a, m| if m.load > a m.load else a)
 
-			# faint gridlines at the quarter marks, labeled in the family's units
+			# faint gridlines at the quarter marks, labeled in the family's units.
+			# No labels on an unmeasured scale (fmax 0, the withheld-spine state):
+			# five identical zero labels would caption a ruler with nothing on it
 			List.for_each!([0.0, 0.25, 0.5, 0.75, 1.0], |q| {
 				gy = line_bot - q * (line_bot - line_top)
 				frame.line!({ start: { x: plot_l, y: gy }, end: { x: plot_r, y: gy }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 40), 1) })
-				w = fmin + (match F32.to_i64_try(q * I64.to_f32(fmax - fmin)) { Ok(v) => v
-					Err(_) => 0 })
-				Text.from(spine_label(model.units, w, sp.kind, sp.fam), model.font).size(10).draw!(frame, { pos: { x: plot_l - 8.0, y: gy - 5.0 }, color: ink_faint, align: (Top, Right) })
+				if fmax > 0 {
+					w = fmin + (match F32.to_i64_try(q * I64.to_f32(fmax - fmin)) { Ok(v) => v
+						Err(_) => 0 })
+					Text.from(spine_label(model.units, w, sp.kind, sp.fam), model.font).size(10).draw!(frame, { pos: { x: plot_l - 8.0, y: gy - 5.0 }, color: ink_faint, align: (Top, Right) })
+				}
 			})
+
+			# what the withheld spine is waiting for, said where the arc would be
+			_ = if !spine_ready {
+				Text.from("tonnage arc: ${U64.to_str(raw_measured)} of 3 months measured — the spine draws at 3", model.font).size(13).draw!(frame, { pos: { x: plot_l + plot_w / 2.0, y: line_top + 24.0 }, color: ink_muted, align: (Top, Center) })
+			} else {
+				{}
+			}
 
 			# ── year bands rise from the baseline as the head crosses into them.
 			# A label draws only when it clears the last one by 42px, so a short

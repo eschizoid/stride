@@ -269,6 +269,29 @@ Schema :: [].{
     # differently and must never plot two kinds on one axis. Stored as SPEED
     # rather than seconds-per-distance on purpose: higher is better for both
     # kinds, so an improving athlete's line rises whatever the sport.
+    # how much of a month's strength work the parsed sets actually cover:
+    # tracked sessions carry a pasted breakdown, instructor-led classes never
+    # do, so a month's tonnage is a SAMPLE of its training — and a biased
+    # sample reads as a trend (#521). One row per strength month: how many of
+    # its sessions contributed sets, out of how many the family trained.
+    # Shared as a view so every surface states the same denominator.
+    # COUPLED to the notes drain's family gate: this WHERE and the tonnage
+    # arm's inner join both assume strength_sets rows only ever belong to
+    # the WeightTraining family, which is true because the drain fetches
+    # descriptions for exactly that family — widening one without the other
+    # makes a new family's tonnage vanish silently at the join.
+    strength_coverage_drop =
+        \\DROP VIEW IF EXISTS strength_coverage
+    strength_coverage =
+        \\CREATE VIEW strength_coverage AS
+        \\SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month,
+        \\       CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS fam,
+        \\       SUM(CASE WHEN EXISTS (SELECT 1 FROM strength_sets s WHERE s.activity_id = a.id) THEN 1 ELSE 0 END) AS covered,
+        \\       COUNT(*) AS total
+        \\FROM activities a
+        \\WHERE COALESCE(a.sport_family, a.sport_type) = 'WeightTraining'
+        \\GROUP BY substr(CAST(a.start_local AS TEXT), 1, 7), COALESCE(a.sport_family, a.sport_type)
+
     monthly_threshold_drop =
         \\DROP VIEW IF EXISTS monthly_threshold
     monthly_threshold =
@@ -291,12 +314,28 @@ Schema :: [].{
         \\-- window's spine discovery query reads it by name across a second
         \\-- binary and platform; the rename is deferred deliberately, not
         \\-- forgotten.
+        \\-- A month under a THIRD coverage is refused rather than drawn:
+        \\-- tracked sessions carry sets, instructor-led classes never can, so
+        \\-- a thin month's total is a biased sample that reads as a decline
+        \\-- the athlete did not have — a missing point is honest where a
+        \\-- misleading one is not. A THIRD and not half, because an athlete
+        \\-- alternating tracked sessions with classes lives AT one-half, and
+        \\-- a bar there makes months flicker in and out of the chart with
+        \\-- which class they happened to book; one-third sits clear of that
+        \\-- band while still refusing the mostly-absent months. The rule
+        \\-- lives in the view so the CLI and the window cannot disagree about
+        \\-- which months exist, and a refused month renders exactly as an
+        \\-- unmeasured one: no row, which the career spine bridges with
+        \\-- dashes rather than a value.
         \\UNION ALL
         \\SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month,
         \\       CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS fam,
         \\       'tonnage' AS kind,
         \\       CAST(SUM(s.sets * s.reps * s.weight_kg) AS REAL) AS value
         \\FROM activities a JOIN strength_sets s ON s.activity_id = a.id
+        \\JOIN strength_coverage c ON c.month = substr(CAST(a.start_local AS TEXT), 1, 7)
+        \\                        AND c.fam = COALESCE(a.sport_family, a.sport_type)
+        \\WHERE c.covered * 3 >= c.total
         \\GROUP BY substr(CAST(a.start_local AS TEXT), 1, 7), COALESCE(a.sport_family, a.sport_type)
 
     # the FTP the engine scored each month's LAST power-scored Ride-family
