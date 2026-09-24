@@ -319,7 +319,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1159)?
+    checks_ran_exactly!(1175)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -4700,7 +4700,7 @@ b_agent_loop! = |ctx| {
     base_hist_len = str_to_i64(pj!(".data.plan_history_28d | length"))
     # The invariant SKILL.md states to the coach, asserted before anything moves so a
     # later failure is attributable to this scenario rather than inherited.
-    check!("the adherence identity holds at the start", base_planned == base_completed + str_to_i64(pj!(".data.adherence_28d.skipped")) + base_open)?
+    check!("the adherence identity holds at the start", base_planned == base_completed + str_to_i64(pj!(".data.adherence_28d.skipped")) + str_to_i64(pj!(".data.adherence_28d.rested")) + base_open)?
 
     # ── leg 1: write intent ─────────────────────────────────────────────
     # Dated d1: inside the 28-day adherence window, and a DIFFERENT day from the probe
@@ -4721,7 +4721,7 @@ b_agent_loop! = |ctx| {
     # still_open is non-zero" went stale when the bystander session moved all
     # three measurement points — a comment describing which assertions are weak
     # must be re-derived when the fixture moves.)
-    check!("...and the adherence identity holds with still_open actually non-zero", str_to_i64(pj!(".data.adherence_28d.still_open")) > 0 and str_to_i64(pj!(".data.adherence_28d.planned")) == str_to_i64(pj!(".data.adherence_28d.completed")) + str_to_i64(pj!(".data.adherence_28d.skipped")) + str_to_i64(pj!(".data.adherence_28d.still_open")))?
+    check!("...and the adherence identity holds with still_open actually non-zero", str_to_i64(pj!(".data.adherence_28d.still_open")) > 0 and str_to_i64(pj!(".data.adherence_28d.planned")) == str_to_i64(pj!(".data.adherence_28d.completed")) + str_to_i64(pj!(".data.adherence_28d.skipped")) + str_to_i64(pj!(".data.adherence_28d.rested")) + str_to_i64(pj!(".data.adherence_28d.still_open")))?
 
     # ── leg 2: reconcile against real training ──────────────────────────
     # Asserted, not fired and forgotten: if the link is REFUSED — the activity already told another
@@ -4862,10 +4862,65 @@ b_agent_loop! = |ctx| {
     # new skip is a substitution, so `skipped` and `substituted` must rise together.
     check!("...and the plain-skip count is unmoved, so the new skip is a substitution", str_to_i64(pj!(".data.adherence_28d.skipped")) == str_to_i64(pj!(".data.adherence_28d.substituted")) + base_skipped_plain)?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${sid2}; DELETE FROM activity_metrics WHERE activity_id = 9221; DELETE FROM activities WHERE id = 9221;")
-    check!("...with the identity still holding after all of it", str_to_i64(pj!(".data.adherence_28d.planned")) == str_to_i64(pj!(".data.adherence_28d.completed")) + str_to_i64(pj!(".data.adherence_28d.skipped")) + str_to_i64(pj!(".data.adherence_28d.still_open")))?
-    # completion_pct is derived from two of the counts above; asserted against them rather
-    # than against a literal, so it cannot drift from its own inputs.
-    check!("...and completion_pct agrees with the counts it is derived from", str_to_i64(pj!(".data.adherence_28d.completion_pct")) == ((str_to_i64(pj!(".data.adherence_28d.completed"))).to_f64() / (str_to_i64(pj!(".data.adherence_28d.planned"))).to_f64() * 100.0).round_to_i64_try().ok_or(-1))?
+    check!("...with the identity still holding after all of it", str_to_i64(pj!(".data.adherence_28d.planned")) == str_to_i64(pj!(".data.adherence_28d.completed")) + str_to_i64(pj!(".data.adherence_28d.skipped")) + str_to_i64(pj!(".data.adherence_28d.rested")) + str_to_i64(pj!(".data.adherence_28d.still_open")))?
+    # completion_pct is derived from the counts above; asserted against them rather
+    # than against a literal, so it cannot drift from its own inputs. The denominator
+    # is planned MINUS rested — a rest day that passed with no load required no
+    # action, so it is neutral to the ratio.
+    check!("...and completion_pct agrees with the counts it is derived from", str_to_i64(pj!(".data.adherence_28d.completion_pct")) == ((str_to_i64(pj!(".data.adherence_28d.completed"))).to_f64() / (str_to_i64(pj!(".data.adherence_28d.planned")) - str_to_i64(pj!(".data.adherence_28d.rested"))).to_f64() * 100.0).round_to_i64_try().ok_or(-1))?
+
+    # ── leg 2.5: an aged rest day the athlete in fact rested (#504) ─────
+    # Rest is the one session type whose prescription is the absence of evidence,
+    # so an open rest row whose date passed with no load on the day is resolved
+    # in fact — the payload counts it `rested`, out of still_open and out of
+    # completion_pct's denominator, and `week` shows `rested` while `status`
+    # stays `open`. A rest day WITH load, and a rest day dated today, both stay
+    # open: one is a deviation, the other is not over yet.
+    # Ground truth measured, not assumed: the predicate reads daily_load, so the
+    # dates chosen must actually differ on it. The empty day is d2 minus one
+    # (today-2) — no scenario in this file puts an activity there — and the
+    # loaded day is d2, which carries 9220. Both facts are asserted before the
+    # deltas, so a future fixture landing on either date fails HERE, naming the
+    # cause, not downstream in a delta.
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    d_empty = Str.trim(sql!(ctx.db, "SELECT date('${ctx.d2}', '-1 day');"))
+    check!("rested ground truth: today-2 carries no load and d2 does", Str.trim(sql!(ctx.db, "SELECT (COALESCE((SELECT tss FROM daily_load WHERE day='${d_empty}'),0) < 1.0) AND (COALESCE((SELECT tss FROM daily_load WHERE day='${ctx.d2}'),0) >= 1.0);")) == "1")?
+    pct_r = str_to_i64(pj!(".data.adherence_28d.completion_pct"))
+    open_r = str_to_i64(pj!(".data.adherence_28d.still_open"))
+    rested_r = str_to_i64(pj!(".data.adherence_28d.rested"))
+    planned_r = str_to_i64(pj!(".data.adherence_28d.planned"))
+    rid = Str.trim(strjq!(ctx, ["week", "add", "${d_empty}", "rest", "off", "recovery"], ".data.id"))
+    check!("an aged zero-load rest row counts as rested", str_to_i64(pj!(".data.adherence_28d.rested")) == rested_r + 1)?
+    check!("...never entering still_open", str_to_i64(pj!(".data.adherence_28d.still_open")) == open_r)?
+    check!("...while planned still counts it", str_to_i64(pj!(".data.adherence_28d.planned")) == planned_r + 1)?
+    # the sharp consequence: before #504 this row would have dragged the pct down
+    check!("...and completion_pct does not move — the rest owed nothing", str_to_i64(pj!(".data.adherence_28d.completion_pct")) == pct_r)?
+    check!("...with the identity holding while rested is non-zero", str_to_i64(pj!(".data.adherence_28d.rested")) > 0 and str_to_i64(pj!(".data.adherence_28d.planned")) == str_to_i64(pj!(".data.adherence_28d.completed")) + str_to_i64(pj!(".data.adherence_28d.skipped")) + str_to_i64(pj!(".data.adherence_28d.rested")) + str_to_i64(pj!(".data.adherence_28d.still_open")))?
+    # the week surface: display says rested, the lifecycle stays open
+    check!("week shows the row as rested while status stays open", strjq!(ctx, ["week", "all"], "[.data[] | select(.id == ${rid}) | .status + \"/\" + .status_shown] | join(\",\")") == "open/rested")?
+    check!("...on the human table too", Str.contains(stride_human!(ctx.bin, ctx.home, ["week", "all"]), "rested"))?
+    # the two rows that must NOT reframe: a rest day the athlete trained through,
+    # and a rest day still in progress
+    rid2 = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d2}", "rest", "off", "recovery"], ".data.id"))
+    check!("a rest day WITH load on it stays open — training through rest is a deviation", str_to_i64(pj!(".data.adherence_28d.rested")) == rested_r + 1 and str_to_i64(pj!(".data.adherence_28d.still_open")) == open_r + 1)?
+    check!("...and week does not reframe it", strjq!(ctx, ["week", "all"], "[.data[] | select(.id == ${rid2}) | .status_shown] | join(\",\")") == "open")?
+    rid3 = Str.trim(strjq!(ctx, ["week", "add", "${ctx.today}", "rest", "off", "recovery"], ".data.id"))
+    check!("a rest day dated today is not aged, so it stays open", str_to_i64(pj!(".data.adherence_28d.rested")) == rested_r + 1 and str_to_i64(pj!(".data.adherence_28d.still_open")) == open_r + 2)?
+    check!("...and week does not reframe it either", strjq!(ctx, ["week", "all"], "[.data[] | select(.id == ${rid3}) | .status_shown] | join(\",\")") == "open")?
+    # an UNKNOWN day is not a rested day: a date daily_load has not covered has no
+    # row, and the COALESCEd 0 behind it means "the engine has not looked" — the
+    # athlete may have trained hard there. daily_load is computed tier, so deleting
+    # the row IS the uncovered state, not a simulation of it. Both surfaces must
+    # refuse the reframe: week's day_load_known flag and the bundle's EXISTS clause
+    # fail independently (one is a decoded column, the other is inside rested_sql).
+    _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = '${d_empty}';")
+    check!("a day the load series has not covered stays open in week — unknown is not rested", strjq!(ctx, ["week", "all"], "[.data[] | select(.id == ${rid}) | .status_shown] | join(\",\")") == "open")?
+    check!("...and leaves the bundle's rested count, from its own EXISTS clause", str_to_i64(pj!(".data.adherence_28d.rested")) == rested_r and str_to_i64(pj!(".data.adherence_28d.still_open")) == open_r + 3)?
+    # analyze rebuilds the computed tier, which restores the measured zero
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("...and analyze restores the measured zero, so the row reads rested again", str_to_i64(pj!(".data.adherence_28d.rested")) == rested_r + 1)?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${rid}, ${rid2}, ${rid3});")
+    check!("...and the leg cleans up after itself", str_to_i64(pj!(".data.adherence_28d.rested")) == rested_r and str_to_i64(pj!(".data.adherence_28d.still_open")) == open_r)?
 
     # ── leg 3: the machine-mode error invariant ─────────────────────────
     # `run_command!` is the single boundary converting platform failures into
@@ -5489,8 +5544,8 @@ b_plan! = |ctx| {
     check!("history row carries the skip reason", strjq!(ctx, ["plan"], ".data.plan_history_28d[] | select(.id == ${ph1}) | .status == \"skipped\" and .skipped_reason == \"weather\"") == "true")?
     check!("history row carries the substitute link AND its date", strjq!(ctx, ["plan"], ".data.plan_history_28d[] | select(.id == ${ph2}) | (.substitute_activity_id == 102) and (.completed_on | length == 10)") == "true")?
     # the adherence identity: every in-window session is exactly one of
-    # completed / skipped / still_open — leftover-proof, no magic totals
-    check!("adherence counts partition the planned set", strjq!(ctx, ["plan"], ".data.adherence_28d | .planned == (.completed + .skipped + .still_open)") == "true")?
+    # completed / skipped / rested / still_open — leftover-proof, no magic totals
+    check!("adherence counts partition the planned set", strjq!(ctx, ["plan"], ".data.adherence_28d | .planned == (.completed + .skipped + .rested + .still_open)") == "true")?
     check!("substituted is a subset of skipped", strjq!(ctx, ["plan"], ".data.adherence_28d | .substituted <= .skipped and .substituted >= 1") == "true")?
     check!("completion_pct is a raw number", strjq!(ctx, ["plan"], ".data.adherence_28d.completion_pct | type") == "number")?
     # 101 and 102 are both LINKED at this point (completion + substitute), so an

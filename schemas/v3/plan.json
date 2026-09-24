@@ -227,6 +227,7 @@
         "skipped",
         "substituted",
         "still_open",
+        "rested",
         "completion_pct",
         "unplanned_activities"
       ],
@@ -246,6 +247,10 @@
         },
         "still_open": {
           "type": "integer"
+        },
+        "rested": {
+          "type": "integer",
+          "description": "Open rest sessions whose target_date has passed with under 1.0 load recorded on that day. Rest is the one session type whose prescription is the absence of evidence, so these are resolved in fact while still open in the lifecycle; they are excluded from still_open and from completion_pct's denominator. A rest day that DID carry load fails this test and stays in still_open — training through a rest day is a plan deviation."
         },
         "completion_pct": {
           "type": "integer"
