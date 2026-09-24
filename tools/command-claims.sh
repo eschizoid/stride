@@ -145,10 +145,11 @@ fi
 
 # Trap FIRST: installed after the block, a mid-block mktemp failure leaks the ones
 # already created. `rm -f ""` is a free no-op for the unset placeholders.
-NAMED=; REAL=; HELP=; ARGS=; QUOTED=; UNPARSED=; SIGA=; SIGB=; UNPLIST=; HUMANHELP=
-trap 'rm -f "$NAMED" "$REAL" "$HELP" "$ARGS" "$QUOTED" "$UNPARSED" "$SIGA" "$SIGB" "$UNPLIST" "$HUMANHELP"' EXIT
+NAMED=; REAL=; HELP=; ARGS=; QUOTED=; UNPARSED=; SIGA=; SIGB=; UNPLIST=; HUMANHELP=; HEADS=
+trap 'rm -f "$NAMED" "$REAL" "$HELP" "$ARGS" "$QUOTED" "$UNPARSED" "$SIGA" "$SIGB" "$UNPLIST" "$HUMANHELP" "$HEADS"' EXIT
 UNPLIST=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
 HUMANHELP=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
+HEADS=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
 NAMED=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
 REAL=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
 HELP=$(mktemp) || { echo "command-claims: mktemp failed" >&2; exit 6; }
@@ -180,16 +181,48 @@ jq -r '.data.commands[] | .name + "\t" + ([.args[]? | (if .required then "!" els
 # ----------------------------- the human help names every command the table declares
 #
 # The bare `--help` screen is a hand-maintained literal; only the JSON help is
-# generated from Command.specs. Nothing tied them together, and they drift in the
-# silent direction: the parser accepts a command, the JSON lists it, and the screen a
-# human actually reads omits it. A set comparison against the generated oracle closes
-# it — every table name must appear somewhere in the human text (#376).
+# generated from Command.specs, and they drift in the silent direction: the parser
+# accepts a command, the JSON lists it, and the screen a human actually reads omits
+# it (#376). Two rules, because the screen presents two kinds of name. A command
+# gets its own usage row, so the check is against the set of INVOCATION HEADS — the
+# leading command words of each indented row, cut before the first argument or the
+# column gap. A bare substring search cannot do this job: a parent like `config` is
+# a substring of its sub-verb rows, and a two-letter alias like `cs` is a substring
+# of English words (`analytics`, `metrics`), so either survives losing its own text.
+# ALIAS_MENTIONS is the pinned exception set: names presented parenthetically inside
+# their parent's row rather than as a row of their own. Those are held to a
+# whole-word mention — boundaries exclude [alnum_-], so `cs` inside `analytics` or
+# `-h` inside `--help` cannot satisfy it.
+ALIAS_MENTIONS="cs pc pz"
 "$STRIDE" --help > "$HUMANHELP" 2>/dev/null \
   || { echo "command-claims: \`$STRIDE --help\` failed — cannot read the human help screen" >&2; exit 3; }
 [ -s "$HUMANHELP" ] || { echo "command-claims: \`$STRIDE --help\` printed nothing — the human help cannot be checked, refusing to pass" >&2; exit 3; }
+# usage rows are indented four spaces and start with a lowercase command word;
+# flag rows (`--json`), prose (capitalised), and deeper continuation lines all
+# fall outside the pattern. The head may hold extras the table does not declare
+# (`stride` from the USAGE stanza) — the requirement is one-directional.
+awk '/^    [a-z]/ {
+  line = substr($0, 5)
+  sub(/  +.*$/, "", line)
+  n = split(line, t, / +/)
+  head = ""
+  for (i = 1; i <= n; i++) {
+    if (t[i] ~ /^[a-z][a-z0-9-]*$/) { head = (head == "" ? t[i] : head " " t[i]) } else { break }
+  }
+  if (head != "") print head
+}' "$HUMANHELP" > "$HEADS" \
+  || { echo "command-claims: the usage-head extraction failed — the human help cannot be checked, refusing to pass" >&2; exit 6; }
+[ -s "$HEADS" ] || { echo "command-claims: no usage rows found on the help screen — the head extractor and the screen's layout disagree, refusing to pass" >&2; exit 6; }
 helpmiss=0
 while IFS= read -r _c; do
-  grep -qF -e "$_c" "$HUMANHELP" || { echo "command-claims: the human help screen does not mention \`$_c\` while the command table declares it — the help_text literal drifted from Command.specs" >&2; helpmiss=1; }
+  case " $ALIAS_MENTIONS " in
+    *" $_c "*)
+      grep -qE "(^|[^[:alnum:]_-])$_c([^[:alnum:]_-]|$)" "$HUMANHELP" \
+        || { echo "command-claims: the human help screen never mentions the alias \`$_c\` as a word while the command table declares it — the help_text literal drifted from Command.specs" >&2; helpmiss=1; } ;;
+    *)
+      grep -qxF "$_c" "$HEADS" \
+        || { echo "command-claims: the human help screen has no usage row headed \`$_c\` while the command table declares it — the help_text literal drifted from Command.specs" >&2; helpmiss=1; } ;;
+  esac
 done < "$REAL"
 if [ "$helpmiss" != "0" ]; then exit 8; fi
 
@@ -333,7 +366,7 @@ fi
 if [ "$nunp" != "$EXPECTED_UNPARSED" ]; then
   echo "command-claims: $nunp lines mention a stride command but yielded no reference, expected $EXPECTED_UNPARSED. The unresolved lines are:" >&2
   sed 's/^/  /' "$UNPLIST" >&2
-  echo "command-claims: for each NEW line above, decide which it is: a claim in a shape neither rule reads (a fence dialect, an indented block, bare prose naming a real command — teach the extractor or backtick it) or genuine prose (then bump EXPECTED_UNPARSED). Bumping the pin without reading the list is how a bogus command gets admitted permanently." >&2
+  echo "command-claims: for each NEW line above, decide which it is: a claim in a shape neither rule reads (a fence dialect, an indented block, bare prose naming a real command — teach the extractor or backtick it) or genuine prose (then bump EXPECTED_UNPARSED). Bumping the pin without reading the list is how a bogus command gets admitted permanently. A count BELOW the pin means lines were resolved or removed — lower EXPECTED_UNPARSED to $nunp." >&2
   exit 4
 fi
 
