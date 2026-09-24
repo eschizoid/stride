@@ -821,17 +821,19 @@ Msg : [
 	DayDetail({ day : Str, lines : List(Db.DayLine) }),
 ]
 
-# The nav's two densities: wide windows carry icon pills (88px pitch),
-# narrow ones fall back to compact text-only pills (76px) so the row never
-# runs into the title. ONE predicate, shared by render and both hit-tests.
-nav_iconic : F32, U64 -> Bool
-nav_iconic = |w, n| w >= 36.0 + U64.to_f32(n) * 88.0 + 540.0
+# ONE nav density: every pill carries its 12x12 vector mark beside the
+# label. A width-switched icon tier used to exist, and an information
+# tier that switches off by width goes dark for whole classes of windows
+# - at the 150% scale default its threshold asked for more logical width
+# than common laptop displays report - so the pill grew to hold both
+# instead. The constants are shared by the render and both hit-tests; at
+# the 980 logical floor nine pills span x 260-938, clear of the title
+# row's scale chip by ~15px at its widest rendering.
+nav_pitch : F32
+nav_pitch = 76.0
 
-nav_pitch : F32, U64 -> F32
-nav_pitch = |w, n| if nav_iconic(w, n) 88.0 else 76.0
-
-nav_width : F32, U64 -> F32
-nav_width = |w, n| if nav_iconic(w, n) 80.0 else 68.0
+nav_width : F32
+nav_width = 70.0
 
 # One entry per pickable session, loaded eagerly: switching and ghost
 # summons read this list instead of a task round-trip per keypress.
@@ -951,8 +953,8 @@ update! = |model0, program_input| {
 			if Mouse.button_pressed(d.mouse, Left) and m0.y >= 30.0 and m0.y <= 54.0 {
 				nav_n = List.len(model.nav)
 				List.fold(List.map_with_index(model.nav, |nv2, vi| { nv2, vi }), -1, |acc, x| {
-					nx2 = win.w - 36.0 - U64.to_f32(nav_n - x.vi) * nav_pitch(win.w, nav_n)
-					if m0.x >= nx2 and m0.x <= nx2 + nav_width(win.w, nav_n) (U8.to_i64(x.nv2.v)) else acc
+					nx2 = win.w - 36.0 - U64.to_f32(nav_n - x.vi) * nav_pitch
+					if m0.x >= nx2 and m0.x <= nx2 + nav_width (U8.to_i64(x.nv2.v)) else acc
 				})
 			} else -1
 		view_input =
@@ -1256,8 +1258,8 @@ update! = |model0, program_input| {
 		row_count = Table.window_of(List.len(model.data), cursor2, Table.rows_fit(win.h)).rows
 		over_row = view2 == 3 and m.x >= 36.0 and (if detail_day2 != "" (m.x < Table.panel_edge(win.w)) else m.x < win.w - 40.0) and m.y >= 134.0 and m.y < 134.0 + U64.to_f32(row_count) * 24.0
 		over_nav = m.y >= 30.0 and m.y <= 54.0 and (List.fold(List.map_with_index(model.nav, |nv3, vi3| { nv3, vi3 }), Bool.False, |acc, x| {
-			nx3 = win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.vi3) * nav_pitch(win.w, List.len(model.nav))
-			if m.x >= nx3 and m.x <= nx3 + nav_width(win.w, List.len(model.nav)) Bool.True else acc
+			nx3 = win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.vi3) * nav_pitch
+			if m.x >= nx3 and m.x <= nx3 + nav_width Bool.True else acc
 		}))
 		Mouse.set_cursor!(if over_chip or over_row or over_nav PointingHand else Default)
 		# a view switch stamps this frame; render fades the new view in from it
@@ -1426,18 +1428,16 @@ scene! = |model, frame| {
 	# the nav: every view, visible and clickable, active one filled - TAB
 	# stays as the keyboard accelerator
 	List.for_each!(List.map_with_index(model.nav, |nv, ni| { nv, ni }), |x| {
-		nx = model.win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.ni) * nav_pitch(model.win.w, List.len(model.nav))
+		nx = model.win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.ni) * nav_pitch
 		on2 = x.nv.v == model.view
-		hov2 = model.mouse_x >= nx and model.mouse_x <= nx + nav_width(model.win.w, List.len(model.nav)) and model.mouse_y >= 30.0 and model.mouse_y <= 54.0
+		hov2 = model.mouse_x >= nx and model.mouse_x <= nx + nav_width and model.mouse_y >= 30.0 and model.mouse_y <= 54.0
 		style2 = if on2 (Draw.filled(Color.with_alpha(Theme.ctl_c, 60))) else if hov2 (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
-		frame.rounded_rectangle!({ x: nx, y: 30.0, width: nav_width(model.win.w, List.len(model.nav)), height: 24.0, radius: 7.0, segments: 6, style: style2 })
+		frame.rounded_rectangle!({ x: nx, y: 30.0, width: nav_width, height: 24.0, radius: 7.0, segments: 6, style: style2 })
 		ic = if on2 Color.white else Theme.ink_muted
-		if nav_iconic(model.win.w, List.len(model.nav)) {
-			nav_icon!(frame, x.nv.v, nx + 8.0, 36.0, ic)
-			x.nv.p.draw!(frame, { pos: { x: nx + 46.0, y: 35.0 }, color: ic, align: (Top, Center) })
-		} else {
-			x.nv.p.draw!(frame, { pos: { x: nx + 34.0, y: 35.0 }, color: ic, align: (Top, Center) })
-		}
+		nav_icon!(frame, x.nv.v, nx + 7.0, 36.0, ic)
+		# the label centers in the span RIGHT of the mark, not the pill - a
+		# pill-centered label would sit under the icon
+		x.nv.p.draw!(frame, { pos: { x: nx + 44.0, y: 35.0 }, color: ic, align: (Top, Center) })
 	})
 	# Legend belongs to the FORM BOARD only: it draws in the same row the
 	# other views put their titles in, and overprinted them.
