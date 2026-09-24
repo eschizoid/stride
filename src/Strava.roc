@@ -451,16 +451,20 @@ Strava :: [].{
                     # admitted regardless of time. Over-including costs a read;
                     # "tidying" this to date()-vs-date() would not be inert, it
                     # would narrow the window.
+                    # the scope rides as a BOUND :all flag, the same pattern the
+                    # week query uses — never a conditionally interpolated SQL
+                    # fragment, which is the shape the house rule exists to keep
+                    # out of query strings
                     Sqlite.query_many!({
                         path: Path.utf8(path),
                         query:
                             \\SELECT a.id AS id FROM activities a
                             \\LEFT JOIN strength_notes n ON n.activity_id = a.id
                             \\WHERE COALESCE(a.sport_family, a.sport_type) = 'WeightTraining'
-                            \\  AND (${if all "1=1" else "n.activity_id IS NULL OR a.start_local >= datetime('now', '-31 days')"})
+                            \\  AND (:all = 1 OR n.activity_id IS NULL OR a.start_local >= datetime('now', '-31 days'))
                             \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}
                         ,
-                        bindings: [],
+                        bindings: [{ name: ":all", value: Integer(if all 1 else 0) }],
                         rows: Sqlite.i64("id"),
                     })?
             }

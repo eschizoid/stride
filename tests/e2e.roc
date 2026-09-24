@@ -784,6 +784,10 @@ run_notes! = || {
     _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${so}' 2>/dev/null")
     check!("an edited description reaches the store on the next sync", Str.contains(sql!(db, "SELECT description FROM strength_notes WHERE activity_id = 504;"), "Kettlebell Swing"))?
     check!("the human line names what the steady-state run fetched", Str.contains(Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' sync 2>/dev/null")), "fetched 1 strength descriptions"))?
+    # --all drops the window: an edit to a description OLDER than the window
+    # is reachable from the CLI, without the raw-SQL delete
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync --all >'${so}' 2>/dev/null")
+    check!("sync --all re-reads every stored description, window or not", sq!(".data.notes_fetched") == "2")?
     # the manual refresh #519 requires stays safe: deleting a row is the
     # not-yet-fetched state, and the next run refetches it (plus the in-window
     # re-read — two rows, which is what tells this apart from the steady state)
