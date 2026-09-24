@@ -815,9 +815,28 @@ run_notes! = || {
     check!("...while the null-description session contributes no rows — the honest gap", Str.trim(sql!(db, "SELECT COUNT(*) FROM strength_sets WHERE activity_id = 505;")) == "0")?
     # 3*8*27.2155 + 3*16*11.3398 = 1197.48… in 503's July; 504's month carries
     # its own 2*10*9.0718 = 181.4 — two months, each the sum of ITS sessions,
-    # which is what makes the spine an arc rather than a total
+    # which is what makes the spine an arc rather than a total. July is 1 of 2
+    # covered (503 carries sets, 505's null description never can) — above the
+    # one-third bar, so it draws; the bar itself is pinned by the probes below.
     check!("the aged month earns a tonnage spine row", Str.trim(sql!(db, "SELECT kind || '/' || fam || '/' || CAST(ROUND(value) AS INTEGER) FROM monthly_threshold WHERE kind = 'tonnage' AND month = '2026-07';")) == "tonnage/WeightTraining/1197")?
-    check!("...and the recent month its own", Str.trim(sql!(db, "SELECT CAST(ROUND(value) AS INTEGER) FROM monthly_threshold WHERE kind = 'tonnage' AND month <> '2026-07';")) == "181")?
+    check!("...and the recent month its own, at full coverage", Str.trim(sql!(db, "SELECT CAST(ROUND(value) AS INTEGER) FROM monthly_threshold WHERE kind = 'tonnage' AND month <> '2026-07';")) == "181")?
+    check!("...with the coverage view stating both denominators", Str.trim(sql!(db, "SELECT covered || '/' || total FROM strength_coverage WHERE month = '2026-07';")) == "1/2")?
+    # the one-third bar, pinned from BOTH sides: a third July session that
+    # never carries sets makes 1 of 3 — exactly a third, the month that must
+    # STILL draw (the >= direction) — and a fourth tips it under, where the
+    # biased sample must vanish from the spine rather than read as a decline,
+    # while the other month, untouched, keeps its row. The refusal lives in
+    # the VIEW, so these assertions cover the CLI and the window at once.
+    # sport_family set explicitly: sync writes it on upsert, and a raw insert
+    # without it would file the probe under a different family and never
+    # touch July's coverage — a mutation that cannot land
+    _ = sql!(db, "INSERT INTO activities (id, name, sport_type, sport_family, start_local, moving_time) VALUES (506, 'coverage probe class', 'Workout', 'WeightTraining', '2026-07-31T09:00:00Z', 2700);")
+    check!("a month at exactly a third coverage still draws", Str.trim(sql!(db, "SELECT COUNT(*) || '/' || (SELECT covered || '/' || total FROM strength_coverage WHERE month = '2026-07') FROM monthly_threshold WHERE kind = 'tonnage' AND month = '2026-07';")) == "1/1/3")?
+    _ = sql!(db, "INSERT INTO activities (id, name, sport_type, sport_family, start_local, moving_time) VALUES (507, 'coverage probe class 2', 'Workout', 'WeightTraining', '2026-07-31T10:00:00Z', 2700);")
+    check!("a month tipped under a third leaves the spine", Str.trim(sql!(db, "SELECT COUNT(*) FROM monthly_threshold WHERE kind = 'tonnage' AND month = '2026-07';")) == "0")?
+    check!("...while the fully covered month keeps its row", Str.trim(sql!(db, "SELECT COUNT(*) FROM monthly_threshold WHERE kind = 'tonnage' AND month <> '2026-07';")) == "1")?
+    _ = sql!(db, "DELETE FROM activities WHERE id IN (506, 507);")
+    check!("...and returns when the coverage does", Str.trim(sql!(db, "SELECT COUNT(*) FROM monthly_threshold WHERE kind = 'tonnage' AND month = '2026-07';")) == "1")?
     _ = sh!("rm -rf '${home}'")
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     reset_sqlite_errors!({})

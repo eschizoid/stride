@@ -258,7 +258,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 34
+    schema_version = 35
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -478,6 +478,9 @@ Db :: [].{
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_load, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_ride_ftp_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_ride_ftp, bindings: [] })?
+        # v35 (#521): coverage BEFORE the spine view, which joins it
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.strength_coverage_drop, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.strength_coverage, bindings: [] })?
         # v33: the same quantity for every family, with its kind beside it
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_threshold_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_threshold, bindings: [] })?
