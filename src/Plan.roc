@@ -107,7 +107,8 @@ Plan :: [].{
                 \\       COALESCE(superseded_activity_id,0) AS superseded_activity_id,
                 \\       COALESCE(CAST(status AS TEXT),'open') AS status, COALESCE(CAST(skipped_reason AS TEXT),'') AS skipped_reason,
                 \\       COALESCE(substitute_activity_id,0) AS substitute_activity_id,
-                \\       COALESCE(CAST((SELECT substr(a.start_local,1,10) FROM activities a WHERE a.id = planned_sessions.completed_activity_id) AS TEXT), '') AS done_date
+                \\       COALESCE(CAST((SELECT substr(a.start_local,1,10) FROM activities a WHERE a.id = planned_sessions.completed_activity_id) AS TEXT), '') AS done_date,
+                \\       CAST(COALESCE((SELECT dl.tss FROM daily_load dl WHERE dl.day = planned_sessions.target_date), 0) AS REAL) AS day_tss
                 \\FROM planned_sessions
                 \\WHERE (:all = 1 OR (target_date >= :mon AND target_date <= :sun AND id IN (SELECT id FROM plan_current)))
                 \\ORDER BY target_date DESC, id DESC LIMIT :lim
@@ -126,7 +127,8 @@ Plan :: [].{
                 skipped_reason = Sqlite.str("skipped_reason")(cols)(stmt)?
                 substitute_activity_id = Sqlite.i64("substitute_activity_id")(cols)(stmt)?
                 done_date = Sqlite.str("done_date")(cols)(stmt)?
-                Ok({ id, created_at, target_date, session_type, detail, rationale, completed_activity_id, superseded_activity_id, status, skipped_reason, substitute_activity_id, done_date })
+                day_tss = Sqlite.f64("day_tss")(cols)(stmt)?
+                Ok({ id, created_at, target_date, session_type, detail, rationale, completed_activity_id, superseded_activity_id, status, skipped_reason, substitute_activity_id, done_date, day_tss })
             },
         })?
         # newest-first from SQL, flipped to calendar order for display. `Render.reverse_list`
@@ -166,12 +168,23 @@ Plan :: [].{
             # exactly like one completed on time, so the plan would silently imply the
             # work happened on the date it was prescribed for. Show the real day when
             # they differ.
+            #
+            # An open REST row whose date has passed with no load on it reads `rested`:
+            # rest is the one type whose prescription is the absence of evidence, so a
+            # zero-load day past its date IS the session having happened, and rendering
+            # it like a missed workout tells the athlete they owe something they don't
+            # (#504). Display-only — `status` stays `open`, the lifecycle is untouched.
+            # The same-day threshold (>= 1.0 load counts as trained) is the one the
+            # summary table uses to print a day as rest. A rest day WITH load stays
+            # `open`: training through a rest day is a plan deviation, not a completion.
             status_shown:
                 if p.status == "done" and p.done_date != "" and p.done_date != p.target_date {
                     # Full date, year included: `week all` spans years, so a bare month-day
                     # would be ambiguous exactly where the log is longest. The wider cell
                     # costs a line of wrapping in the detail column; that is the cheaper loss.
                     "done (${dow(p.done_date)} ${p.done_date})"
+                } else if p.status == "open" and p.session_type == "rest" and p.day_tss < 1.0 and (match Metrics.date_str_to_days(p.target_date) { Ok(d) => d < today Err(_) => False }) {
+                    "rested"
                 } else {
                     p.status
                 },
@@ -1433,6 +1446,17 @@ Plan :: [].{
                 # whose skip tombstone was superseded as unplanned: for adherence
                 # that would double-count one ride as both substituted and
                 # unplanned. Counted once here, as the substitution it was.
+                #
+                # rested: open REST rows whose date passed with under 1.0 load on the
+                # day — rest is the one type whose prescription is the absence of
+                # evidence, so these are debt the athlete does not owe (#504). They
+                # leave still_open (planned = completed + skipped + rested +
+                # still_open) and completion_pct's denominator; the rows themselves
+                # stay open — the reframe is read-time only. One predicate string
+                # serves both columns so they cannot drift apart. A rest day WITH
+                # load fails the predicate and stays in still_open: training through
+                # a rest day is a deviation adherence must keep visible.
+                rested_sql = "COALESCE(status,'open') = 'open' AND session_type = 'rest' AND target_date < :today AND COALESCE((SELECT dl.tss FROM daily_load dl WHERE dl.day = planned_sessions.target_date), 0) < 1.0"
                 adh = Sqlite.query!({
                     path: Path.utf8(path),
                     query:
@@ -1440,7 +1464,8 @@ Plan :: [].{
                         \\       COALESCE(SUM(CASE WHEN COALESCE(status,'open') = 'done' THEN 1 ELSE 0 END),0) AS completed,
                         \\       COALESCE(SUM(CASE WHEN COALESCE(status,'open') = 'skipped' THEN 1 ELSE 0 END),0) AS skipped,
                         \\       COALESCE(SUM(CASE WHEN COALESCE(status,'open') = 'skipped' AND substitute_activity_id IS NOT NULL THEN 1 ELSE 0 END),0) AS substituted,
-                        \\       COALESCE(SUM(CASE WHEN COALESCE(status,'open') = 'open' THEN 1 ELSE 0 END),0) AS still_open
+                        \\       COALESCE(SUM(CASE WHEN COALESCE(status,'open') = 'open' AND NOT (${rested_sql}) THEN 1 ELSE 0 END),0) AS still_open,
+                        \\       COALESCE(SUM(CASE WHEN ${rested_sql} THEN 1 ELSE 0 END),0) AS rested
                         \\FROM planned_sessions
                         \\WHERE target_date >= :cutoff AND target_date <= :today
                     ,
@@ -1451,7 +1476,8 @@ Plan :: [].{
                         skipped = Sqlite.i64("skipped")(cols)(stmt)?
                         substituted = Sqlite.i64("substituted")(cols)(stmt)?
                         still_open = Sqlite.i64("still_open")(cols)(stmt)?
-                        Ok({ planned, completed, skipped, substituted, still_open })
+                        rested = Sqlite.i64("rested")(cols)(stmt)?
+                        Ok({ planned, completed, skipped, substituted, still_open, rested })
                     },
                 })?
                 unplanned_n = Sqlite.query!({
@@ -1465,7 +1491,13 @@ Plan :: [].{
                     bindings: [{ name: ":cutoff", value: String(cutoff28p) }, { name: ":today", value: String(s.as_of) }],
                     row: Sqlite.i64("n"),
                 })?
-                completion_pct = if adh.planned > 0 (((adh.completed).to_f64() / (adh.planned).to_f64()) * 100.0).round_to_i64_try().ok_or(0) else 0
+                # denominator excludes rested: a rest day that passed with no load
+                # required no action and got none, so it is neutral to adherence —
+                # neither earned nor owed. planned 0 is still the discriminator for
+                # the ambiguous 0; a window that is ALL rested also reports 0, which
+                # the rested count beside it disambiguates.
+                actionable = adh.planned - adh.rested
+                completion_pct = if actionable > 0 (((adh.completed).to_f64() / (actionable).to_f64()) * 100.0).round_to_i64_try().ok_or(0) else 0
                 # ── data freshness (#221) ────────────────────────────────────────────
                 # Without this a coach either spent a turn on `doctor` every time or planned from
                 # a week of unsynced rides. Four MEASUREMENTS, no verdict (ADR 0012): what counts
@@ -1539,7 +1571,11 @@ Plan :: [].{
                             skipped: adh.skipped,
                             substituted: adh.substituted,
                             still_open: adh.still_open,
-                            # raw ratio of the two counts above; 0 with planned 0 —
+                            # open rest rows whose date passed with no load — resolved
+                            # in fact, excluded from still_open and from the pct
+                            # denominator; the stored rows stay open
+                            rested: adh.rested,
+                            # completed over (planned - rested); 0 with planned 0 —
                             # planned is the discriminator, per the ambiguous-zero rule
                             completion_pct,
                             unplanned_activities: unplanned_n,
