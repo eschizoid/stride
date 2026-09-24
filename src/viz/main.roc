@@ -822,17 +822,18 @@ Msg : [
 ]
 
 # ONE nav density: every pill carries its 12x12 vector mark beside the
-# label. A width-switched icon tier used to exist and became unreachable
-# the day UI scaling made every logical window narrow - the icons only
-# drew on physical widths no scaled window reports - so the pill grew to
-# hold both instead of switching information off by width. The constants
-# are shared by the render and both hit-tests; at the 980 logical floor
-# nine pills end at x=278, clear of the title row's chip.
+# label. A width-switched icon tier used to exist, and an information
+# tier that switches off by width goes dark for whole classes of windows
+# - at the 150% scale default its threshold asked for more logical width
+# than common laptop displays report - so the pill grew to hold both
+# instead. The constants are shared by the render and both hit-tests; at
+# the 980 logical floor nine pills span x 260-936, clear of the title
+# row's scale chip by ~15px at its widest rendering.
 nav_pitch : F32
-nav_pitch = 78.0
+nav_pitch = 76.0
 
 nav_width : F32
-nav_width = 72.0
+nav_width = 70.0
 
 # One entry per pickable session, loaded eagerly: switching and ghost
 # summons read this list instead of a task round-trip per keypress.
