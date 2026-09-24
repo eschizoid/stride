@@ -61,6 +61,13 @@ Strength :: [].{
     # to sets. "" with no rows means no adapter recognized the text.
     Parsed : { source : Str, rows : List(SetRow) }
 
+    # ORDERED, and the order IS the disambiguation rule: adapters are tried
+    # top to bottom and the first to yield rows wins, so a narrower grammar
+    # goes ABOVE a broader one, and a new adapter's author owns the check
+    # that their format does not claim text an existing adapter already
+    # reads. With one adapter nothing can test this; it is stated here
+    # because by the time a second adapter exists, an ambiguity between
+    # them has already shipped.
     adapters : List({ name : Str, parse : Str -> List(SetRow) })
     adapters = [{ name: "peloton", parse: parse_peloton }]
 
@@ -72,6 +79,8 @@ Strength :: [].{
         match ads {
             [] => { source: "", rows: [] }
             [a, .. as rest] => {
+                # parenthesized on purpose: `a.parse(text)` is method-call
+                # syntax for `parse(a, text)` in this compiler
                 rows = (a.parse)(text)
                 if List.is_empty(rows) first_recognized(rest, text) else { source: a.name, rows }
             }
