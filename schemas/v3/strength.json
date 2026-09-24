@@ -51,13 +51,13 @@
     },
     "monthly": {
       "type": "array",
-      "description": "Every strength month from strength_coverage, INCLUDING the months the career spine refuses — a table can qualify a number where a curve cannot. `known` is the both-possible flag (ADR 0009): 0 means the month sits under the coverage bar and no tonnage is claimed for it (kg is 0 there, an impossible-zero behind the flag), 1 means kg is the month's summed lifted mass. covered/total is the denominator that keeps a coverage shift from reading as a training trend.",
+      "description": "Every strength month from strength_coverage, INCLUDING the months the career spine refuses — a table can qualify a number where a curve cannot. `tonnage_known` is the both-possible flag (ADR 0009): false means the month sits under the coverage bar and no tonnage is claimed for it (kg is 0 there, an impossible-zero behind the flag), true means kg is the month's summed lifted mass. covered/total is the denominator that keeps a coverage shift from reading as a training trend.",
       "items": {
         "type": "object",
         "required": [
           "month",
           "kg",
-          "known",
+          "tonnage_known",
           "covered",
           "total"
         ],
@@ -69,8 +69,8 @@
           "kg": {
             "type": "number"
           },
-          "known": {
-            "type": "integer"
+          "tonnage_known": {
+            "type": "boolean"
           },
           "covered": {
             "type": "integer"

@@ -61,7 +61,7 @@ skip.json	kept_substitute,reason,released_substitute,released_substitute_of,skip
 stats.json	all_time,ytd,ytd_year	all_time,ytd,ytd_year	-	$
 stats.json	hours,km,sessions,sport	hours,km,sessions,sport	doc	properties.all_time.items
 stats.json	hours,km,sessions,sport	hours,km,sessions,sport	doc	properties.ytd.items
-strength.json	covered,kg,known,month,total	covered,kg,known,month,total	doc	properties.monthly.items
+strength.json	covered,kg,month,tonnage_known,total	covered,kg,month,tonnage_known,total	doc	properties.monthly.items
 strength.json	date,kg_reps,top_kg	date,kg_reps,top_kg	doc	properties.exercises.items.properties.points.items
 strength.json	exercise,points	exercise,points	doc	properties.exercises.items
 strength.json	exercises,monthly,sessions	exercises,monthly,sessions	doc	$

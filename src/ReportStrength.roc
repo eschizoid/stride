@@ -85,7 +85,9 @@ ReportStrength :: [].{
                 known = Sqlite.i64("known")(cols)(stmt)?
                 covered = Sqlite.i64("covered")(cols)(stmt)?
                 total = Sqlite.i64("total")(cols)(stmt)?
-                Ok({ month, kg, known, covered, total })
+                # Bool at the boundary, like every _known in the payload family —
+                # a bare tag would serialize as the STRING "True"
+                Ok({ month, kg, tonnage_known: known != 0, covered, total })
             },
         })?
         counts = Sqlite.query!({
@@ -107,14 +109,14 @@ ReportStrength :: [].{
         })?
         # ANNOTATED and closed: the renderer below infers an open record, and
         # a new key would otherwise ship undeclared in schemas/v3 (ADR §9c)
-        payload : { exercises : List({ exercise : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64 }) }), monthly : List({ month : Str, kg : F64, known : I64, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } }
+        payload : { exercises : List({ exercise : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64 }) }), monthly : List({ month : Str, kg : F64, tonnage_known : Bool, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } }
         payload = { exercises, monthly, sessions: counts }
         Output.out!(payload, |p| screen(units, p))
     }
 
     # numbers in tables, meaning in legends — and no verdict line at all:
     # progression is exactly the number a coach must not have pre-judged
-    screen : [Metric, Imperial], { exercises : List({ exercise : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64 }) }), monthly : List({ month : Str, kg : F64, known : I64, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } } -> Str
+    screen : [Metric, Imperial], { exercises : List({ exercise : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64 }) }), monthly : List({ month : Str, kg : F64, tonnage_known : Bool, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } } -> Str
     screen = |units, p| {
         if p.sessions.total == 0 {
             "no strength sessions yet — they arrive with `stride sync` like every other activity"
@@ -133,21 +135,33 @@ ReportStrength :: [].{
                     "${last.date}  ${Units.mass_label(units, last.top_kg)}",
                 ]
             })
+            # "more" needs an antecedent: with no table above it, the once-seen
+            # count is the WHOLE story and says so on one line
             prog =
                 if List.is_empty(repeated) {
-                    "no exercise seen on two days yet — progression needs a repeat"
+                    if once > 0 {
+                        "no exercise seen on two days yet — progression needs a repeat (${(once).to_str()} seen on one day each, in the JSON)"
+                    } else {
+                        "no exercise seen on two days yet — progression needs a repeat"
+                    }
                 } else {
                     Render.render_table(["exercise", "days", "first (top set)", "latest (top set)"], prog_rows)
                 }
-            once_note = if once > 0 "\n(${(once).to_str()} more seen on one day — in the JSON)" else ""
+            once_note = if once > 0 and !(List.is_empty(repeated)) "\n(${(once).to_str()} more seen on one day — in the JSON)" else ""
             month_rows = List.map(p.monthly, |m| [
                 m.month,
-                if m.known == 1 Units.mass_label(units, m.kg) else "-",
+                if m.tonnage_known Units.mass_label(units, m.kg) else "-",
                 "${(m.covered).to_str()}/${(m.total).to_str()}",
             ])
             months = Render.render_table(["month", "tonnage", "sessions with sets"], month_rows)
-            # the legend the '-' needs: a withheld month is a coverage fact
-            legend = "\n(- = under a third of the month's sessions carry sets, so no tonnage is claimed)"
+            # the legend the '-' needs, shown only when a '-' is on screen —
+            # a legend for an absent symbol explains nothing
+            legend =
+                if List.any(p.monthly, |m| !(m.tonnage_known)) {
+                    "\n(- = under a third of the month's sessions carry sets, so no tonnage is claimed)"
+                } else {
+                    ""
+                }
             # "no readable set lines" rather than "a format stride does not
             # read": the class includes a caption-only description, which is
             # prose working as intended, not a format gap
@@ -160,9 +174,13 @@ ReportStrength :: [].{
             # the capability, stated at the moment its absence is visible: an
             # athlete who never pastes cannot otherwise learn pasting exists
             gap = p.sessions.total - p.sessions.with_sets - p.sessions.pasted_unparsed
+            # the noun agrees with the total, the verb with the gap: "1 of 5
+            # strength sessions has", "1 of 1 strength session has"
             nudge =
                 if gap > 0 {
-                    "\n${(gap).to_str()} of ${(p.sessions.total).to_str()} strength sessions have no recorded sets — paste the set breakdown into the activity description to track tonnage"
+                    noun = if p.sessions.total == 1 "session" else "sessions"
+                    verb = if gap == 1 "has" else "have"
+                    "\n${(gap).to_str()} of ${(p.sessions.total).to_str()} strength ${noun} ${verb} no recorded sets — paste the set breakdown into the activity description to track tonnage"
                 } else {
                     ""
                 }
