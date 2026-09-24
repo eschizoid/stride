@@ -220,7 +220,7 @@ while IFS= read -r _c; do
       grep -qE "(^|[^[:alnum:]_-])$_c([^[:alnum:]_-]|$)" "$HUMANHELP" \
         || { echo "command-claims: the human help screen never mentions the alias \`$_c\` as a word while the command table declares it — the help_text literal drifted from Command.specs" >&2; helpmiss=1; } ;;
     *)
-      grep -qxF "$_c" "$HEADS" \
+      grep -qxF -e "$_c" "$HEADS" \
         || { echo "command-claims: the human help screen has no usage row headed \`$_c\` while the command table declares it — the help_text literal drifted from Command.specs" >&2; helpmiss=1; } ;;
   esac
 done < "$REAL"
