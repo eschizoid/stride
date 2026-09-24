@@ -855,7 +855,7 @@ Db :: [].{
 	load_trace_pace! = |db, aid| {
 		times = load_stream_arr!(db, aid, "$.time.data")
 		dists = load_stream_arr!(db, aid, "$.distance.data")
-		pairs = List.map2(times, dists, |tt, dv| { t: (tt * 1.0).round_to_i64_try().ok_or(0), v: dv })
+		pairs = List.map2(times, dists, |tt, dv| { t: (tt).round_to_i64_try().ok_or(0), v: dv })
 		speeds = List.map(Series.speed_1s(pairs), |p| p.v)
 		bucket_mean(speeds, 800)
 	}
