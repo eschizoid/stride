@@ -1404,12 +1404,17 @@ nav_icon! = |frame, v, x, y, c| {
 		# ramp: the climb and its rider
 		frame.line!({ start: { x: x, y: y + 11.0 }, end: { x: x + 12.0, y: y + 2.0 }, stroke: Draw.stroke(c, 1.5) })
 		frame.circle!({ center: { x: x + 9.0, y: y + 4.0 }, radius: 2.0, style: Draw.filled(c) })
-	} else {
+	} else if v == 8 {
 		# career: a summit profile — the years as a skyline, the highest peak
 		# marked. Not the ramp's single diagonal, which this view used to
 		# borrow: a straight rise is one block's trend, and a career is the
 		# range of them. The peak dot sits ON the apex, the same way the view
 		# marks its best month.
+		#
+		# Every view tests for its OWN number and the chain ends here with no
+		# catch-all: a view added without a mark draws an empty chip, which is
+		# visible, rather than silently wearing its neighbour's — which is how
+		# career came to borrow the ramp's.
 		frame.line!({ start: { x: x, y: y + 11.0 }, end: { x: x + 4.0, y: y + 6.0 }, stroke: Draw.stroke(c, 1.5) })
 		frame.line!({ start: { x: x + 4.0, y: y + 6.0 }, end: { x: x + 6.5, y: y + 8.5 }, stroke: Draw.stroke(c, 1.5) })
 		frame.line!({ start: { x: x + 6.5, y: y + 8.5 }, end: { x: x + 10.0, y: y + 2.0 }, stroke: Draw.stroke(c, 1.5) })
