@@ -54,16 +54,19 @@ Theme :: [].{
 	# two sports could share one colour. These are keyed to the sport NAME
 	# (sport_color) so a sport wears the same colour every render, and the set
 	# avoids the ramp's blue/teal/red so a reader never confuses the two scales.
+	# each hue holds clear of the ramp's blue (0x4f8ef7), teal (0x2dd4bf) and
+	# red (0xe0645b): warm orange, violet, spring green, magenta-pink, amber,
+	# indigo, sienna, olive - so no sport reads as a zone.
 	sport_palette : List(Color.Rgba)
 	sport_palette = [
-		Color.from_hex_rgb(0x5b8ff9),
 		Color.from_hex_rgb(0xf2994a),
-		Color.from_hex_rgb(0x9b8cff),
+		Color.from_hex_rgb(0x9b6cff),
 		Color.from_hex_rgb(0x54c98a),
-		Color.from_hex_rgb(0xe86a92),
-		Color.from_hex_rgb(0x39c0c8),
-		Color.from_hex_rgb(0xc9a227),
+		Color.from_hex_rgb(0xe86ab0),
+		Color.from_hex_rgb(0xd8b23a),
+		Color.from_hex_rgb(0x6a5acd),
 		Color.from_hex_rgb(0xb07d55),
+		Color.from_hex_rgb(0x8a9a3b),
 	]
 
 	# a stable colour for a sport, from a hash of its NAME (byte sum) into the

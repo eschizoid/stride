@@ -906,7 +906,10 @@ update! = |model0, program_input| {
 			MarkDone(_) => acc
 			# also the boot task's failure exit: the splash must never spin
 			# forever, so a dead load hands over to the skeleton's own screens
-			ReloadFailed => { ..acc, booting: Bool.False }
+			# clear reloading too: a failed reload must not leave the power
+			# view's "loading…" note burned on forever — the flag is reset on
+			# BOTH terminal outcomes, not just success
+			ReloadFailed => { ..acc, booting: Bool.False, reloading: Bool.False }
 			TraceSwitchFailed => acc
 			GhostSwitchFailed => acc
 			# a slow load must not resurrect a dismissed ghost or overwrite a

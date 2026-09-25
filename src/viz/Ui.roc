@@ -99,7 +99,9 @@ Ui :: [].{
 		booting : Bool,
 		# True while a range-chip (or R) reload is in flight: the power view
 		# shows a "loading" note so a chip click that takes a second to fetch
-		# reads as working rather than dead. Cleared when the fresh model lands.
+		# reads as working rather than dead. Cleared on EITHER terminal
+		# outcome - a fresh model landing or the reload failing - so a failed
+		# fetch never strands the note on screen.
 		reloading : Bool,
 		# the brand mark as the authored PNG, loaded for the splash only -
 		# hand-drawn approximations of the logo kept drifting from the real
