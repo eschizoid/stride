@@ -33,7 +33,10 @@ pkg=src/strength
 # the rows in table order: `{ name: "peloton", parse: Peloton.parse }`, taken
 # from the literal's own lines (its opening line through the first `]`, which
 # is the same line when the list fits on one) with comments removed
-block=$(awk '/^    adapters = \[/{p=1} p{print} p && /\]/{exit}' "$table" | sed 's/#.*//')
+# comments are stripped BEFORE the range scan, not after: the terminator is a
+# `]`, and a comment between the list's open and its close that merely names
+# one would end the range early and silently drop every row below it
+block=$(sed 's/#.*//' "$table" | awk '/^    adapters = \[/{p=1} p{print} p && /\]/{exit}')
 rows=$(printf '%s\n' "$block" | grep -oE '\{ name: "[a-z0-9_]+", parse: [A-Z][A-Za-z0-9]*\.parse \}') || true
 if [ -z "$rows" ]; then
   echo "adapter-fixtures: no adapter rows found in $table — the extractor matched nothing, refusing to pass blind" >&2
