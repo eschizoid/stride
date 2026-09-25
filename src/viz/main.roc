@@ -149,12 +149,18 @@ load_model! = |font, curve_days, boot| {
 				e = Db.load_event!(db)
 				c = Db.load_curve!(db, curve_days)
 				tids = Db.load_trace_ids!(db)
-				# the whole picker loads up front, per-session SQL paid once in
-				# this boot task, so every later switch and ghost summon is a
-				# memory read, not a task round-trip - the trace view answers
-				# keys instantly
+				# ONLY the selected session is cached at boot. Caching the whole
+				# picker up front is what made the window take minutes to open on
+				# a real database: not the SQL (0.2s for the whole stream corpus)
+				# but the roc-ray SQLite binding, which marshals result rows one
+				# at a time - and each session's downsampled trace is hundreds of
+				# rows, so a hundred-odd sessions was ~100k rows before the first
+				# frame. A switch or ghost summon to an un-cached session falls
+				# through to the one-session load the cache-miss path already
+				# spawns (trace_task! / ghost_task!), so the cost is paid per
+				# session actually looked at, not for the whole picker at boot.
 				un = Db.units!(db)
-				tcache = load_tcache!(db, un, tids)
+				tcache = load_tcache!(db, un, List.take_first(tids, 1))
 				tr = match List.first(tcache) { Ok(t0) => t0.tr
 					Err(_) => [] }
 				sg = match List.first(tcache) { Ok(t0) => t0.sg
