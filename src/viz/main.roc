@@ -1409,8 +1409,9 @@ nav_icon! = |frame, v, x, y, c| {
 		# separates it is COMPOSITION, not fill: half the set is already solid,
 		# so a block alone would not tell it apart. No sibling pairs one
 		# off-centre block with a stem — the other solids are full-width strips
-		# (table, plan), a four-cell grid (heat) and baseline-anchored columns
-		# (zones), and ramp's fill is a small dot riding a diagonal. That dot
+		# (table), a page under a header bar (plan), a four-cell grid (heat)
+		# and baseline-anchored columns (zones), and ramp's fill is a small
+		# dot riding a diagonal. That dot
 		# is why nothing here puts one high on the right: at this size a dot
 		# resolves before any path does, and two marks that share one read
 		# alike however differently they bend.
