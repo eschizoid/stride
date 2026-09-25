@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.17.0](https://github.com/eschizoid/stride/compare/v0.16.0...v0.17.0) (2026-09-25)
+
+
+### Features
+
+* **viz:** four visual reads that misled, made honest ([6a16c53](https://github.com/eschizoid/stride/commit/6a16c5361e2c78f6d2d1fecb99ce2ec6b9f8e278))
+
+
+### Performance Improvements
+
+* **viz:** load only the shown session at boot, the rest on demand ([18173a1](https://github.com/eschizoid/stride/commit/18173a152eb62006431b44a3be28add5bac25d82))
+
 ## [0.16.0](https://github.com/eschizoid/stride/compare/v0.15.0...v0.16.0) (2026-09-24)
 
 
