@@ -80,7 +80,7 @@ jobs:
           # only linux-arm64 sets roc_target; everywhere else the native default is right
           target_flag=""
           if [ -n "${{ matrix.roc_target }}" ]; then target_flag="--target=${{ matrix.roc_target }}"; fi
-          roc build src/main.roc --output="stride-cli-${{ matrix.target }}" --opt=dev $target_flag
+          roc build src/cli/main.roc --output="stride-cli-${{ matrix.target }}" --opt=dev $target_flag
           ls -la stride-cli-${{ matrix.target }}* || true
           test -f "stride-cli-${{ matrix.target }}" || test -f "stride-cli-${{ matrix.target }}.exe"
 

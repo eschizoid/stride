@@ -4,7 +4,9 @@ Status: accepted, executed 2026-08-02. The split shipped, so `app.roc` is now a 
 argv → dispatch shell. Effectful code lives in the `Db.roc`, `Strava.roc`, `Analyze.roc`,
 `Plan.roc` and `Import.roc` modules and in the report family (`Report.roc` plus
 `ReportSessions`/`ReportHealth`/`ReportSeason`), and all of them are `roc check` green on
-the new compiler.
+the new compiler. On 2026-09-25 the engine's modules moved from `src/` into `src/cli/`,
+beside `main.roc`, one folder per app (ADR 0016's update of the same date); the module
+names and the split itself are unchanged.
 Date: 2026-08-01
 
 The decision supersedes the monolith constraint in [ADR 0000 §2](0000-architecture.md).
@@ -124,7 +126,7 @@ trigger above fires. No structure is added before it is needed.
 
 Two file-layout facts above no longer describe the tree, and the decision survives both.
 
-The engine's entry point is `src/main.roc` rather than `app.roc`, renamed in #394 on
+The engine's entry point is `src/cli/main.roc` rather than `app.roc`, renamed in #394 on
 2026-09-07, so every mention of `app.roc` above refers to that file. The split by domain
 and the adjacency rule are unchanged.
 

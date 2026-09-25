@@ -52,7 +52,7 @@ jobs:
       # this type-checks main.roc plus all 16 modules against basic-cli 0.22 + http.
       - name: Type-check (main + all modules)
         shell: bash
-        run: roc check src/main.roc
+        run: roc check src/cli/main.roc
 
       # Here rather than in the `e2e` job, and rather than only in the justfile.
       #
@@ -76,6 +76,13 @@ jobs:
         shell: bash
         run: sh tools/blob-safety.sh
 
+      # Same job, same reason: source only. Every strength-notes adapter is a row
+      # in the ordered table and ships a real sample of its app's share text
+      # (ADR 0018) — the one promise in that ADR nothing else enforces.
+      - name: Check every strength adapter is registered and ships its sample
+        shell: bash
+        run: sh tools/adapter-fixtures.sh
+
       # The pure modules carry the logic and the tests. main.roc
       # has no expects (its effectful ones can't run under the test runner), so it
       # is validated by `check` above.
@@ -90,11 +97,11 @@ jobs:
           # --main on every engine module: core is imported transitively, and a
           # bare module run carries no package map
           for m in Metrics Render Drain Csv Command Config Streams; do
-            echo "--- roc test --main=src/main.roc src/$m.roc ---"
-            roc test --main=src/main.roc "src/$m.roc"
+            echo "--- roc test --main=src/cli/main.roc src/cli/$m.roc ---"
+            roc test --main=src/cli/main.roc "src/cli/$m.roc"
           done
-          echo "--- roc check src/Schema.roc (DDL-only, no expects) ---"
-          roc check src/Schema.roc
+          echo "--- roc check src/cli/Schema.roc (DDL-only, no expects) ---"
+          roc check src/cli/Schema.roc
 
   # End-to-end: build the real binary and run the native offline e2e suite (
   # sandboxed HOME, no network). Built with --opt=dev for build time; #32's SIGABRT in the
@@ -119,7 +126,7 @@ jobs:
       - name: Install just
         run: brew install just
       - name: Build stride (dev backend — chosen for build time, not correctness)
-        run: roc build src/main.roc --output=stride --opt=dev   # new compiler uses --output=
+        run: roc build src/cli/main.roc --output=stride --opt=dev   # new compiler uses --output=
       - name: Run offline e2e suite
         run: ROC=roc just e2e
       # Runs in CI despite the "sync" name: it needs no network and no credential.

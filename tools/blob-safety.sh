@@ -26,7 +26,7 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 : > "$tmp/problems"
 decodes=0
 sites=0
-for f in src/*.roc; do
+for f in src/cli/*.roc; do
   # BOTH string decoders, ANY alias — a lowercase-only alias class misses
   # `Sqlite.str("sportType")` without moving the asserted count.
   grep -oE 'Sqlite\.(nullable_)?str\("[^"]*"\)' "$f" 2>/dev/null | sed 's/.*("//;s/")//' | sort -u > "$tmp/aliases" || true

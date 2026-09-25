@@ -32,7 +32,7 @@ The distinction between the two layers is easy to lose, because a new producer c
 
 ## Consequences
 
-Adding a prose output surface means adding it to the boundary sweep in `src/Render.roc`, and the producers swept today are `compare_verdict`, `form_trend_phrase`, `band_days_phrase`, `warming_up_note`, `trend_label`, `tte_screen` and `drain_note`. `season_screen` deliberately renders no verdict line at all, which is the cleanest way to satisfy this rule.
+Adding a prose output surface means adding it to the boundary sweep in `src/cli/Render.roc`, and the producers swept today are `compare_verdict`, `form_trend_phrase`, `band_days_phrase`, `warming_up_note`, `trend_label`, `tte_screen` and `drain_note`. `season_screen` deliberately renders no verdict line at all, which is the cleanest way to satisfy this rule.
 
 The gap between the two layers is real and it recurs. `trend_label` shipped with neither guard and stayed that way until this ADR was written and someone checked its claims against the code. Writing "every finite producer is pinned" did not pin anything, so counting the pins is better than asserting the invariant.
 

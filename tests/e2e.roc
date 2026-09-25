@@ -1182,7 +1182,7 @@ run_stops! = || {
         # 401 exits are flattened by the boundary into the same envelope — so stdout
         # cannot tell a bounded run from one that never refreshed (bound set to 0
         # passed every check). The stderr count discriminates and tracks max_refreshes
-        # exactly. The literal 2 is `max_refreshes` in src/Strava.roc, coupled across a
+        # exactly. The literal 2 is `max_refreshes` in src/cli/Strava.roc, coupled across a
         # module boundary with nothing linking them — the count is in the NAME so the
         # red explains itself; without it, 0 means "no refreshes" and "no file" alike.
         refreshes_seen = str_to_i64(Str.trim(sh!("grep -c 'refreshed, continuing' '${be401}' 2>/dev/null")))
@@ -1495,7 +1495,7 @@ b_init_config! = |ctx| {
     # with no space was callable and invisible to the tight pattern, and `roc fmt` is
     # blocked upstream (#27), so nothing normalises spacing. LC_ALL=C for collation.
     verbs_dir = "${ctx.home}/.verbs"
-    parser_verbs = "sed 's/#.*//' src/Command.roc | grep -oE '\\[[[:space:]]*_[[:space:]]*,[[:space:]]*\"[A-Za-z0-9_-]+\"' | sed 's/.*\"\\([A-Za-z0-9_-]*\\)\"/\\1/' | grep -v '^-' | grep -vx help | LC_ALL=C sort -u"
+    parser_verbs = "sed 's/#.*//' src/cli/Command.roc | grep -oE '\\[[[:space:]]*_[[:space:]]*,[[:space:]]*\"[A-Za-z0-9_-]+\"' | sed 's/.*\"\\([A-Za-z0-9_-]*\\)\"/\\1/' | grep -v '^-' | grep -vx help | LC_ALL=C sort -u"
     spec_verbs = "HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[].name | split(\" \")[0]' | LC_ALL=C sort -u"
     _ = sh!("rm -rf '${verbs_dir}' && mkdir -p '${verbs_dir}' && ${parser_verbs} > '${verbs_dir}/parser' && ${spec_verbs} > '${verbs_dir}/spec'")
     # `backfill` and nothing else. It is the one arm that answers a name with a pointer
@@ -1567,7 +1567,7 @@ b_init_config! = |ctx| {
     # which is already accounted for, so a real three-token form was invisible. Measured to
     # yield the identical nine paths on pristine source, so this is depth-independence at
     # no cost to the pinned value.
-    parser_pairs = "sed 's/#.*//' src/Command.roc | grep -oE '\\[[[:space:]]*_([[:space:]]*,[[:space:]]*\"[A-Za-z0-9_-]+\")+' | sed 's/\\[[[:space:]]*_[[:space:]]*,[[:space:]]*//; s/\"//g; s/[[:space:]]*,[[:space:]]*/ /g' | grep ' ' | LC_ALL=C sort -u"
+    parser_pairs = "sed 's/#.*//' src/cli/Command.roc | grep -oE '\\[[[:space:]]*_([[:space:]]*,[[:space:]]*\"[A-Za-z0-9_-]+\")+' | sed 's/\\[[[:space:]]*_[[:space:]]*,[[:space:]]*//; s/\"//g; s/[[:space:]]*,[[:space:]]*/ /g' | grep ' ' | LC_ALL=C sort -u"
     # Enum placeholders are EXPANDED, so `<asc|desc>` accounts for `progress asc` and
     # `progress desc`. Without that they landed in the leftover list and the comment called
     # them "not commands" — but `[_, "progress", "asc"] => Ok(...)` dispatches, so they are
@@ -1649,13 +1649,13 @@ b_init_config! = |ctx| {
     # both in Strava.roc, reachable from auth and sync — so that is what the table
     # must say.
     check!("the network set is exactly auth and sync", cmdq!("[.data.commands[] | select(.network) | .name] | sort") == "[\n  \"auth\",\n  \"sync\"\n]")?
-    check!("...and Strava is still reachable from exactly two call sites", Str.trim(sh!("sed 's/#.*//' src/Strava.roc | grep -c 'Http.send!'")) == "2")?
-    check!("...with no other module able to reach one", Str.trim(sh!("for f in src/*.roc; do sed 's/#.*//' $f | grep -q 'Http.send!' && printf '%s' $f; done")) == "src/Strava.roc")?
+    check!("...and Strava is still reachable from exactly two call sites", Str.trim(sh!("sed 's/#.*//' src/cli/Strava.roc | grep -c 'Http.send!'")) == "2")?
+    check!("...with no other module able to reach one", Str.trim(sh!("for f in src/cli/*.roc; do sed 's/#.*//' $f | grep -q 'Http.send!' && printf '%s' $f; done")) == "src/cli/Strava.roc")?
     # `interactive` the same way: Stdin is what blocking on a human looks like, and it
     # appears once in the whole source, inside the auth flow.
     check!("the interactive set is exactly auth", cmdq!("[.data.commands[] | select(.interactive) | .name]") == "[\n  \"auth\"\n]")?
-    check!("...and stdin is read from exactly one place", Str.trim(sh!("sed 's/#.*//' src/Strava.roc | grep -c 'Stdin\\.'")) == "1")?
-    check!("...which is the only module that reads it", Str.trim(sh!("for f in src/*.roc; do sed 's/#.*//' $f | grep -q 'Stdin\\.' && printf '%s' $f; done")) == "src/Strava.roc")?
+    check!("...and stdin is read from exactly one place", Str.trim(sh!("sed 's/#.*//' src/cli/Strava.roc | grep -c 'Stdin\\.'")) == "1")?
+    check!("...which is the only module that reads it", Str.trim(sh!("for f in src/cli/*.roc; do sed 's/#.*//' $f | grep -q 'Stdin\\.' && printf '%s' $f; done")) == "src/cli/Strava.roc")?
     # The mutation-proof for the sweep itself: a form that DOES write, run the same way,
     # must be caught. `week add` is declared mutates:true so it is not in the sweep, and
     # it is chosen over `rate` because it writes unconditionally — `rate` depends on the
@@ -2017,7 +2017,7 @@ b_config_ftp! = |ctx| {
     #     not stored, so there was nothing to remove" — no routing sentence, scored
     #     as ROUTED. `unseeded` is asserted at 0 so the probe proves it could speak
     #     before its silence counts.
-    unset_sweep = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; { awk '/plain_keys = \\[/,/\\]/' src/Config.roc; awk '/secret_keys = \\[/,/\\]/' src/Config.roc; } | grep -o '\"[^\"]*\"' | tr -d '\"' > $h/keys; n=0; u=0; z=0; while read -r k; do n=$((n+1)); case \"$k\" in units) v=metric;; *) v=7;; esac; HOME=$h '${ctx.bin}' config set \"$k\" \"$v\" >/dev/null 2>&1; m=$(HOME=$h '${ctx.bin}' config unset \"$k\" 2>&1 | head -1); case \"$m\" in *'starts refusing'*) u=$((u+1));; esac; case \"$m\" in *'was not stored'*) z=$((z+1));; esac; done < $h/keys; echo \"probed=$n unrouted=$u unseeded=$z\""))
+    unset_sweep = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; { awk '/plain_keys = \\[/,/\\]/' src/cli/Config.roc; awk '/secret_keys = \\[/,/\\]/' src/cli/Config.roc; } | grep -o '\"[^\"]*\"' | tr -d '\"' > $h/keys; n=0; u=0; z=0; while read -r k; do n=$((n+1)); case \"$k\" in units) v=metric;; *) v=7;; esac; HOME=$h '${ctx.bin}' config set \"$k\" \"$v\" >/dev/null 2>&1; m=$(HOME=$h '${ctx.bin}' config unset \"$k\" 2>&1 | head -1); case \"$m\" in *'starts refusing'*) u=$((u+1));; esac; case \"$m\" in *'was not stored'*) z=$((z+1));; esac; done < $h/keys; echo \"probed=$n unrouted=$u unseeded=$z\""))
     check!("every LISTED config key reaches a routed `config unset` branch, enumerated from Config.roc", unset_sweep == "probed=11 unrouted=0 unseeded=0")?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max_ride", "155"])
     # ── bare `config` lists what is set. Its first job is answering "which config do I
@@ -2387,7 +2387,7 @@ b_seed_analyze! = |ctx| {
     #              the whole suite rc=0 before this was pinned.
     #   unconverted the half-bug itself, at a site still in the fmt shape
     #
-    # `src/*.roc`, not a hand-listed set. Plan.roc and Report.roc both resolve `Db.units!`
+    # `src/cli/*.roc`, not a hand-listed set. Plan.roc and Report.roc both resolve `Db.units!`
     # and were missing from the first list — the files most likely to gain a distance
     # render, since `units` is already in scope there. A hand-list lets a whole FILE
     # escape, which is wider than what `formatted` closes.
@@ -2417,9 +2417,9 @@ b_seed_analyze! = |ctx| {
     # nothing wrong — the sites run to 204 characters, so it is a live risk. Rejoin the
     # line; do not lower the number. A comment containing `dist_unit(` would also count
     # toward `examined`. Both are loud false positives, which is the safe direction.
-    units_static = Str.trim(sh!("n=0; fmt=0; bad=0; for f in src/*.roc; do while IFS= read -r l; do case \"$l\" in expect*) continue;; esac; case \"$l\" in *'dist_unit('*|*'pace_unit('*|*'seg_unit('*|*'elev_unit('*) ;; *) continue;; esac; n=$((n+1)); case \"$l\" in *'fmt0('*|*'fmt1('*|*'fmt2('*|*'seg_value('*|*'signed('*|*'pace_per_dist('*) fmt=$((fmt+1));; *) continue;; esac; case \"$l\" in *'dist_value(units'*|*'pace_per_dist(units'*|*'seg_value(units'*|*'elev_value(units'*) ;; *) bad=$((bad+1));; esac; done < $f; done; echo \"examined=$n formatted=$fmt unconverted=$bad\""))
+    units_static = Str.trim(sh!("n=0; fmt=0; bad=0; for f in src/cli/*.roc; do while IFS= read -r l; do case \"$l\" in expect*) continue;; esac; case \"$l\" in *'dist_unit('*|*'pace_unit('*|*'seg_unit('*|*'elev_unit('*) ;; *) continue;; esac; n=$((n+1)); case \"$l\" in *'fmt0('*|*'fmt1('*|*'fmt2('*|*'seg_value('*|*'signed('*|*'pace_per_dist('*) fmt=$((fmt+1));; *) continue;; esac; case \"$l\" in *'dist_value(units'*|*'pace_per_dist(units'*|*'seg_value(units'*|*'elev_value(units'*) ;; *) bad=$((bad+1));; esac; done < $f; done; echo \"examined=$n formatted=$fmt unconverted=$bad\""))
     check!("...and every site that names a unit converts the number beside it, checked in source", units_static == "examined=19 formatted=13 unconverted=0")?
-    # The window's own half of the same rule. `src/*.roc` above is non-recursive
+    # The window's own half of the same rule. `src/cli/*.roc` above is non-recursive
     # on purpose, so src/viz never enters that sweep; since the window converts
     # (career card, pace spine, day-detail line) it needs its own pins. Two
     # counters: `sites` is the exact count of lines calling a core.Units
@@ -2588,7 +2588,7 @@ b_seed_analyze! = |ctx| {
     # ...and the LOAD LADDER's HR rung, which #313 bounded and nothing at the
     # binary level guarded: with the guard reverted, `just e2e` alone passed while
     # an impossible heart rate scored training load — the pure expects were the
-    # entire gate, and `src/Analyze.roc` (the call site) is not in the `roc test`
+    # entire gate, and `src/cli/Analyze.roc` (the call site) is not in the `roc test`
     # list.
     #
     # Two rows; the second is the non-vacuity half. 471 (impossible average) must
@@ -2981,14 +2981,14 @@ b_seed_analyze! = |ctx| {
     # string enforces whatever the skill said when the pin was written, so a
     # platform bump stayed green while the skill kept naming the old version.
     # major.minor is the claim (a patch or rc suffix is not a different line).
-    platform_mm = Str.trim(sh!("grep -o 'basic-cli/releases/download/[^/]*' src/main.roc | head -1 |  cut -d/ -f4 | cut -d. -f1-2"))
+    platform_mm = Str.trim(sh!("grep -o 'basic-cli/releases/download/[^/]*' src/cli/main.roc | head -1 |  cut -d/ -f4 | cut -d. -f1-2"))
     check!("the engine's platform version is readable at all", !(Str.is_empty(platform_mm)))?
     check!("skill names the current platform", Str.contains(skill_text, "basic-cli ${platform_mm}"))?
     # ...and the commands it teaches exist: spot-check the ones this guard grew from
     check!("skill documents the derived-key refusal", Str.contains(skill_text, "derived_key"))?
     # The Codex plugin manifest carries its OWN version, which is a second place the
     # released number can rot. Compared against `.release-please-manifest.json` rather
-    # than against `src/main.roc`'s string: the manifest is what release-please actually
+    # than against `src/cli/main.roc`'s string: the manifest is what release-please actually
     # writes, so this fails on the release PR itself if the bump did not reach the plugin,
     # rather than one release later when someone reads the plugin card and sees 0.9.0.
     # jq, not sed: a sed pattern returns "" on a minified file, a prerelease suffix, or
@@ -3299,7 +3299,7 @@ b_seed_analyze! = |ctx| {
     # response). Set equality in BOTH directions, extracted multi-line-aware
     # because err_out! calls wrap. A count check would have passed — the sets
     # were both 27.
-    code_diff = Str.trim(sh!("cat src/*.roc | tr '\\n' ' ' | grep -oE '(err_out!|emit_err!)\\( *\"[a-z_]+\"' | grep -oE '\"[a-z_]+\"' | tr -d '\"' | sort -u > /tmp/stride_src_codes.$$; jq -r '.properties.error.properties.code.enum[]' schemas/v3/envelope.json | sort > /tmp/stride_enum_codes.$$; diff /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$; rm -f /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$"))
+    code_diff = Str.trim(sh!("cat src/cli/*.roc | tr '\\n' ' ' | grep -oE '(err_out!|emit_err!)\\( *\"[a-z_]+\"' | grep -oE '\"[a-z_]+\"' | tr -d '\"' | sort -u > /tmp/stride_src_codes.$$; jq -r '.properties.error.properties.code.enum[]' schemas/v3/envelope.json | sort > /tmp/stride_enum_codes.$$; diff /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$; rm -f /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$"))
     check!("every error code the source emits is in the contract, and vice versa", code_diff == "")?
     # ── the 1.0 additivity guards (§9c). Set EQUALITY above cannot see a coordinated
     # DELETION — remove a code from the source and the enum together and it stays

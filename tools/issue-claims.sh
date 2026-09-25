@@ -37,7 +37,7 @@ awk '
   /^[[:space:]]*#/ { if (!n) { f=FILENAME; s=FNR; t="" } n++; l=$0; sub(/^[[:space:]]*#[[:space:]]?/,"",l); t=t" "l; next }
   { if (n) { print f"\t"s"\t"t; n=0 } }
   END { if (n) print f"\t"s"\t"t }
-' src/*.roc tests/*.roc > "$BLOCKS" \
+' src/cli/*.roc tests/*.roc > "$BLOCKS" \
   || { echo "issue-claims: Roc extraction failed — a listed file or glob is missing" >&2; exit 5; }
 
 # Markdown gets its own extractor: `^#` would key on HEADINGS, so a block is a

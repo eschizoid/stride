@@ -439,7 +439,7 @@ exit 0, because they are reported in the payload and the command did what it was
 
 Four facts above no longer describe the tree, and the decisions survive all four.
 
-The engine's entry point is `src/main.roc` rather than `app.roc`, renamed in #394 on
+The engine's entry point is `src/cli/main.roc` rather than `app.roc`, renamed in #394 on
 2026-09-07, so §2's dispatch shell and §9's `roc build src/app.roc` both name a path that
 has moved. The split by concern is unchanged.
 

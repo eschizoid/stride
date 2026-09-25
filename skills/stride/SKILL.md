@@ -392,7 +392,7 @@ against, which is why `just test` builds in between.
 
 Toolchain: Roc's new (Zig) compiler (one nightly, pinned as the default of
 `.github/actions/setup-roc`; no per-job overrides, and `tools/pin-check.sh` enforces
-it) + basic-cli 0.23 (the line named in `src/main.roc`'s platform URL; e2e
+it) + basic-cli 0.23 (the line named in `src/cli/main.roc`'s platform URL; e2e
 holds this sentence to that header) + builtin JSON (roc-json dropped). The
 full `just test` (expects, build, and e2e) runs green; the roc#10469 perf gate is
 fixed. Build flags take `=` (`--output=`, `--main=`) and always `--opt=dev`, since the

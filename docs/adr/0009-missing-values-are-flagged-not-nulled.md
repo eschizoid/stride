@@ -61,7 +61,7 @@ reasons, revisit the question, because omission would then be free to adopt.
 ## Consequences
 
 Consumers read flags and never magnitudes, and the coach skill is the first of them. The
-contract is recorded as the comment block in `src/Output.roc` and as the warning in
+contract is recorded as the comment block in `src/cli/Output.roc` and as the warning in
 `skills/stride/SKILL.md`. The e2e suite pins both flag presence and flag discrimination,
 comparing a power ride against an HR-only row.
 

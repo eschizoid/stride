@@ -56,12 +56,12 @@ The history below is kept because the traps in it are real and will apply to the
 Every nightly from **2026-08-05 onward segfaulted the compiler** on this codebase.
 Verified on 2026-08-08: the 2026-08-05, 2026-08-06, 2026-08-07 and 2026-08-08 nightlies
 all crash; 2026-08-04
-(the pin at the time) passes: `roc test src/Render.roc`. Nightlies live in `roc-lang/nightlies`, not
+(the pin at the time) passes: `roc test src/cli/Render.roc`. Nightlies live in `roc-lang/nightlies`, not
 `roc-lang/roc`; note the tag format changed mid-window (`2026-August-05` → `2026-08-06`).
 
 What breaks, precisely:
 
-- `roc test src/Render.roc` → `Segmentation fault (SIGSEGV) in the Roc compiler`, fault
+- `roc test src/cli/Render.roc` → `Segmentation fault (SIGSEGV) in the Roc compiler`, fault
   address 0x0. Bisected in-repo to the **24th** expect, the one calling
   `Render.progress_section(..., Ef, Asc)`.
 - `roc check` is fine on the new nightlies. `roc build` is not — see below; an earlier
@@ -73,7 +73,7 @@ Two traps if you re-test this:
 - **`roc test` on a copy outside the repo silently runs 0 expects** and exits 0 or 1 —
   it needs the file in its project context under its own module name. A bisect done on
   `/tmp/RenderCut.roc` "passes" every variant and tells you nothing. Bisect in-place
-  (copy the original aside, truncate `src/Render.roc`, restore with a shell `trap`), and
+  (copy the original aside, truncate `src/cli/Render.roc`, restore with a shell `trap`), and
   assert on the reported test COUNT, not just the exit code.
 - The macOS asset you want is `roc_nightly-macos_x86_64-*`; `uname -m` on this machine
   reports `x86_64`, and the apple_silicon build dies with "bad CPU type in executable".
@@ -159,7 +159,7 @@ old compiler before trusting a bump.
 
 ## CLI flags: `=`, never a space
 
-`--output=stride`, `--main=src/main.roc`, `--opt=dev`, `--target=x64musl`. A
+`--output=stride`, `--main=src/cli/main.roc`, `--opt=dev`, `--target=x64musl`. A
 space-separated `--output stride` fails with a confusing error — it broke a release
 build once and a `roc test --main` invocation another time.
 

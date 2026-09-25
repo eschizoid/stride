@@ -49,10 +49,11 @@ rest of it, all runnable locally — run them before pushing. Every one is netwo
 except `issue-claims`, which reads the tracker:
 
 ```bash
-roc check src/main.roc      # CI runs this on three OSes before anything else
+roc check src/cli/main.roc      # CI runs this on three OSes before anything else
 just e2e-sync              # mock-backed sync/skips/stops/notes drivers; no network
 sh tools/skill-shapes.sh   # the coach skill's payload keys vs schemas/v3
 sh tools/blob-safety.sh    # every TEXT decode is projected through CAST(... AS TEXT)
+sh tools/adapter-fixtures.sh # every strength-notes adapter is registered, in pinned order, with its sample (ADR 0018)
 sh tools/command-claims.sh # commands the docs name vs the binary's own table (needs ./stride)
 just layer-check           # every engine import points down the layer table (ADR 0016)
 just pin-check             # every workflow nightly-tag site agrees with the two compiler pins
@@ -61,9 +62,21 @@ just viz-test              # the window's expects + assertion-count pins, on the
 just issue-claims          # issue-state claims in comments (needs `gh` auth)
 ```
 
+The engine's modules live in `src/cli/` beside its `main.roc` — one folder per
+app, as `src/viz/` — and `src/core` and `src/strength` are packages, each with a
+`package.roc` header. `tools/layer-check.sh` scans exactly those four folders and
+fails on a `.roc` anywhere else, `src/` itself included.
+
 A NEW MODULE needs a row in `tools/layer-check.sh`'s table before CI will take it —
 `roc check` and the whole suite pass without one, so the layer gate is the check
 nothing else reminds you of.
+
+A NEW STRENGTH-NOTES ADAPTER is a module in the `src/strength` package (one file
+per app; `Adapter.roc` states the contract), a row in `src/cli/Strength.roc`'s ordered
+table, and a real `sample` of the app's share text pinned by the module's own
+expect — `tools/adapter-fixtures.sh` refuses any of the three without the others
+(ADR 0018). A package's header file is `package.roc`; the app header that declares
+the package names it by path, so nothing about that name is compiler-imposed.
 
 Prerequisites for everything above: `just`, `jq`, `sqlite3`, `gh`, and the Roc
 nightlies: the ENGINE pin is the default in `.github/actions/setup-roc/action.yml`
@@ -276,7 +289,7 @@ These are measured toolchain behaviors, not style opinions.
 - **`roc test`'s summary line can lie about the outcome.** When an expect fails to
   COMPILE, it prints `All (N) tests passed` with a silently smaller N and exits **1**. The
   exit code is the truth; the text is not. Read the code, and watch the count.
-- **`roc test --main=src/main.roc <module>` runs every expect reachable from the app**, not
+- **`roc test --main=src/cli/main.roc <module>` runs every expect reachable from the app**, not
   just that module's — so the number it prints is not that file's test count.
 - **The e2e harness aborts at the first failing `check!`.** A negative control that
   reverts two fixes at once only ever proves the first one. Revert one at a time.
@@ -317,7 +330,7 @@ These are measured toolchain behaviors, not style opinions.
 ## Product invariants (enforced by code and/or e2e — keep them true)
 
 - Machine JSON: **absence is FLAGGED or DISCRIMINATED, never silently zeroed** (ADR 0009,
-  whose three classes this summarises — `src/Output.roc`'s comment block is the contract of
+  whose three classes this summarises — `src/cli/Output.roc`'s comment block is the contract of
   record). *Impossible-zero* fields keep 0 as the magnitude and ship a `_known`
   companion decoded from the STORED NULL (`CASE WHEN … IS NULL`) — `np_w`/`power_known`,
   `avg_hr`/`hr_known`. (`ftp_used` is impossible-zero but ships NO flag: analyze always
@@ -455,7 +468,7 @@ tests on linux/macOS/Windows, then build + e2e on macOS), `release-please.yml`
 Releases are automated by **release-please**, driven by **Conventional Commit** messages
 on `main`. You never tag or edit the version by hand.
 
-- **Version lives in `src/main.roc`** (`version = "stride X.Y.Z" # x-release-please-version`)
+- **Version lives in `src/cli/main.roc`** (`version = "stride X.Y.Z" # x-release-please-version`)
   and `.release-please-manifest.json`. release-please bumps both — **do not hand-edit the
   version for a release.**
 - **Commit types → version bump** (config sets `bump-minor-pre-major` only — the

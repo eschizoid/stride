@@ -69,7 +69,7 @@ SH
 chmod +x "$C/MacOS/launcher" "$C/MacOS/stride-viz"
 
 # release-please maintains this marker; a second number would drift
-VERSION=$(sed -n 's/^version = "stride \(.*\)".*/\1/p' src/main.roc | head -1)
+VERSION=$(sed -n 's/^version = "stride \(.*\)".*/\1/p' src/cli/main.roc | head -1)
 [ -n "$VERSION" ] || VERSION="0.0.0-dev"
 
 cat > "$C/Info.plist" <<PLIST
