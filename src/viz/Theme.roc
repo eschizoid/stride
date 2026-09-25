@@ -1,4 +1,5 @@
 import rr.Color
+import core.Sports
 
 Theme :: [].{
 	# window geometry — every view maps through the same paddings
@@ -78,8 +79,22 @@ Theme :: [].{
 	# type-required fallback for List.get, not a reachable branch.
 	sport_color : Str -> Color.Rgba
 	sport_color = |sport| {
-		h = List.fold(Str.to_utf8(sport), 0, |a, b| a + U8.to_u64(b))
-		match List.get(sport_palette, h % List.len(sport_palette)) {
+		# the FAMILY'S position in the shared sports table, not a hash of the
+		# name: the table has six rows against eight colours, so every family
+		# the engine knows gets a distinct one. A byte-sum hash does not - it
+		# put Ride and WeightTraining on the same colour, which is the two
+		# sports a mixed athlete trains most. Position here is the table's own
+		# order, fixed in source, so it is stable across renders in a way the
+		# BAR's order (which sorts by volume) is not.
+		canon = Sports.canonical(sport)
+		rows = List.map_with_index(Sports.families, |f, i| { f, i })
+		slot = match List.first(List.keep_if(rows, |x| List.contains(x.f.sports, canon))) {
+			Ok(x) => x.i
+			# a sport with no family row is its own population: fall back to a
+			# hash of the name, which is stable and may collide
+			Err(_) => List.fold(Str.to_utf8(sport), 0, |a, b| a + U8.to_u64(b))
+		}
+		match List.get(sport_palette, slot % List.len(sport_palette)) {
 			Ok(c) => c
 			Err(_) => ink_faint
 		}
@@ -90,4 +105,16 @@ Theme :: [].{
 	# stable across calls and reorderings
 	expect List.contains(sport_palette, sport_color("Ride"))
 	expect List.contains(sport_palette, sport_color("WeightTraining"))
+
+	# DISTINCT families get distinct colours - the property a byte-sum hash
+	# did not hold, and the pair below is the one it collided on
+	expect sport_color("Ride") != sport_color("WeightTraining")
+	expect sport_color("Rowing") != sport_color("Ride")
+	expect sport_color("Rowing") != sport_color("WeightTraining")
+	expect sport_color("Run") != sport_color("Ride")
+
+	# a family's members share its colour, so a Workout and a WeightTraining
+	# session read as the same sport wherever both appear
+	expect sport_color("Workout") == sport_color("WeightTraining")
+	expect sport_color("GravelRide") == sport_color("Ride")
 }
