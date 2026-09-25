@@ -1405,12 +1405,15 @@ nav_icon! = |frame, v, x, y, c| {
 		frame.line!({ start: { x: x, y: y + 11.0 }, end: { x: x + 12.0, y: y + 2.0 }, stroke: Draw.stroke(c, 1.5) })
 		frame.circle!({ center: { x: x + 9.0, y: y + 4.0 }, radius: 2.0, style: Draw.filled(c) })
 	} else if v == 8 {
-		# career: a flag on its pole — the distance covered, claimed. A FILLED
-		# block on a stem rather than a drawn path, because every neighbouring
-		# mark is strokes: at this size a shape is told apart by its silhouette
-		# before any of its detail resolves, and two paths of similar weight
-		# read alike however differently they bend. The ramp beside it carries
-		# a dot high on the right, so nothing here puts one in that corner.
+		# career: a flag on its pole — the distance covered, claimed. What
+		# separates it is COMPOSITION, not fill: half the set is already solid,
+		# so a block alone would not tell it apart. No sibling pairs one
+		# off-centre block with a stem — the other solids are full-width strips
+		# (table, plan), a four-cell grid (heat) and baseline-anchored columns
+		# (zones), and ramp's fill is a small dot riding a diagonal. That dot
+		# is why nothing here puts one high on the right: at this size a dot
+		# resolves before any path does, and two marks that share one read
+		# alike however differently they bend.
 		#
 		# Every view tests for its OWN number and the chain ends here with no
 		# catch-all. The caller paints and labels each chip regardless, so a
