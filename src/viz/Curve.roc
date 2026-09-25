@@ -27,6 +27,13 @@ Curve :: [].{
 		ctl_c = Theme.ctl_c
 		tsb_c = Theme.tsb_c
 		model.curve_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+		# a chip click re-fetches the curve in the background; while that is in
+		# flight the note says so, so a click that takes a beat reads as working
+		# rather than dead (the clicked chip also highlights immediately below).
+		# The old curve stays on screen underneath until the fresh one lands.
+		if model.reloading {
+			Text.from("loading ${I64.to_str(model.curve_days)}d window…", model.font).size(12).draw!(frame, { pos: { x: 36.0, y: 92.0 }, color: Theme.gold_c, align: (Top, Left) })
+		}
 		# one line above the hint row: the chips own the top-right band, and
 		# hint plus caption together outgrow a single bottom line
 		model.fit_lbl.draw!(frame, { pos: { x: win_w - 40.0, y: win_h - 52.0 }, color: ink_muted, align: (Top, Right) })

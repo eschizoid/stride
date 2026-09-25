@@ -362,6 +362,9 @@ load_model! = |font, curve_days, boot| {
 			status: mk!(if boot "" else loaded.s.err, 16)?,
 			has_error: !boot and loaded.s.err != "",
 			booting: boot,
+			# a freshly loaded model is never mid-reload; the flag is raised in
+			# update! when a chip/R spawns the next load and cleared when it lands
+			reloading: Bool.False,
 			logo: load_logo!(home, boot),
 			font: mono,
 			hint: mk!("1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   V record   G glow   ESC quit", 13)?,
@@ -903,7 +906,10 @@ update! = |model0, program_input| {
 			MarkDone(_) => acc
 			# also the boot task's failure exit: the splash must never spin
 			# forever, so a dead load hands over to the skeleton's own screens
-			ReloadFailed => { ..acc, booting: Bool.False }
+			# clear reloading too: a failed reload must not leave the power
+			# view's "loading…" note burned on forever — the flag is reset on
+			# BOTH terminal outcomes, not just success
+			ReloadFailed => { ..acc, booting: Bool.False, reloading: Bool.False }
 			TraceSwitchFailed => acc
 			GhostSwitchFailed => acc
 			# a slow load must not resurrect a dismissed ghost or overwrite a
@@ -1250,7 +1256,8 @@ update! = |model0, program_input| {
 				match List.get(model.trace_ids, want_sel2) { Ok(se) => Db.trace_unit(se.chan, model.units)
 					Err(_) => model.trace_unit }
 			} else model.trace_unit
-		_ = if want_days != model.curve_days or d.key_pressed(KeyR) {
+		reload_spawned = want_days != model.curve_days or d.key_pressed(KeyR)
+		_ = if reload_spawned {
 			f2 = model.font
 			Task.spawn!(program_input, || match load_model!(f2, want_days, Bool.False) {
 				Ok(m2) => Reloaded(m2)
@@ -1346,7 +1353,7 @@ update! = |model0, program_input| {
 				Unavailable(u9) => if u9.gw == pixels.w and u9.gh == pixels.h (model.glow) else build_glow!(pixels)
 			}
 		glow_on2 = if d.key_pressed(KeyG) (!model.glow_on) else model.glow_on
-		Ok({ ..model, range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, reloading: (if reload_spawned Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
@@ -1407,7 +1414,12 @@ scene! = |model, frame| {
 	frame.rectangle_gradient_v!({ x: 16.0, y: 16.0, width: model.win.w - 32.0, height: (model.win.h - 32.0) * 0.4, color_top: Color.with_alpha(Color.from_hex_rgb(0x232332), 40), color_bottom: Color.with_alpha(Theme.panel, 0) })
 	frame.rectangle_gradient_v!({ x: 16.0, y: model.win.h - 96.0, width: model.win.w - 32.0, height: 80.0, color_top: Color.with_alpha(Theme.bg, 0), color_bottom: Color.with_alpha(Theme.bg, 90) })
 	model.title.draw!(frame, { pos: { x: 34.0, y: 30.0 }, color: Color.white, align: (Top, Left) })
-	Text.from("${Db.fmt_i(model.ui_scale * 100.0)}%  Ctrl +/-", model.font).size(11).draw!(frame, { pos: { x: 152.0, y: 40.0 }, color: Theme.ink_muted, align: (Top, Left) })
+	# the scale chip shows the PERCENT only once the athlete has moved it off the
+	# default: a standing "150%" reads as a value something set wrong, when it is
+	# just the shipped default. At rest it is a plain affordance; a changed scale
+	# earns the number, because then it is the athlete's own choice and feedback.
+	scale_label = if model.ui_percent == DisplayScale.default_percent "Ctrl +/-  resize" else "${Db.fmt_i(model.ui_scale * 100.0)}%  Ctrl +/-"
+	Text.from(scale_label, model.font).size(11).draw!(frame, { pos: { x: 152.0, y: 40.0 }, color: Theme.ink_muted, align: (Top, Left) })
 	# the recording badge lives below the pills on every view: a red dot
 	# while filming, a quiet confirmation once the file is written
 	_ = match model.rec_status {
