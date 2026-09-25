@@ -1405,21 +1405,20 @@ nav_icon! = |frame, v, x, y, c| {
 		frame.line!({ start: { x: x, y: y + 11.0 }, end: { x: x + 12.0, y: y + 2.0 }, stroke: Draw.stroke(c, 1.5) })
 		frame.circle!({ center: { x: x + 9.0, y: y + 4.0 }, radius: 2.0, style: Draw.filled(c) })
 	} else if v == 8 {
-		# career: a summit profile — the years as a skyline, the highest peak
-		# marked. Not the ramp's single diagonal, which this view used to
-		# borrow: a straight rise is one block's trend, and a career is the
-		# range of them. The peak dot sits ON the apex, the same way the view
-		# marks its best month.
+		# career: a flag on its pole — the distance covered, claimed. A FILLED
+		# block on a stem rather than a drawn path, because every neighbouring
+		# mark is strokes: at this size a shape is told apart by its silhouette
+		# before any of its detail resolves, and two paths of similar weight
+		# read alike however differently they bend. The ramp beside it carries
+		# a dot high on the right, so nothing here puts one in that corner.
 		#
 		# Every view tests for its OWN number and the chain ends here with no
-		# catch-all: a view added without a mark draws an empty chip, which is
-		# visible, rather than silently wearing its neighbour's — which is how
-		# career came to borrow the ramp's.
-		frame.line!({ start: { x: x, y: y + 11.0 }, end: { x: x + 4.0, y: y + 6.0 }, stroke: Draw.stroke(c, 1.5) })
-		frame.line!({ start: { x: x + 4.0, y: y + 6.0 }, end: { x: x + 6.5, y: y + 8.5 }, stroke: Draw.stroke(c, 1.5) })
-		frame.line!({ start: { x: x + 6.5, y: y + 8.5 }, end: { x: x + 10.0, y: y + 2.0 }, stroke: Draw.stroke(c, 1.5) })
-		frame.line!({ start: { x: x + 10.0, y: y + 2.0 }, end: { x: x + 12.0, y: y + 6.0 }, stroke: Draw.stroke(c, 1.5) })
-		frame.circle!({ center: { x: x + 10.0, y: y + 2.0 }, radius: 1.6, style: Draw.filled(c) })
+		# catch-all. The caller paints and labels each chip regardless, so a
+		# view with no arm shows a labelled chip with an empty mark slot: the
+		# gap is visible, and it belongs to the view that lacks a mark instead
+		# of borrowing whichever neighbour a catch-all happened to reach.
+		frame.line!({ start: { x: x + 2.5, y: y + 12.0 }, end: { x: x + 2.5, y: y + 1.0 }, stroke: Draw.stroke(c, 1.5) })
+		frame.rectangle!({ x: x + 3.5, y: y + 1.5, width: 6.5, height: 5.0, style: Draw.filled(c) })
 	}
 }
 
