@@ -27,14 +27,14 @@ default: test
 
 # type-check without building
 check:
-    {{roc}} check src/main.roc
+    {{roc}} check src/cli/main.roc
 
 # build the binary. --opt=dev on purpose, but for BUILD TIME (~14s against ~2min), not
 # correctness: the optimized backend's miscompile (#32) was fixed by the 2026-08-17 pin.
 # CI and the release workflow both pin dev, so match them here or `just test` tests a
 # binary nobody ships.
 build:
-    {{roc}} build src/main.roc --output=stride --opt=dev {{linker}}
+    {{roc}} build src/cli/main.roc --output=stride --opt=dev {{linker}}
 
 # full suite: pure expects -> fresh build (must succeed!) -> effectful e2e
 test:
@@ -47,14 +47,18 @@ test:
     # every engine module takes --main: core is imported TRANSITIVELY (Command
     # reaches it through Metrics), and a bare module run carries no package
     # map, so every expect below the import fails to resolve
-    {{roc}} test --main=src/main.roc src/Metrics.roc
-    {{roc}} test --main=src/main.roc src/Render.roc
-    {{roc}} test --main=src/main.roc src/Drain.roc
-    {{roc}} test --main=src/main.roc src/Csv.roc
-    {{roc}} test --main=src/main.roc src/Command.roc
-    {{roc}} test --main=src/main.roc src/Config.roc
-    {{roc}} test --main=src/main.roc src/Streams.roc
-    {{roc}} test --main=src/main.roc src/Strength.roc
+    {{roc}} test --main=src/cli/main.roc src/cli/Metrics.roc
+    {{roc}} test --main=src/cli/main.roc src/cli/Render.roc
+    {{roc}} test --main=src/cli/main.roc src/cli/Drain.roc
+    {{roc}} test --main=src/cli/main.roc src/cli/Csv.roc
+    {{roc}} test --main=src/cli/main.roc src/cli/Command.roc
+    {{roc}} test --main=src/cli/main.roc src/cli/Config.roc
+    {{roc}} test --main=src/cli/main.roc src/cli/Streams.roc
+    # Strength carries the src/strength package's expects too: a package
+    # module that imports core resolves only through an app declaring both,
+    # so a bare run of src/strength/Peloton.roc cannot find Units, and
+    # --main reads its sibling import as an app path
+    {{roc}} test --main=src/cli/main.roc src/cli/Strength.roc
     just build
     just e2e
 
@@ -78,6 +82,13 @@ skill-shapes:
 # Reads source only — no binary, no database.
 blob-safety:
     sh tools/blob-safety.sh
+
+# Every strength-notes adapter (src/strength) is a row in src/cli/Strength.roc's
+# ordered table, in pinned order, and ships a real sample of its app's share
+# text pinned by its own expect (ADR 0018). Reads source only — no binary, no
+# database.
+adapter-fixtures:
+    sh tools/adapter-fixtures.sh
 
 # validate this machine's real payloads against the published contract
 # (schemas/v3/*.json). e2e runs the same validator against fixtures; this is the

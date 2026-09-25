@@ -110,7 +110,7 @@ where the definition has to be true.
   `week_bounds`, `activity_intensity`, `activity_power_ladder`, `weekly_ramp`,
   `career_totals`, `monthly_load` and `monthly_threshold`. Moving those into
   Roc would mean each binary running its own SQL and agreeing by luck.
-  `src/Schema.roc` defines one more, `monthly_ride_ftp`, which only the engine
+  `src/cli/Schema.roc` defines one more, `monthly_ride_ftp`, which only the engine
   reads, so nothing has to agree about it.
 - A core module holds a definition about a value already in hand. `Fmt.mmss`
   and `Fmt.hundredths` are the first two, because both surfaces had written

@@ -2,6 +2,8 @@
 
 Status: Accepted
 Date: 2026-09-18
+Amended: 2026-09-25 — the adapters became a package, the tonnage spine gained
+a minimum, and the fixture gate the consequences promised now exists.
 
 ## Context
 
@@ -32,20 +34,27 @@ builder or a FIT device get correct data with no parsing, so the general path
 is the primary path.
 
 Second, description adapters. When the structured endpoint returns nothing,
-the activity's description is tried against a table of parsers in
-`src/Lift.roc`, a pure module in the engine core layer. Each adapter is one
-row holding a name and a parse function, the same shape as `Sports.families`,
-so adding a format is editing the table rather than building a subsystem. Each
-adapter lands with expects that pin a real sample description as a fixture.
-The first adapter that matches wins, so the table's order is part of the
-decision. The Peloton share grammar is the first row.
+the activity's description is tried against an ordered table of parsers in
+`src/cli/Strength.roc`. The parsers themselves live in the `src/strength`
+package, one module per app, so a new format is a new file rather than a
+longer one. `Adapter.roc` states the contract every module keeps: pure
+`Str -> List(SetRow)`, tolerant of junk, silent on formats it does not
+recognize, and shipping a real sample of its app's share text as a top-level
+`sample` that its own expects parse. `Peloton.roc` is the first adapter. Each
+table row holds a name and a parse function, the same shape as
+`Sports.families`, so registering a module is one row. The first adapter that
+matches wins, so the table's order is part of the decision.
 
 Third, honest absence. A strength session with no structured sets and no
 parseable description stays a session. It counts for load and for the streak,
 and it contributes nothing to tonnage, so the arc shows a gap. The career spine
 already bridges months without a threshold with a dashed line, and the
-tonnage spine treats a month where the paste habit slipped the same way. A
-description that parses badly returns no match rather than failing the sync.
+tonnage spine treats a month where the paste habit slipped the same way. The
+spine also refuses to draw at all until three months carry tonnage (#521):
+two points are a line through anything, and a trend drawn from them would
+claim a direction the data cannot support, so below three the view states the
+count it has and the count it needs instead of a curve. A description that
+parses badly returns no match rather than failing the sync.
 
 Every `strength_sets` row carries a provenance column naming its source, the
 structured endpoint or the adapter that parsed it. `load_coverage` already
@@ -55,15 +64,16 @@ of being flattened into equality with device-recorded rows.
 
 ## Consequences
 
-A new app's paste format costs one table row, one parse function, and one
-real fixture in an expect. Nothing else changes, and the gate suite refuses
-an adapter that arrives without its sample.
+A new app's paste format costs one module in `src/strength`, one table row,
+and the sample its expects pin. `tools/adapter-fixtures.sh` holds the three to
+each other in CI: the table's order is pinned, every row names a module and
+every module has a row, and every module carries its sample and an expect that
+parses it. An adapter that arrives without its sample does not land.
 
 The parser is a fallback by construction. If Strava ever opens structured
 strength data to API writes, or Peloton starts filling the structured
 endpoint, the adapters stop being consulted, because the first layer wins
 whenever it has rows.
 
-The sync must start storing descriptions for strength-class activities. The
-schema change belongs to the #478 implementation, and the decision is
-recorded here ahead of it.
+The sync stores descriptions for strength-class activities; that schema change
+landed with the #478 implementation.

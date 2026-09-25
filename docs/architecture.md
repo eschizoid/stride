@@ -1,6 +1,6 @@
 # How stride is shaped, in one page
 
-Two programs share one athlete: the **engine** (`src/main.roc`, basic-cli, the
+Two programs share one athlete: the **engine** (`src/cli/main.roc`, basic-cli, the
 `stride` CLI the coach drives) and the **window** (`src/viz/main.roc`,
 roc-ray, the board the human watches). They compile on different platforms,
 against different compiler pins, and never import each other's code.

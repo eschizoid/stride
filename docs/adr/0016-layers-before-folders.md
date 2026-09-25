@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-09-07
-Updated: 2026-09-17
+Updated: 2026-09-25
 
 ## Context
 
@@ -79,3 +79,18 @@ unchanged.
 `Sports` moved into the core package, so it is no longer an engine module. Both
 binaries need the sport vocabulary, and the module was already pure with no
 imports of its own.
+
+## Update, 2026-09-25
+
+The engine's modules now live in `src/cli/`, beside its `main.roc`, so `src/`
+holds four folders and no loose modules: `cli/` and `viz/` are the two apps,
+each importing its own siblings, and `core/` and `strength/` are packages, each
+with a `package.roc` header that the app headers name by path. That is the
+layout the context above found workable for `src/viz/` — an app file inside
+the folder with its modules — applied to the engine, not the layer folders the
+probe rejected. The decision stands: a folder says which BINARY a module
+belongs to, never which layer, and `tools/layer-check.sh` still enforces the
+layers over the import lists, now scanning those four folders and failing on a
+`.roc` anywhere else, `src/` itself included. `strength` is the first package to
+depend on another package (`core`); the header syntax allows it and the pinned
+compiler resolves it.

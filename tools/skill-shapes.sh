@@ -63,7 +63,7 @@ awk '
 ' "$SK" > "$LOGICAL"
 
 # The command->schema join, derived from the table rather than restated.
-grep '\(reads\|writes\)("' src/Command.roc | while IFS= read -r line; do
+grep '\(reads\|writes\)("' src/cli/Command.roc | while IFS= read -r line; do
   n=$(printf '%s\n' "$line" | grep -o '\(reads\|writes\)("[^"]*"' | head -1 | sed 's/.*("//;s/"$//')
   s=$(printf '%s\n' "$line" | grep -o '"[a-z_]*\.json"' | tail -1 | tr -d '"')
   if [ -n "$n" ] && [ -n "$s" ]; then printf '%s\t%s\n' "$n" "$s"; fi

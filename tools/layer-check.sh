@@ -46,26 +46,29 @@ rank_of() { case "$1" in core) echo 0 ;; io) echo 1 ;; analytics) echo 2 ;; app)
 
 fail=0
 
-# ── the gate scans three homes: src/*.roc (the engine), src/viz/*.roc (the
-# window) and src/core/*.roc (the package BOTH import). A module anywhere else
-# means the layout changed under the gate — fail loudly rather than let an
-# unscanned file ride along. Only DIRECT children of the two subdirectories
-# count; a nested src/viz/sub/X.roc is outside the scan and must trip like any
-# other stray.
+# ── the gate scans four homes, one folder each: src/cli/*.roc (the engine),
+# src/viz/*.roc (the window), src/core/*.roc (the package BOTH apps import)
+# and src/strength/*.roc (the engine's strength-notes parser package). A .roc
+# anywhere else — src/ itself included — means the layout changed under the
+# gate: fail loudly rather than let an unscanned file ride along. Only DIRECT
+# children of the four folders count; a nested src/cli/sub/X.roc is outside
+# the scan and must trip like any other stray.
 #
-# core is scanned for STRAYS but has no layer row: it sits beneath both homes
-# by construction, since a package cannot import an app's modules. The
-# direction it must not take — core importing engine or viz code — is not
-# expressible in Roc, so no rule here has to enforce it.
-stray=$(find src -mindepth 2 -name '*.roc' ! \( -path 'src/viz/*' ! -path 'src/viz/*/*' \) ! \( -path 'src/core/*' ! -path 'src/core/*/*' \))
+# The packages are scanned for STRAYS but have no layer rows: each sits
+# beneath the app that declares it by construction, since a package cannot
+# import an app's modules. The direction they must not take — a package
+# importing engine or viz code — is not expressible in Roc, so no rule here
+# has to enforce it. Between them, core's header declares no dependencies, so
+# core cannot import strength; strength declares core and may.
+stray=$(find src -name '*.roc' ! \( -path 'src/cli/*' ! -path 'src/cli/*/*' \) ! \( -path 'src/viz/*' ! -path 'src/viz/*/*' \) ! \( -path 'src/core/*' ! -path 'src/core/*/*' \) ! \( -path 'src/strength/*' ! -path 'src/strength/*/*' \))
 if [ -n "$stray" ]; then
   echo "layer-check: .roc files outside the scanned homes:" >&2
   echo "$stray" >&2
   fail=1
 fi
 
-# ── engine: src/*.roc, dependency direction only ever points down ──
-for f in src/*.roc; do
+# ── engine: src/cli/*.roc, dependency direction only ever points down ──
+for f in src/cli/*.roc; do
   m=$(basename "$f" .roc)
   ml=$(layer_of "$m")
   if [ "$ml" = UNKNOWN ]; then
