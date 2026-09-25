@@ -4,6 +4,7 @@ import rr.Text
 import core.Fmt
 import core.Sports
 import core.Units
+import Db
 import Hud
 import Theme
 import Ui
@@ -104,6 +105,24 @@ Career :: [].{
 			lim = 3.0 * (d_prev).abs().min((d_next).abs())
 			if (m).abs() > lim ((if m < 0.0 (-1.0) else 1.0) * lim) else m
 		}
+	}
+	# career_totals groups by sport_type; the composition bar wants FAMILIES,
+	# so members are merged on Sports.canonical and the result re-sorted
+	# widest-first. The sort is not decoration: the fold pins a family to
+	# where its LARGEST member first appeared and only adds to it afterwards,
+	# so a family split evenly across two members can finish larger than one
+	# that sat between them and would otherwise draw behind it.
+	fold_families : List(Db.CareerSport) -> List({ sport : Str, sessions : I64 })
+	fold_families = |sports| {
+		folded = List.fold(sports, [], |acc, s| {
+			c = Sports.canonical(s.sport)
+			if List.is_empty(List.keep_if(acc, |x| x.sport == c)) {
+				List.append(acc, { sport: c, sessions: s.sessions })
+			} else {
+				List.map(acc, |x| if x.sport == c ({ ..x, sessions: x.sessions + s.sessions }) else x)
+			}
+		})
+		List.sort_with(folded, |a, b| b.sessions.order_relative_to(a.sessions))
 	}
 
 	# one KPI card: a racked-up value, its unit, its caption
@@ -484,18 +503,15 @@ Career :: [].{
 			# — into neighbouring segments that share a colour, since the colour
 			# is the family's. Folding first makes each family one segment, and
 			# makes the bar's vocabulary the same as the spine's, which is what
-			# F cycles through. Order survives the fold: career_totals arrives
-			# widest-first, so a family lands where its largest member sat.
+			# F cycles through. The fold pins a family to where its LARGEST
+			# member first appeared and only adds to it after, so a family
+			# split fairly evenly across two members can overtake one that sat
+			# between them and still be drawn behind it - the widest-first
+			# order is re-established by sorting the folded list, not inherited
+			# from career_totals.
 			comp_y = win_h - 66.0
 			comp_w = plot_r - 36.0
-			comp_fams = List.fold(model.career_sports, [], |acc, s| {
-				c = Sports.canonical(s.sport)
-				if List.is_empty(List.keep_if(acc, |x| x.sport == c)) {
-					List.append(acc, { sport: c, sessions: s.sessions })
-				} else {
-					List.map(acc, |x| if x.sport == c ({ ..x, sessions: x.sessions + s.sessions }) else x)
-				}
-			})
+			comp_fams = fold_families(model.career_sports)
 			tot_ss = List.fold(comp_fams, 0.I64, |a, s| a + s.sessions)
 			if tot_ss > 0 {
 				hovered = List.fold_try!(List.map_with_index(comp_fams, |s, i| { s, i }), { x0: 36.0, hit: { sport: "", sessions: 0.I64, pct: 0.I64, cx: 0.0 } }, |st, y| {
@@ -538,3 +554,39 @@ Career :: [].{
 # tenths-of-kg, so 1197 kg carries to 1.2t
 expect Career.spine_label(Metric, 11970, "tonnage", "WeightTraining") == "1.2t"
 expect Career.spine_label(Metric, 8500, "tonnage", "WeightTraining") == "850kg"
+
+# members of one family merge and the segment carries the family head, so a
+# gravel ride and a road ride are one Ride rather than two neighbours wearing
+# the same colour
+expect {
+	got = Career.fold_families([
+		{ sport: "Ride", sessions: 485, hours10: 0, dist_m: 0.0 },
+		{ sport: "Rowing", sessions: 208, hours10: 0, dist_m: 0.0 },
+		{ sport: "Workout", sessions: 52, hours10: 0, dist_m: 0.0 },
+		{ sport: "GravelRide", sessions: 11, hours10: 0, dist_m: 0.0 },
+		{ sport: "WeightTraining", sessions: 5, hours10: 0, dist_m: 0.0 },
+	])
+	got
+		== [
+			{ sport: "Ride", sessions: 496 },
+			{ sport: "Rowing", sessions: 208 },
+			{ sport: "WeightTraining", sessions: 57 },
+		]
+}
+
+# widest-first is ENFORCED by the sort, not inherited from the input order: a
+# family split across two members can total more than one that sat between
+# them, and must still be drawn first. Rowing's 250 + 80 beats Ride's 300 + 5
+# even though Ride's largest member came first.
+expect {
+	got = Career.fold_families([
+		{ sport: "Ride", sessions: 300, hours10: 0, dist_m: 0.0 },
+		{ sport: "Rowing", sessions: 250, hours10: 0, dist_m: 0.0 },
+		{ sport: "VirtualRow", sessions: 80, hours10: 0, dist_m: 0.0 },
+		{ sport: "GravelRide", sessions: 5, hours10: 0, dist_m: 0.0 },
+	])
+	got == [{ sport: "Rowing", sessions: 330 }, { sport: "Ride", sessions: 305 }]
+}
+
+# a sport with no family row stands alone rather than joining anything
+expect Career.fold_families([{ sport: "Yoga", sessions: 3, hours10: 0, dist_m: 0.0 }]) == [{ sport: "Yoga", sessions: 3 }]

@@ -52,9 +52,12 @@ Theme :: [].{
 	# sport IDENTITY colours, deliberately a DIFFERENT hue set from zone_ramp:
 	# the composition bar used to recycle the intensity ramp by position, so a
 	# colour meant "this sport" in one place and "hard effort" in another, and
-	# two sports could share one colour. These are keyed to the sport NAME
-	# (sport_color) so a sport wears the same colour every render, and the set
-	# avoids the ramp's blue/teal/red so a reader never confuses the two scales.
+	# two sports could share one colour. These are keyed to the sport's FAMILY
+	# (sport_color) so a sport wears the same colour every render and every
+	# view, and the set avoids the ramp's hues so the two scales never read as
+	# one. The palette must stay LONGER than `Sports.families`: the surplus
+	# slots are where sports with no family row go, and with none of them a
+	# stranger would have to wear a family's colour.
 	# each hue holds clear of ALL FIVE ramp stops - grey (0x4d5a68), blue
 	# (0x4f8ef7), teal (0x2dd4bf), tan (0xd8c27a) and red (0xe0645b): warm
 	# orange, violet, spring green, magenta-pink, orchid, indigo, sienna,
@@ -72,11 +75,13 @@ Theme :: [].{
 		Color.from_hex_rgb(0x8a9a3b),
 	]
 
-	# a stable colour for a sport, from a hash of its NAME (byte sum) into the
-	# palette — position-independent, so reordering the bar never re-colours a
-	# sport, and the same sport matches across views. `sport_palette` is a
-	# non-empty literal, so `h % 8` is always in range; the Err arm is the
-	# type-required fallback for List.get, not a reachable branch.
+	# a stable colour for a sport, taken from its FAMILY's row in the shared
+	# sports table. Independent of what is drawn, so reordering a bar never
+	# re-colours a sport and the same sport matches across views; independent
+	# of the NAME, so every member of a family shares one colour and two
+	# different families can never share one. Every index is in range - the
+	# family's own row, or a surplus slot past the table's end - so the Err arm
+	# is the type-required fallback for List.get, not a reachable branch.
 	sport_color : Str -> Color.Rgba
 	sport_color = |sport| {
 		# the FAMILY'S position in the shared sports table, not a hash of the
