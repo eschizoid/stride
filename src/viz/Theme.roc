@@ -90,9 +90,18 @@ Theme :: [].{
 		rows = List.map_with_index(Sports.families, |f, i| { f, i })
 		slot = match List.first(List.keep_if(rows, |x| List.contains(x.f.sports, canon))) {
 			Ok(x) => x.i
-			# a sport with no family row is its own population: fall back to a
-			# hash of the name, which is stable and may collide
-			Err(_) => List.fold(Str.to_utf8(sport), 0, |a, b| a + U8.to_u64(b))
+			# a sport with no family row is its own population, and it takes
+			# only the slots BEYOND the families' own: hashing it across the
+			# whole palette would let Yoga or Crossfit wear Ride's colour,
+			# which is the collision this function exists to prevent, moved
+			# rather than removed. Unknowns may still collide with each other.
+			# The spare range is the palette minus the table; keep the palette
+			# longer than `Sports.families` or there is nowhere safe to put them.
+			Err(_) => {
+				h = List.fold(Str.to_utf8(sport), 0, |a, b| a + U8.to_u64(b))
+				nfam = List.len(Sports.families)
+				nfam + (h % (List.len(sport_palette) - nfam))
+			}
 		}
 		match List.get(sport_palette, slot % List.len(sport_palette)) {
 			Ok(c) => c
@@ -101,10 +110,16 @@ Theme :: [].{
 	}
 
 	# every sport's colour is a palette member (never the ink_faint fallback,
-	# which no in-range index reaches), and the map is name-keyed so it is
-	# stable across calls and reorderings
+	# which no in-range index reaches), and the map is FAMILY-keyed, so it is
+	# stable across calls and across any reordering of what is drawn
 	expect List.contains(sport_palette, sport_color("Ride"))
 	expect List.contains(sport_palette, sport_color("WeightTraining"))
+
+	# an unrecognised sport never wears a known family's colour: it draws from
+	# the slots past the table's end
+	expect sport_color("Yoga") != sport_color("Ride")
+	expect sport_color("Crossfit") != sport_color("WeightTraining")
+	expect List.contains(sport_palette, sport_color("Yoga"))
 
 	# DISTINCT families get distinct colours - the property a byte-sum hash
 	# did not hold, and the pair below is the one it collided on

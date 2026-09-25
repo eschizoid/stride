@@ -606,8 +606,9 @@ Db :: [].{
 	# should be, but it cannot answer what the SELECTED family did - and a
 	# spine whose family has no threshold data (strength before any sets are
 	# pasted) would otherwise put nothing of its own on screen. Grouped on the
-	# stored `sport_family`, which a trigger canonicalizes on insert, so the
-	# spelling matches the families monthly_threshold names.
+	# stored `sport_family` falling back to `sport_type`, the same expression
+	# monthly_threshold groups on: a trigger canonicalizes the column on
+	# insert, and the COALESCE covers a row written before it existed.
 	FamMonth : { fam : Str, month : Str, load : I64, sessions : I64 }
 	load_fam_months! : Sqlite.Db => List(FamMonth)
 	load_fam_months! = |db|

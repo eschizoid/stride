@@ -470,19 +470,35 @@ Career :: [].{
 
 			# ── composition: one stacked bar of every sport by session count,
 			# widest first, filling as the sweep runs. Each segment wears its
-			# sport's IDENTITY colour (Theme.sport_color, keyed to the name, not
-			# the position) so the colour means the sport and nothing else — the
-			# bar used to recycle the intensity ramp, which made the colours
-			# meaningless and collided with the zone scale. A segment too narrow
-			# for its inline label loses the text but not the meaning: hover it
-			# and the tooltip names the sport, its count and its share, so the
-			# far-right slivers are readable instead of mute. Never a pie: an
-			# angle is harder to compare than a length.
+			# IDENTITY colour (Theme.sport_color) so the colour means the sport
+			# and nothing else — the bar used to recycle the intensity ramp,
+			# which made the colours meaningless and collided with the zone
+			# scale. A segment too narrow for its inline label loses the text
+			# but not the meaning: hover it and the tooltip names it, its count
+			# and its share, so the far-right slivers are readable instead of
+			# mute. Never a pie: an angle is harder to compare than a length.
+			#
+			# Segments are FAMILIES, not raw sport_types: career_totals groups
+			# by sport_type, which splits one sport an athlete thinks of as one
+			# — a gravel ride from a road ride, a Workout from a WeightTraining
+			# — into neighbouring segments that share a colour, since the colour
+			# is the family's. Folding first makes each family one segment, and
+			# makes the bar's vocabulary the same as the spine's, which is what
+			# F cycles through. Order survives the fold: career_totals arrives
+			# widest-first, so a family lands where its largest member sat.
 			comp_y = win_h - 66.0
 			comp_w = plot_r - 36.0
-			tot_ss = List.fold(model.career_sports, 0.I64, |a, s| a + s.sessions)
+			comp_fams = List.fold(model.career_sports, [], |acc, s| {
+				c = Sports.canonical(s.sport)
+				if List.is_empty(List.keep_if(acc, |x| x.sport == c)) {
+					List.append(acc, { sport: c, sessions: s.sessions })
+				} else {
+					List.map(acc, |x| if x.sport == c ({ ..x, sessions: x.sessions + s.sessions }) else x)
+				}
+			})
+			tot_ss = List.fold(comp_fams, 0.I64, |a, s| a + s.sessions)
 			if tot_ss > 0 {
-				hovered = List.fold_try!(List.map_with_index(model.career_sports, |s, i| { s, i }), { x0: 36.0, hit: { sport: "", sessions: 0.I64, pct: 0.I64, cx: 0.0 } }, |st, y| {
+				hovered = List.fold_try!(List.map_with_index(comp_fams, |s, i| { s, i }), { x0: 36.0, hit: { sport: "", sessions: 0.I64, pct: 0.I64, cx: 0.0 } }, |st, y| {
 					seg = I64.to_f32(y.s.sessions) / I64.to_f32(tot_ss) * comp_w * p
 					col = Theme.sport_color(y.s.sport)
 					x0 = st.x0
