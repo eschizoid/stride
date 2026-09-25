@@ -417,26 +417,47 @@ Career :: [].{
 			}
 
 			# ── composition: one stacked bar of every sport by session count,
-			# widest first, filling as the sweep runs. Segments narrower than a
-			# label keep their colour and lose their text - the bar still totals
-			# the whole career either way. Never a pie: an angle is harder to
-			# compare than a length.
+			# widest first, filling as the sweep runs. Each segment wears its
+			# sport's IDENTITY colour (Theme.sport_color, keyed to the name, not
+			# the position) so the colour means the sport and nothing else — the
+			# bar used to recycle the intensity ramp, which made the colours
+			# meaningless and collided with the zone scale. A segment too narrow
+			# for its inline label loses the text but not the meaning: hover it
+			# and the tooltip names the sport, its count and its share, so the
+			# far-right slivers are readable instead of mute. Never a pie: an
+			# angle is harder to compare than a length.
 			comp_y = win_h - 66.0
 			comp_w = plot_r - 36.0
 			tot_ss = List.fold(model.career_sports, 0.I64, |a, s| a + s.sessions)
 			if tot_ss > 0 {
-				_ = List.fold_try!(List.map_with_index(model.career_sports, |s, i| { s, i }), 36.0, |x0, y| {
+				hovered = List.fold_try!(List.map_with_index(model.career_sports, |s, i| { s, i }), { x0: 36.0, hit: { sport: "", sessions: 0.I64, pct: 0.I64, cx: 0.0 } }, |st, y| {
 					seg = I64.to_f32(y.s.sessions) / I64.to_f32(tot_ss) * comp_w * p
-					col = match List.get(Theme.zone_ramp, y.i % 5) { Ok(c) => c
-						Err(_) => ink_faint }
+					col = Theme.sport_color(y.s.sport)
+					x0 = st.x0
+					# the FULL segment width for hit-testing (not the 1.5px-inset
+					# draw width), so even a one-pixel sliver is hoverable
+					over = model.mouse_y >= comp_y and model.mouse_y <= comp_y + 12.0 and model.mouse_x >= x0 and model.mouse_x < x0 + seg
+					hit2 = if over and seg > 0.5 { sport: y.s.sport, sessions: y.s.sessions, pct: (I64.to_f32(y.s.sessions) / I64.to_f32(tot_ss) * 100.0).round_to_i64_try().ok_or(0), cx: x0 + seg / 2.0 } else st.hit
 					if seg > 1.0 {
 						frame.rounded_rectangle!({ x: x0, y: comp_y, width: (seg - 1.5).max(1.0), height: 12.0, radius: 3.0, segments: 3, style: Draw.filled(Color.with_alpha(col, 190)) })
 						if seg > 64.0 {
-							Text.from("${y.s.sport} ${I64.to_str(y.s.sessions)}", model.font).size(10).draw!(frame, { pos: { x: x0 + 6.0, y: comp_y + 15.0 }, color: Color.with_alpha(col, 220), align: (Top, Left) })
+							Text.from("${y.s.sport} ${I64.to_str(y.s.sessions)}", model.font).size(10).draw!(frame, { pos: { x: x0 + 6.0, y: comp_y + 15.0 }, color: Color.with_alpha(col, 235), align: (Top, Left) })
 						}
 					}
-					Ok(x0 + seg)
+					Ok({ x0: x0 + seg, hit: hit2 })
 				})
+				# the tooltip for whatever segment the pointer is on, drawn ABOVE
+				# the bar so it never hides the thing it describes
+				h = match hovered { Ok(v) => v.hit
+					Err(_) => { sport: "", sessions: 0.I64, pct: 0.I64, cx: 0.0 } }
+				if h.sport != "" {
+					label = "${h.sport}  ${I64.to_str(h.sessions)} sessions  ${I64.to_str(h.pct)}%"
+					tw = 8.0 * U64.to_f32(Str.count_utf8_bytes(label)) + 20.0
+					tx = F32.max(36.0, F32.min(h.cx - tw / 2.0, comp_w + 36.0 - tw))
+					frame.rounded_rectangle!({ x: tx, y: comp_y - 30.0, width: tw, height: 22.0, radius: 6.0, segments: 5, style: Draw.filled(Theme.card) })
+					frame.rounded_rectangle!({ x: tx + 10.0, y: comp_y - 23.0, width: 8.0, height: 8.0, radius: 2.0, segments: 3, style: Draw.filled(Theme.sport_color(h.sport)) })
+					Text.from(label, model.font).size(11).draw!(frame, { pos: { x: tx + 24.0, y: comp_y - 25.0 }, color: Color.white, align: (Top, Left) })
+				}
 			}
 		}
 		Text.from("click to settle   F  sport   TAB  form board   R  reload   S  screenshot   ESC  quit", model.font).size(13).draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })

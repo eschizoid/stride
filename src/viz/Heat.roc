@@ -60,9 +60,12 @@ Heat :: [].{
 				}
 				sty = if a == 0 (Draw.filled(Theme.card)) else Draw.filled(Color.with_alpha(Theme.ctl_c, (match I64.to_u8_try(a) { Ok(v) => v
 					Err(_) => 255 })))
-				# past event days ringed: a white halo under the cell reads as an outline
+				# event days ringed in GOLD, the app's colour for earned/marked
+				# things (levels, records) — a white halo read as a leftover
+				# selection cursor, gold reads as "this day is marked", and the
+				# legend below names it so the meaning is not left to guess
 				if List.contains(model.heat_events, h.day) {
-					frame.rounded_rectangle!({ x: x0 - 2.0, y: y0 - 2.0, width: cell + 4.0, height: cell + 4.0, radius: 4.0, segments: 3, style: Draw.filled(Color.with_alpha(Color.white, 160)) })
+					frame.rounded_rectangle!({ x: x0 - 2.0, y: y0 - 2.0, width: cell + 4.0, height: cell + 4.0, radius: 4.0, segments: 3, style: Draw.filled(Color.with_alpha(Theme.gold_c, 200)) })
 				}
 				frame.rounded_rectangle!({ x: x0, y: y0, width: cell, height: cell, radius: 3.0, segments: 3, style: sty })
 				# month tick above each month's first Monday (day-of-month 01..07:
@@ -88,7 +91,16 @@ Heat :: [].{
 				Ok({ col: col2, prev_row: r })
 			})
 		}
-		model.heat_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
+		# the gold-ring legend, shown only when a marked day is on screen: a
+		# swatch and its word, so the ring in the grid is never a mystery.
+		# Placed on the hint row, left of the keys, in the ring's own colour.
+		if !(List.is_empty(model.heat_events)) {
+				frame.rounded_rectangle!({ x: 36.0, y: win_h - 27.0, width: 10.0, height: 10.0, radius: 3.0, segments: 3, style: Draw.filled(Color.with_alpha(Theme.gold_c, 200)) })
+				Text.from("event day", model.font).size(11).draw!(frame, { pos: { x: 52.0, y: win_h - 28.0 }, color: ink_faint, align: (Top, Left) })
+				model.heat_hint.draw!(frame, { pos: { x: 150.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
+			} else {
+				model.heat_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
+			}
 		Ok({})
 	}
 }

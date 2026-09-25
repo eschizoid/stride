@@ -97,6 +97,10 @@ Ui :: [].{
 		# True from launch until the first background load lands: the window
 		# opens instantly and renders the splash instead of empty views
 		booting : Bool,
+		# True while a range-chip (or R) reload is in flight: the power view
+		# shows a "loading" note so a chip click that takes a second to fetch
+		# reads as working rather than dead. Cleared when the fresh model lands.
+		reloading : Bool,
 		# the brand mark as the authored PNG, loaded for the splash only -
 		# hand-drawn approximations of the logo kept drifting from the real
 		# artwork, so the splash renders the artwork itself
