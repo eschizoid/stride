@@ -17,8 +17,11 @@
 #
 # Reads source only: no binary, no database. The order is asserted EXACTLY,
 # not as a floor — under a floor a deleted row stops matching while the gate
-# prints the same clean line a healthy tree prints. An extractor that matches
-# nothing is a failure, not a pass: silence is never a measurement.
+# prints the same clean line a healthy tree prints. Rows are read from the
+# `adapters = [...]` literal alone, comments stripped, so a row-shaped string
+# in a comment or a doc example elsewhere in the file is not a registration.
+# An extractor that matches nothing is a failure, not a pass: silence is
+# never a measurement.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -27,8 +30,11 @@ EXPECT_ORDER="${EXPECT_ORDER:-peloton}"
 table=src/cli/Strength.roc
 pkg=src/strength
 
-# the rows in table order: `{ name: "peloton", parse: Peloton.parse }`
-rows=$(grep -oE '\{ name: "[a-z0-9_]+", parse: [A-Z][A-Za-z0-9]*\.parse \}' "$table") || true
+# the rows in table order: `{ name: "peloton", parse: Peloton.parse }`, taken
+# from the literal's own lines (its opening line through the first `]`, which
+# is the same line when the list fits on one) with comments removed
+block=$(awk '/^    adapters = \[/{p=1} p{print} p && /\]/{exit}' "$table" | sed 's/#.*//')
+rows=$(printf '%s\n' "$block" | grep -oE '\{ name: "[a-z0-9_]+", parse: [A-Z][A-Za-z0-9]*\.parse \}') || true
 if [ -z "$rows" ]; then
   echo "adapter-fixtures: no adapter rows found in $table — the extractor matched nothing, refusing to pass blind" >&2
   exit 1
@@ -52,7 +58,8 @@ if [ "$row_mods" != "$pkg_mods" ]; then
 fi
 for m in $pkg_mods; do
   f="$pkg/$m.roc"
-  if ! grep -qE '^    sample : Str$' "$f"; then
+  # trailing whitespace tolerated so a CRLF checkout does not read as a missing sample
+  if ! grep -qE '^    sample : Str[[:space:]]*$' "$f"; then
     echo "adapter-fixtures: $f has no top-level \`sample : Str\` — an adapter ships a real sample of its app's share text" >&2
     fail=1
   fi

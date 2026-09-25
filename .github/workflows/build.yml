@@ -96,7 +96,7 @@ jobs:
           done
           # --main on every engine module: core is imported transitively, and a
           # bare module run carries no package map
-          for m in Metrics Render Drain Csv Command Config Streams; do
+          for m in Metrics Render Drain Csv Command Config Streams Strength; do
             echo "--- roc test --main=src/cli/main.roc src/cli/$m.roc ---"
             roc test --main=src/cli/main.roc "src/cli/$m.roc"
           done
