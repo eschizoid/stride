@@ -1400,10 +1400,30 @@ nav_icon! = |frame, v, x, y, c| {
 		frame.rectangle!({ x: x + 1.0, y: y + 7.0, width: 3.0, height: 5.0, style: Draw.filled(c) })
 		frame.rectangle!({ x: x + 5.0, y: y + 3.0, width: 3.0, height: 9.0, style: Draw.filled(Color.with_alpha(c, 150)) })
 		frame.rectangle!({ x: x + 9.0, y: y + 5.0, width: 3.0, height: 7.0, style: Draw.filled(c) })
-	} else {
+	} else if v == 7 {
 		# ramp: the climb and its rider
 		frame.line!({ start: { x: x, y: y + 11.0 }, end: { x: x + 12.0, y: y + 2.0 }, stroke: Draw.stroke(c, 1.5) })
 		frame.circle!({ center: { x: x + 9.0, y: y + 4.0 }, radius: 2.0, style: Draw.filled(c) })
+	} else if v == 8 {
+		# career: a flag on its pole
+		#
+		# What separates this mark is COMPOSITION, not fill: half the set is
+		# already solid, so being filled would tell it apart from nothing. No
+		# sibling pairs one off-centre block with a stem — the other solids
+		# are full-width strips (table), a page under a header bar (plan), a
+		# four-cell grid (heat) and baseline-anchored columns (zones), and
+		# ramp's fill is a small dot riding a diagonal. That dot is why
+		# nothing here puts one high on the right: at this size a dot resolves
+		# before any path does, and two marks that share one read alike
+		# however differently they bend.
+		#
+		# Every view tests for its OWN number and the chain ends here with no
+		# catch-all. The caller paints and labels each chip regardless, so a
+		# view with no arm shows a labelled chip with an empty mark slot: the
+		# gap is visible, and it belongs to the view that lacks a mark instead
+		# of borrowing whichever neighbour a catch-all happened to reach.
+		frame.line!({ start: { x: x + 2.5, y: y + 12.0 }, end: { x: x + 2.5, y: y + 1.0 }, stroke: Draw.stroke(c, 1.5) })
+		frame.rectangle!({ x: x + 3.5, y: y + 1.5, width: 6.5, height: 5.0, style: Draw.filled(c) })
 	}
 }
 
