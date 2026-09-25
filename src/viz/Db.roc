@@ -601,6 +601,29 @@ Db :: [].{
 				})
 		}
 
+	# one family's own month: the load it carried and how many sessions built
+	# it. `monthly_load` pools every sport, which is what the career ground
+	# should be, but it cannot answer what the SELECTED family did - and a
+	# spine whose family has no threshold data (strength before any sets are
+	# pasted) would otherwise put nothing of its own on screen. Grouped on the
+	# stored `sport_family` falling back to `sport_type`, the same expression
+	# monthly_threshold groups on: a trigger canonicalizes the column on
+	# insert, and the COALESCE covers a row written before it existed.
+	FamMonth : { fam : Str, month : Str, load : I64, sessions : I64 }
+	load_fam_months! : Sqlite.Db => List(FamMonth)
+	load_fam_months! = |db|
+		match Sqlite.query!({ db, query: "SELECT CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS f, CAST(substr(a.start_local, 1, 7) AS TEXT) AS m, CAST(ROUND(COALESCE(SUM(am.tss), 0)) AS INTEGER) AS ld, COUNT(*) AS n FROM activities a JOIN activity_metrics am ON am.activity_id = a.id GROUP BY f, m ORDER BY f, m", bindings: [] }) {
+			Err(_) => []
+			Ok(rows) =>
+				List.keep_oks(rows, |r| {
+					f = r.str("f") ? |_| "bad"
+					m = r.str("m") ? |_| "bad"
+					ld = r.i64("ld") ? |_| "bad"
+					n = r.i64("n") ? |_| "bad"
+					Ok({ fam: f, month: m, load: ld, sessions: n })
+				})
+		}
+
 	# every RIDE power PR: the best-ever watts per duration rung and the day
 	# each record first landed. Ordering is on the TRUE stored watts - the
 	# round is presentation, so two efforts that DISPLAY equal still rank by

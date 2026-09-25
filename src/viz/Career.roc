@@ -4,6 +4,7 @@ import rr.Text
 import core.Fmt
 import core.Sports
 import core.Units
+import Db
 import Hud
 import Theme
 import Ui
@@ -105,6 +106,24 @@ Career :: [].{
 			if (m).abs() > lim ((if m < 0.0 (-1.0) else 1.0) * lim) else m
 		}
 	}
+	# career_totals groups by sport_type; the composition bar wants FAMILIES,
+	# so members are merged on Sports.canonical and the result re-sorted
+	# widest-first. The sort is not decoration: the fold pins a family to
+	# where its LARGEST member first appeared and only adds to it afterwards,
+	# so a family split evenly across two members can finish larger than one
+	# that sat between them and would otherwise draw behind it.
+	fold_families : List(Db.CareerSport) -> List({ sport : Str, sessions : I64 })
+	fold_families = |sports| {
+		folded = List.fold(sports, [], |acc, s| {
+			c = Sports.canonical(s.sport)
+			if List.is_empty(List.keep_if(acc, |x| x.sport == c)) {
+				List.append(acc, { sport: c, sessions: s.sessions })
+			} else {
+				List.map(acc, |x| if x.sport == c ({ ..x, sessions: x.sessions + s.sessions }) else x)
+			}
+		})
+		List.sort_with(folded, |a, b| b.sessions.order_relative_to(a.sessions))
+	}
 
 	# one KPI card: a racked-up value, its unit, its caption
 	card! : Draw.Frame, Text.Font, F32, F32, Str, Str => {}
@@ -184,7 +203,17 @@ Career :: [].{
 
 			# ── header: the career racking up. The final figures are the true
 			# ones; the count-up is the feeling of accumulation, nothing else.
-			tot = List.fold(model.career_sports, { h10: 0.I64, m: 0.0.F64, ss: 0.I64 }, |a, s| { h10: a.h10 + s.hours10, m: a.m + s.dist_m, ss: a.ss + s.sessions })
+			# the cards count the SPINE'S OWN family, not the whole career: on a
+			# single-sport arc, career-wide totals answer a question the view is
+			# not asking - a lifting arc reporting every ride's distance reads as
+			# the lifting's own. career_totals groups by sport_type, so rows fold
+			# through Sports.canonical to reach the family the spine names
+			# (Workout counts as WeightTraining, GravelRide as Ride). The captions
+			# carry the family for the same reason: a scoped number under an
+			# unscoped word is the confusion, not the fix.
+			scoped = if sp.fam == "" (model.career_sports) else List.keep_if(model.career_sports, |s| Sports.canonical(s.sport) == sp.fam)
+			fam_cap = if sp.fam == "" "" else " - ${Str.with_ascii_lowercased(sp.fam)}"
+			tot = List.fold(scoped, { h10: 0.I64, m: 0.0.F64, ss: 0.I64 }, |a, s| { h10: a.h10 + s.hours10, m: a.m + s.dist_m, ss: a.ss + s.sessions })
 			# metres held until here; the card is the last moment (core.Units)
 			dist_whole = (Units.dist_value(model.units, tot.m)).round_to_i64_try().ok_or(0)
 			ease_i = |v| match F32.to_i64_try(I64.to_f32(v) * p) { Ok(x) => x
@@ -192,15 +221,24 @@ Career :: [].{
 			cw = 196.0
 			gap = (win_w - 72.0 - cw * 4.0) / 3.0
 			cx0 = |i| 36.0 + I64.to_f32(i) * (cw + gap)
-			card!(frame, model.font, cx0(0), 96.0, "${I64.to_str(ease_i(tot.h10) // 10)}h", "moving time")
-			card!(frame, model.font, cx0(1), 96.0, "${I64.to_str(ease_i(dist_whole))} ${Units.dist_unit(model.units)}", "distance")
-			card!(frame, model.font, cx0(2), 96.0, I64.to_str(ease_i(tot.ss)), "sessions")
+			card!(frame, model.font, cx0(0), 96.0, "${I64.to_str(ease_i(tot.h10) // 10)}h", "moving time${fam_cap}")
+			# a family that records no distance says so rather than showing a
+			# zero: 0 km under a lifting arc reads as a measurement that came
+			# back empty, when the sport simply does not carry the quantity
+			dist_card = if tot.m <= 0.0 "-" else "${I64.to_str(ease_i(dist_whole))} ${Units.dist_unit(model.units)}"
+			card!(frame, model.font, cx0(1), 96.0, dist_card, "distance${fam_cap}")
+			card!(frame, model.font, cx0(2), 96.0, I64.to_str(ease_i(tot.ss)), "sessions${fam_cap}")
 			# months TRAINED, not months elapsed: the axis spans every month
 			# daily_load carries, and it carries decay days after the last
 			# session too, so a month with no session is on the axis and
 			# must not count as trained.
-			trained = List.fold(months, 0.I64, |a, m| if m.load > 0 (a + 1) else a)
-			card!(frame, model.font, cx0(3), 96.0, I64.to_str(ease_i(trained)), "months trained")
+			trained =
+				if sp.fam == "" {
+					List.fold(months, 0.I64, |a, m| if m.load > 0 (a + 1) else a)
+				} else {
+					List.fold(model.career_fam_months, 0.I64, |a, fm| if fm.fam == sp.fam and fm.sessions > 0 (a + 1) else a)
+				}
+			card!(frame, model.font, cx0(3), 96.0, I64.to_str(ease_i(trained)), "months trained${fam_cap}")
 
 			# ── geometry: months on x, the spine value on the one y axis
 			plot_l = pad
@@ -245,6 +283,25 @@ Career :: [].{
 			# what the withheld spine is waiting for, said where the arc would be
 			_ = if !spine_ready {
 				Text.from("tonnage arc: ${U64.to_str(raw_measured)} of 3 months measured — the spine draws at 3", model.font).size(13).draw!(frame, { pos: { x: plot_l + plot_w / 2.0, y: line_top + 24.0 }, color: ink_muted, align: (Top, Center) })
+				# the gate withholds the STROKE, not the measurements: a line
+				# through two points claims a direction two points cannot
+				# support, but the points themselves are measured, and hiding
+				# them leaves an empty plot reading as "no data" when the truth
+				# is "not enough for a trend yet". Each measured month draws as
+				# its own dot, labelled, on a zero-based scale so the heights
+				# compare honestly. Read from cur.rows, not months: the gate
+				# zeroes the latter, which is what silences every other reader.
+				rmax = List.fold(cur.rows, 0.I64, |a, m| if m.ftp10 > a m.ftp10 else a)
+				if rmax > 0 {
+					dot_bot = line_bot - 24.0
+					dot_top = line_top + 72.0
+					List.for_each!(List.map_with_index(cur.rows, |m, i| { m, i }), |x|
+						if x.m.ftp10 > 0 and head_x >= xf(x.i) {
+							dy = dot_bot - (I64.to_f32(x.m.ftp10) / I64.to_f32(rmax)) * (dot_bot - dot_top)
+							frame.circle!({ center: { x: xf(x.i), y: dy }, radius: 4.0, style: Draw.filled(Theme.sport_color(sp.fam)) })
+							Text.from(spine_label(model.units, x.m.ftp10, sp.kind, sp.fam), model.font).size(11).draw!(frame, { pos: { x: xf(x.i), y: dy - 20.0 }, color: Theme.sport_color(sp.fam), align: (Top, Center) })
+						})
+				}
 			} else {
 				{}
 			}
@@ -290,6 +347,20 @@ Career :: [].{
 						frame.line!({ start: { x: bx, y: bars_bot - bh }, end: { x: bx + bw, y: bars_bot - bh }, stroke: Draw.stroke(Color.with_alpha(Theme.ctl_c, 200), 2) })
 					} else {
 						frame.rectangle!({ x: bx, y: bars_bot - bh, width: bw, height: bh, style: Draw.filled(Color.with_alpha(Theme.ctl_c, 90)) })
+					}
+					# the SELECTED family's share of that month, filled from the
+					# baseline in the family's own identity colour. The ground bar
+					# pools every sport, so without this a family whose threshold
+					# history is thin puts nothing of its own on the chart and the
+					# arc reads as a career that never happened. Scaled on the same
+					# lmax as the bar it sits inside, so the two are comparable
+					# rather than each normalised to itself.
+					if sp.fam != "" {
+						fl = List.fold(model.career_fam_months, 0.I64, |a, fm| if fm.fam == sp.fam and fm.month == x.m.month (fm.load) else a)
+						fh = (I64.to_f32(fl) / I64.to_f32(lmax)) * (bars_bot - bars_top) * rise
+						if fh > 0.5 {
+							frame.rectangle!({ x: bx, y: bars_bot - fh, width: bw, height: fh, style: Draw.filled(Color.with_alpha(Theme.sport_color(sp.fam), 210)) })
+						}
 					}
 				}
 			})
@@ -418,19 +489,32 @@ Career :: [].{
 
 			# ── composition: one stacked bar of every sport by session count,
 			# widest first, filling as the sweep runs. Each segment wears its
-			# sport's IDENTITY colour (Theme.sport_color, keyed to the name, not
-			# the position) so the colour means the sport and nothing else — the
-			# bar used to recycle the intensity ramp, which made the colours
-			# meaningless and collided with the zone scale. A segment too narrow
-			# for its inline label loses the text but not the meaning: hover it
-			# and the tooltip names the sport, its count and its share, so the
-			# far-right slivers are readable instead of mute. Never a pie: an
-			# angle is harder to compare than a length.
+			# IDENTITY colour (Theme.sport_color) so the colour means the sport
+			# and nothing else — the bar used to recycle the intensity ramp,
+			# which made the colours meaningless and collided with the zone
+			# scale. A segment too narrow for its inline label loses the text
+			# but not the meaning: hover it and the tooltip names it, its count
+			# and its share, so the far-right slivers are readable instead of
+			# mute. Never a pie: an angle is harder to compare than a length.
+			#
+			# Segments are FAMILIES, not raw sport_types: career_totals groups
+			# by sport_type, which splits one sport an athlete thinks of as one
+			# — a gravel ride from a road ride, a Workout from a WeightTraining
+			# — into neighbouring segments that share a colour, since the colour
+			# is the family's. Folding first makes each family one segment, and
+			# makes the bar's vocabulary the same as the spine's, which is what
+			# F cycles through. The fold pins a family to where its LARGEST
+			# member first appeared and only adds to it after, so a family
+			# split fairly evenly across two members can overtake one that sat
+			# between them and still be drawn behind it - the widest-first
+			# order is re-established by sorting the folded list, not inherited
+			# from career_totals.
 			comp_y = win_h - 66.0
 			comp_w = plot_r - 36.0
-			tot_ss = List.fold(model.career_sports, 0.I64, |a, s| a + s.sessions)
+			comp_fams = fold_families(model.career_sports)
+			tot_ss = List.fold(comp_fams, 0.I64, |a, s| a + s.sessions)
 			if tot_ss > 0 {
-				hovered = List.fold_try!(List.map_with_index(model.career_sports, |s, i| { s, i }), { x0: 36.0, hit: { sport: "", sessions: 0.I64, pct: 0.I64, cx: 0.0 } }, |st, y| {
+				hovered = List.fold_try!(List.map_with_index(comp_fams, |s, i| { s, i }), { x0: 36.0, hit: { sport: "", sessions: 0.I64, pct: 0.I64, cx: 0.0 } }, |st, y| {
 					seg = I64.to_f32(y.s.sessions) / I64.to_f32(tot_ss) * comp_w * p
 					col = Theme.sport_color(y.s.sport)
 					x0 = st.x0
@@ -470,3 +554,39 @@ Career :: [].{
 # tenths-of-kg, so 1197 kg carries to 1.2t
 expect Career.spine_label(Metric, 11970, "tonnage", "WeightTraining") == "1.2t"
 expect Career.spine_label(Metric, 8500, "tonnage", "WeightTraining") == "850kg"
+
+# members of one family merge and the segment carries the family head, so a
+# gravel ride and a road ride are one Ride rather than two neighbours wearing
+# the same colour
+expect {
+	got = Career.fold_families([
+		{ sport: "Ride", sessions: 485, hours10: 0, dist_m: 0.0 },
+		{ sport: "Rowing", sessions: 208, hours10: 0, dist_m: 0.0 },
+		{ sport: "Workout", sessions: 52, hours10: 0, dist_m: 0.0 },
+		{ sport: "GravelRide", sessions: 11, hours10: 0, dist_m: 0.0 },
+		{ sport: "WeightTraining", sessions: 5, hours10: 0, dist_m: 0.0 },
+	])
+	got
+		== [
+			{ sport: "Ride", sessions: 496 },
+			{ sport: "Rowing", sessions: 208 },
+			{ sport: "WeightTraining", sessions: 57 },
+		]
+}
+
+# widest-first is ENFORCED by the sort, not inherited from the input order: a
+# family split across two members can total more than one that sat between
+# them, and must still be drawn first. Rowing's 250 + 80 beats Ride's 300 + 5
+# even though Ride's largest member came first.
+expect {
+	got = Career.fold_families([
+		{ sport: "Ride", sessions: 300, hours10: 0, dist_m: 0.0 },
+		{ sport: "Rowing", sessions: 250, hours10: 0, dist_m: 0.0 },
+		{ sport: "VirtualRow", sessions: 80, hours10: 0, dist_m: 0.0 },
+		{ sport: "GravelRide", sessions: 5, hours10: 0, dist_m: 0.0 },
+	])
+	got == [{ sport: "Rowing", sessions: 330 }, { sport: "Ride", sessions: 305 }]
+}
+
+# a sport with no family row stands alone rather than joining anything
+expect Career.fold_families([{ sport: "Yoga", sessions: 3, hours10: 0, dist_m: 0.0 }]) == [{ sport: "Yoga", sessions: 3 }]

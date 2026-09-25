@@ -132,6 +132,11 @@ Ui :: [].{
 		zone_weeks : List(Db.ZoneWeek),
 		career_spines : List(Db.CareerSpine),
 		career_sports : List(Db.CareerSport),
+		# per-family monthly load and session count, so the career view can show
+		# what the SELECTED family did in each month rather than only the pooled
+		# ground bar. Every family is loaded once, so cycling the spine with F
+		# needs no round trip.
+		career_fam_months : List(Db.FamMonth),
 		# which family's arc the career view is drawing; F cycles it
 		spine_idx : U64,
 		zones_title : Text.Prepared,
