@@ -1400,10 +1400,21 @@ nav_icon! = |frame, v, x, y, c| {
 		frame.rectangle!({ x: x + 1.0, y: y + 7.0, width: 3.0, height: 5.0, style: Draw.filled(c) })
 		frame.rectangle!({ x: x + 5.0, y: y + 3.0, width: 3.0, height: 9.0, style: Draw.filled(Color.with_alpha(c, 150)) })
 		frame.rectangle!({ x: x + 9.0, y: y + 5.0, width: 3.0, height: 7.0, style: Draw.filled(c) })
-	} else {
+	} else if v == 7 {
 		# ramp: the climb and its rider
 		frame.line!({ start: { x: x, y: y + 11.0 }, end: { x: x + 12.0, y: y + 2.0 }, stroke: Draw.stroke(c, 1.5) })
 		frame.circle!({ center: { x: x + 9.0, y: y + 4.0 }, radius: 2.0, style: Draw.filled(c) })
+	} else {
+		# career: a summit profile — the years as a skyline, the highest peak
+		# marked. Not the ramp's single diagonal, which this view used to
+		# borrow: a straight rise is one block's trend, and a career is the
+		# range of them. The peak dot sits ON the apex, the same way the view
+		# marks its best month.
+		frame.line!({ start: { x: x, y: y + 11.0 }, end: { x: x + 4.0, y: y + 6.0 }, stroke: Draw.stroke(c, 1.5) })
+		frame.line!({ start: { x: x + 4.0, y: y + 6.0 }, end: { x: x + 6.5, y: y + 8.5 }, stroke: Draw.stroke(c, 1.5) })
+		frame.line!({ start: { x: x + 6.5, y: y + 8.5 }, end: { x: x + 10.0, y: y + 2.0 }, stroke: Draw.stroke(c, 1.5) })
+		frame.line!({ start: { x: x + 10.0, y: y + 2.0 }, end: { x: x + 12.0, y: y + 6.0 }, stroke: Draw.stroke(c, 1.5) })
+		frame.circle!({ center: { x: x + 10.0, y: y + 2.0 }, radius: 1.6, style: Draw.filled(c) })
 	}
 }
 
