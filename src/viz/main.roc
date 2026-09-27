@@ -275,6 +275,7 @@ load_model! = |font, curve_days, boot| {
 			curve_days,
 			trace_ids: loaded.tids,
 			trace_sel: 0.U64,
+			trace_refetch: Bool.False,
 			trace_day: match List.first(loaded.tids) {
 				Ok(x) => x.day
 				Err(_) => ""
@@ -509,8 +510,13 @@ detail_task! = |home, units, day|
 # from a spawned task (Sqlite parks there).
 # every poll also refreshes the coach corner's note, so the plan view
 # shows the directive that actually arrived last, not launch-time state
-poll_task! : Str => Msg
-poll_task! = |home|
+# `last_id` is the directive the window last applied: a row re-polled
+# before its acknowledgement landed carries that id, and re-reading the
+# picker for it would pay the query once per poll for as long as the
+# acknowledgement keeps losing the write, for a directive that will not be
+# applied again anyway.
+poll_task! : Str, I64 => Msg
+poll_task! = |home, last_id|
 	if home == "" DirectiveNone
 	else match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
 		Err(_) => DirectiveNone
@@ -519,9 +525,10 @@ poll_task! = |home|
 			match Db.poll_directive!(db) {
 				Some(dv) => {
 					# one picker read, only when a session is named - 'none'
-					# dismisses the ghost and names nothing
+					# dismisses the ghost and names nothing - and only on
+					# first delivery
 					names_session = dv.trace_day != "" or (dv.ghost_day != "" and dv.ghost_day != "none")
-					ids = if names_session (Fresh(Db.load_trace_ids!(db))) else Kept
+					ids = if names_session and dv.id != last_id (Fresh(Db.load_trace_ids!(db))) else Kept
 					Directive({ dv, note, ids })
 				}
 				None => Polled(note)
@@ -756,43 +763,45 @@ expect {
 # The selection after the picker is re-read: the same SESSION, found by id
 # in the fresh list, wherever it now sits. A session synced since the old
 # read shifts every position after it, so carrying the old index forward
-# would silently select a neighbour. A shown session absent from the fresh
-# list (deleted since) falls to the newest entry - the only index every
-# non-empty picker has - and an empty picker keeps zero.
-sel_following_id : List(TraceId), U64, List(TraceId) -> U64
+# would silently select a neighbour. `found` says whether the shown session
+# is still there; when it is not, the selection falls to the newest entry -
+# the only index every non-empty picker has - and the caller must fetch
+# that entry, because the samples on screen belong to a session no index
+# names any more. An empty picker keeps zero.
+sel_following_id : List(TraceId), U64, List(TraceId) -> { sel : U64, found : Bool }
 sel_following_id = |old, old_sel, fresh| {
 	cur_id = match List.get(old, old_sel) {
 		Ok(e) => e.id
 		Err(_) => -1
 	}
-	List.fold(List.map_with_index(fresh, |e, i| { e, i }), 0, |s, x| if x.e.id == cur_id x.i else s)
+	List.fold(List.map_with_index(fresh, |e, i| { e, i }), { sel: 0, found: Bool.False }, |s, x| if x.e.id == cur_id ({ sel: x.i, found: Bool.True }) else s)
 }
 
 # the shown session keeps its identity across a re-read that inserted a
-# newer session ahead of it
+# newer session ahead of it, and is reported found
 expect {
 	a = { id: 10, day: "2026-09-01", name: "a", sport: "Ride", chan: "watts" }
 	b = { id: 11, day: "2026-09-02", name: "b", sport: "Ride", chan: "watts" }
 	c = { id: 12, day: "2026-09-03", name: "c", sport: "Ride", chan: "watts" }
 	# shown: b at index 0 of [b, a]; fresh read gained c at the top
-	sel_following_id([b, a], 0, [c, b, a]) == 1
+	sel_following_id([b, a], 0, [c, b, a]) == { sel: 1, found: Bool.True }
 }
 
-# a shown session deleted since the read falls to the newest entry, not to
-# a neighbour that happens to hold its old index
+# a shown session deleted since the read falls to the newest entry and is
+# reported NOT found, so the caller fetches rather than relabels
 expect {
 	a = { id: 10, day: "2026-09-01", name: "a", sport: "Ride", chan: "watts" }
 	b = { id: 11, day: "2026-09-02", name: "b", sport: "Ride", chan: "watts" }
-	sel_following_id([b, a], 0, [a]) == 0
-	and sel_following_id([b, a], 1, [b]) == 0
+	sel_following_id([b, a], 0, [a]) == { sel: 0, found: Bool.False }
+	and sel_following_id([b, a], 1, [b]) == { sel: 0, found: Bool.False }
 }
 
 # an old index past the old list (nothing was shown) and an empty fresh
-# picker both resolve to zero rather than out of range
+# picker both resolve to zero, not found, rather than out of range
 expect {
 	a = { id: 10, day: "2026-09-01", name: "a", sport: "Ride", chan: "watts" }
-	sel_following_id([], 0, [a]) == 0
-	and sel_following_id([a], 0, []) == 0
+	sel_following_id([], 0, [a]) == { sel: 0, found: Bool.False }
+	and sel_following_id([a], 0, []) == { sel: 0, found: Bool.False }
 }
 
 refusals_for :{ has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str }, I64, U64, U64, List(TraceId) -> Str
@@ -1040,14 +1049,24 @@ update! = |model0, program_input| {
 			# a session-naming directive replaces the picker with the one it
 			# was read against, so the refusal below and the selection it
 			# resolves both see the database as it is. The trace cache is
-			# index-aligned to the picker, so it empties with the re-read
-			# (the shown trace stays; only switches fetch), and the selection
-			# follows the shown session by id rather than by position, since
-			# a session synced since boot shifts every position after it.
+			# index-aligned to the picker, so it empties with the re-read,
+			# and the selection follows the shown session by id rather than
+			# by position, since a session synced since boot shifts every
+			# position after it. The shown samples stay unless the shown
+			# session itself is gone: the header names sessions by index, so
+			# leaving those samples under the index the selection fell to
+			# would label one session with another's name - trace_refetch
+			# makes the next frame fetch what the selection now names. A
+			# redelivered directive (its id already applied) changes nothing.
 			Directive(d2) =>
 				match d2.ids {
 					Kept => { ..acc, bus_note: d2.note }
-					Fresh(fresh) => { ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: sel_following_id(acc.trace_ids, acc.trace_sel, fresh) }
+					Fresh(fresh) =>
+						if d2.dv.id == acc.last_directive.id { ..acc, bus_note: d2.note }
+						else {
+							r = sel_following_id(acc.trace_ids, acc.trace_sel, fresh)
+							{ ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: r.sel, trace_refetch: !r.found and !(List.is_empty(fresh)) }
+						}
 				}
 			Reloaded(fresh) => {
 				merged = { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim }
@@ -1294,8 +1313,12 @@ update! = |model0, program_input| {
 				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_sel, |acc, x| if x.e.day == directive.trace_day x.ei else acc)
 			} else want_sel
 		# NoSwitch joins List.get's OutOfBounds in one inferred error union
-		switched = if want_sel2 != model.trace_sel (List.get(model.trace_cache, want_sel2)) else Err(NoSwitch)
-		_ = if want_sel2 != model.trace_sel and (match switched { Ok(_) => Bool.False
+		# a switch is the selection moving, or a refetch the picker re-read
+		# asked for: the shown session is gone and the index it fell to
+		# names a session whose samples are not on screen
+		moving = want_sel2 != model.trace_sel or model.trace_refetch
+		switched = if moving (List.get(model.trace_cache, want_sel2)) else Err(NoSwitch)
+		_ = if moving and (match switched { Ok(_) => Bool.False
 			Err(_) => Bool.True }) {
 			# cache miss only - the normal path answers from memory this frame
 			home2 = model.home
@@ -1313,10 +1336,10 @@ update! = |model0, program_input| {
 			else if wheel.y > 0.1 (model.trace_zoom * 1.15)
 			else if wheel.y < -0.1 (model.trace_zoom / 1.15)
 			else model.trace_zoom
-		trace_zoom2 = if want_sel2 != model.trace_sel (1.0) else F32.min(20.0, F32.max(1.0, zoom_raw))
+		trace_zoom2 = if moving (1.0) else F32.min(20.0, F32.max(1.0, zoom_raw))
 		pan_raw =
 			if view != 2 model.trace_pan
-			else if (d.key_pressed(Key0) and !ctrl) or want_sel2 != model.trace_sel 0.0
+			else if (d.key_pressed(Key0) and !ctrl) or moving 0.0
 			else {
 				pw9 = win.w - Theme.pad_l - Theme.pad_r
 				u9 = F32.min(1.0, F32.max(0.0, (m.x - Theme.pad_l) / pw9))
@@ -1369,7 +1392,7 @@ update! = |model0, program_input| {
 			Err(_) => model.ghost_dur }
 		# a cache hit lands its data this frame; a miss clears rather than
 		# drawing the previous ride under the new day
-		switching = want_sel2 != model.trace_sel
+		switching = moving
 		trace2 = match switched { Ok(sc) => sc.tr
 			Err(_) => if switching ([]) else model.trace }
 		segs2m = match switched { Ok(sc) => sc.sg
@@ -1439,7 +1462,8 @@ update! = |model0, program_input| {
 		# manufacture failing tasks every tick, forever
 		_ = if tick % 60 == 0 and model.home != "" {
 			homep = model.home
-			Task.spawn!(program_input, || poll_task!(homep))
+			lastp = model.last_directive.id
+			Task.spawn!(program_input, || poll_task!(homep, lastp))
 		}
 		# focus mirrors the screen: view, range, the crosshair day, the session
 		cur_day =
@@ -1496,7 +1520,7 @@ update! = |model0, program_input| {
 				Unavailable(u9) => if u9.gw == pixels.w and u9.gh == pixels.h (model.glow) else build_glow!(pixels)
 			}
 		glow_on2 = if d.key_pressed(KeyG) (!model.glow_on) else model.glow_on
-		Ok({ ..model, reloading: (if reload_spawned Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, reloading: (if reload_spawned Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, trace_refetch: Bool.False, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
