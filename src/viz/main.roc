@@ -517,7 +517,13 @@ poll_task! = |home|
 		Ok(db) => {
 			note = Db.load_bus_note!(db)
 			match Db.poll_directive!(db) {
-				Some(dv) => Directive({ dv, note })
+				Some(dv) => {
+					# one picker read, only when a session is named - 'none'
+					# dismisses the ghost and names nothing
+					names_session = dv.trace_day != "" or (dv.ghost_day != "" and dv.ghost_day != "none")
+					ids = if names_session (Fresh(Db.load_trace_ids!(db))) else Kept
+					Directive({ dv, note, ids })
+				}
 				None => Polled(note)
 			}
 		}
@@ -747,7 +753,49 @@ expect {
 	and next_sport([], "") == ""
 }
 
-refusals_for : { has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str }, I64, U64, U64, List(TraceId) -> Str
+# The selection after the picker is re-read: the same SESSION, found by id
+# in the fresh list, wherever it now sits. A session synced since the old
+# read shifts every position after it, so carrying the old index forward
+# would silently select a neighbour. A shown session absent from the fresh
+# list (deleted since) falls to the newest entry - the only index every
+# non-empty picker has - and an empty picker keeps zero.
+sel_following_id : List(TraceId), U64, List(TraceId) -> U64
+sel_following_id = |old, old_sel, fresh| {
+	cur_id = match List.get(old, old_sel) {
+		Ok(e) => e.id
+		Err(_) => -1
+	}
+	List.fold(List.map_with_index(fresh, |e, i| { e, i }), 0, |s, x| if x.e.id == cur_id x.i else s)
+}
+
+# the shown session keeps its identity across a re-read that inserted a
+# newer session ahead of it
+expect {
+	a = { id: 10, day: "2026-09-01", name: "a", sport: "Ride", chan: "watts" }
+	b = { id: 11, day: "2026-09-02", name: "b", sport: "Ride", chan: "watts" }
+	c = { id: 12, day: "2026-09-03", name: "c", sport: "Ride", chan: "watts" }
+	# shown: b at index 0 of [b, a]; fresh read gained c at the top
+	sel_following_id([b, a], 0, [c, b, a]) == 1
+}
+
+# a shown session deleted since the read falls to the newest entry, not to
+# a neighbour that happens to hold its old index
+expect {
+	a = { id: 10, day: "2026-09-01", name: "a", sport: "Ride", chan: "watts" }
+	b = { id: 11, day: "2026-09-02", name: "b", sport: "Ride", chan: "watts" }
+	sel_following_id([b, a], 0, [a]) == 0
+	and sel_following_id([b, a], 1, [b]) == 0
+}
+
+# an old index past the old list (nothing was shown) and an empty fresh
+# picker both resolve to zero rather than out of range
+expect {
+	a = { id: 10, day: "2026-09-01", name: "a", sport: "Ride", chan: "watts" }
+	sel_following_id([], 0, [a]) == 0
+	and sel_following_id([a], 0, []) == 0
+}
+
+refusals_for :{ has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str }, I64, U64, U64, List(TraceId) -> Str
 refusals_for = |dv, cdir, wsel, cur_sel, ids| {
 	segs = List.keep_if([
 		(if dv.view > 8 or dv.view < -1 ("view ${I64.to_str(dv.view)} unknown") else ""),
@@ -874,7 +922,12 @@ Msg : [
 	ReloadFailed,
 	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, sel : U64, day : Str, un : Str, sp : List(Series.Split) }),
 	TraceSwitchFailed,
-	Directive({ dv : Db.Directive, note : Str }),
+	# `ids` is the picker as the database holds it at poll time, read only when
+	# the directive names a session: what a session-naming directive is judged
+	# against, so a session synced since boot is steerable and one deleted
+	# since is refused, rather than either being judged against a boot-time
+	# cache. Kept means the directive named no session and nothing was read.
+	Directive({ dv : Db.Directive, note : Str, ids : [Kept, Fresh(List(TraceId))] }),
 	Polled(Str),
 	DirectiveNone,
 	FocusWritten,
@@ -984,7 +1037,18 @@ update! = |model0, program_input| {
 			# the user closed or switched away from is dropped
 			DayDetail(dd) => if dd.day == acc.detail_day ({ ..acc, detail: dd.lines }) else acc
 			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" } }
-			Directive(d2) => { ..acc, bus_note: d2.note }
+			# a session-naming directive replaces the picker with the one it
+			# was read against, so the refusal below and the selection it
+			# resolves both see the database as it is. The trace cache is
+			# index-aligned to the picker, so it empties with the re-read
+			# (the shown trace stays; only switches fetch), and the selection
+			# follows the shown session by id rather than by position, since
+			# a session synced since boot shifts every position after it.
+			Directive(d2) =>
+				match d2.ids {
+					Kept => { ..acc, bus_note: d2.note }
+					Fresh(fresh) => { ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: sel_following_id(acc.trace_ids, acc.trace_sel, fresh) }
+				}
 			Reloaded(fresh) => {
 				merged = { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim }
 				# R reads the window it was pressed on, and it is the slow path.
