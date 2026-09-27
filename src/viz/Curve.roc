@@ -34,9 +34,11 @@ Curve :: [].{
 		# note sits in the chip band, right-aligned just left of the chips it
 		# describes: the line below the title belongs to the rung tooltip, and
 		# two texts at one anchor overprint whenever a reload and a hover
-		# coincide.
+		# coincide. It names no window - the lit chip already does - so it
+		# stays one short word, and cannot reach the title from the right at
+		# any width the window allows.
 		if model.reloading {
-			Text.from("loading ${I64.to_str(model.curve_days)}d window…", model.font).size(12).draw!(frame, { pos: { x: win_w - 432.0, y: 68.0 }, color: Theme.gold_c, align: (Top, Right) })
+			Text.from("loading…", model.font).size(12).draw!(frame, { pos: { x: win_w - 432.0, y: 68.0 }, color: Theme.gold_c, align: (Top, Right) })
 		}
 		# one line above the hint row: the chips own the top-right band, and
 		# hint plus caption together outgrow a single bottom line

@@ -818,9 +818,9 @@ focus_task! = |home, f|
 # curve over the window before it, and the CP fit across it - three reads.
 # Everything else the model holds (the series, the heat, the career, the
 # plan, the trace) is the same data whatever the window says, so a chip
-# click re-reading all of it through the full loader cost more than a cold
-# start. This is the chip's own path; R still runs the full loader, which
-# is what R is for.
+# click through the full loader repeats, on every switch, the whole read
+# the boot pays once. This is the chip's own path; R still runs the full
+# loader, which is what R is for.
 CurveWindow : { days : I64, c : List(Db.CurvePt), cpv : List(Db.CurvePt), lbls : List({ p : Text.Prepared, d : I64 }), title : Text.Prepared, fit_lbl : Text.Prepared, cp_lbl : Text.Prepared, fit_cp : F32, fit_r2 : F32 }
 
 load_curve_window! : Text.Font, I64 => Try(CurveWindow, [ResourceLimit, ..])
@@ -985,7 +985,18 @@ update! = |model0, program_input| {
 			DayDetail(dd) => if dd.day == acc.detail_day ({ ..acc, detail: dd.lines }) else acc
 			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" } }
 			Directive(d2) => { ..acc, bus_note: d2.note }
-			Reloaded(fresh) => { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim }
+			Reloaded(fresh) => {
+				merged = { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim }
+				# R reads the window it was pressed on, and it is the slow path.
+				# A chip clicked while it ran has since moved curve_days and
+				# landed its own curve for the window now on screen; when the
+				# two disagree that slice is the newer answer and is kept, while
+				# R still refreshes everything the window does not drive. The
+				# reloading flag stays the chip's too, since its request may
+				# still be in flight.
+				if fresh.curve_days == acc.curve_days merged
+				else { ..merged, curve: acc.curve, curve_prev: acc.curve_prev, curve_lbls: acc.curve_lbls, curve_title: acc.curve_title, curve_days: acc.curve_days, fit_lbl: acc.fit_lbl, cp_lbl: acc.cp_lbl, fit_cp: acc.fit_cp, fit_r2: acc.fit_r2, reloading: acc.reloading }
+			}
 			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day, trace_unit: sw.un, trace_splits: sw.sp }
 		})
 	# the coach's word arrives beside the human's input and steers only what
