@@ -39,7 +39,7 @@ Curve :: [].{
 		# the chips already have; the minimum size is a hint the window
 		# manager may ignore, and no anchor left of the chips survives that.
 		if model.reloading {
-			Text.from("loading…", model.font).size(12).draw!(frame, { pos: { x: win_w - 254.0, y: 68.0 }, color: Theme.gold_c, align: (Top, Left) })
+			Text.from("loading...", model.font).size(12).draw!(frame, { pos: { x: win_w - 254.0, y: 68.0 }, color: Theme.gold_c, align: (Top, Left) })
 		}
 		# one line above the hint row: the chips own the top-right band, and
 		# hint plus caption together outgrow a single bottom line

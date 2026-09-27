@@ -9,11 +9,18 @@ Db :: [].{
 	DayLine : { title : Str, stats : Str, extra : Str, zones : List(I64) }
 
 	# the brand atlases carry ASCII; human-authored text (plan details, session
-	# names, rationales) arrives with em-dashes, arrows and checkmarks that
-	# would render as '?'. One gate maps them to ASCII at load time.
+	# names, rationales) arrives with em-dashes, arrows, checkmarks and
+	# ellipses that would render as '?'. One gate maps them to ASCII at load
+	# time. The window's OWN literals must not rely on it either: a glyph the
+	# atlas lacks draws as '?' wherever it is written, so a literal carries
+	# three dots, never the single ellipsis character.
 	ascii_safe : Str -> Str
 	ascii_safe = |s|
-		Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(s, "—", "-"), "–", "-"), "→", "->"), "←", "<-"), "✓", "ok"), "≤", "<="), "≥", ">="), "·", "-")
+		Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(s, "—", "-"), "–", "-"), "→", "->"), "←", "<-"), "✓", "ok"), "≤", "<="), "≥", ">="), "·", "-"), "…", "...")
+
+	# the ellipsis and the em dash are the two glyphs human-authored text
+	# carries most often; both map, each to the ASCII a reader expects of it
+	expect ascii_safe("wait… — done") == "wait... - done"
 	Seg : { kind : Str, start_s : I64, dur_s : I64 }
 	Fit : { cp : F32, w_prime : F32, r2 : F32, points : F32, ok : Bool }
 
