@@ -814,7 +814,57 @@ focus_task! = |home, f|
 # Reload work is Cmd + Sqlite + text preparation — all of it task-legal and
 # none of it update!-legal (the platform panics on Cmd there, by design).
 # update! only ever spawns; results come back through these messages.
+# what a WINDOW change actually depends on: the curve over that window, the
+# curve over the window before it, and the CP fit across it - three reads.
+# Everything else the model holds (the series, the heat, the career, the
+# plan, the trace) is the same data whatever the window says, so a chip
+# click re-reading all of it through the full loader cost more than a cold
+# start. This is the chip's own path; R still runs the full loader, which
+# is what R is for.
+CurveWindow : { days : I64, c : List(Db.CurvePt), cpv : List(Db.CurvePt), lbls : List({ p : Text.Prepared, d : I64 }), title : Text.Prepared, fit_lbl : Text.Prepared, cp_lbl : Text.Prepared, fit_cp : F32, fit_r2 : F32 }
+
+load_curve_window! : Text.Font, I64 => Try(CurveWindow, [ResourceLimit, ..])
+load_curve_window! = |font, curve_days| {
+	home = resolve_home!({})
+	db_path = Str.concat(home, "/.stride/db.sqlite")
+	read = if home == "" ({ c: [], cpv: [] }) else match Sqlite.Db.open!(db_path) {
+		Ok(db) => { c: Db.load_curve!(db, curve_days), cpv: Db.load_curve_prev!(db, curve_days) }
+		Err(_) => { c: [], cpv: [] }
+	}
+	fit = Db.load_fit!(curve_days)
+	fit_text =
+		if fit.ok
+			"CP ${Db.fmt_f(fit.cp)} W · W' ${Db.fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${Db.fmt_f(fit.r2)} from ${Db.fmt_i(fit.points)} bests"
+		else "CP fit unavailable - the engine did not answer"
+	# the same two faces the full loader prepares these labels with, so a
+	# window switch cannot re-set the curve in a different type
+	head = brand_font!(home, "Quicksand-Medium.ttf", 24, font)
+	mono = brand_font!(home, "JetBrainsMono-Regular.ttf", 24, font)
+	mk! = |txt, sz| Text.from(txt, head).size(sz).prepare!()
+	mkm! = |txt, sz| Text.from(txt, mono).size(sz).prepare!()
+	lbls = List.map_try!(read.c, |x| {
+		p = mkm!(I64.to_str(x.dur_s), 12)?
+		Ok({ p, d: x.dur_s })
+	})?
+	Ok({
+		days: curve_days,
+		c: read.c,
+		cpv: read.cpv,
+		lbls,
+		title: mk!("power - this ${I64.to_str(curve_days)}d vs the ${I64.to_str(curve_days)}d before it", 15)?,
+		fit_lbl: mk!(Db.ascii_safe(fit_text), 14)?,
+		cp_lbl: mkm!("CP ${Db.fmt_f(fit.cp)}W", 12)?,
+		fit_cp: if fit.ok (fit.cp) else 0.0,
+		fit_r2: if fit.ok (fit.r2) else 0.0,
+	})
+}
+
 Msg : [
+	# a window change's answer, carrying the window it answers so a reply
+	# that arrives after the athlete has already clicked another chip is
+	# recognised as stale and dropped rather than painted over the newer one
+	CurveReloaded(CurveWindow),
+	CurveReloadFailed(I64),
 	GhostSwitched({ tr : List(F32), du : F32, sel : I64, day : Str }),
 	GhostSwitchFailed,
 	Shot(Try({}, Capture.ScreenshotError)),
@@ -912,6 +962,14 @@ update! = |model0, program_input| {
 			# view's "loading…" note burned on forever — the flag is reset on
 			# BOTH terminal outcomes, not just success
 			ReloadFailed => { ..acc, booting: Bool.False, reloading: Bool.False }
+			# only the answer to the CURRENT window lands; curve_days moved on
+			# the click, so an older reply's days no longer match and it is
+			# dropped whole - including its reloading flag, which the newer
+			# request still owns
+			CurveReloaded(w) =>
+				if w.days != acc.curve_days acc
+				else { ..acc, curve: w.c, curve_prev: w.cpv, curve_lbls: w.lbls, curve_title: w.title, fit_lbl: w.fit_lbl, cp_lbl: w.cp_lbl, fit_cp: w.fit_cp, fit_r2: w.fit_r2, reloading: Bool.False }
+			CurveReloadFailed(days) => if days != acc.curve_days acc else { ..acc, reloading: Bool.False }
 			TraceSwitchFailed => acc
 			GhostSwitchFailed => acc
 			# a slow load must not resurrect a dismissed ghost or overwrite a
@@ -1259,11 +1317,19 @@ update! = |model0, program_input| {
 					Err(_) => model.trace_unit }
 			} else model.trace_unit
 		reload_spawned = want_days != model.curve_days or d.key_pressed(KeyR)
-		_ = if reload_spawned {
+		# R is the full reload - every table, for an athlete who just synced.
+		# A chip is a window change, and takes the three-read path.
+		_ = if d.key_pressed(KeyR) {
 			f2 = model.font
 			Task.spawn!(program_input, || match load_model!(f2, want_days, Bool.False) {
 				Ok(m2) => Reloaded(m2)
 				Err(_) => ReloadFailed
+			})
+		} else if want_days != model.curve_days {
+			f3 = model.font
+			Task.spawn!(program_input, || match load_curve_window!(f3, want_days) {
+				Ok(w) => CurveReloaded(w)
+				Err(_) => CurveReloadFailed(want_days)
 			})
 		}
 		chip0h = win.w - 420.0

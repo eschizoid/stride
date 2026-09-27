@@ -29,10 +29,14 @@ Curve :: [].{
 		model.curve_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		# a chip click re-fetches the curve in the background; while that is in
 		# flight the note says so, so a click that takes a beat reads as working
-		# rather than dead (the clicked chip also highlights immediately below).
-		# The old curve stays on screen underneath until the fresh one lands.
+		# rather than dead (the clicked chip also highlights immediately). The
+		# old curve stays on screen underneath until the fresh one lands. The
+		# note sits in the chip band, right-aligned just left of the chips it
+		# describes: the line below the title belongs to the rung tooltip, and
+		# two texts at one anchor overprint whenever a reload and a hover
+		# coincide.
 		if model.reloading {
-			Text.from("loading ${I64.to_str(model.curve_days)}d window…", model.font).size(12).draw!(frame, { pos: { x: 36.0, y: 92.0 }, color: Theme.gold_c, align: (Top, Left) })
+			Text.from("loading ${I64.to_str(model.curve_days)}d window…", model.font).size(12).draw!(frame, { pos: { x: win_w - 432.0, y: 68.0 }, color: Theme.gold_c, align: (Top, Right) })
 		}
 		# one line above the hint row: the chips own the top-right band, and
 		# hint plus caption together outgrow a single bottom line
