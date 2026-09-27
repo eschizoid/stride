@@ -88,7 +88,7 @@ Plan :: [].{
 		# the card is bounded even though coach-written details are not: past
 		# these caps the tail collapses to an ellipsis line, so a pathological
 		# prescription can never push the ladder past the overflow floor
-		cap = |lines, k| if List.len(lines) > k (List.append(List.take_first(lines, k - 1), "…")) else lines
+		cap = |lines, k| if List.len(lines) > k (List.append(List.take_first(lines, k - 1), "...")) else lines
 		dlines = cap(wrap(today.detail, card_cols), 6)
 		rlines = cap(wrap(today.rationale, card_cols + 8), 3)
 		nd = U64.to_f32(List.len(dlines))
@@ -129,7 +129,7 @@ Plan :: [].{
 			}
 		})?
 		if end.hidden > 0 {
-			Text.from("… ${U64.to_str(end.hidden)} more - grow the window", model.font).size(11).draw!(frame, { pos: { x: 260.0, y: (end.y).min(floor_y) }, color: ink_faint, align: (Top, Left) })
+			Text.from("... ${U64.to_str(end.hidden)} more - grow the window", model.font).size(11).draw!(frame, { pos: { x: 260.0, y: (end.y).min(floor_y) }, color: ink_faint, align: (Top, Left) })
 		}
 
 		# progress strip + coach corner
