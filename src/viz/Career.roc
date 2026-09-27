@@ -282,7 +282,7 @@ Career :: [].{
 
 			# what the withheld spine is waiting for, said where the arc would be
 			_ = if !spine_ready {
-				Text.from("tonnage arc: ${U64.to_str(raw_measured)} of 3 months measured — the spine draws at 3", model.font).size(13).draw!(frame, { pos: { x: plot_l + plot_w / 2.0, y: line_top + 24.0 }, color: ink_muted, align: (Top, Center) })
+				Text.from("tonnage arc: ${U64.to_str(raw_measured)} of 3 months measured - the spine draws at 3", model.font).size(13).draw!(frame, { pos: { x: plot_l + plot_w / 2.0, y: line_top + 24.0 }, color: ink_muted, align: (Top, Center) })
 				# the gate withholds the STROKE, not the measurements: a line
 				# through two points claims a direction two points cannot
 				# support, but the points themselves are measured, and hiding

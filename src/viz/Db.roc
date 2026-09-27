@@ -18,8 +18,8 @@ Db :: [].{
 	ascii_safe = |s|
 		Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(Str.replace_each(s, "—", "-"), "–", "-"), "→", "->"), "←", "<-"), "✓", "ok"), "≤", "<="), "≥", ">="), "·", "-"), "…", "...")
 
-	# the ellipsis is the one glyph human text carries most that the list
-	# above used to miss, and the one the window's own literals reached for
+	# the ellipsis and the em dash are the two glyphs human-authored text
+	# carries most often; both map, each to the ASCII a reader expects of it
 	expect ascii_safe("wait… — done") == "wait... - done"
 	Seg : { kind : Str, start_s : I64, dur_s : I64 }
 	Fit : { cp : F32, w_prime : F32, r2 : F32, points : F32, ok : Bool }
