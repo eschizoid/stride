@@ -52,6 +52,11 @@ Ui :: [].{
 		trace_dur : F32,
 		trace_ids : List({ id : I64, day : Str, name : Str, sport : Str, chan : Str }),
 		trace_sel : U64,
+		# raised when a re-read picker no longer holds the SHOWN session, so
+		# the next frame fetches the selection it fell to instead of leaving
+		# the vanished session's samples under a neighbour's name; the frame
+		# that spawns the fetch lowers it
+		trace_refetch : Bool,
 		trace_day : Str,
 		# what the y axis is counting for the SELECTED session, which follows
 		# the stream it actually carries rather than its sport: watts where a
