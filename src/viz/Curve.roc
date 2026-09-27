@@ -31,14 +31,15 @@ Curve :: [].{
 		# flight the note says so, so a click that takes a beat reads as working
 		# rather than dead (the clicked chip also highlights immediately). The
 		# old curve stays on screen underneath until the fresh one lands. The
-		# note sits in the chip band, right-aligned just left of the chips it
-		# describes: the line below the title belongs to the rung tooltip, and
-		# two texts at one anchor overprint whenever a reload and a hover
-		# coincide. It names no window - the lit chip already does - so it
-		# stays one short word, and cannot reach the title from the right at
-		# any width the window allows.
+		# note sits in the chip band, just RIGHT of the last chip: the line
+		# below the title belongs to the rung tooltip, and two texts at one
+		# anchor overprint whenever a reload and a hover coincide. It names no
+		# window - the lit chip already does. Anchored to the chips' right it
+		# shares their anchor, so it can meet the title only at a width where
+		# the chips already have; the minimum size is a hint the window
+		# manager may ignore, and no anchor left of the chips survives that.
 		if model.reloading {
-			Text.from("loading…", model.font).size(12).draw!(frame, { pos: { x: win_w - 432.0, y: 68.0 }, color: Theme.gold_c, align: (Top, Right) })
+			Text.from("loading…", model.font).size(12).draw!(frame, { pos: { x: win_w - 254.0, y: 68.0 }, color: Theme.gold_c, align: (Top, Left) })
 		}
 		# one line above the hint row: the chips own the top-right band, and
 		# hint plus caption together outgrow a single bottom line
