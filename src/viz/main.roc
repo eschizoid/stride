@@ -807,6 +807,65 @@ sel_following_id = |old, old_sel, fresh| {
 	List.fold(List.map_with_index(fresh, |e, i| { e, i }), { sel: 0, found: Bool.False }, |s, x| if x.e.id == cur_id ({ sel: x.i, found: Bool.True }) else s)
 }
 
+# A directive's session, resolved against the picker. A day names its
+# NEWEST session - the picker is newest-first, and the first match is the
+# one the athlete most likely means on a day that carries two; an id names
+# one session exactly. Absent, the selection stays where it was.
+sel_for_day : List(TraceId), Str, U64 -> U64
+sel_for_day = |ids, day, fallback|
+	match List.find_first_index(ids, |e| e.day == day) { Ok(i) => i
+		Err(_) => fallback }
+
+sel_for_id : List(TraceId), I64, U64 -> U64
+sel_for_id = |ids, id, fallback|
+	match List.find_first_index(ids, |e| e.id == id) { Ok(i) => i
+		Err(_) => fallback }
+
+# a day with two sessions resolves to the newest - index 0 of a
+# newest-first picker - not to whichever the fold visited last
+expect {
+	a = { id: 10, day: "2026-09-26", name: "morning", sport: "Ride", chan: "w" }
+	b = { id: 11, day: "2026-09-26", name: "evening", sport: "Ride", chan: "w" }
+	c = { id: 12, day: "2026-09-27", name: "c", sport: "Ride", chan: "w" }
+	sel_for_day([c, b, a], "2026-09-26", 7) == 1
+	and sel_for_day([c, b, a], "2026-09-27", 7) == 0
+	and sel_for_day([c, b, a], "2026-01-01", 7) == 7
+	and sel_for_id([c, b, a], 10, 7) == 2
+	and sel_for_id([c, b, a], 99, 7) == 7
+}
+
+# The ghost the same way, with the kind test the keyboard path applies: the
+# newest session of that day that is the shown session's kind, or the
+# fallback. Given as an I64 index because -1 is "no ghost".
+ghost_for_day : List(TraceId), TraceId, Str, I64 -> I64
+ghost_for_day = |ids, live, day, fallback|
+	match List.find_first_index(ids, |e| e.day == day and ghost_matches(live, e)) {
+		Ok(i) => match U64.to_i64_try(i) { Ok(gi) => gi
+			Err(_) => fallback }
+		Err(_) => fallback
+	}
+
+ghost_for_id : List(TraceId), TraceId, I64, I64 -> I64
+ghost_for_id = |ids, live, id, fallback|
+	match List.find_first_index(ids, |e| e.id == id and ghost_matches(live, e)) {
+		Ok(i) => match U64.to_i64_try(i) { Ok(gi) => gi
+			Err(_) => fallback }
+		Err(_) => fallback
+	}
+
+# on a day carrying a rowing session (newer) and a ride (older), a ride on
+# screen ghosts the ride, not the newer session of the wrong kind
+expect {
+	live = { id: 1, day: "d0", name: "live", sport: "Ride", chan: "w" }
+	row = { id: 20, day: "2026-09-26", name: "row", sport: "Rowing", chan: "w" }
+	ride = { id: 21, day: "2026-09-26", name: "ride", sport: "Ride", chan: "w" }
+	ghost_for_day([live, row, ride], live, "2026-09-26", -1) == 2
+	and ghost_for_day([live, row, ride], live, "2026-01-01", -1) == -1
+	and ghost_for_id([live, row, ride], live, 21, -1) == 2
+	# the right id but the wrong kind is no ghost
+	and ghost_for_id([live, row, ride], live, 20, -1) == -1
+}
+
 # Where the ghost stands after a picker re-read: no ghost stays no ghost
 # (keep, nothing to clear); a ghost whose session is still listed follows
 # it to its new index; a ghost whose session is gone is dismissed, and
@@ -1142,8 +1201,8 @@ caps_fields = [
 	{ name: "view", kind: "integer", accepts: "0..8" },
 	{ name: "range", kind: "integer", accepts: "30|60|90 (days; omitted leaves the range unchanged)" },
 	{ name: "cursor_day", kind: "date", accepts: "YYYY-MM-DD present in the form-board series" },
-	{ name: "trace_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions; picks the first session of that day, trace_id names one exactly" },
-	{ name: "ghost_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions, or 'none' to dismiss" },
+	{ name: "trace_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions; picks that day's newest session, trace_id names one exactly" },
+	{ name: "ghost_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions, or 'none' to dismiss; picks that day's newest session of the shown session's kind" },
 	{ name: "trace_id", kind: "integer", accepts: "an activity id among the trace picker's sessions; when both are given it takes precedence over trace_day" },
 	{ name: "ghost_id", kind: "integer", accepts: "an activity id among the trace picker's sessions, of the same kind as the session shown; takes precedence over ghost_day, and 'none' in ghost_day still dismisses" },
 ]
@@ -1486,11 +1545,9 @@ update! = |model0, program_input| {
 		# an id names one session exactly and wins over a day; a day names
 		# whichever session of that day sorts first, which is the newest
 		want_sel2 =
-			if directive.has_d and directive.trace_id >= 0 {
-				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_sel, |acc, x| if x.e.id == directive.trace_id x.ei else acc)
-			} else if directive.has_d and directive.trace_day != "" {
-				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_sel, |acc, x| if x.e.day == directive.trace_day x.ei else acc)
-			} else want_sel
+			if directive.has_d and directive.trace_id >= 0 (sel_for_id(model.trace_ids, directive.trace_id, want_sel))
+			else if directive.has_d and directive.trace_day != "" (sel_for_day(model.trace_ids, directive.trace_day, want_sel))
+			else want_sel
 		# NoSwitch joins List.get's OutOfBounds in one inferred error union
 		# a switch is the selection moving, or a refetch the picker re-read
 		# asked for: the shown session is gone and the index it fell to
@@ -1541,13 +1598,9 @@ update! = |model0, program_input| {
 		# honoured: ghost_matches is the same test the keyboard path applies
 		want_ghost_raw =
 			if directive.has_d and directive.ghost_day == "none" (-1)
-			else if directive.has_d and directive.ghost_id >= 0 {
-				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_ghost, |acc, x| if x.e.id == directive.ghost_id and ghost_matches(entry_at(model.trace_ids, want_sel2), x.e) (match U64.to_i64_try(x.ei) { Ok(gi) => gi
-					Err(_) => acc }) else acc)
-			} else if directive.has_d and directive.ghost_day != "" {
-				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_ghost, |acc, x| if x.e.day == directive.ghost_day and ghost_matches(entry_at(model.trace_ids, want_sel2), x.e) (match U64.to_i64_try(x.ei) { Ok(gi) => gi
-					Err(_) => acc }) else acc)
-			} else want_ghost
+			else if directive.has_d and directive.ghost_id >= 0 (ghost_for_id(model.trace_ids, entry_at(model.trace_ids, want_sel2), directive.ghost_id, want_ghost))
+			else if directive.has_d and directive.ghost_day != "" (ghost_for_day(model.trace_ids, entry_at(model.trace_ids, want_sel2), directive.ghost_day, want_ghost))
+			else want_ghost
 		# whatever chose the ghost, the PAIR is re-judged against this frame's
 		# selection: a ghost summoned beside one session must not outlive a
 		# switch to a session of another kind
