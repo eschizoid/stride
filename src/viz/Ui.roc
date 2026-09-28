@@ -57,6 +57,13 @@ Ui :: [].{
 		# the vanished session's samples under a neighbour's name; the frame
 		# that spawns the fetch lowers it
 		trace_refetch : Bool,
+		# a switch to a session not in the boot cache fetches its samples off
+		# the main loop, and blanks the plot until they land. This latches from
+		# that spawn until the samples arrive, so the empty plot reads as
+		# "loading" rather than as the "no samples" message, which is only true
+		# of a session whose stream really is empty. Set when the fetch spawns,
+		# cleared when TraceSwitched or TraceSwitchFailed lands.
+		trace_loading : Bool,
 		trace_day : Str,
 		# what the y axis is counting for the SELECTED session, which follows
 		# the stream it actually carries rather than its sport: watts where a
