@@ -52,17 +52,24 @@ Ui :: [].{
 		trace_dur : F32,
 		trace_ids : List({ id : I64, day : Str, name : Str, sport : Str, chan : Str }),
 		trace_sel : U64,
+		# the identity of the trace fetch that may still land: bumped on every
+		# switch, stamped onto the fetch it spawns, and a reply applies only if
+		# it carries the current value. A picker index is not an identity - it
+		# is reused across switches and reassigned by a picker re-read - so a
+		# reply is matched to its request, never to a position.
+		trace_gen : U64,
 		# raised when a re-read picker no longer holds the SHOWN session, so
 		# the next frame fetches the selection it fell to instead of leaving
 		# the vanished session's samples under a neighbour's name; the frame
 		# that spawns the fetch lowers it
 		trace_refetch : Bool,
-		# a switch to a session not in the boot cache fetches its samples off
-		# the main loop, and blanks the plot until they land. This latches from
-		# that spawn until the samples arrive, so the empty plot reads as
-		# "loading" rather than as the "no samples" message, which is only true
-		# of a session whose stream really is empty. Set when the fetch spawns,
-		# cleared when TraceSwitched or TraceSwitchFailed lands.
+		# true exactly while a fetch for the CURRENT trace_gen is outstanding: a
+		# switch to a session not in the boot cache fetches its samples off the
+		# main loop and blanks the plot until they land, and this is what lets
+		# the blank read as "loading" rather than as the "no samples" message,
+		# which is only true of a session whose stream really is empty. Raised
+		# when that fetch spawns; lowered by its reply, or by a later switch
+		# that answers from the cache and so has nothing outstanding.
 		trace_loading : Bool,
 		trace_day : Str,
 		# what the y axis is counting for the SELECTED session, which follows
@@ -84,6 +91,10 @@ Ui :: [].{
 		ghost : List(F32),
 		ghost_dur : F32,
 		ghost_sel : I64,
+		# the ghost fetch's identity, as trace_gen is the trace's: bumped on
+		# every ghost change including a dismissal, so a slow load can neither
+		# resurrect a cleared ghost nor overwrite a newer pick
+		ghost_gen : U64,
 		ghost_day : Str,
 		# the trace camera: zoom >= 1 windows [pan, pan + 1/zoom] of the session
 		trace_zoom : F32,
