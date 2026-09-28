@@ -421,8 +421,9 @@ These are measured toolchain behaviors, not style opinions.
   a careful migration. Don't harden migrations against versions no real db is on. The
   ONLY hard rule: never silently destroy judgment-tier data (`ratings`,
   `planned_sessions`, `config`/tokens) — it can't be re-derived. See ADR §6.
-  The bus tables are the opposite case: the e2e suite poisons them and pins
-  doctor, summary and plan unmoved, then drops them and pins summary again.
+  The bus tables are the opposite case: the e2e suite poisons them, pins doctor
+  and summary unmoved and plan still answering, then drops them and pins
+  summary again.
 - Training weeks are **Monday–Sunday**.
 - Human output philosophy: numbers in tables, meaning in legends, conclusion in a
   verdict line. No graphs — that experiment ran and failed; don't reintroduce.
