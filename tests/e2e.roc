@@ -7175,7 +7175,9 @@ b_viz_caps! = |ctx| {
     view_parity = Str.trim(sh!("acc=$(grep 'name: \"view\"' src/viz/main.roc | grep -oE '0\\.\\.[0-9]+' | grep -oE '[0-9]+$'); enf=$(grep -oE 'dv\\.view > [0-9]+' src/viz/main.roc | grep -oE '[0-9]+$'); lst=$(grep -oE 'caps_views = List\\.map\\(\\[[^]]*\\]' src/viz/main.roc | grep -oE '[0-9]+' | tail -1); if [ -n \"$acc\" ] && [ \"$acc\" = \"$enf\" ] && [ \"$acc\" = \"$lst\" ]; then echo same; else echo \"acc=$acc enf=$enf list=$lst\"; fi"))
     check!("the published view bound equals the refused bound and the listed views (${view_parity})", view_parity == "same")?
     # each day and id field names WHERE a value must exist - the form-board
-    # series or the trace picker - and its refusal names the same place
+    # series or the trace picker - and its refusal names the same place. The
+    # accepts side reads the FIRST of the two nouns it finds, so an accepts
+    # string must name only the place its value lives in, never both.
     noun_parity = Str.trim(sh!("out=''; for f in cursor_day trace_day ghost_day trace_id ghost_id; do a=$(grep \"name: \\\"$f\\\"\" src/viz/main.roc | grep -oE 'series|picker' | head -1); r=$(grep -oE \"\\\"$f [$][{][^\\\"]*not in the (series|picker)\" src/viz/main.roc | grep -oE '(series|picker)$' | head -1); if [ -z \"$a\" ] || [ \"$a\" != \"$r\" ]; then out=\"$out $f:$a/$r\"; fi; done; if [ -z \"$out\" ]; then echo same; else echo \"$out\"; fi"))
     check!("every day and id field's accepts names the place its refusal names (${noun_parity})", noun_parity == "same")?
     # an id takes precedence over a day: both id accepts say so, and in both
