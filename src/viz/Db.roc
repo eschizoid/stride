@@ -290,9 +290,14 @@ Db :: [].{
 
 	Directive : { id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str }
 
-	# newest unconsumed directive, consumed AS READ — a directive the window
-	# crashes on is dropped, never replayed against a stale model. -1/"" mean
-	# "field not set" (SQL NULL): the coach steers only what it names.
+	# the newest fresh unconsumed directive. Rows past the freshness window are
+	# consumed as read (marked stale), and rows older than the winner are
+	# consumed as superseded — but the WINNING row is left PENDING here, and
+	# the frame that applies it writes its terminal outcome through
+	# mark_directive!. So a window that crashes between reading a directive and
+	# applying it leaves that directive retryable within the freshness window,
+	# not dropped. -1/"" mean "field not set" (SQL NULL): the coach steers only
+	# what it names.
 	poll_directive! : Sqlite.Db => [Some(Directive), None]
 	poll_directive! = |db| {
 		ensure_bus!(db)
