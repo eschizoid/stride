@@ -81,6 +81,7 @@ sync.json	new_activities,notes_fetched,notes_skipped,pending_notes,pending_strea
 top.json	avg_hr,date,date_known,distance_m,hr_known,id,intensity,intensity_known,moving_time,name,np_w,output_kj,power_known,rankable,sport,tss	avg_hr,date,date_known,distance_m,hr_known,id,intensity,intensity_known,moving_time,name,np_w,output_kj,power_known,rankable,sport,tss	-	items
 tte.json	contradicts_model,cp,demonstrated_known,demonstrated_s,demonstrated_w,fit_points,fit_r2,known,seconds,sport_family,status,w_prime,watts,window_days	contradicts_model,cp,demonstrated_known,demonstrated_s,demonstrated_w,fit_points,fit_r2,known,seconds,sport_family,status,w_prime,watts,window_days	doc	$
 version.json	version	version	-	$
+viz-tick.json	acked,cursor_day,found,ghost_day,ghost_id,id,range,status,trace_day,trace_id,view	acked,cursor_day,found,ghost_day,ghost_id,id,range,status,trace_day,trace_id,view	-	$
 viz.json	accepts,kind,name	accepts,kind,name	doc	properties.fields.items
 viz.json	age_seconds,cursor_day,ghost_day,ghost_id,live,present,range,trace_day,trace_id,updated_at,view	age_seconds,cursor_day,ghost_day,ghost_id,live,present,range,trace_day,trace_id,updated_at,view	doc	properties.focus
 viz.json	fields,focus,focus_staleness_seconds,protocol,published_at,staleness_seconds,views	fields,focus,focus_staleness_seconds,protocol,published_at,staleness_seconds,views	doc	$

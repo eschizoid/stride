@@ -23,6 +23,7 @@ import Db
 import Output
 import Metrics
 import Render
+import core.Bus
 import core.Sports
 import pf.Sqlite
 import pf.Stdout
@@ -624,6 +625,73 @@ ReportHealth :: [].{
                 Ok({})
             }
         }
+    }
+
+    # One poll-and-mark cycle of the window's directive lifecycle, without a
+    # window. The statements are core.Bus's - the same list the window runs
+    # every second - bound here to basic-cli's Sqlite, so the lifecycle the
+    # e2e suite cannot reach through a GUI is reachable through this. The
+    # cycle is exactly the window's: migrate if the sentinel says so, sweep
+    # stale rows, take the newest fresh row as the winner, close older rows
+    # as superseded, then write the winner's outcome - or, with ack false,
+    # leave it pending as a window crashed between apply and report would.
+    # No field is validated: that judgement needs the window's model, and it
+    # is pinned by the window's own expects. Every field here is honoured.
+    viz_tick! : { ack : Bool } => Try({}, _)
+    viz_tick! = |t| {
+        path = Db.open_db!({})?
+        exec! = |q, bindings| Sqlite.execute!({ path: Path.utf8(path), query: q, bindings })
+        present = match Sqlite.query_many!({ path: Path.utf8(path), query: Bus.sentinel_sql, bindings: [], rows: Sqlite.i64("c") }) {
+            Ok(rows) => match List.first(rows) { Ok(c) => c
+                Err(_) => 0 }
+            Err(_) => 0
+        }
+        if present != Bus.sentinel_present {
+            List.for_each!(Bus.ddl, |q| { _ = exec!(q, []) })
+        }
+        pending = match Sqlite.query_many!({ path: Path.utf8(path), query: Bus.has_pending_sql, bindings: [], rows: Sqlite.i64("e") }) {
+            Ok(rows) => match List.first(rows) { Ok(e) => e == 1
+                Err(_) => Bool.False }
+            Err(_) => Bool.False
+        }
+        none = { found: Bool.False, acked: Bool.False, id: -1, status: "none", view: -1, range: -1, cursor_day: "", trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1 }
+        out =
+            if !pending none
+            else {
+                _ = exec!(Bus.stale_sweep_sql, [])
+                winners = Sqlite.query_many!({
+                    path: Path.utf8(path),
+                    query: Bus.winner_sql,
+                    bindings: [],
+                    rows: |cols| |stmt| {
+                        id = Sqlite.i64("id")(cols)(stmt)?
+                        v = Sqlite.i64("v")(cols)(stmt)?
+                        rg = Sqlite.i64("rg")(cols)(stmt)?
+                        cd = Sqlite.str("cd")(cols)(stmt)?
+                        td = Sqlite.str("td")(cols)(stmt)?
+                        gd = Sqlite.str("gd")(cols)(stmt)?
+                        ti = Sqlite.i64("ti")(cols)(stmt)?
+                        gi = Sqlite.i64("gi")(cols)(stmt)?
+                        Ok({ id, v, rg, cd, td, gd, ti, gi })
+                    },
+                })?
+                match List.first(winners) {
+                    Err(_) => none
+                    Ok(w) => {
+                        _ = exec!(Bus.supersede_sql, [{ name: ":id", value: Integer(w.id) }])
+                        status =
+                            if t.ack {
+                                _ = exec!(Bus.mark_sql, [{ name: ":st", value: String(Bus.mark_status("")) }, { name: ":e", value: String("") }, { name: ":id", value: Integer(w.id) }])
+                                Bus.mark_status("")
+                            } else "pending"
+                        { found: Bool.True, acked: t.ack, id: w.id, status, view: w.v, range: w.rg, cursor_day: w.cd, trace_day: w.td, trace_id: w.ti, ghost_day: w.gd, ghost_id: w.gi }
+                    }
+                }
+            }
+        if Output.json_mode!({})
+            Output.emit_ok!(out)
+        else
+            Stdout.line!(if out.found "tick: directive ${(out.id).to_str()} ${out.status} (view ${(out.view).to_str()}, range ${(out.range).to_str()}, trace ${out.trace_day}/${(out.trace_id).to_str()}, ghost ${out.ghost_day}/${(out.ghost_id).to_str()})" else "tick: nothing pending")
     }
 
     # power-zone reference chart: the 7 Coggan/Peloton zones as watt ranges from your

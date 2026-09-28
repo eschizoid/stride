@@ -470,6 +470,7 @@ fi
 # never for placeholder names — the asymmetry is the rule's own. Last of the four so
 # the wider failures speak first.
 EXPECTED_LITERALS='sync=--all
+viz tick=--no-ack
 week=all'
 littext=$(awk -F'\t' '{ n = split($2, a, " "); for (i = 1; i <= n; i++) { t = a[i]; sub(/^!/, "", t); if (t !~ /</) printf "%s=%s\n", $1, t } }' "$ARGS" | LC_ALL=C sort)
 if [ "$littext" != "$EXPECTED_LITERALS" ]; then

@@ -147,6 +147,8 @@ help_text =
         \\    zones                       power-zone watt ranges (7) from your FTP (alias: pz)
         \\    viz                         the window's published bus capabilities — views,
         \\                                directive fields, staleness (launch the app once first)
+        \\    viz tick [--no-ack]         one poll-and-mark cycle of the window's directive
+        \\                                lifecycle, headless; --no-ack leaves the winner pending
         \\
         \\FLAGS
         \\    --json                      machine output (beats STRIDE_FORMAT)
@@ -396,6 +398,7 @@ dispatch! = |cmd|
         Command.Zones => ReportHealth.pz!({})
         Command.Strength => ReportStrength.strength!({})
         Command.VizCaps => ReportHealth.viz_caps!({})
+        Command.VizTick(t) => ReportHealth.viz_tick!(t)
         # a machine calls this alongside schema_version to negotiate, so it
         # answers in the envelope like every other query (#182)
         Command.Version => Output.out!({ version: version }, |p| p.version)

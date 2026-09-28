@@ -1,0 +1,55 @@
+{
+  "title": "viz tick",
+  "description": "Payload of `stride viz tick` — one poll-and-mark cycle of the window's directive lifecycle, run without a window so the lifecycle can be tested headless. found says whether a fresh pending directive won this cycle; acked says whether this cycle wrote its terminal status.",
+  "type": "object",
+  "required": [
+    "acked",
+    "cursor_day",
+    "found",
+    "ghost_day",
+    "ghost_id",
+    "id",
+    "range",
+    "status",
+    "trace_day",
+    "trace_id",
+    "view"
+  ],
+  "additionalKeys": false,
+  "properties": {
+    "found": {
+      "type": "boolean"
+    },
+    "acked": {
+      "type": "boolean"
+    },
+    "id": {
+      "type": "integer"
+    },
+    "status": {
+      "description": "The status this cycle left the winner in: applied, applied_partial, or pending when not acked; none when nothing won.",
+      "type": "string"
+    },
+    "view": {
+      "type": "integer"
+    },
+    "range": {
+      "type": "integer"
+    },
+    "cursor_day": {
+      "type": "string"
+    },
+    "trace_day": {
+      "type": "string"
+    },
+    "trace_id": {
+      "type": "integer"
+    },
+    "ghost_day": {
+      "type": "string"
+    },
+    "ghost_id": {
+      "type": "integer"
+    }
+  }
+}
