@@ -569,11 +569,11 @@ ReportHealth :: [].{
             # live false and age -1: the age is COALESCEd, the row still reads.
             focus_rows = Sqlite.query_many!({
                 path: Path.utf8(path),
-                query: "SELECT view, range, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd, CAST(COALESCE(trace_day, '') AS TEXT) AS td, CAST(COALESCE(ghost_day, '') AS TEXT) AS gd, CAST(updated_at AS TEXT) AS ua, CAST(COALESCE(strftime('%s', 'now') - strftime('%s', updated_at), -1) AS INTEGER) AS age FROM viz_focus WHERE id = 1",
+                query: "SELECT view AS v, range AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd, CAST(COALESCE(trace_day, '') AS TEXT) AS td, CAST(COALESCE(ghost_day, '') AS TEXT) AS gd, CAST(updated_at AS TEXT) AS ua, CAST(COALESCE(strftime('%s', 'now') - strftime('%s', updated_at), -1) AS INTEGER) AS age FROM viz_focus WHERE id = 1",
                 bindings: [],
                 rows: |cols| |stmt| {
-                    view = Sqlite.i64("view")(cols)(stmt)?
-                    range = Sqlite.i64("range")(cols)(stmt)?
+                    view = Sqlite.i64("v")(cols)(stmt)?
+                    range = Sqlite.i64("rg")(cols)(stmt)?
                     cd = Sqlite.str("cd")(cols)(stmt)?
                     td = Sqlite.str("td")(cols)(stmt)?
                     gd = Sqlite.str("gd")(cols)(stmt)?
