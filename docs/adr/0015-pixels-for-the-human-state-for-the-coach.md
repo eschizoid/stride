@@ -153,3 +153,11 @@ Decision 3 says the app "imports the same modules as the CLI", which is no longe
 window imports its own modules under `src/viz/` and the shared `src/core` package, and ADR
 0016's layer table together with ADR 0017 records that the window may not import engine
 modules.
+
+## Update, 2026-09-28
+
+Two properties of the bus were unstated above and are now part of its contract.
+
+A directive names a session by activity id, not only by day. `trace_id` and `ghost_id` join `trace_day` and `ghost_day` in `viz_directives` and in the published field list; an id names one session exactly, a day names one of that day's sessions by picker order, and when both are given the id counts. `viz_focus` reports the ids of what is shown beside the days, so "verify it was applied" is answerable for a specific session on a day that carries two.
+
+`viz_focus` has a liveness rule. The window rewrites the row on change and on a heartbeat every 30 seconds, publishes `focus_staleness_seconds` (90) beside the directive staleness, deletes the row when it quits by ESC (a delete that fails leaves a row the staleness rule retires), and `stride viz --json` serves the row with `present`, `live` and `age_seconds` judged against that constant. A row older than the window is history left by a window the OS closed or that crashed, not what the athlete sees, and a reader that ignores the rule is reading yesterday.

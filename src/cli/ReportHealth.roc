@@ -517,17 +517,18 @@ ReportHealth :: [].{
             # error. That covers the scalars-absent torn shape only: the window
             # writes the whole publish in one transaction, so the other shapes
             # last at most until its next launch republishes
-            query: "SELECT CAST(COALESCE((SELECT CAST(value AS INTEGER) FROM viz_capabilities WHERE key = 'protocol'), 0) AS INTEGER) AS protocol, CAST(COALESCE((SELECT CAST(value AS INTEGER) FROM viz_capabilities WHERE key = 'staleness_seconds'), 0) AS INTEGER) AS staleness, CAST(COALESCE((SELECT value FROM viz_capabilities WHERE key = 'published_at'), '') AS TEXT) AS published",
+            query: "SELECT CAST(COALESCE((SELECT CAST(value AS INTEGER) FROM viz_capabilities WHERE key = 'protocol'), 0) AS INTEGER) AS protocol, CAST(COALESCE((SELECT CAST(value AS INTEGER) FROM viz_capabilities WHERE key = 'staleness_seconds'), 0) AS INTEGER) AS staleness, CAST(COALESCE((SELECT CAST(value AS INTEGER) FROM viz_capabilities WHERE key = 'focus_staleness_seconds'), 0) AS INTEGER) AS fstale, CAST(COALESCE((SELECT value FROM viz_capabilities WHERE key = 'published_at'), '') AS TEXT) AS published",
             bindings: [],
             row: |cols| |stmt| {
                 protocol = Sqlite.i64("protocol")(cols)(stmt)?
                 staleness = Sqlite.i64("staleness")(cols)(stmt)?
+                fstale = Sqlite.i64("fstale")(cols)(stmt)?
                 published = Sqlite.str("published")(cols)(stmt)?
-                Ok({ protocol, staleness, published })
+                Ok({ protocol, staleness, fstale, published })
             },
         })
         s = match scalars {
-            Err(_) => { protocol: 0, staleness: 0, published: "" }
+            Err(_) => { protocol: 0, staleness: 0, fstale: 0, published: "" }
             Ok(s0) => s0
         }
         if s.protocol == 0
@@ -554,10 +555,64 @@ ReportHealth :: [].{
                     Ok({ name, kind, accepts })
                 },
             })?
+            # the focus row, judged for the reader: `present` says a row exists,
+            # `live` that it is younger than the window's published focus
+            # staleness. A window closed by the OS button or crashed leaves its
+            # last row behind, and `live` is what separates that history from
+            # what the athlete sees; the ESC path deletes the row, so absent is
+            # the cleaner "nobody is looking". Two reads, because the CLI and
+            # the window are separate binaries and rebuild separately: the
+            # columns every window ever wrote come first and decide `present`,
+            # and the id columns come second and may fail against a table a
+            # window from before them created - that reports the row with ids
+            # -1, never as absent. A corrupt timestamp reports present with
+            # live false and age -1: the age is COALESCEd, the row still reads.
+            focus_rows = Sqlite.query_many!({
+                path: Path.utf8(path),
+                query: "SELECT view AS v, range AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd, CAST(COALESCE(trace_day, '') AS TEXT) AS td, CAST(COALESCE(ghost_day, '') AS TEXT) AS gd, CAST(updated_at AS TEXT) AS ua, CAST(COALESCE(strftime('%s', 'now') - strftime('%s', updated_at), -1) AS INTEGER) AS age FROM viz_focus WHERE id = 1",
+                bindings: [],
+                rows: |cols| |stmt| {
+                    view = Sqlite.i64("v")(cols)(stmt)?
+                    range = Sqlite.i64("rg")(cols)(stmt)?
+                    cd = Sqlite.str("cd")(cols)(stmt)?
+                    td = Sqlite.str("td")(cols)(stmt)?
+                    gd = Sqlite.str("gd")(cols)(stmt)?
+                    ua = Sqlite.str("ua")(cols)(stmt)?
+                    age = Sqlite.i64("age")(cols)(stmt)?
+                    Ok({ view, range, cd, td, gd, ua, age })
+                },
+            })
+            id_rows = Sqlite.query_many!({
+                path: Path.utf8(path),
+                query: "SELECT CAST(COALESCE(trace_id, -1) AS INTEGER) AS ti, CAST(COALESCE(ghost_id, -1) AS INTEGER) AS gi FROM viz_focus WHERE id = 1",
+                bindings: [],
+                rows: |cols| |stmt| {
+                    ti = Sqlite.i64("ti")(cols)(stmt)?
+                    gi = Sqlite.i64("gi")(cols)(stmt)?
+                    Ok({ ti, gi })
+                },
+            })
+            ids = match id_rows {
+                Err(_) => { ti: -1, gi: -1 }
+                Ok(rows) => match List.first(rows) {
+                    Err(_) => { ti: -1, gi: -1 }
+                    Ok(r) => r
+                }
+            }
+            absent = { present: Bool.False, live: Bool.False, age_seconds: -1, updated_at: "", view: -1, range: -1, cursor_day: "", trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1 }
+            focus = match focus_rows {
+                Err(_) => absent
+                Ok(rows) => match List.first(rows) {
+                    Err(_) => absent
+                    Ok(r) => { present: Bool.True, live: r.age >= 0 and r.age <= s.fstale, age_seconds: r.age, updated_at: r.ua, view: r.view, range: r.range, cursor_day: r.cd, trace_day: r.td, trace_id: ids.ti, ghost_day: r.gd, ghost_id: ids.gi }
+                }
+            }
+            focus_word = if !focus.present "none" else if focus.live "live" else "stale"
             if Output.json_mode!({})
-                Output.emit_ok!({ protocol: s.protocol, published_at: s.published, staleness_seconds: s.staleness, views, fields })
+                Output.emit_ok!({ protocol: s.protocol, published_at: s.published, staleness_seconds: s.staleness, focus_staleness_seconds: s.fstale, focus, views, fields })
             else {
-                Stdout.line!("bus protocol ${(s.protocol).to_str()}, published ${s.published}, directives stale after ${(s.staleness).to_str()}s")?
+                Stdout.line!("bus protocol ${(s.protocol).to_str()}, published ${s.published}, directives stale after ${(s.staleness).to_str()}s, focus stale after ${(s.fstale).to_str()}s")?
+                Stdout.line!("focus: ${focus_word}${(if focus.present " - view ${(focus.view).to_str()}, trace ${focus.trace_day} (id ${(focus.trace_id).to_str()}), ${(focus.age_seconds).to_str()}s ago" else "")}")?
                 Stdout.line!(Render.render_table(
                     ["view", "name"],
                     List.map(views, |v| [(v.id).to_str(), v.name]),

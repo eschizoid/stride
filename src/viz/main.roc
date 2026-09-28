@@ -51,6 +51,10 @@ init! = App.init(
 		.with_size({ width: Theme.win_w, height: Theme.win_h })
 		.with_frame_pacing(Capped(60))
 		.with_resizable(Bool.True)
+# ESC is handled by update!, not by raylib's own exit key: quitting first
+# clears the focus row so a coach never reads a closed window as live, and
+# only a frame the window drives can spawn that write before it exits
+.with_exit_key(NoExitKey)
 		.with_min_size({ width: DisplayScale.min_width, height: DisplayScale.min_height })
 		.with_output_dir("captures"),
 	|_startup| {
@@ -313,6 +317,9 @@ load_model! = |font, curve_days, boot| {
 			ghost_dur: 1.0,
 			ghost_sel: -1,
 			ghost_gen: 0.U64,
+			quitting: Bool.False,
+			quit_tick: 0.U64,
+			focus_cleared: Bool.False,
 			ghost_day: "",
 			trace_zoom: 1.0,
 			trace_pan: 0.0,
@@ -327,7 +334,7 @@ load_model! = |font, curve_days, boot| {
 			home,
 			tick: 0,
 			view_anim: 0,
-			last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" },
+			last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1 },
 			day_notes: loaded.nts,
 			plan: loaded.pl,
 			week_tss: loaded.wk,
@@ -530,7 +537,7 @@ poll_task! = |home, last_id|
 					# one picker read, only when a session is named - 'none'
 					# dismisses the ghost and names nothing - and only on
 					# first delivery
-					names_session = dv.trace_day != "" or (dv.ghost_day != "" and dv.ghost_day != "none")
+					names_session = dv.trace_day != "" or dv.trace_id >= 0 or dv.ghost_id >= 0 or (dv.ghost_day != "" and dv.ghost_day != "none")
 					ids = if names_session and dv.id != last_id (Fresh(Db.load_trace_ids!(db))) else Kept
 					Directive({ dv, note, ids })
 				}
@@ -619,6 +626,26 @@ entry_at = |ids, sel|
 		Ok(te) => te
 		Err(_) => { id: 0, day: "", name: "", sport: "", chan: "" }
 	}
+
+# the activity id at a picker slot, -1 when the slot is empty: the focus row
+# writes -1 as NULL, so an empty picker reports no session rather than id 0
+id_at : List(TraceId), U64 -> I64
+id_at = |ids, sel|
+	match List.get(ids, sel) {
+		Ok(te) => te.id
+		Err(_) => -1
+	}
+
+expect id_at([{ id: 7, day: "d", name: "n", sport: "Ride", chan: "w" }], 0) == 7
+expect id_at([], 0) == -1
+
+# the focus heartbeat in frames: the app paces at 60 fps, so this is
+# Db.focus_beat_secs of wall clock, and the expect below holds the two together
+focus_beat_ticks : U64
+focus_beat_ticks = 60 * 30
+
+expect focus_beat_ticks == 60 * (match I64.to_u64_try(Db.focus_beat_secs) { Ok(b) => b
+	Err(_) => 0 })
 
 # A ghost is chosen against one selection and outlives it: stepping the
 # solid session, a directive, or a filter snap all move the live trace
@@ -780,6 +807,42 @@ sel_following_id = |old, old_sel, fresh| {
 	List.fold(List.map_with_index(fresh, |e, i| { e, i }), { sel: 0, found: Bool.False }, |s, x| if x.e.id == cur_id ({ sel: x.i, found: Bool.True }) else s)
 }
 
+# Where the ghost stands after a picker re-read: no ghost stays no ghost
+# (keep, nothing to clear); a ghost whose session is still listed follows
+# it to its new index; a ghost whose session is gone is dismissed, and
+# `keep` false tells the fold to clear its samples, day and duration and
+# to open a new ghost generation. Follows sel_following_id for the same
+# reason the trace does - an index is a position, a session is an id.
+ghost_after_reread : I64, List(TraceId), List(TraceId) -> { sel : I64, keep : Bool }
+ghost_after_reread = |ghost_sel, old, fresh|
+	match I64.to_u64_try(ghost_sel) {
+		Err(_) => { sel: -1, keep: Bool.True }
+		Ok(gu) => {
+			gr = sel_following_id(old, gu, fresh)
+			if gr.found (match U64.to_i64_try(gr.sel) { Ok(gs) => { sel: gs, keep: Bool.True }
+				Err(_) => { sel: -1, keep: Bool.False } }) else { sel: -1, keep: Bool.False }
+		}
+	}
+
+# no ghost: nothing moves and nothing is cleared
+expect ghost_after_reread(-1, [], [{ id: 1, day: "d", name: "n", sport: "Ride", chan: "w" }]) == { sel: -1, keep: Bool.True }
+
+# the ghost's session shifted one slot down behind a newer session: it
+# follows, and stays drawn
+expect {
+	a = { id: 10, day: "2026-09-01", name: "a", sport: "Ride", chan: "w" }
+	b = { id: 11, day: "2026-09-02", name: "b", sport: "Ride", chan: "w" }
+	c = { id: 12, day: "2026-09-03", name: "c", sport: "Ride", chan: "w" }
+	ghost_after_reread(1, [b, a], [c, b, a]) == { sel: 2, keep: Bool.True }
+}
+
+# the ghost's session is gone from the re-read: dismissed, and cleared
+expect {
+	a = { id: 10, day: "2026-09-01", name: "a", sport: "Ride", chan: "w" }
+	b = { id: 11, day: "2026-09-02", name: "b", sport: "Ride", chan: "w" }
+	ghost_after_reread(1, [b, a], [b]) == { sel: -1, keep: Bool.False }
+}
+
 # the shown session keeps its identity across a re-read that inserted a
 # newer session ahead of it, and is reported found
 expect {
@@ -807,7 +870,7 @@ expect {
 	and sel_following_id([a], 0, []) == { sel: 0, found: Bool.False }
 }
 
-refusals_for :{ has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str }, I64, U64, U64, List(TraceId) -> Str
+refusals_for :{ has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64 }, I64, U64, U64, List(TraceId) -> Str
 refusals_for = |dv, cdir, wsel, cur_sel, ids| {
 	segs = List.keep_if([
 		(if dv.view > 8 or dv.view < -1 ("view ${I64.to_str(dv.view)} unknown") else ""),
@@ -815,6 +878,10 @@ refusals_for = |dv, cdir, wsel, cur_sel, ids| {
 		(if dv.cursor_day != "" and cdir == -2 ("cursor_day ${dv.cursor_day} not in the series") else ""),
 		(if dv.trace_day != "" and wsel == cur_sel and (match List.get(ids, wsel) { Ok(te9) => te9.day != dv.trace_day
 			Err(_) => Bool.True }) ("trace_day ${dv.trace_day} not in the picker") else ""),
+		# an id resolves by identity, so "not in the picker" is exact: no
+		# session with that id, rather than no session on that day
+		(if dv.trace_id >= 0 and wsel == cur_sel and (match List.get(ids, wsel) { Ok(te8) => te8.id != dv.trace_id
+			Err(_) => Bool.True }) ("trace_id ${I64.to_str(dv.trace_id)} not in the picker") else ""),
 		(if dv.ghost_day != "" and dv.ghost_day != "none" and !(List.any(ids, |ge9| ge9.day == dv.ghost_day)) ("ghost_day ${dv.ghost_day} not in the picker") else ""),
 		# the session on screen cannot be its own ghost: the kind test below
 		# stays quiet on it (a session trivially matches itself), and the
@@ -830,6 +897,17 @@ refusals_for = |dv, cdir, wsel, cur_sel, ids| {
 			if gh6.sport != live6.sport ("ghost_day ${dv.ghost_day} is ${gh6.sport}, the session is ${live6.sport}")
 			else "ghost_day ${dv.ghost_day} is ${Db.chan_name(gh6.chan)}, the session is ${Db.chan_name(live6.chan)}"
 		} else ""),
+		# the same three judgements for a ghost named by id. A ghost_day of
+		# 'none' dismisses regardless of ghost_id, so an id beside it is not
+		# judged at all - the resolver never reads it either
+		(if dv.ghost_id >= 0 and dv.ghost_day != "none" and !(List.any(ids, |gi9| gi9.id == dv.ghost_id)) ("ghost_id ${I64.to_str(dv.ghost_id)} not in the picker") else ""),
+		(if dv.ghost_id >= 0 and dv.ghost_day != "none" and dv.ghost_id == entry_at(ids, wsel).id ("ghost_id ${I64.to_str(dv.ghost_id)} is the session on screen") else ""),
+		(if dv.ghost_id >= 0 and dv.ghost_day != "none" and dv.ghost_id != entry_at(ids, wsel).id and List.any(ids, |gi8| gi8.id == dv.ghost_id) and !(List.any(ids, |gi7| gi7.id == dv.ghost_id and ghost_matches(entry_at(ids, wsel), gi7))) {
+			live5 = entry_at(ids, wsel)
+			gh5 = List.fold(ids, live5, |acc, g5| if g5.id == dv.ghost_id g5 else acc)
+			if gh5.sport != live5.sport ("ghost_id ${I64.to_str(dv.ghost_id)} is ${gh5.sport}, the session is ${live5.sport}")
+			else "ghost_id ${I64.to_str(dv.ghost_id)} is ${Db.chan_name(gh5.chan)}, the session is ${Db.chan_name(live5.chan)}"
+		} else ""),
 	], |s9| s9 != "")
 	Str.join_with(segs, "; ")
 }
@@ -839,7 +917,7 @@ expect {
 		{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan },
 		{ id: 2, day: "d2", name: "n2", sport: "Rowing", chan: Db.watts_chan },
 	]
-	dv = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "d1" }
+	dv = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "d1", trace_id: -1, ghost_id: -1 }
 	# naming the shown session as its own ghost is refused BY NAME - the kind
 	# test cannot catch it (a session trivially matches itself) and the
 	# dismissal downstream is silent
@@ -848,7 +926,33 @@ expect {
 	# these two differ by sport
 	and refusals_for(dv, -2, 1, 1, m) == "ghost_day d1 is Ride, the session is Rowing"
 	# a clean directive refuses nothing
-	and refusals_for({ has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "" }, -2, 0, 0, m) == ""
+	and refusals_for({ has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1 }, -2, 0, 0, m) == ""
+}
+
+# a session named by id is judged by identity: absent, the one on screen, or
+# the wrong kind - each spelled out, and none of them a day question
+expect {
+	m = [
+		{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan },
+		{ id: 2, day: "d2", name: "n2", sport: "Rowing", chan: Db.watts_chan },
+	]
+	blank = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1 }
+	# an id no picker entry carries; the selection did not move, so it is
+	# judged against the shown session and refused by name
+	refusals_for({ ..blank, trace_id: 9 }, -2, 0, 0, m) == "trace_id 9 not in the picker"
+	# the same absent id while the selection MOVED (wsel differs from
+	# cur_sel) is not judged against the shown session at all - the move is
+	# the answer - so nothing is refused; this is the guard's own case
+	and refusals_for({ ..blank, trace_id: 9 }, -2, 1, 0, m) == ""
+	and refusals_for({ ..blank, ghost_id: 9 }, -2, 0, 0, m) == "ghost_id 9 not in the picker"
+	and refusals_for({ ..blank, ghost_id: 1 }, -2, 0, 0, m) == "ghost_id 1 is the session on screen"
+	and refusals_for({ ..blank, ghost_id: 1 }, -2, 1, 1, m) == "ghost_id 1 is Ride, the session is Rowing"
+	# 'none' dismisses; an id beside it is never judged, so nothing is refused
+	# - not an absent id, not the shown session's own id, not one of the
+	# wrong kind (each would otherwise name its own refusal)
+	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 9 }, -2, 0, 0, m) == ""
+	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 1 }, -2, 0, 0, m) == ""
+	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 1 }, -2, 1, 1, m) == ""
 }
 
 # Reports a directive's terminal outcome from the task lane.
@@ -859,8 +963,35 @@ mark_task! = |home, did, refused|
 		Ok(db) => Db.mark_directive!(db, did, refused)
 	}
 
+# The frame after ESC leaves once the focus clear has landed, or once half
+# a second (30 frames at the app's 60 fps pacing) has passed without it - a
+# database that will not answer must not hold the window open. Ticks only
+# grow, so the difference cannot wrap.
+exits_now : Bool, U64, U64 -> Bool
+exits_now = |cleared, tick, quit_tick| cleared or tick - quit_tick >= 30
+
+# the clear landing ends the wait at once; without it the wait ends on the
+# 30th frame and not before
+expect exits_now(Bool.True, 100, 100)
+expect !exits_now(Bool.False, 129, 100)
+expect exits_now(Bool.False, 130, 100)
+expect exits_now(Bool.False, 5000, 100)
+
+# The window's last word: delete the focus row on the way out. Either
+# outcome ends the quit - a clear that failed changes nothing the staleness
+# window will not retire on its own.
+clear_focus_task! : Str => Msg
+clear_focus_task! = |home|
+	match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
+		Err(_) => FocusCleared
+		Ok(db) => match Db.clear_focus!(db) {
+			Ok(_) => FocusCleared
+			Err(_) => FocusCleared
+		}
+	}
+
 # The window's answer: upsert what the human is looking at
-focus_task! : Str, { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str } => Msg
+focus_task! : Str, Db.Focus => Msg
 focus_task! = |home, f|
 	if home == "" FocusWriteFailed
 	else match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
@@ -947,6 +1078,7 @@ Msg : [
 	DirectiveNone,
 	FocusWritten,
 	FocusWriteFailed,
+	FocusCleared,
 	DayDetail({ day : Str, lines : List(Db.DayLine) }),
 ]
 
@@ -1010,8 +1142,10 @@ caps_fields = [
 	{ name: "view", kind: "integer", accepts: "0..8" },
 	{ name: "range", kind: "integer", accepts: "30|60|90 (days; omitted leaves the range unchanged)" },
 	{ name: "cursor_day", kind: "date", accepts: "YYYY-MM-DD present in the form-board series" },
-	{ name: "trace_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions" },
+	{ name: "trace_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions; picks the first session of that day, trace_id names one exactly" },
 	{ name: "ghost_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions, or 'none' to dismiss" },
+	{ name: "trace_id", kind: "integer", accepts: "an activity id among the trace picker's sessions; when both are given it takes precedence over trace_day" },
+	{ name: "ghost_id", kind: "integer", accepts: "an activity id among the trace picker's sessions, of the same kind as the session shown; takes precedence over ghost_day, and 'none' in ghost_day still dismisses" },
 ]
 
 update! : Model, App.Input(Msg) => Try(Model, [Exit(I64), ..])
@@ -1049,12 +1183,13 @@ update! = |model0, program_input| {
 			DirectiveNone => acc
 			Polled(note) => { ..acc, bus_note: note }
 			FocusWritten => acc
+			FocusCleared => { ..acc, focus_cleared: Bool.True }
 			# a dropped write must not leave the coach stale: resetting
 			# last_focus makes the next throttle tick try again
 			# only the answer for the day still open lands; a result for a day
 			# the user closed or switched away from is dropped
 			DayDetail(dd) => if dd.day == acc.detail_day ({ ..acc, detail: dd.lines }) else acc
-			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" } }
+			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1 } }
 			# a session-naming directive replaces the picker with the one it
 			# was read against, so the refusal below and the selection it
 			# resolves both see the database as it is. The trace cache is
@@ -1080,7 +1215,16 @@ update! = |model0, program_input| {
 							# a fetch still in flight for it is matched by generation,
 							# not by index, and its samples land under the new index;
 							# samples already drawn are that session's by id.
-							{ ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: r.sel, trace_refetch: !r.found and !(List.is_empty(fresh)) }
+							# The ghost follows its session by id the same way, and a
+							# ghost whose session is gone is dismissed - its samples,
+							# day and duration cleared together - rather than left
+							# pointing at whatever session now holds its old index.
+							# A dismissal here opens a new ghost generation exactly as
+							# a keyboard dismissal does, so a ghost fetch still in
+							# flight for the vanished session lands nowhere instead
+							# of resurrecting its samples beside a cleared selection.
+							g = ghost_after_reread(acc.ghost_sel, acc.trace_ids, fresh)
+							{ ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: r.sel, trace_refetch: !r.found and !(List.is_empty(fresh)), ghost_sel: g.sel, ghost: (if g.keep acc.ghost else []), ghost_day: (if g.keep acc.ghost_day else ""), ghost_dur: (if g.keep acc.ghost_dur else 0.0), ghost_gen: (if g.keep acc.ghost_gen else acc.ghost_gen + 1) }
 						}
 				}
 			Reloaded(fresh) => {
@@ -1107,9 +1251,9 @@ update! = |model0, program_input| {
 		})
 	# the coach's word arrives beside the human's input and steers only what
 	# it names: view, range, a day for the crosshair, a session for the trace
-	directive0 = List.fold(program_input.messages, { has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" }, |acc, msg|
+	directive0 = List.fold(program_input.messages, { has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1 }, |acc, msg|
 		match msg {
-			Directive(d2) => { has_d: Bool.True, id: d2.dv.id, view: d2.dv.view, range: d2.dv.range, cursor_day: d2.dv.cursor_day, trace_day: d2.dv.trace_day, ghost_day: d2.dv.ghost_day }
+			Directive(d2) => { has_d: Bool.True, id: d2.dv.id, view: d2.dv.view, range: d2.dv.range, cursor_day: d2.dv.cursor_day, trace_day: d2.dv.trace_day, ghost_day: d2.dv.ghost_day, trace_id: d2.dv.trace_id, ghost_id: d2.dv.ghost_id }
 			_ => acc
 		})
 	# a re-delivered id means the mark was lost to a busy database (the row
@@ -1123,9 +1267,17 @@ update! = |model0, program_input| {
 		rref = model.last_directive.refused
 		Task.spawn!(program_input, || MarkDone(mark_task!(homer, rid, rref)))
 	}
-	directive = if is_redelivery ({ has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "" }) else directive0
-	if d.key_pressed(KeyEscape) {
-		Err(Exit(0))
+	directive = if is_redelivery ({ has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1 }) else directive0
+	if model.quitting {
+		if exits_now(model.focus_cleared, model.tick, model.quit_tick) (Err(Exit(0)))
+		else Ok({ ..model, tick: model.tick + 1 })
+	} else if d.key_pressed(KeyEscape) {
+		if model.home == "" (Err(Exit(0)))
+		else {
+			homeq = model.home
+			_ = Task.spawn!(program_input, || clear_focus_task!(homeq))
+			Ok({ ..model, quitting: Bool.True, quit_tick: model.tick, tick: model.tick + 1 })
+		}
 	} else {
 		pixels = { w: I32.to_f32(program_input.window.size.width), h: I32.to_f32(program_input.window.size.height) }
 		ctrl = d.key_down(KeyLeftControl) or d.key_down(KeyRightControl)
@@ -1331,8 +1483,12 @@ update! = |model0, program_input| {
 		# reloads and trace switches SPAWN — Cmd panics in update!, and the
 		# task lane is where Sqlite and text preparation park legally
 		# a directive naming a session day resolves to its picker slot
+		# an id names one session exactly and wins over a day; a day names
+		# whichever session of that day sorts first, which is the newest
 		want_sel2 =
-			if directive.has_d and directive.trace_day != "" {
+			if directive.has_d and directive.trace_id >= 0 {
+				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_sel, |acc, x| if x.e.id == directive.trace_id x.ei else acc)
+			} else if directive.has_d and directive.trace_day != "" {
 				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_sel, |acc, x| if x.e.day == directive.trace_day x.ei else acc)
 			} else want_sel
 		# NoSwitch joins List.get's OutOfBounds in one inferred error union
@@ -1385,7 +1541,10 @@ update! = |model0, program_input| {
 		# honoured: ghost_matches is the same test the keyboard path applies
 		want_ghost_raw =
 			if directive.has_d and directive.ghost_day == "none" (-1)
-			else if directive.has_d and directive.ghost_day != "" {
+			else if directive.has_d and directive.ghost_id >= 0 {
+				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_ghost, |acc, x| if x.e.id == directive.ghost_id and ghost_matches(entry_at(model.trace_ids, want_sel2), x.e) (match U64.to_i64_try(x.ei) { Ok(gi) => gi
+					Err(_) => acc }) else acc)
+			} else if directive.has_d and directive.ghost_day != "" {
 				List.fold(List.map_with_index(model.trace_ids, |e, ei| { e, ei }), want_ghost, |acc, x| if x.e.day == directive.ghost_day and ghost_matches(entry_at(model.trace_ids, want_sel2), x.e) (match U64.to_i64_try(x.ei) { Ok(gi) => gi
 					Err(_) => acc }) else acc)
 			} else want_ghost
@@ -1525,9 +1684,17 @@ update! = |model0, program_input| {
 			# the coach's readout must not trail it by one write
 			trace_day: trace_day2,
 			ghost_day: ghost_day2,
+			# the ids answer "which session" where a day cannot, on a day that
+			# carries two; -1 (no session) writes as NULL
+			trace_id: id_at(model.trace_ids, want_sel2),
+			ghost_id: (match I64.to_u64_try(want_ghost2) { Ok(gu5) => id_at(model.trace_ids, gu5)
+				Err(_) => -1 }),
 		}
+		# written when what the human sees changed (throttled), and on a
+		# heartbeat regardless: updated_at is the coach's liveness signal, and a
+		# window idle on one view for an hour is still a window
 		last_focus =
-			if focus_now != model.last_focus and tick % 30 == 0 and model.home != "" {
+			if model.home != "" and ((focus_now != model.last_focus and tick % 30 == 0) or tick % focus_beat_ticks == 0) {
 				homef = model.home
 				_ = Task.spawn!(program_input, || focus_task!(homef, focus_now))
 				focus_now
