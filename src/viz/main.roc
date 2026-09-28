@@ -275,6 +275,7 @@ load_model! = |font, curve_days, boot| {
 			curve_days,
 			trace_ids: loaded.tids,
 			trace_sel: 0.U64,
+			trace_gen: 0.U64,
 			trace_refetch: Bool.False,
 			trace_loading: Bool.False,
 			trace_day: match List.first(loaded.tids) {
@@ -311,6 +312,7 @@ load_model! = |font, curve_days, boot| {
 			ghost: [],
 			ghost_dur: 1.0,
 			ghost_sel: -1,
+			ghost_gen: 0.U64,
 			ghost_day: "",
 			trace_zoom: 1.0,
 			trace_pan: 0.0,
@@ -454,8 +456,8 @@ build_glow! = |win|
 # session's trace and duration (no segments - the ghost is a line, not a
 # block chart). The caller already cleared the drawn overlay when the
 # selection moved, so a failure leaves no ghost, never a stale one.
-ghost_task! : Str, List(TraceId), I64 => Msg
-ghost_task! = |home, ids, gsel|
+ghost_task! : Str, List(TraceId), I64, U64 => Msg
+ghost_task! = |home, ids, gsel, gen|
 	if home == "" GhostSwitchFailed
 	else match I64.to_u64_try(gsel) {
 		Err(_) => GhostSwitchFailed
@@ -467,7 +469,7 @@ ghost_task! = |home, ids, gsel|
 					Ok(db) => {
 						tr = Db.load_trace!(db, entry.id, entry.chan)
 						du = Db.load_dur!(db, entry.id)
-						GhostSwitched({ tr, du, sel: gsel, day: entry.day })
+						GhostSwitched({ tr, du, gen, day: entry.day })
 					}
 				}
 		}
@@ -476,20 +478,20 @@ ghost_task! = |home, ids, gsel|
 # Same task lane, the live session: re-reads one session's trace, segments
 # and duration and reports back as a message. Any failure keeps the session
 # the window already had.
-trace_task! : Str, [Metric, Imperial], List(TraceId), U64 => Msg
-trace_task! = |home, units, ids, sel|
-	if home == "" TraceSwitchFailed(sel)
+trace_task! : Str, [Metric, Imperial], List(TraceId), U64, U64 => Msg
+trace_task! = |home, units, ids, sel, gen|
+	if home == "" TraceSwitchFailed(gen)
 	else match List.get(ids, sel) {
-		Err(_) => TraceSwitchFailed(sel)
+		Err(_) => TraceSwitchFailed(gen)
 		Ok(entry) =>
 			match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
-				Err(_) => TraceSwitchFailed(sel)
+				Err(_) => TraceSwitchFailed(gen)
 				Ok(db) => {
 					tr = Db.load_trace!(db, entry.id, entry.chan)
 					sg = Db.load_segs!(db, entry.id)
 					du = Db.load_dur!(db, entry.id)
 					sp = if entry.chan == Db.pace_chan (Db.load_splits!(db, entry.id, Units.split_len(units))) else []
-					TraceSwitched({ tr, sg, du, sel, day: entry.day, un: Db.trace_unit(entry.chan, units), sp })
+					TraceSwitched({ tr, sg, du, gen, day: entry.day, un: Db.trace_unit(entry.chan, units), sp })
 				}
 			}
 	}
@@ -923,14 +925,17 @@ Msg : [
 	# recognised as stale and dropped rather than painted over the newer one
 	CurveReloaded(CurveWindow),
 	CurveReloadFailed(I64),
-	GhostSwitched({ tr : List(F32), du : F32, sel : I64, day : Str }),
+	# a fetch reply names the generation it was spawned under, not the picker
+	# index it read: the model applies it only while that generation is still
+	# current, so a reply for a superseded switch lands nowhere
+	GhostSwitched({ tr : List(F32), du : F32, gen : U64, day : Str }),
 	GhostSwitchFailed,
 	Shot(Try({}, Capture.ScreenshotError)),
 	RecCmd({}),
 	MarkDone({}),
 	Reloaded(Ui.Model),
 	ReloadFailed,
-	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, sel : U64, day : Str, un : Str, sp : List(Series.Split) }),
+	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, gen : U64, day : Str, un : Str, sp : List(Series.Split) }),
 	TraceSwitchFailed(U64),
 	# `ids` is the picker as the database holds it at poll time, read only when
 	# the directive names a session: what a session-naming directive is judged
@@ -1033,15 +1038,14 @@ update! = |model0, program_input| {
 				if w.days != acc.curve_days acc
 				else { ..acc, curve: w.c, curve_prev: w.cpv, curve_lbls: w.lbls, curve_title: w.title, fit_lbl: w.fit_lbl, cp_lbl: w.cp_lbl, fit_cp: w.fit_cp, fit_r2: w.fit_r2, reloading: Bool.False }
 			CurveReloadFailed(days) => if days != acc.curve_days acc else { ..acc, reloading: Bool.False }
-			# only the reply for the selection now on screen counts: a fetch for
-			# a session the athlete has already switched away from is stale and
-			# dropped, and it must not clear the loading flag the newer fetch
-			# still owns (mirrors GhostSwitched's guard, and TraceSwitched below)
-			TraceSwitchFailed(fsel) => if fsel != acc.trace_sel acc else { ..acc, trace_loading: Bool.False }
+			# a failed fetch lowers the loading flag only if it was the current
+			# fetch: a failure for a superseded switch must not clear the flag
+			# the newer fetch still owns
+			TraceSwitchFailed(g) => if g != acc.trace_gen acc else { ..acc, trace_loading: Bool.False }
 			GhostSwitchFailed => acc
-			# a slow load must not resurrect a dismissed ghost or overwrite a
-			# newer pick: only the result matching the current selection lands
-			GhostSwitched(gw) => if gw.sel == acc.ghost_sel ({ ..acc, ghost: gw.tr, ghost_dur: gw.du, ghost_day: gw.day }) else acc
+			# only the reply for the current ghost generation lands: a slow load
+			# for a pick since replaced, or since dismissed, applies nowhere
+			GhostSwitched(gw) => if gw.gen == acc.ghost_gen ({ ..acc, ghost: gw.tr, ghost_dur: gw.du, ghost_day: gw.day }) else acc
 			DirectiveNone => acc
 			Polled(note) => { ..acc, bus_note: note }
 			FocusWritten => acc
@@ -1070,19 +1074,13 @@ update! = |model0, program_input| {
 						if d2.dv.id == acc.last_directive.id { ..acc, bus_note: d2.note }
 						else {
 							r = sel_following_id(acc.trace_ids, acc.trace_sel, fresh)
-							# refetch when the re-read orphaned an in-flight fetch or
-							# lost the session, never merely because an index moved:
-							# a fetch spawned for the old index is tagged with it and
-							# the switch guard would drop it as stale, so a shift
-							# WHILE LOADING must spawn a replacement the guard will
-							# match. A shift while NOT loading needs nothing - the
-							# drawn samples belong to that same session by id and
-							# the header re-reads its new index, so forcing a fetch
-							# there only blanks correct data to "loading" for a frame
-							# (the emptied cache guarantees the miss) before
-							# reloading the identical trace. Vanish always refetches
-							# for the fallback session.
-							{ ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: r.sel, trace_refetch: ((r.sel != acc.trace_sel and acc.trace_loading) or !r.found) and !(List.is_empty(fresh)) }
+							# refetch only when the shown session is gone: the fallback
+							# is a different session whose samples are not in memory.
+							# A session merely moved to another index needs nothing -
+							# a fetch still in flight for it is matched by generation,
+							# not by index, and its samples land under the new index;
+							# samples already drawn are that session's by id.
+							{ ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: r.sel, trace_refetch: !r.found and !(List.is_empty(fresh)) }
 						}
 				}
 			Reloaded(fresh) => {
@@ -1097,12 +1095,15 @@ update! = |model0, program_input| {
 				if fresh.curve_days == acc.curve_days merged
 				else { ..merged, curve: acc.curve, curve_prev: acc.curve_prev, curve_lbls: acc.curve_lbls, curve_title: acc.curve_title, curve_days: acc.curve_days, fit_lbl: acc.fit_lbl, cp_lbl: acc.cp_lbl, fit_cp: acc.fit_cp, fit_r2: acc.fit_r2, reloading: acc.reloading }
 			}
-			# apply only the reply for the selection now on screen: two switches
+			# only the reply for the current trace generation lands: two switches
 			# faster than the first fetch resolves would otherwise let the first,
-			# stale answer overwrite the second - a wrong session drawn under the
-			# right one's name until the next interaction. A dropped stale reply
-			# leaves the loading flag up, since the newer fetch is still coming.
-			TraceSwitched(sw) => if sw.sel != acc.trace_sel acc else { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day, trace_unit: sw.un, trace_splits: sw.sp, trace_loading: Bool.False }
+			# stale answer overwrite the second. A dropped stale reply leaves the
+			# loading flag up, since the newer fetch is still coming. The reply
+			# carries samples, never a selection - trace_sel belongs to the frame
+			# that switches, and a picker re-read may have moved the session
+			# since the fetch read its index; the samples are still that
+			# session's, so they land under whatever index it holds now.
+			TraceSwitched(sw) => if sw.gen != acc.trace_gen acc else { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_day: sw.day, trace_unit: sw.un, trace_splits: sw.sp, trace_loading: Bool.False }
 		})
 	# the coach's word arrives beside the human's input and steers only what
 	# it names: view, range, a day for the crosshair, a session for the trace
@@ -1345,11 +1346,14 @@ update! = |model0, program_input| {
 		# so only the miss is a load in flight
 		trace_fetch = moving and (match switched { Ok(_) => Bool.False
 			Err(_) => Bool.True })
+		# every switch opens a new generation, fetch or not: a hit also retires
+		# whatever fetch the previous selection still had in flight
+		trace_gen2 = if moving (model.trace_gen + 1) else model.trace_gen
 		_ = if trace_fetch {
 			home2 = model.home
 			units2 = model.units
 			ids2 = model.trace_ids
-			Task.spawn!(program_input, || trace_task!(home2, units2, ids2, want_sel2))
+			Task.spawn!(program_input, || trace_task!(home2, units2, ids2, want_sel2, trace_gen2))
 		}
 		# the trace camera: wheel zooms anchored at the cursor's moment, a held
 		# left drag pans, 0 resets - and a session switch resets (the window
@@ -1398,11 +1402,14 @@ update! = |model0, program_input| {
 				match I64.to_u64_try(want_ghost2) { Ok(gu9) => List.get(model.trace_cache, gu9)
 					Err(_) => Err(OutOfBounds) }
 			} else Err(NoSwitch)
+		# any ghost change - a new pick, a cache hit, or a dismissal - opens a
+		# new generation, so a load still in flight for the old pick lands nowhere
+		ghost_gen2 = if want_ghost2 != model.ghost_sel (model.ghost_gen + 1) else model.ghost_gen
 		_ = if want_ghost2 != model.ghost_sel and want_ghost2 >= 0 and (match ghost_hit { Ok(_) => Bool.False
 			Err(_) => Bool.True }) {
 			home3 = model.home
 			ids3 = model.trace_ids
-			Task.spawn!(program_input, || ghost_task!(home3, ids3, want_ghost2))
+			Task.spawn!(program_input, || ghost_task!(home3, ids3, want_ghost2, ghost_gen2))
 		}
 		# any ghost change clears the overlay this frame: a failed load leaves
 		# no ghost rather than the previous one
@@ -1545,7 +1552,7 @@ update! = |model0, program_input| {
 				Unavailable(u9) => if u9.gw == pixels.w and u9.gh == pixels.h (model.glow) else build_glow!(pixels)
 			}
 		glow_on2 = if d.key_pressed(KeyG) (!model.glow_on) else model.glow_on
-		Ok({ ..model, reloading: (if reload_spawned Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, trace_refetch: Bool.False, trace_loading: (if trace_fetch Bool.True else model.trace_loading), ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, reloading: (if reload_spawned Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if trace_fetch Bool.True else if moving Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
