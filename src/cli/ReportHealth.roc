@@ -23,6 +23,7 @@ import Db
 import Output
 import Metrics
 import Render
+import core.Bus
 import core.Sports
 import pf.Sqlite
 import pf.Stdout
@@ -624,6 +625,96 @@ ReportHealth :: [].{
                 Ok({})
             }
         }
+    }
+
+    # One poll-and-mark cycle of the window's directive lifecycle, without a
+    # window. The statements are core.Bus's - the same list the window runs
+    # every second - bound here to basic-cli's Sqlite, so the lifecycle the
+    # e2e suite cannot reach through a GUI is reachable through this. The
+    # cycle is exactly the window's: migrate if the sentinel says so, sweep
+    # stale rows, take the newest fresh row as the winner, close older rows
+    # as superseded, then write the winner's outcome - or, with ack false,
+    # leave it pending as a window crashed between apply and report would.
+    # No field is validated: that judgement needs the window's model, and it
+    # is pinned by the window's own expects. Every field here is honoured.
+    #
+    # Where this differs from the window, on purpose: the window discards
+    # every write's result, because it polls again a second later and a
+    # transient miss heals itself unseen. This is one shot whose payload
+    # says `acked`, so a sweep, supersede or mark that does not land, and a
+    # pending read that cannot answer, fail the command through the
+    # envelope boundary rather than report a cycle that did not happen. The
+    # migration's statements alone keep the discard: an ALTER on a column
+    # that already exists fails by design. A row the decoder cannot read
+    # field by field is tolerated field by field, as the window tolerates
+    # it, so one hostile row cannot wedge the lifecycle for the tick while
+    # the window consumes it.
+    viz_tick! : { ack : Bool } => Try({}, _)
+    viz_tick! = |t| {
+        path = Db.open_db!({})?
+        exec! = |q, bindings| Sqlite.execute!({ path: Path.utf8(path), query: q, bindings })
+        present = match Sqlite.query_many!({ path: Path.utf8(path), query: Bus.sentinel_sql, bindings: [], rows: Sqlite.i64("c") }) {
+            Ok(rows) => match List.first(rows) { Ok(c) => c
+                Err(_) => 0 }
+            Err(_) => 0
+        }
+        if present != Bus.sentinel_present {
+            List.for_each!(Bus.ddl, |q| { _ = exec!(q, []) })
+        }
+        pending_rows = Sqlite.query_many!({ path: Path.utf8(path), query: Bus.has_pending_sql, bindings: [], rows: Sqlite.i64("e") })?
+        pending = match List.first(pending_rows) { Ok(e) => e == 1
+            Err(_) => Bool.False }
+        none = { found: Bool.False, acked: Bool.False, id: -1, status: "none", view: -1, range: -1, cursor_day: "", trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1 }
+        or_int = |r, fallback| match r { Ok(x) => x
+            Err(_) => fallback }
+        or_str = |r| match r { Ok(x) => x
+            Err(_) => "" }
+        out =
+            if !pending none
+            else {
+                exec!(Bus.stale_sweep_sql, [])?
+                winners = Sqlite.query_many!({
+                    path: Path.utf8(path),
+                    query: Bus.winner_sql,
+                    bindings: [],
+                    rows: |cols| |stmt| {
+                        id = Sqlite.i64("id")(cols)(stmt)?
+                        v = or_int(Sqlite.i64("v")(cols)(stmt), -1)
+                        rg = or_int(Sqlite.i64("rg")(cols)(stmt), -1)
+                        cd = or_str(Sqlite.str("cd")(cols)(stmt))
+                        td = or_str(Sqlite.str("td")(cols)(stmt))
+                        gd = or_str(Sqlite.str("gd")(cols)(stmt))
+                        ti = or_int(Sqlite.i64("ti")(cols)(stmt), -1)
+                        gi = or_int(Sqlite.i64("gi")(cols)(stmt), -1)
+                        Ok({ id, v, rg, cd, td, gd, ti, gi })
+                    },
+                })?
+                match List.first(winners) {
+                    Err(_) => none
+                    Ok(w) => {
+                        exec!(Bus.supersede_sql, [{ name: ":id", value: Integer(w.id) }])?
+                        # the mark returns the id it closed; no row back means
+                        # another executor closed the winner between this
+                        # cycle's select and its mark, and the cycle reports
+                        # that it lost the race rather than a write it never
+                        # made. A supersede matching nothing is ordinary - no
+                        # older row - and reports nothing.
+                        marked =
+                            if t.ack
+                                Sqlite.query_many!({ path: Path.utf8(path), query: Bus.mark_returning_sql, bindings: [{ name: ":st", value: String(Bus.mark_status("")) }, { name: ":e", value: String("") }, { name: ":id", value: Integer(w.id) }], rows: Sqlite.i64("id") })?
+                            else []
+                        status =
+                            if !t.ack "pending"
+                            else if List.is_empty(marked) "raced"
+                            else Bus.mark_status("")
+                        { found: Bool.True, acked: status == Bus.mark_status(""), id: w.id, status, view: w.v, range: w.rg, cursor_day: w.cd, trace_day: w.td, trace_id: w.ti, ghost_day: w.gd, ghost_id: w.gi }
+                    }
+                }
+            }
+        if Output.json_mode!({})
+            Output.emit_ok!(out)
+        else
+            Stdout.line!(if out.found "tick: directive ${(out.id).to_str()} ${out.status} (view ${(out.view).to_str()}, range ${(out.range).to_str()}, trace ${out.trace_day}/${(out.trace_id).to_str()}, ghost ${out.ghost_day}/${(out.ghost_id).to_str()})" else "tick: nothing pending")
     }
 
     # power-zone reference chart: the 7 Coggan/Peloton zones as watt ranges from your

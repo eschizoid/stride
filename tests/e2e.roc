@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1185)?
+    checks_ran_exactly!(1207)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -391,6 +391,7 @@ run_scenarios! = |ctx| {
     b_device_watts!(ctx)?
     b_doctor!(ctx)?
     b_viz_caps!(ctx)?
+    b_viz_tick!(ctx)?
     b_cross_surface!(ctx)?
     b_human!(ctx)?
     b_command_schemas!(ctx)?
@@ -1531,7 +1532,7 @@ b_init_config! = |ctx| {
     _ = sh!("rm -rf '${help_dir}' && mkdir -p '${help_dir}' && ${spec_names} > '${help_dir}/spec' && ${human_help} > '${help_dir}/human'")
     # Fail-closed: an empty extraction on either side would make the loop below vacuous.
     help_sizes = Str.trim(sh!("wc -l < '${help_dir}/spec' | tr -d ' '"))
-    check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "41")?
+    check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "42")?
     missing_from_help = Str.trim(sh!("while IFS= read -r c; do grep -qw -- \"\$c\" '${help_dir}/human' || printf '%s ' \"\$c\"; done < '${help_dir}/spec'"))
     check!("every command in the table is named in `stride --help` (missing: ${missing_from_help})", missing_from_help == "")?
     _ = sh!("rm -rf '${help_dir}'")
@@ -4687,13 +4688,14 @@ b_command_schemas! = |ctx| {
     # this build `complete x x x x`, still usage, still green, while `complete x x x` (the
     # arity the table now advertises) answers usage and nothing asks.
     shortfall = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | [.name] + [.args[] ${junk}] | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true; } | tr '\\n' '|'"))
-    # THREE named exceptions, because for these the parser validates the VALUE at parse
+    # FOUR named exceptions, because for these the parser validates the VALUE at parse
     # time, so `usage` there is a value verdict rather than an arity one — which is the
-    # limit of the observation this whole block rests on. `week` declares the literal `all`
-    # and refuses anything else; `reps` refuses a non-date; `progress` has dedicated
-    # `asc`/`desc` arms and refuses a second token that is neither. Pinned by name so a
-    # fourth is a line in the diff rather than a silent member.
-    check!("...and exactly what the table declares is never one, bar the three that parse-check their value (got: ${shortfall})", shortfall == "progress x x|reps x|week x|")?
+    # limit of the observation this whole block rests on. `viz tick` declares the literal
+    # `--no-ack` and refuses anything else; `week` declares the literal `all` the same
+    # way; `reps` refuses a non-date; `progress` has dedicated `asc`/`desc` arms and
+    # refuses a second token that is neither. Pinned by name so a fifth is a line in the
+    # diff rather than a silent member.
+    check!("...and exactly what the table declares is never one, bar the four that parse-check their value (got: ${shortfall})", shortfall == "viz tick x|progress x x|reps x|week x|")?
     # ...and one REQUIRED argument short is always a usage error, which the total-
     # driven bounds cannot see: flipping an optional to required leaves both
     # unmoved — and declaring `complete <activity_id>` required erases
@@ -7158,13 +7160,13 @@ b_viz_caps! = |ctx| {
     _ = sql!(ctx.db, "DELETE FROM viz_focus;")
     check!("a cleared row - the window quit - reads as no focus", strjq!(ctx, ["viz"], ".data.focus.present | tostring") == "false")?
     _ = sql!(ctx.db, "DROP TABLE viz_focus;")
-    # the NAMES the window publishes equal the directive columns Db.roc's
-    # SQL reads through COALESCE, in both directions. Not pinned here or
-    # anywhere: the accepts text (prose), and whether update!'s resolver
-    # acts on a field - refusals_for's expects judge a resolved selection,
-    # not the fold that resolves it. An empty extraction fails rather than
-    # matching empty against empty.
-    field_parity = Str.trim(sh!("pub=$(awk '/^caps_fields = \\[/{p=1} p{print} p&&/\\]/{exit}' src/viz/main.roc | grep -oE 'name: \"[a-z_]+\"' | sed 's/name: \"//; s/\"//' | LC_ALL=C sort -u | tr '\\n' ' '); q=$(grep -oE 'COALESCE\\((view|range|cursor_day|trace_day|ghost_day|trace_id|ghost_id)' src/viz/Db.roc | grep -oE '[a-z_]+$' | LC_ALL=C sort -u | tr '\\n' ' '); if [ -n \"$pub\" ] && [ \"$pub\" = \"$q\" ]; then echo same; else echo \"pub=$pub q=$q\"; fi"))
+    # the NAMES the window publishes equal the directive columns the poll's
+    # winner query in core.Bus reads through COALESCE, in both directions.
+    # Not pinned here or anywhere: the accepts text (prose), and whether
+    # update!'s resolver acts on a field - refusals_for's expects judge a
+    # resolved selection, not the fold that resolves it. An empty extraction
+    # fails rather than matching empty against empty.
+    field_parity = Str.trim(sh!("pub=$(awk '/^caps_fields = \\[/{p=1} p{print} p&&/\\]/{exit}' src/viz/main.roc | grep -oE 'name: \"[a-z_]+\"' | sed 's/name: \"//; s/\"//' | LC_ALL=C sort -u | tr '\\n' ' '); q=$(grep -oE 'COALESCE\\((view|range|cursor_day|trace_day|ghost_day|trace_id|ghost_id)' src/core/Bus.roc | grep -oE '[a-z_]+$' | LC_ALL=C sort -u | tr '\\n' ' '); if [ -n \"$pub\" ] && [ \"$pub\" = \"$q\" ]; then echo same; else echo \"pub=$pub q=$q\"; fi"))
     check!("the published field names equal the columns the poll reads (${field_parity})", field_parity == "same")?
     check!("viz payload conforms to its schema", Str.is_empty(Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' viz | jq '.data' | jq -r --slurpfile schema schemas/v3/viz.json -f tools/validate.jq 2>&1"))))?
     # a HALF-written publish — tables present, scalars gone — must refuse the
@@ -7175,6 +7177,92 @@ b_viz_caps! = |ctx| {
     _ = sql!(ctx.db, "DROP TABLE viz_capabilities;")
     _ = sql!(ctx.db, "DROP TABLE viz_views;")
     _ = sql!(ctx.db, "DROP TABLE viz_fields;")
+    Ok({})
+}
+
+# The directive lifecycle, headless: `stride viz tick` runs the window's
+# poll-and-mark cycle through the same core.Bus statements, so every state
+# ADR 0015 promises - stale, superseded, pending-until-reported, applied -
+# is driven here without a window. The sentinel that migrates an existing
+# database is exercised on purpose: it has failed once.
+b_viz_tick! : Ctx => Try({}, _)
+b_viz_tick! = |ctx| {
+    # a database that predates the bus: the tick creates it, and finds nothing
+    _ = sql!(ctx.db, "DROP TABLE IF EXISTS viz_directives; DROP TABLE IF EXISTS viz_focus;")
+    check!("tick on a database with no bus creates it and finds nothing", strjq!(ctx, ["viz", "tick"], ".data | (.found | tostring) + \"/\" + (.acked | tostring) + \"/\" + .status") == "false/false/none")?
+    cols = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_directives');")
+    check!("...and the tables it created carry every column the migration adds (${Str.trim(cols)})", Str.contains(cols, "trace_id") and Str.contains(cols, "ghost_id") and Str.contains(cols, "applied_at"))?
+    # the sentinel: a bus from a window that predates the id columns is
+    # migrated by the next tick, not skipped as already migrated
+    _ = sql!(ctx.db, "DROP TABLE viz_directives; DROP TABLE viz_focus;")
+    _ = sql!(ctx.db, "CREATE TABLE viz_directives (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL DEFAULT (datetime('now')), view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT, ghost_day TEXT, consumed INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', error TEXT, applied_at TEXT);")
+    _ = sql!(ctx.db, "CREATE INDEX viz_directives_pending ON viz_directives (id) WHERE consumed = 0;")
+    _ = sql!(ctx.db, "CREATE TABLE viz_focus (id INTEGER PRIMARY KEY CHECK (id = 1), updated_at TEXT NOT NULL, view INTEGER NOT NULL, range INTEGER NOT NULL, cursor_day TEXT, trace_day TEXT, ghost_day TEXT);")
+    _ = strjq!(ctx, ["viz", "tick"], ".data.found")
+    cols2 = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_directives');")
+    fcols = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")
+    check!("a bus from before the id columns gains them on the next tick, both tables", Str.contains(cols2, "trace_id") and Str.contains(cols2, "ghost_id") and Str.contains(fcols, "trace_id") and Str.contains(fcols, "ghost_id"))?
+    # stale: a row older than the window closes as stale, applied by nobody,
+    # and a fresh row beside it is the winner
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view, created_at) VALUES (3, datetime('now', '-1 hour'));")
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view, range, trace_day, trace_id) VALUES (2, 60, '2099-01-02', 4242);")
+    check!("a fresh row wins over a stale one and is applied with every field", strjq!(ctx, ["viz", "tick"], ".data | (.found | tostring) + \"/\" + .status + \"/\" + (.view | tostring) + \"/\" + (.range | tostring) + \"/\" + .trace_day + \"/\" + (.trace_id | tostring)") == "true/applied/2/60/2099-01-02/4242")?
+    check!("...the stale row closed as stale, with its age named", Str.trim(sql!(ctx.db, "SELECT status || '|' || error FROM viz_directives WHERE view = 3;")) == "stale|older than 600 seconds when read")?
+    check!("...and the winner closed as applied with an applied_at stamp", Str.trim(sql!(ctx.db, "SELECT status || '|' || (applied_at IS NOT NULL) || '|' || consumed FROM viz_directives WHERE view = 2;")) == "applied|1|1")?
+    # supersede: two fresh rows, the newest wins, the older closes as superseded
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (4);")
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (5);")
+    check!("the newest of two fresh rows wins", strjq!(ctx, ["viz", "tick"], ".data.view") == "5")?
+    check!("...and the older closed as superseded", Str.trim(sql!(ctx.db, "SELECT status FROM viz_directives WHERE view = 4;")) == "superseded")?
+    # pending until reported: a cycle that does not ack leaves the winner
+    # pending, and the next cycle returns the SAME row - a crash between
+    # apply and report retries rather than loses the directive
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (6);")
+    first = strjq!(ctx, ["viz", "tick", "--no-ack"], ".data | (.id | tostring) + \"/\" + .status + \"/\" + (.acked | tostring)")
+    check!("an unacked cycle leaves the winner pending (${first})", Str.ends_with(first, "/pending/false"))?
+    second = strjq!(ctx, ["viz", "tick", "--no-ack"], ".data | (.id | tostring) + \"/\" + .status + \"/\" + (.acked | tostring)")
+    check!("...and the next cycle returns the same row again", first == second)?
+    check!("...still pending in the table", Str.trim(sql!(ctx.db, "SELECT status || '|' || consumed FROM viz_directives WHERE view = 6;")) == "pending|0")?
+    check!("...until a cycle acks it", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + (.acked | tostring)") == "applied/true")?
+    # the nothing-pending fast path after everything is closed
+    check!("with every row closed a tick finds nothing", strjq!(ctx, ["viz", "tick"], ".data.found") == "false")?
+    # a winner left pending that ages past the window before any cycle acks
+    # it is retired by the next cycle's sweep, which runs before the winner
+    # select, so no mark ever reaches it. (The mark's own consumed = 0 guard
+    # is not reached by a single sequential executor; it exists for a
+    # concurrent closer, which this harness does not construct.)
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (7);")
+    _ = strjq!(ctx, ["viz", "tick", "--no-ack"], ".data.found")
+    _ = sql!(ctx.db, "UPDATE viz_directives SET created_at = datetime('now', '-1 hour') WHERE view = 7;")
+    check!("a pending row that went stale before its ack is swept, not applied, by the next cycle", strjq!(ctx, ["viz", "tick"], ".data.found") == "false" and Str.trim(sql!(ctx.db, "SELECT status FROM viz_directives WHERE view = 7;")) == "stale")?
+    # a hostile row - a non-integer in an INTEGER column, which affinity
+    # stores as text - is consumed field by field as the window consumes it,
+    # never wedging the lifecycle for one executor and not the other
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view, trace_day) VALUES ('banana', '2099-02-03');")
+    check!("a row with an unreadable field is consumed with that field unset, not a crash", strjq!(ctx, ["viz", "tick"], ".data | (.found | tostring) + \"/\" + .status + \"/\" + (.view | tostring) + \"/\" + .trace_day") == "true/applied/-1/2099-02-03")?
+    # the payload echoes the row read into memory; the table says whether the
+    # mark reached THAT row
+    check!("...and the table agrees the hostile row was the one marked", Str.trim(sql!(ctx.db, "SELECT status || '|' || consumed FROM viz_directives WHERE trace_day = '2099-02-03';")) == "applied|1")?
+    # a write that does not land is an error, never a cycle reported as
+    # done: a trigger refuses the mark, and the tick must say so, exit 1,
+    # and leave the row pending for a cycle that can write
+    _ = sql!(ctx.db, "CREATE TRIGGER no_ack BEFORE UPDATE ON viz_directives WHEN NEW.status = 'applied' BEGIN SELECT RAISE(ABORT, 'mark refused'); END;")
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (10);")
+    check!("a mark the database refuses is an error envelope, not an applied payload", strjq!(ctx, ["viz", "tick"], ".error.code") == "database_error")?
+    check!("...and the row it could not mark stays pending", Str.trim(sql!(ctx.db, "SELECT status || '|' || consumed FROM viz_directives WHERE view = 10;")) == "pending|0")?
+    _ = sql!(ctx.db, "DROP TRIGGER no_ack;")
+    check!("...until a cycle that can write marks it", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + (.view | tostring)") == "applied/10")?
+    # two executors on one table: another closer taking the winner between
+    # this cycle's select and its mark leaves the mark matching no row. A
+    # trigger on the supersede plays that closer deterministically; the
+    # cycle must report that it lost the race, never a write it did not make
+    _ = sql!(ctx.db, "CREATE TRIGGER racer AFTER UPDATE OF status ON viz_directives WHEN NEW.status = 'superseded' BEGIN UPDATE viz_directives SET consumed = 1, status = 'applied', applied_at = 'by the other executor' WHERE consumed = 0 AND id = (SELECT MAX(id) FROM viz_directives WHERE consumed = 0); END;")
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (11); INSERT INTO viz_directives (view) VALUES (12);")
+    check!("a winner another executor closed first is reported as raced, not applied", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + (.acked | tostring) + \"/\" + (.view | tostring)") == "raced/false/12")?
+    check!("...and the table carries the other executor's mark, untouched by this cycle", Str.trim(sql!(ctx.db, "SELECT status || '|' || applied_at FROM viz_directives WHERE view = 12;")) == "applied|by the other executor")?
+    _ = sql!(ctx.db, "DROP TRIGGER racer;")
+    check!("viz tick payload conforms to its schema", Str.is_empty(Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' viz tick | jq '.data' | jq -r --slurpfile schema schemas/v3/viz-tick.json -f tools/validate.jq"))))?
+    _ = sql!(ctx.db, "DROP TABLE viz_directives; DROP TABLE viz_focus;")
     Ok({})
 }
 

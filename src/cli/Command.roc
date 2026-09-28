@@ -22,6 +22,12 @@ Command := [
 	## the window's self-published bus capabilities (#439): views, directive
 	## fields, staleness - served from the database the window wrote them to
 	VizCaps,
+	# one poll-and-mark cycle of the window's directive lifecycle, without a
+	# window: the same core.Bus statements the window runs every second, so
+	# the lifecycle is testable where no window can open. ack false leaves the
+	# winner pending, the state a window crashed between apply and report
+	# leaves behind.
+	VizTick({ ack : Bool }),
 	Compare(Str),
 	Activities(U64, Str),
 	Top(Str, U64, Str),
@@ -141,6 +147,8 @@ Command := [
 			[_, "zones"] => Ok(Zones)
 			[_, "strength"] => Ok(Strength)
 			[_, "viz"] => Ok(VizCaps)
+			[_, "viz", "tick"] => Ok(VizTick({ ack: True }))
+			[_, "viz", "tick", "--no-ack"] => Ok(VizTick({ ack: False }))
 			[_, "pz"] => Ok(Zones)
 			# a bare asc/desc is a sort on the latest anchor, not a date named "desc"
 			[_, "progress"] => Ok(Progress("", Asc))
@@ -461,6 +469,10 @@ Command := [
 		## the payload is the WINDOW's claim about itself, relayed: absence of the
 		## capability tables is the window never having run, an answer with a code
 		errs(reads("viz", [], "viz.json"), ["no_viz_capabilities"]),
+		## the window's directive lifecycle run once, headless, through the same
+		## core.Bus statements the window polls with; it consumes and marks rows,
+		## so it writes
+		writes("viz tick", [opt("--no-ack")], "viz-tick.json"),
 		errs(reads("zones", [], "zones.json"), ["no_power_data"]),
 		## per-exercise progression + monthly tonnage with coverage (#522);
 		## empty states are payload facts, not errors, so no codes beyond
@@ -870,6 +882,9 @@ expect match Command.parse(["stride", "rate", "1", "5"]) { Ok(Rate("1", "5")) =>
 expect match Command.parse(["stride", "activity", "7"]) { Ok(Activity("7")) => True  _ => False }
 expect match Command.parse(["stride", "zones"]) { Ok(Zones) => True  _ => False }
 expect match Command.parse(["stride", "viz"]) { Ok(VizCaps) => True  _ => False }
+expect match Command.parse(["stride", "viz", "tick"]) { Ok(VizTick({ ack: True })) => True  _ => False }
+expect match Command.parse(["stride", "viz", "tick", "--no-ack"]) { Ok(VizTick({ ack: False })) => True  _ => False }
+expect match Command.parse(["stride", "viz", "tick", "--ack"]) { Err(_) => True  _ => False }
 expect match Command.parse(["stride", "viz", "extra"]) { Err(_) => True  _ => False }
 expect match Command.parse(["stride", "pz"]) { Ok(Zones) => True  _ => False }
 expect match Command.parse(["stride", "compare"]) { Ok(Compare("week")) => True  _ => False }
