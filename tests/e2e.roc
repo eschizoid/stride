@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1211)?
+    checks_ran_exactly!(1214)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7058,6 +7058,32 @@ b_cross_surface! = |ctx| {
     cli_curve = strjq!(ctx, ["power-curve", "3650", "Ride"], "[.data.points[] | select(.watts > 0) | (.dur_s | tostring) + \":\" + ((.watts * 10 | round) | tostring)] | join(\",\")")
     view_curve = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(s), '') FROM (SELECT secs || ':' || CAST(ROUND(MAX(watts) * 10) AS INTEGER) AS s FROM activity_power_ladder WHERE sport_family = 'Ride' AND start_local >= date('${ctx.today}', '-3650 days') GROUP BY rung, secs ORDER BY secs);"))
     check!("the CLI power curve equals the ladder view at every rung (${cli_curve})", !Str.is_empty(cli_curve) and cli_curve == view_curve)?
+    # the window's record book reads its rungs off the ladder view and joins
+    # the Ride record per rung; the same query, run here, must equal the
+    # CLI's all-time Ride curve at every rung the CLI reports, and must carry
+    # exactly the view's rung list - a rung the view gains appears, a rung no
+    # ride recorded stays as a zero row rather than vanishing
+    book = Str.trim(sql!(ctx.db, "WITH rungs AS (SELECT DISTINCT rung, secs FROM activity_power_ladder), best AS (SELECT rung, watts, day FROM (SELECT rung, watts, day, ROW_NUMBER() OVER (PARTITION BY rung ORDER BY watts DESC, start_local ASC) AS rn FROM activity_power_ladder WHERE sport_family = 'Ride') WHERE rn = 1) SELECT COALESCE(group_concat(r.secs || ':' || CAST(COALESCE(ROUND(b.watts), 0) AS INTEGER)), '') FROM rungs r LEFT JOIN best b ON b.rung = r.rung ORDER BY r.secs;"))
+    cli_book = strjq!(ctx, ["power-curve", "3650", "Ride"], "[.data.points[] | (.dur_s | tostring) + \":\" + ((.watts | round) | tostring)] | join(\",\")")
+    check!("the window's record-book query equals the CLI's all-time Ride curve at every rung (${book})", !Str.is_empty(book) and book == cli_book)?
+    view_rungs = Str.trim(sql!(ctx.db, "SELECT COUNT(DISTINCT rung) FROM activity_power_ladder;"))
+    book_rows = Str.trim(sql!(ctx.db, "WITH rungs AS (SELECT DISTINCT rung, secs FROM activity_power_ladder), best AS (SELECT rung, watts, day FROM (SELECT rung, watts, day, ROW_NUMBER() OVER (PARTITION BY rung ORDER BY watts DESC, start_local ASC) AS rn FROM activity_power_ladder WHERE sport_family = 'Ride') WHERE rn = 1) SELECT COUNT(*) FROM rungs r LEFT JOIN best b ON b.rung = r.rung;"))
+    check!("...and carries one row per rung the view knows (${view_rungs})", view_rungs != "0" and book_rows == view_rungs)?
+    # the plan strip's week is today's calendar week, the anchor the `week`
+    # command uses, not week_bounds' (the series' last analyzed week): the
+    # done count the window's query yields equals the `week` payload's
+    # count of done rows
+    # a done session is seeded on today so both sides count at least one -
+    # 0 == 0 would hold with either anchor and prove nothing - and removed
+    # after, since later fixtures count sessions by position
+    mon_of_today = "date('${ctx.today}', '-' || ((CAST(strftime('%w','${ctx.today}') AS INTEGER) + 6) % 7) || ' days')"
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance, elevation) VALUES (9502, 'cross-surface done ride', 'Ride', '${ctx.today}T07:00:00Z', 3600, 25000, 0);")
+    cs_done = Str.trim(strjq!(ctx, ["week", "add", "${ctx.today}", "endurance", "cross-surface done", "counted by both surfaces"], ".data.id"))
+    _ = strjq!(ctx, ["complete", cs_done, "9502"], ".data.id")
+    strip_done = Str.trim(sql!(ctx.db, "WITH anchor AS (SELECT ${mon_of_today} AS mon) SELECT CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER) FROM plan_current, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days');"))
+    week_done = strjq!(ctx, ["week"], "[.data[] | select(.status == \"done\")] | length | tostring")
+    check!("the window's plan-strip done count equals the week command's, with a done session seeded (${strip_done})", strip_done != "0" and strip_done == week_done)?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${cs_done}; DELETE FROM activities WHERE id = 9502;")
     # end-of-week CTL: weekly_ramp's newest week vs the load series on that
     # week's last loaded day, both in thousandths
     wk_ctl = Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(ctl_end * 1000) AS INTEGER) FROM weekly_ramp ORDER BY wk DESC LIMIT 1;"))

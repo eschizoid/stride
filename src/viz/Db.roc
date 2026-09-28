@@ -387,7 +387,13 @@ Db :: [].{
 
 	# the Monday-aligned CURRENT week's completion count - the progress strip's
 	# numerator and denominator (the display ladder below is forward-looking
-	# and cannot count done sessions meaningfully)
+	# and cannot count done sessions meaningfully). The week is TODAY's, the
+	# same anchor the engine's `week` command uses (Plan.plan_view!, today
+	# minus its Monday offset), and not week_bounds', which is the SERIES'
+	# current week - the week of the last analyzed day. The two agree once
+	# analyze has run today and differ by a week when it has not; a plan
+	# count is a calendar question, so it stays on the calendar. The sibling
+	# load_week_tss! reads week_bounds because load is a series question.
 	load_plan_week! : Sqlite.Db => { done : I64, total : I64 }
 	load_plan_week! = |db|
 		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT date(date('now', 'localtime'), '-6 days', 'weekday 1') AS mon) SELECT CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER) AS dn, COUNT(*) AS tot FROM plan_current, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days')", bindings: [] }) {
@@ -679,21 +685,23 @@ Db :: [].{
 		}
 
 	# every RIDE power PR: the best-ever watts per duration rung and the day
-	# each record first landed. Ordering is on the TRUE stored watts - the
-	# round is presentation, so two efforts that DISPLAY equal still rank by
-	# their real values; only an exact tie breaks to the earliest ride (a
-	# matched record is not a new one). The ladder view has no row for an
-	# unrecorded rung, so each rung's best comes off a LEFT JOIN whose empty
-	# side COALESCEs to w 0 / day '' - eight rows on success, and the ladder
-	# never shrinks or jumps; a failed query returns none and the view shows
-	# its empty state, the same honest floor every loader here has. Each rung
-	# scans the ladder view once, and the whole query runs once per load
-	# (launch and R) - never per frame - so the scans stay off any hot path
-	# and no best_* index is warranted.
+	# each record first landed. The rungs are the activity_power_ladder
+	# view's, not restated here: the view carries each rung's name and its
+	# seconds, and the rung list is read off it - every rung ANY sport has
+	# ever recorded, which is the view's whole ladder once one session has
+	# a stream - so a rung added to the view reaches the record book with no
+	# edit in this file. The Ride record per rung joins onto that list, and
+	# a rung no ride has recorded keeps its row at w 0 / day '': the record
+	# book is index-spaced and its comment holds that every rung is
+	# materialized, so the ladder never shrinks or jumps. Ordering within a
+	# rung is on the TRUE stored watts - the round is presentation, so two
+	# efforts that DISPLAY equal still rank by their real values; only an
+	# exact tie breaks to the earliest ride (a matched record is not a new
+	# one). The query runs once per load (launch and R), never per frame.
 	PrRung : { rung : Str, secs : I64, w : I64, day : Str }
 	load_prs! : Sqlite.Db => List(PrRung)
 	load_prs! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST('5s' AS TEXT) AS rung, 5 AS secs, CAST(COALESCE(b.w, 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM (SELECT 1) LEFT JOIN (SELECT ROUND(watts) AS w, day FROM activity_power_ladder WHERE rung = '5s' AND sport_family = 'Ride' ORDER BY watts DESC, start_local ASC LIMIT 1) b UNION ALL SELECT CAST('15s' AS TEXT) AS rung, 15 AS secs, CAST(COALESCE(b.w, 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM (SELECT 1) LEFT JOIN (SELECT ROUND(watts) AS w, day FROM activity_power_ladder WHERE rung = '15s' AND sport_family = 'Ride' ORDER BY watts DESC, start_local ASC LIMIT 1) b UNION ALL SELECT CAST('30s' AS TEXT) AS rung, 30 AS secs, CAST(COALESCE(b.w, 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM (SELECT 1) LEFT JOIN (SELECT ROUND(watts) AS w, day FROM activity_power_ladder WHERE rung = '30s' AND sport_family = 'Ride' ORDER BY watts DESC, start_local ASC LIMIT 1) b UNION ALL SELECT CAST('1min' AS TEXT) AS rung, 60 AS secs, CAST(COALESCE(b.w, 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM (SELECT 1) LEFT JOIN (SELECT ROUND(watts) AS w, day FROM activity_power_ladder WHERE rung = '1min' AND sport_family = 'Ride' ORDER BY watts DESC, start_local ASC LIMIT 1) b UNION ALL SELECT CAST('5min' AS TEXT) AS rung, 300 AS secs, CAST(COALESCE(b.w, 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM (SELECT 1) LEFT JOIN (SELECT ROUND(watts) AS w, day FROM activity_power_ladder WHERE rung = '5min' AND sport_family = 'Ride' ORDER BY watts DESC, start_local ASC LIMIT 1) b UNION ALL SELECT CAST('10min' AS TEXT) AS rung, 600 AS secs, CAST(COALESCE(b.w, 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM (SELECT 1) LEFT JOIN (SELECT ROUND(watts) AS w, day FROM activity_power_ladder WHERE rung = '10min' AND sport_family = 'Ride' ORDER BY watts DESC, start_local ASC LIMIT 1) b UNION ALL SELECT CAST('20min' AS TEXT) AS rung, 1200 AS secs, CAST(COALESCE(b.w, 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM (SELECT 1) LEFT JOIN (SELECT ROUND(watts) AS w, day FROM activity_power_ladder WHERE rung = '20min' AND sport_family = 'Ride' ORDER BY watts DESC, start_local ASC LIMIT 1) b UNION ALL SELECT CAST('60min' AS TEXT) AS rung, 3600 AS secs, CAST(COALESCE(b.w, 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM (SELECT 1) LEFT JOIN (SELECT ROUND(watts) AS w, day FROM activity_power_ladder WHERE rung = '60min' AND sport_family = 'Ride' ORDER BY watts DESC, start_local ASC LIMIT 1) b", bindings: [] }) {
+		match Sqlite.query!({ db, query: "WITH rungs AS (SELECT DISTINCT rung, secs FROM activity_power_ladder), best AS (SELECT rung, watts, day FROM (SELECT rung, watts, day, ROW_NUMBER() OVER (PARTITION BY rung ORDER BY watts DESC, start_local ASC) AS rn FROM activity_power_ladder WHERE sport_family = 'Ride') WHERE rn = 1) SELECT CAST(r.rung AS TEXT) AS rung, CAST(r.secs AS INTEGER) AS secs, CAST(COALESCE(ROUND(b.watts), 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM rungs r LEFT JOIN best b ON b.rung = r.rung ORDER BY r.secs ASC", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
