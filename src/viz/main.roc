@@ -478,12 +478,12 @@ ghost_task! = |home, ids, gsel|
 # the window already had.
 trace_task! : Str, [Metric, Imperial], List(TraceId), U64 => Msg
 trace_task! = |home, units, ids, sel|
-	if home == "" TraceSwitchFailed
+	if home == "" TraceSwitchFailed(sel)
 	else match List.get(ids, sel) {
-		Err(_) => TraceSwitchFailed
+		Err(_) => TraceSwitchFailed(sel)
 		Ok(entry) =>
 			match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
-				Err(_) => TraceSwitchFailed
+				Err(_) => TraceSwitchFailed(sel)
 				Ok(db) => {
 					tr = Db.load_trace!(db, entry.id, entry.chan)
 					sg = Db.load_segs!(db, entry.id)
@@ -931,7 +931,7 @@ Msg : [
 	Reloaded(Ui.Model),
 	ReloadFailed,
 	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, sel : U64, day : Str, un : Str, sp : List(Series.Split) }),
-	TraceSwitchFailed,
+	TraceSwitchFailed(U64),
 	# `ids` is the picker as the database holds it at poll time, read only when
 	# the directive names a session: what a session-naming directive is judged
 	# against, so a session synced since boot is steerable and one deleted
@@ -1033,7 +1033,11 @@ update! = |model0, program_input| {
 				if w.days != acc.curve_days acc
 				else { ..acc, curve: w.c, curve_prev: w.cpv, curve_lbls: w.lbls, curve_title: w.title, fit_lbl: w.fit_lbl, cp_lbl: w.cp_lbl, fit_cp: w.fit_cp, fit_r2: w.fit_r2, reloading: Bool.False }
 			CurveReloadFailed(days) => if days != acc.curve_days acc else { ..acc, reloading: Bool.False }
-			TraceSwitchFailed => { ..acc, trace_loading: Bool.False }
+			# only the reply for the selection now on screen counts: a fetch for
+			# a session the athlete has already switched away from is stale and
+			# dropped, and it must not clear the loading flag the newer fetch
+			# still owns (mirrors GhostSwitched's guard, and TraceSwitched below)
+			TraceSwitchFailed(fsel) => if fsel != acc.trace_sel acc else { ..acc, trace_loading: Bool.False }
 			GhostSwitchFailed => acc
 			# a slow load must not resurrect a dismissed ghost or overwrite a
 			# newer pick: only the result matching the current selection lands
@@ -1081,7 +1085,12 @@ update! = |model0, program_input| {
 				if fresh.curve_days == acc.curve_days merged
 				else { ..merged, curve: acc.curve, curve_prev: acc.curve_prev, curve_lbls: acc.curve_lbls, curve_title: acc.curve_title, curve_days: acc.curve_days, fit_lbl: acc.fit_lbl, cp_lbl: acc.cp_lbl, fit_cp: acc.fit_cp, fit_r2: acc.fit_r2, reloading: acc.reloading }
 			}
-			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day, trace_unit: sw.un, trace_splits: sw.sp, trace_loading: Bool.False }
+			# apply only the reply for the selection now on screen: two switches
+			# faster than the first fetch resolves would otherwise let the first,
+			# stale answer overwrite the second - a wrong session drawn under the
+			# right one's name until the next interaction. A dropped stale reply
+			# leaves the loading flag up, since the newer fetch is still coming.
+			TraceSwitched(sw) => if sw.sel != acc.trace_sel acc else { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day, trace_unit: sw.un, trace_splits: sw.sp, trace_loading: Bool.False }
 		})
 	# the coach's word arrives beside the human's input and steers only what
 	# it names: view, range, a day for the crosshair, a session for the trace
