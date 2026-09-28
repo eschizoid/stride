@@ -637,6 +637,18 @@ ReportHealth :: [].{
     # leave it pending as a window crashed between apply and report would.
     # No field is validated: that judgement needs the window's model, and it
     # is pinned by the window's own expects. Every field here is honoured.
+    #
+    # Where this differs from the window, on purpose: the window discards
+    # every write's result, because it polls again a second later and a
+    # transient miss heals itself unseen. This is one shot whose payload
+    # says `acked`, so a sweep, supersede or mark that does not land, and a
+    # pending read that cannot answer, fail the command through the
+    # envelope boundary rather than report a cycle that did not happen. The
+    # migration's statements alone keep the discard: an ALTER on a column
+    # that already exists fails by design. A row the decoder cannot read
+    # field by field is tolerated field by field, as the window tolerates
+    # it, so one hostile row cannot wedge the lifecycle for the tick while
+    # the window consumes it.
     viz_tick! : { ack : Bool } => Try({}, _)
     viz_tick! = |t| {
         path = Db.open_db!({})?
@@ -649,39 +661,41 @@ ReportHealth :: [].{
         if present != Bus.sentinel_present {
             List.for_each!(Bus.ddl, |q| { _ = exec!(q, []) })
         }
-        pending = match Sqlite.query_many!({ path: Path.utf8(path), query: Bus.has_pending_sql, bindings: [], rows: Sqlite.i64("e") }) {
-            Ok(rows) => match List.first(rows) { Ok(e) => e == 1
-                Err(_) => Bool.False }
-            Err(_) => Bool.False
-        }
+        pending_rows = Sqlite.query_many!({ path: Path.utf8(path), query: Bus.has_pending_sql, bindings: [], rows: Sqlite.i64("e") })?
+        pending = match List.first(pending_rows) { Ok(e) => e == 1
+            Err(_) => Bool.False }
         none = { found: Bool.False, acked: Bool.False, id: -1, status: "none", view: -1, range: -1, cursor_day: "", trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1 }
+        or_int = |r, fallback| match r { Ok(x) => x
+            Err(_) => fallback }
+        or_str = |r| match r { Ok(x) => x
+            Err(_) => "" }
         out =
             if !pending none
             else {
-                _ = exec!(Bus.stale_sweep_sql, [])
+                exec!(Bus.stale_sweep_sql, [])?
                 winners = Sqlite.query_many!({
                     path: Path.utf8(path),
                     query: Bus.winner_sql,
                     bindings: [],
                     rows: |cols| |stmt| {
                         id = Sqlite.i64("id")(cols)(stmt)?
-                        v = Sqlite.i64("v")(cols)(stmt)?
-                        rg = Sqlite.i64("rg")(cols)(stmt)?
-                        cd = Sqlite.str("cd")(cols)(stmt)?
-                        td = Sqlite.str("td")(cols)(stmt)?
-                        gd = Sqlite.str("gd")(cols)(stmt)?
-                        ti = Sqlite.i64("ti")(cols)(stmt)?
-                        gi = Sqlite.i64("gi")(cols)(stmt)?
+                        v = or_int(Sqlite.i64("v")(cols)(stmt), -1)
+                        rg = or_int(Sqlite.i64("rg")(cols)(stmt), -1)
+                        cd = or_str(Sqlite.str("cd")(cols)(stmt))
+                        td = or_str(Sqlite.str("td")(cols)(stmt))
+                        gd = or_str(Sqlite.str("gd")(cols)(stmt))
+                        ti = or_int(Sqlite.i64("ti")(cols)(stmt), -1)
+                        gi = or_int(Sqlite.i64("gi")(cols)(stmt), -1)
                         Ok({ id, v, rg, cd, td, gd, ti, gi })
                     },
                 })?
                 match List.first(winners) {
                     Err(_) => none
                     Ok(w) => {
-                        _ = exec!(Bus.supersede_sql, [{ name: ":id", value: Integer(w.id) }])
+                        exec!(Bus.supersede_sql, [{ name: ":id", value: Integer(w.id) }])?
                         status =
                             if t.ack {
-                                _ = exec!(Bus.mark_sql, [{ name: ":st", value: String(Bus.mark_status("")) }, { name: ":e", value: String("") }, { name: ":id", value: Integer(w.id) }])
+                                exec!(Bus.mark_sql, [{ name: ":st", value: String(Bus.mark_status("")) }, { name: ":e", value: String("") }, { name: ":id", value: Integer(w.id) }])?
                                 Bus.mark_status("")
                             } else "pending"
                         { found: Bool.True, acked: t.ack, id: w.id, status, view: w.v, range: w.rg, cursor_day: w.cd, trace_day: w.td, trace_id: w.ti, ghost_day: w.gd, ghost_id: w.gi }

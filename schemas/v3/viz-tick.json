@@ -27,7 +27,7 @@
       "type": "integer"
     },
     "status": {
-      "description": "The status this cycle left the winner in: applied, applied_partial, or pending when not acked; none when nothing won.",
+      "description": "The status this cycle left the winner in: applied, or pending when not acked; none when nothing won. The tick honours every field, so it never writes applied_partial — that verdict needs the window's model.",
       "type": "string"
     },
     "view": {

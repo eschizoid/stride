@@ -54,14 +54,18 @@ Bus :: [].{
 		"ALTER TABLE viz_focus ADD COLUMN ghost_id INTEGER",
 	]
 
-	# The every-second fast path: one read of sqlite_master, no schema lock.
-	# Counts the three objects plus ghost_day and ghost_id in each table's
-	# SQL; only a database that ran the whole list to its last statement
-	# reaches sentinel_present, and any older column set re-enters the DDL.
+	# The every-second fast path: one read of the catalog, no schema lock.
+	# Counts the three objects, then the ghost_day and ghost_id COLUMNS of
+	# each table as the catalog structures them - not as text in their
+	# CREATE statements, which a comment or a renamed column could satisfy
+	# without the column existing. Only a database that ran the whole list
+	# to its last statement reaches sentinel_present; any older column set
+	# re-enters the DDL. A table that does not exist contributes nothing.
 	sentinel_sql : Str
-	sentinel_sql = "SELECT count(*) + SUM(CASE WHEN instr(COALESCE(sql, ''), 'ghost_day') > 0 THEN 1 ELSE 0 END) + SUM(CASE WHEN instr(COALESCE(sql, ''), 'ghost_id') > 0 THEN 1 ELSE 0 END) AS c FROM sqlite_master WHERE name IN ('viz_directives', 'viz_focus', 'viz_directives_pending')"
+	sentinel_sql = "SELECT (SELECT count(*) FROM sqlite_master WHERE name IN ('viz_directives', 'viz_focus', 'viz_directives_pending')) + (SELECT count(*) FROM pragma_table_info('viz_directives') WHERE name IN ('ghost_day', 'ghost_id')) + (SELECT count(*) FROM pragma_table_info('viz_focus') WHERE name IN ('ghost_day', 'ghost_id')) AS c"
 
-	# 3 objects + ghost_day on both tables (2) + ghost_id on both tables (2)
+	# 3 objects + ghost_day and ghost_id on viz_directives (2) + the same on
+	# viz_focus (2)
 	sentinel_present : I64
 	sentinel_present = 7
 
@@ -102,18 +106,19 @@ Bus :: [].{
 	focus_clear_sql = "DELETE FROM viz_focus WHERE id = 1"
 }
 
-# the sentinel's proof is the migration's last statement: ghost_id on
-# viz_focus. A column appended after it would never be counted, so this
+# the sentinel's proof is the migration's last statement: it ADDS ghost_id
+# to viz_focus. A column appended after it would never be counted, so this
 # holds the two together.
 expect {
 	last = match List.last(Bus.ddl) { Ok(s) => s
 		Err(_) => "" }
-	Str.contains(last, "viz_focus") and Str.contains(last, "ghost_id")
+	Str.starts_with(last, "ALTER TABLE viz_focus ADD COLUMN ghost_id")
 }
 
-# the sentinel counts ghost_id, the column the last statement adds, and
-# nothing later
-expect Str.contains(Bus.sentinel_sql, "'ghost_id'") and Bus.sentinel_present == 7
+# the sentinel reads the catalog's column structure for both tables, not
+# the text of a CREATE statement, and its target is the three objects plus
+# the two columns it names on each table
+expect Str.contains(Bus.sentinel_sql, "pragma_table_info('viz_directives')") and Str.contains(Bus.sentinel_sql, "pragma_table_info('viz_focus')") and Bus.sentinel_present == 3 + 2 + 2
 
 # the sweep and the winner enforce the one published window
 expect Str.contains(Bus.stale_sweep_sql, "-600 seconds") and Str.contains(Bus.winner_sql, "-600 seconds")

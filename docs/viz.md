@@ -279,7 +279,11 @@ runs one poll-and-mark cycle against the database without a window (its
 `--no-ack` leaves the winner pending, the state a window crashed between
 apply and report leaves behind). The e2e suite drives the tick, so every
 state above is tested where no window can open; the tick honours every
-field it finds, since judging a field needs the window's model.
+field it finds, since judging a field needs the window's model. Unlike
+the window, which polls again a second later and lets a missed write
+heal itself, the tick is one shot whose payload says `acked`: a sweep,
+supersede or mark that does not land fails the command with an error
+envelope rather than reporting a cycle that did not happen.
 
 Everything the two paragraphs above hand-list — the view numbers, the
 directive fields, the staleness window — is also self-published by the

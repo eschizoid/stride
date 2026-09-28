@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1200)?
+    checks_ran_exactly!(1201)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7226,12 +7226,20 @@ b_viz_tick! = |ctx| {
     check!("...until a cycle acks it", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + (.acked | tostring)") == "applied/true")?
     # the nothing-pending fast path after everything is closed
     check!("with every row closed a tick finds nothing", strjq!(ctx, ["viz", "tick"], ".data.found") == "false")?
-    # a row already closed by a sweep is not reopened by a late mark: the
-    # WHERE consumed = 0 on the mark holds
+    # a winner left pending that ages past the window before any cycle acks
+    # it is retired by the next cycle's sweep, which runs before the winner
+    # select, so no mark ever reaches it. (The mark's own consumed = 0 guard
+    # is not reached by a single sequential executor; it exists for a
+    # concurrent closer, which this harness does not construct.)
     _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (7);")
     _ = strjq!(ctx, ["viz", "tick", "--no-ack"], ".data.found")
     _ = sql!(ctx.db, "UPDATE viz_directives SET created_at = datetime('now', '-1 hour') WHERE view = 7;")
-    check!("a pending row that went stale before its ack closes as stale, and the ack does not reopen it", strjq!(ctx, ["viz", "tick"], ".data.found") == "false" and Str.trim(sql!(ctx.db, "SELECT status FROM viz_directives WHERE view = 7;")) == "stale")?
+    check!("a pending row that went stale before its ack is swept, not applied, by the next cycle", strjq!(ctx, ["viz", "tick"], ".data.found") == "false" and Str.trim(sql!(ctx.db, "SELECT status FROM viz_directives WHERE view = 7;")) == "stale")?
+    # a hostile row - a non-integer in an INTEGER column, which affinity
+    # stores as text - is consumed field by field as the window consumes it,
+    # never wedging the lifecycle for one executor and not the other
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view, trace_day) VALUES ('banana', '2099-02-03');")
+    check!("a row with an unreadable field is consumed with that field unset, not a crash", strjq!(ctx, ["viz", "tick"], ".data | (.found | tostring) + \"/\" + .status + \"/\" + (.view | tostring) + \"/\" + .trace_day") == "true/applied/-1/2099-02-03")?
     check!("viz tick payload conforms to its schema", Str.is_empty(Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' viz tick | jq '.data' | jq -r --slurpfile schema schemas/v3/viz-tick.json -f tools/validate.jq"))))?
     _ = sql!(ctx.db, "DROP TABLE viz_directives; DROP TABLE viz_focus;")
     Ok({})
