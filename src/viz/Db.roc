@@ -549,32 +549,59 @@ Db :: [].{
 				})
 		}
 
-	# every family's arc, loaded once. Prepend on the recursion because this
-	# stdlib has no List.reverse; the caller re-sorts if order matters.
+	# every family's arc, from two reads however many families there are:
+	# monthly_load (the ground, shared by every spine) and monthly_threshold
+	# (every family's month-close value) are each read once, and the per-family
+	# rows are assembled in memory. SQLite page-caches the threshold view across
+	# repeated reads, so this is fewer round-trips, not less work - the window
+	# opens in the same time either way. ftp10 is the spine value in tenths -
+	# watts for a power family, m/s for a pace one, kg for tonnage; 0 means the
+	# family had no scored session that month, and the renderer breaks the line
+	# rather than inventing a value. Families keep the input order (widest
+	# career first, as load_spine_fams! sorts them); rows run month-ascending.
 	load_career_spines! : Sqlite.Db, List(SpineFam) => List(CareerSpine)
-	load_career_spines! = |db, fams|
-		match List.first(fams) {
-			Err(_) => []
-			Ok(f0) => {
-				rows0 = load_career_months!(db, f0.fam)
-				List.prepend(load_career_spines!(db, List.drop_first(fams, 1)), { fam: f0.fam, kind: f0.kind, rows: rows0 })
-			}
-		}
+	load_career_spines! = |db, fams| {
+		base = load_monthly_base!(db)
+		thr = load_all_thresholds!(db)
+		List.map(fams, |f| {
+			rows = List.map(base, |b| {
+				ftp10 = List.fold(thr, 0, |acc, x| if x.fam == f.fam and x.month == b.month x.ftp10 else acc)
+				{ month: b.month, load: b.load, ftp10, partial: b.partial }
+			})
+			{ fam: f.fam, kind: f.kind, rows }
+		})
+	}
 
-	# ftp10 is the spine value in tenths - watts for a power family, metres per
-	# second for a pace one. 0 means the family had no scored session that
-	# month, and the renderer breaks the line rather than inventing a value.
-	load_career_months! : Sqlite.Db, Str => List(CareerMonth)
-	load_career_months! = |db, fam|
-		match Sqlite.query!({ db, query: "SELECT CAST(l.month AS TEXT) AS m, CAST(ROUND(l.load) AS INTEGER) AS ld, CAST(ROUND(COALESCE(t.value, 0) * 10) AS INTEGER) AS f10, CASE WHEN l.month = strftime('%Y-%m', 'now') THEN 1 ELSE 0 END AS pt FROM monthly_load l LEFT JOIN monthly_threshold t ON t.month = l.month AND t.fam = :fam ORDER BY l.month ASC", bindings: [{ name: ":fam", value: String(fam) }] }) {
+	# the spine ground, shared by every family: one row per month with its
+	# total load and whether it is the still-open current month (partial). Read
+	# once; the per-family arcs all stand on it.
+	load_monthly_base! : Sqlite.Db => List({ month : Str, load : I64, partial : Bool })
+	load_monthly_base! = |db|
+		match Sqlite.query!({ db, query: "SELECT CAST(month AS TEXT) AS m, CAST(ROUND(load) AS INTEGER) AS ld, CASE WHEN month = strftime('%Y-%m', 'now') THEN 1 ELSE 0 END AS pt FROM monthly_load ORDER BY month ASC", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
 					m = r.str("m") ? |_| "bad"
 					ld = r.i64("ld") ? |_| "bad"
-					f10 = r.i64("f10") ? |_| "bad"
 					pt = r.i64("pt") ? |_| "bad"
-					Ok({ month: m, load: ld, ftp10: f10, partial: pt == 1 })
+					Ok({ month: m, load: ld, partial: pt == 1 })
+				})
+		}
+
+	# every family's month-close threshold in tenths, all families in ONE read
+	# of the expensive monthly_threshold view - the read the old per-family
+	# loader repeated. A month/family with no threshold simply has no row here,
+	# and the assembler above scores it 0.
+	load_all_thresholds! : Sqlite.Db => List({ fam : Str, month : Str, ftp10 : I64 })
+	load_all_thresholds! = |db|
+		match Sqlite.query!({ db, query: "SELECT CAST(fam AS TEXT) AS f, CAST(month AS TEXT) AS m, CAST(ROUND(value * 10) AS INTEGER) AS f10 FROM monthly_threshold", bindings: [] }) {
+			Err(_) => []
+			Ok(rows) =>
+				List.keep_oks(rows, |r| {
+					f = r.str("f") ? |_| "bad"
+					m = r.str("m") ? |_| "bad"
+					f10 = r.i64("f10") ? |_| "bad"
+					Ok({ fam: f, month: m, ftp10: f10 })
 				})
 		}
 
