@@ -224,8 +224,13 @@ Db :: [].{
 	ensure_bus! = |db| {
 		# every-second callers take this read-only fast path; the DDL below runs
 		# only while the objects are actually missing — IF NOT EXISTS still
-		# contends for the schema write lock, a plain sqlite_master read never does
-		present = match Sqlite.query!({ db, query: "SELECT count(*) + SUM(CASE WHEN instr(COALESCE(sql, ''), 'ghost_day') > 0 THEN 1 ELSE 0 END) + SUM(CASE WHEN instr(COALESCE(sql, ''), 'applied_at') > 0 THEN 1 ELSE 0 END) AS c FROM sqlite_master WHERE name IN ('viz_directives', 'viz_focus', 'viz_directives_pending')", bindings: [] }) {
+		# contends for the schema write lock, a plain sqlite_master read never does.
+		# The sentinel is the column the migration adds LAST (ghost_id, on both
+		# tables): counting it proves every earlier ALTER ran, so a db migrated
+		# only to an older column set fails the count and re-enters the DDL. When
+		# the migration grows a new final column, this sentinel and the target
+		# number move to it, or an existing db never gains the column.
+		present = match Sqlite.query!({ db, query: "SELECT count(*) + SUM(CASE WHEN instr(COALESCE(sql, ''), 'ghost_day') > 0 THEN 1 ELSE 0 END) + SUM(CASE WHEN instr(COALESCE(sql, ''), 'ghost_id') > 0 THEN 1 ELSE 0 END) AS c FROM sqlite_master WHERE name IN ('viz_directives', 'viz_focus', 'viz_directives_pending')", bindings: [] }) {
 			Err(_) => 0
 			Ok(rows) => match List.first(rows) {
 				Err(_) => 0
@@ -233,7 +238,8 @@ Db :: [].{
 					Err(_) => 0 }
 			}
 		}
-		if present == 6 {} else ensure_bus_ddl!(db)
+		# 3 objects + ghost_day on both tables (2) + ghost_id on both tables (2)
+		if present == 7 {} else ensure_bus_ddl!(db)
 	}
 
 	ensure_bus_ddl! : Sqlite.Db => {}
@@ -247,15 +253,21 @@ Db :: [].{
 		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_directives ADD COLUMN ghost_day TEXT", bindings: [] })
 		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_directives ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'", bindings: [] })
 		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_directives ADD COLUMN error TEXT", bindings: [] })
-		# applied_at stays the LAST alter: the fast path counts it as proof the
-		# whole trio ran, so a crash mid-DDL re-enters here instead of locking
-		# in a partial schema
 		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_directives ADD COLUMN applied_at TEXT", bindings: [] })
+		# a session named by activity id rather than by day: seven days in a
+		# real database carry two stream-bearing sessions, and a day can only
+		# name the one that sorts first
+		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_directives ADD COLUMN trace_id INTEGER", bindings: [] })
+		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_directives ADD COLUMN ghost_id INTEGER", bindings: [] })
 		# rows consumed before the lifecycle existed default to 'pending', which
 		# contradicts consumed=1 on read-back; their true outcome is unknowable
 		_ = Sqlite.execute!({ db, query: "UPDATE viz_directives SET status = 'unknown' WHERE consumed = 1 AND status = 'pending'", bindings: [] })
 		_ = Sqlite.execute!({ db, query: "CREATE TABLE IF NOT EXISTS viz_focus (id INTEGER PRIMARY KEY CHECK (id = 1), updated_at TEXT NOT NULL, view INTEGER NOT NULL, range INTEGER NOT NULL, cursor_day TEXT, trace_day TEXT, ghost_day TEXT)", bindings: [] })
 		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_focus ADD COLUMN ghost_day TEXT", bindings: [] })
+		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_focus ADD COLUMN trace_id INTEGER", bindings: [] })
+		# ghost_id on viz_focus is the migration's LAST statement, so the fast
+		# path's sentinel counts it as proof the whole DDL ran
+		_ = Sqlite.execute!({ db, query: "ALTER TABLE viz_focus ADD COLUMN ghost_id INTEGER", bindings: [] })
 	}
 
 	# the window's half of capability discovery (#439): what an agent may put
@@ -272,7 +284,7 @@ Db :: [].{
 		_ = Sqlite.execute!({ db, query: "DELETE FROM viz_capabilities", bindings: [] })
 		_ = Sqlite.execute!({ db, query: "DELETE FROM viz_views", bindings: [] })
 		_ = Sqlite.execute!({ db, query: "DELETE FROM viz_fields", bindings: [] })
-		_ = Sqlite.execute!({ db, query: "INSERT INTO viz_capabilities (key, value) VALUES ('protocol', '1'), ('staleness_seconds', '${(stale_secs).to_str()}'), ('published_at', datetime('now'))", bindings: [] })
+		_ = Sqlite.execute!({ db, query: "INSERT INTO viz_capabilities (key, value) VALUES ('protocol', '1'), ('staleness_seconds', '${(stale_secs).to_str()}'), ('focus_staleness_seconds', '${(focus_stale_secs).to_str()}'), ('published_at', datetime('now'))", bindings: [] })
 		List.for_each!(views, |v| {
 			_ = Sqlite.execute!({ db, query: "INSERT INTO viz_views (id, name) VALUES (:i, :n)", bindings: [{ name: ":i", value: Integer(v.id) }, { name: ":n", value: String(v.name) }] })
 		})
@@ -288,7 +300,22 @@ Db :: [].{
 	stale_secs : I64
 	stale_secs = 600
 
-	Directive : { id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str }
+	# the focus row's liveness window, published beside the directive one. The
+	# window rewrites the row on change and on a heartbeat every
+	# focus_beat_secs regardless, so a row older than this was written by a
+	# window that is no longer running - closed by the OS button, or crashed -
+	# and a coach reading it must treat it as history, not as what the athlete
+	# sees. Three missed heartbeats, so one slow frame cannot read as death.
+	focus_stale_secs : I64
+	focus_stale_secs = 90
+
+	focus_beat_secs : I64
+	focus_beat_secs = 30
+
+	# -1 in an id field and "" in a day field mean "not set" (SQL NULL). An id
+	# names one session exactly; a day names whichever session on that day
+	# sorts first, and when both are given the id is the one that counts.
+	Directive : { id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64 }
 
 	# the newest fresh unconsumed directive. Rows past the freshness window are
 	# consumed as read (marked stale), and rows older than the winner are
@@ -319,7 +346,7 @@ Db :: [].{
 		# independently, so one slipping past this sweep is labeled late but
 		# never applied.
 		_ = Sqlite.execute!({ db, query: "UPDATE viz_directives SET consumed = 1, status = 'stale', error = 'older than ' || ${(stale_secs).to_str()} || ' seconds when read' WHERE consumed = 0 AND created_at < datetime('now', '-${(stale_secs).to_str()} seconds')", bindings: [] })
-		match Sqlite.query!({ db, query: "SELECT id, COALESCE(view, -1) AS v, COALESCE(range, -1) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd, CAST(COALESCE(trace_day, '') AS TEXT) AS td, CAST(COALESCE(ghost_day, '') AS TEXT) AS gd FROM viz_directives WHERE consumed = 0 AND created_at >= datetime('now', '-${(stale_secs).to_str()} seconds') ORDER BY id DESC LIMIT 1", bindings: [] }) {
+		match Sqlite.query!({ db, query: "SELECT id, COALESCE(view, -1) AS v, COALESCE(range, -1) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd, CAST(COALESCE(trace_day, '') AS TEXT) AS td, CAST(COALESCE(ghost_day, '') AS TEXT) AS gd, COALESCE(trace_id, -1) AS ti, COALESCE(ghost_id, -1) AS gi FROM viz_directives WHERE consumed = 0 AND created_at >= datetime('now', '-${(stale_secs).to_str()} seconds') ORDER BY id DESC LIMIT 1", bindings: [] }) {
 			Err(_) => None
 			Ok(rows) => match List.first(rows) {
 				Err(_) => None
@@ -336,6 +363,10 @@ Db :: [].{
 						Err(_) => "" }
 					gd = match r.str("gd") { Ok(x) => x
 						Err(_) => "" }
+					ti = match r.i64("ti") { Ok(x) => x
+						Err(_) => -1 }
+					gi = match r.i64("gi") { Ok(x) => x
+						Err(_) => -1 }
 					if id < 0 None
 					else {
 						# older unconsumed rows are closed as superseded; the
@@ -343,7 +374,7 @@ Db :: [].{
 						# it reports back - a crash between read and apply
 						# leaves it retryable instead of silently lost
 						_ = Sqlite.execute!({ db, query: "UPDATE viz_directives SET consumed = 1, status = 'superseded' WHERE id < :id AND consumed = 0", bindings: [{ name: ":id", value: Integer(id) }] })
-						Some({ id, view: v, range: rg, cursor_day: cd, trace_day: td, ghost_day: gd })
+						Some({ id, view: v, range: rg, cursor_day: cd, trace_day: td, ghost_day: gd, trace_id: ti, ghost_id: gi })
 					}
 				}
 			}
@@ -360,15 +391,28 @@ Db :: [].{
 	}
 
 	# the window's answer: what the human is looking at, one row, upserted
-	write_focus! : Sqlite.Db, { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str } => Try({}, [WriteFailed])
+	Focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64 }
+
+	write_focus! : Sqlite.Db, Focus => Try({}, [WriteFailed])
 	write_focus! = |db, f| {
 		ensure_bus!(db)
-		res = Sqlite.execute!({ db, query: "INSERT INTO viz_focus (id, updated_at, view, range, cursor_day, trace_day, ghost_day) VALUES (1, datetime('now'), :v, :rg, NULLIF(:cd, ''), NULLIF(:td, ''), NULLIF(:gd, '')) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, view = excluded.view, range = excluded.range, cursor_day = excluded.cursor_day, trace_day = excluded.trace_day, ghost_day = excluded.ghost_day", bindings: [{ name: ":v", value: Integer(f.view) }, { name: ":rg", value: Integer(f.range) }, { name: ":cd", value: String(f.cursor_day) }, { name: ":td", value: String(f.trace_day) }, { name: ":gd", value: String(f.ghost_day) }] })
+		res = Sqlite.execute!({ db, query: "INSERT INTO viz_focus (id, updated_at, view, range, cursor_day, trace_day, ghost_day, trace_id, ghost_id) VALUES (1, datetime('now'), :v, :rg, NULLIF(:cd, ''), NULLIF(:td, ''), NULLIF(:gd, ''), NULLIF(:ti, -1), NULLIF(:gi, -1)) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, view = excluded.view, range = excluded.range, cursor_day = excluded.cursor_day, trace_day = excluded.trace_day, ghost_day = excluded.ghost_day, trace_id = excluded.trace_id, ghost_id = excluded.ghost_id", bindings: [{ name: ":v", value: Integer(f.view) }, { name: ":rg", value: Integer(f.range) }, { name: ":cd", value: String(f.cursor_day) }, { name: ":td", value: String(f.trace_day) }, { name: ":gd", value: String(f.ghost_day) }, { name: ":ti", value: Integer(f.trace_id) }, { name: ":gi", value: Integer(f.ghost_id) }] })
 		match res {
 			Ok(_) => Ok({})
 			Err(_) => Err(WriteFailed)
 		}
 	}
+
+	# the window's last word on quitting: no row means "nobody is looking",
+	# which a coach can read without judging an age. Only the ESC path can
+	# reach this - the OS close button and a crash leave the last row behind,
+	# and the focus staleness window is what retires those.
+	clear_focus! : Sqlite.Db => Try({}, [WriteFailed])
+	clear_focus! = |db|
+		match Sqlite.execute!({ db, query: "DELETE FROM viz_focus WHERE id = 1", bindings: [] }) {
+			Ok(_) => Ok({})
+			Err(_) => Err(WriteFailed)
+		}
 
 	# the Monday-aligned CURRENT week's completion count - the progress strip's
 	# numerator and denominator (the display ladder below is forward-looking

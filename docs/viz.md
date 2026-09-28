@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS viz_directives (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT,
-  ghost_day TEXT,
+  ghost_day TEXT, trace_id INTEGER, ghost_id INTEGER,
   consumed INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending',  -- applied | applied_partial | superseded | stale
   error TEXT, applied_at TEXT);
@@ -219,6 +219,12 @@ CREATE TABLE IF NOT EXISTS viz_directives (
 -- consumes everything up to it. NULL fields mean "leave that alone".
 INSERT INTO viz_directives (view, range, cursor_day, trace_day, ghost_day)
 VALUES (0, 30, '2026-09-02', NULL, NULL);
+-- a session is named exactly by its activity id, or loosely by its day:
+-- trace_id / ghost_id take precedence over trace_day / ghost_day when both
+-- are given, and a day picks whichever of that day's sessions sorts first
+-- (the newest). Read the id back from the trace picker's rows, or from
+-- `stride activities --json`; `viz_focus` reports the ids of what is shown.
+INSERT INTO viz_directives (trace_id, ghost_id) VALUES (20355183143, 20342052869);
 -- view 0..8 (form/power/trace/table/plan/heat/zones/ramp/career) - but read
 -- the list from `stride viz --json`, which the running binary publishes,
 -- rather than from this comment. A directive naming a view outside the
@@ -244,11 +250,24 @@ CREATE TABLE IF NOT EXISTS viz_focus (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   updated_at TEXT NOT NULL,
   view INTEGER NOT NULL, range INTEGER NOT NULL,
-  cursor_day TEXT, trace_day TEXT, ghost_day TEXT);
+  cursor_day TEXT, trace_day TEXT, ghost_day TEXT,
+  trace_id INTEGER, ghost_id INTEGER);
 
--- observe: one row, upserted when what the human sees changes (throttled ~2/s)
-SELECT view, range, cursor_day, trace_day, ghost_day, updated_at FROM viz_focus;
+-- observe: one row, upserted when what the human sees changes (throttled
+-- ~2/s) and on a heartbeat every 30 seconds regardless
+SELECT view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id,
+       updated_at FROM viz_focus;
 ```
+
+The focus row has a liveness rule, and a reader must apply it: a row is
+**live** only while `updated_at` is younger than the window's published
+`focus_staleness_seconds` (90 s, three missed heartbeats). A window closed
+by the OS button, or crashed, leaves its last row behind, and without the
+rule that row reads as "the athlete is looking at this" forever. Quitting
+with ESC deletes the row, so **no row** is the clean "nobody is looking".
+`stride viz --json` applies the rule for you: its `focus` object carries
+`present`, `live` and `age_seconds` beside the fields, so an agent never
+computes the age itself.
 
 Everything the two paragraphs above hand-list — the view numbers, the
 directive fields, the staleness window — is also self-published by the

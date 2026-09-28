@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1175)?
+    checks_ran_exactly!(1183)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7084,13 +7084,13 @@ b_cross_surface! = |ctx| {
     # under a poisoned bus fails, not just the sentinel; doctor keeps a scalar
     # because its payload carries a wall-clock field
     base_ctl = strjq!(ctx, ["summary"], ".data | tojson")
-    _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_directives (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL DEFAULT (datetime('now')), view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT, ghost_day TEXT, consumed INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', error TEXT, applied_at TEXT);")
+    _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_directives (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL DEFAULT (datetime('now')), view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT, ghost_day TEXT, consumed INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', error TEXT, applied_at TEXT, trace_id INTEGER, ghost_id INTEGER);")
     _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (99);")
     _ = sql!(ctx.db, "INSERT INTO viz_directives (view, cursor_day) VALUES (0, '2099-13-45');")
     _ = sql!(ctx.db, "INSERT INTO viz_directives (trace_day) VALUES ('1970-01-01');")
     _ = sql!(ctx.db, "INSERT INTO viz_directives (view, created_at) VALUES (1, datetime('now', '-1 hour'));")
     _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES ('banana');")
-    _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_focus (id INTEGER PRIMARY KEY CHECK (id = 1), updated_at TEXT NOT NULL, view INTEGER NOT NULL, range INTEGER NOT NULL, cursor_day TEXT, trace_day TEXT, ghost_day TEXT);")
+    _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_focus (id INTEGER PRIMARY KEY CHECK (id = 1), updated_at TEXT NOT NULL, view INTEGER NOT NULL, range INTEGER NOT NULL, cursor_day TEXT, trace_day TEXT, ghost_day TEXT, trace_id INTEGER, ghost_id INTEGER);")
     _ = sql!(ctx.db, "INSERT OR REPLACE INTO viz_focus (id, updated_at, view, range) VALUES (1, 'not a timestamp', -7, 12345);")
     check!("doctor is unmoved by a hostile bus", strjq!(ctx, ["doctor"], ".data.activities") == base_acts)?
     check!("summary is unmoved by a hostile bus", strjq!(ctx, ["summary"], ".data | tojson") == base_ctl)?
@@ -7129,6 +7129,25 @@ b_viz_caps! = |ctx| {
     check!("...and the staleness as one", strjq!(ctx, ["viz"], ".data.staleness_seconds | tojson") == "600")?
     check!("...every view row, id-ordered", strjq!(ctx, ["viz"], "[.data.views[] | (.id | tostring) + \":\" + .name] | join(\",\")") == "0:form-board,1:power")?
     check!("...and the field row verbatim", strjq!(ctx, ["viz"], ".data.fields[0] | .name + \"/\" + .kind + \"/\" + .accepts") == "view/integer/0..7")?
+    # the focus row, judged for the reader. Absent first: no table yet.
+    check!("viz reports no focus when the window never wrote one", strjq!(ctx, ["viz"], ".data.focus | (.present | tostring) + \"/\" + (.live | tostring) + \"/\" + (.age_seconds | tostring)") == "false/false/-1")?
+    _ = sql!(ctx.db, "INSERT INTO viz_capabilities (key, value) VALUES ('focus_staleness_seconds','90');")
+    check!("...and the focus staleness the window published, as a number", strjq!(ctx, ["viz"], ".data.focus_staleness_seconds | tojson") == "90")?
+    _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_focus (id INTEGER PRIMARY KEY CHECK (id = 1), updated_at TEXT NOT NULL, view INTEGER NOT NULL, range INTEGER NOT NULL, cursor_day TEXT, trace_day TEXT, ghost_day TEXT, trace_id INTEGER, ghost_id INTEGER);")
+    _ = sql!(ctx.db, "INSERT INTO viz_focus (id, updated_at, view, range, cursor_day, trace_day, ghost_day, trace_id, ghost_id) VALUES (1, datetime('now'), 2, 90, NULL, '2099-01-02', NULL, 4242, NULL);")
+    check!("a row written just now is present and live, with its ids", strjq!(ctx, ["viz"], ".data.focus | (.present | tostring) + \"/\" + (.live | tostring) + \"/\" + (.trace_id | tostring) + \"/\" + (.ghost_id | tostring) + \"/\" + .trace_day") == "true/true/4242/-1/2099-01-02")?
+    check!("...and its age is seconds, not minutes", sfloat(strjq!(ctx, ["viz"], ".data.focus.age_seconds")) < 30.0)?
+    _ = sql!(ctx.db, "UPDATE viz_focus SET updated_at = datetime('now', '-1000 seconds');")
+    check!("a row older than the focus staleness is present but not live", strjq!(ctx, ["viz"], ".data.focus | (.present | tostring) + \"/\" + (.live | tostring)") == "true/false")?
+    _ = sql!(ctx.db, "UPDATE viz_focus SET updated_at = 'not a timestamp';")
+    check!("a row with no readable timestamp is present, not live, age -1", strjq!(ctx, ["viz"], ".data.focus | (.present | tostring) + \"/\" + (.live | tostring) + \"/\" + (.age_seconds | tostring)") == "true/false/-1")?
+    _ = sql!(ctx.db, "DELETE FROM viz_focus;")
+    check!("a cleared row - the window quit - reads as no focus", strjq!(ctx, ["viz"], ".data.focus.present | tostring") == "false")?
+    _ = sql!(ctx.db, "DROP TABLE viz_focus;")
+    # every field the window publishes is a column its poll reads, and the
+    # reverse: the accepts text is prose, but the NAMES are pinned to the SQL
+    field_parity = Str.trim(sh!("pub=$(awk '/^caps_fields = \\[/{p=1} p{print} p&&/\\]/{exit}' src/viz/main.roc | grep -oE 'name: \"[a-z_]+\"' | sed 's/name: \"//; s/\"//' | LC_ALL=C sort -u | tr '\\n' ' '); q=$(grep -oE 'COALESCE\\((view|range|cursor_day|trace_day|ghost_day|trace_id|ghost_id)' src/viz/Db.roc | grep -oE '[a-z_]+$' | LC_ALL=C sort -u | tr '\\n' ' '); [ \"$pub\" = \"$q\" ] && echo same || echo \"pub=$pub q=$q\""))
+    check!("the published field names equal the columns the poll reads (${field_parity})", field_parity == "same")?
     check!("viz payload conforms to its schema", Str.is_empty(Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' viz | jq '.data' | jq -r --slurpfile schema schemas/v3/viz.json -f tools/validate.jq 2>&1"))))?
     # a HALF-written publish — tables present, scalars gone — must refuse the
     # same way as no publish at all: protocol 0 is not a protocol

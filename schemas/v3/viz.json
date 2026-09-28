@@ -1,9 +1,11 @@
 {
   "title": "viz",
-  "description": "Payload of `stride viz` — the window's self-published bus capabilities.",
+  "description": "Payload of `stride viz` — the window's self-published bus capabilities, and what it is looking at now.",
   "type": "object",
   "required": [
     "fields",
+    "focus",
+    "focus_staleness_seconds",
     "protocol",
     "published_at",
     "staleness_seconds",
@@ -19,6 +21,62 @@
     },
     "staleness_seconds": {
       "type": "integer"
+    },
+    "focus_staleness_seconds": {
+      "type": "integer"
+    },
+    "focus": {
+      "description": "The viz_focus row with its age judged for the reader: present says a row exists, live says it is younger than focus_staleness_seconds. A window closed by the OS button or crashed leaves its last row behind; live is what separates that history from what the athlete sees.",
+      "type": "object",
+      "required": [
+        "age_seconds",
+        "cursor_day",
+        "ghost_day",
+        "ghost_id",
+        "live",
+        "present",
+        "range",
+        "trace_day",
+        "trace_id",
+        "updated_at",
+        "view"
+      ],
+      "additionalKeys": false,
+      "properties": {
+        "present": {
+          "type": "boolean"
+        },
+        "live": {
+          "type": "boolean"
+        },
+        "age_seconds": {
+          "type": "integer"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "view": {
+          "type": "integer"
+        },
+        "range": {
+          "type": "integer"
+        },
+        "cursor_day": {
+          "type": "string"
+        },
+        "trace_day": {
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "integer"
+        },
+        "ghost_day": {
+          "type": "string"
+        },
+        "ghost_id": {
+          "type": "integer"
+        }
+      }
     },
     "views": {
       "type": "array",
