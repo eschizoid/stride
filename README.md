@@ -479,8 +479,9 @@ flowchart TD
 
 The four tiers exist because they have four different recovery stories. Mirror is
 replace-on-sync and re-pullable, computed rebuilds from `analyze`, judgment exists
-nowhere else, and the agent bus is disposable — the window recreates it, its rows
-expire on their own, and the engine never reads it. Human input never lives on a
+nowhere else, and the agent bus is disposable — the window recreates its lifecycle tables on
+its next poll and its capability tables at launch, their rows expire on their own,
+and no analytics command reads them. Human input never lives on a
 mirror table, because a re-sync would silently wipe it.
 
 **What the engine computes** (all deterministic):
