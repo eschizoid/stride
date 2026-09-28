@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1207)?
+    checks_ran_exactly!(1211)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7168,6 +7168,27 @@ b_viz_caps! = |ctx| {
     # fails rather than matching empty against empty.
     field_parity = Str.trim(sh!("pub=$(awk '/^caps_fields = \\[/{p=1} p{print} p&&/\\]/{exit}' src/viz/main.roc | grep -oE 'name: \"[a-z_]+\"' | sed 's/name: \"//; s/\"//' | LC_ALL=C sort -u | tr '\\n' ' '); q=$(grep -oE 'COALESCE\\((view|range|cursor_day|trace_day|ghost_day|trace_id|ghost_id)' src/core/Bus.roc | grep -oE '[a-z_]+$' | LC_ALL=C sort -u | tr '\\n' ' '); if [ -n \"$pub\" ] && [ \"$pub\" = \"$q\" ]; then echo same; else echo \"pub=$pub q=$q\"; fi"))
     check!("the published field names equal the columns the poll reads (${field_parity})", field_parity == "same")?
+    # the accepts text of every field is prose the binary never reads, so each
+    # claim it makes that the code also makes is compared across the two
+    # spellings, as the range set is above. The view bound: accepts says
+    # 0..N, refusals_for refuses above N, caps_views lists 0..N.
+    view_parity = Str.trim(sh!("acc=$(grep 'name: \"view\"' src/viz/main.roc | grep -oE '0\\.\\.[0-9]+' | grep -oE '[0-9]+$'); enf=$(grep -oE 'dv\\.view > [0-9]+' src/viz/main.roc | grep -oE '[0-9]+$'); lst=$(grep -oE 'caps_views = List\\.map\\(\\[[^]]*\\]' src/viz/main.roc | grep -oE '[0-9]+' | tail -1); if [ -n \"$acc\" ] && [ \"$acc\" = \"$enf\" ] && [ \"$acc\" = \"$lst\" ]; then echo same; else echo \"acc=$acc enf=$enf list=$lst\"; fi"))
+    check!("the published view bound equals the refused bound and the listed views (${view_parity})", view_parity == "same")?
+    # each day and id field names WHERE a value must exist - the form-board
+    # series or the trace picker - and its refusal names the same place. The
+    # accepts side reads the FIRST of the two nouns it finds, so an accepts
+    # string must name only the place its value lives in, never both.
+    noun_parity = Str.trim(sh!("out=''; for f in cursor_day trace_day ghost_day trace_id ghost_id; do a=$(grep \"name: \\\"$f\\\"\" src/viz/main.roc | grep -oE 'series|picker' | head -1); r=$(grep -oE \"\\\"$f [$][{][^\\\"]*not in the (series|picker)\" src/viz/main.roc | grep -oE '(series|picker)$' | head -1); if [ -z \"$a\" ] || [ \"$a\" != \"$r\" ]; then out=\"$out $f:$a/$r\"; fi; done; if [ -z \"$out\" ]; then echo same; else echo \"$out\"; fi"))
+    check!("every day and id field's accepts names the place its refusal names (${noun_parity})", noun_parity == "same")?
+    # an id takes precedence over a day: both id accepts say so, and in both
+    # resolvers the id branch is tried before the day branch
+    prec_parity = Str.trim(sh!("ti=$(grep -n 'directive.trace_id >= 0 (sel_for_id' src/viz/main.roc | cut -d: -f1); td=$(grep -n 'directive.trace_day != \"\" (sel_for_day' src/viz/main.roc | cut -d: -f1); gi=$(grep -n 'directive.ghost_id >= 0 (ghost_for_id' src/viz/main.roc | cut -d: -f1); gd=$(grep -n 'directive.ghost_day != \"\" (ghost_for_day' src/viz/main.roc | cut -d: -f1); pr=$(grep -cE 'name: \"(trace_id|ghost_id)\".*precedence' src/viz/main.roc); if [ -n \"$ti\" ] && [ -n \"$gi\" ] && [ \"$ti\" -lt \"$td\" ] && [ \"$gi\" -lt \"$gd\" ] && [ \"$pr\" = 2 ]; then echo same; else echo \"ti=$ti td=$td gi=$gi gd=$gd precedence=$pr\"; fi"))
+    check!("an id resolves before a day in both resolvers, and both id accepts say so (${prec_parity})", prec_parity == "same")?
+    # 'none' dismisses: both ghost accepts say so, the resolver has the
+    # branch, and every ghost refusal segment - the `(if dv.ghost_...` that
+    # opens one - stands down on it
+    none_parity = Str.trim(sh!("na=$(grep -cE \"name: \\\"ghost_(day|id)\\\".*'none'\" src/viz/main.roc); nr=$(grep -c 'directive.ghost_day == \"none\"' src/viz/main.roc); m=$(grep -cE '\\(if dv\\.ghost_(id >= 0|day != \"\")' src/viz/main.roc); g=$(grep -E '\\(if dv\\.ghost_(id >= 0|day != \"\")' src/viz/main.roc | grep -c '!= \"none\"'); if [ \"$na\" = 2 ] && [ \"$nr\" = 1 ] && [ \"$m\" -gt 0 ] && [ \"$m\" = \"$g\" ]; then echo same; else echo \"accepts=$na resolver=$nr segments=$m guarded=$g\"; fi"))
+    check!("'none' dismisses in the accepts, the resolver, and every ghost refusal segment (${none_parity})", none_parity == "same")?
     check!("viz payload conforms to its schema", Str.is_empty(Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' viz | jq '.data' | jq -r --slurpfile schema schemas/v3/viz.json -f tools/validate.jq 2>&1"))))?
     # a HALF-written publish — tables present, scalars gone — must refuse the
     # same way as no publish at all: protocol 0 is not a protocol
