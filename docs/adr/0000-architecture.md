@@ -455,3 +455,7 @@ pin covers the window app as well as the CLI.
 app that draws the dense series a table cannot show, and the window now carries nine views,
 the ninth being career. The boundary the bullet was protecting is unchanged, because the
 window reads the same database and the coach still reads JSON rather than pixels.
+
+## Update, 2026-09-28
+
+§3's table has a fourth row. The window's bus tables — `viz_directives`, `viz_focus`, `viz_capabilities`, `viz_views`, `viz_fields` — belong to a UI coordination tier: disposable, recreated by the window on its next poll, expired by their own freshness windows (a directive after 600 s, the focus row after 90 s and on quit), rewritten at every launch, never read by the engine. Their recovery story is "nothing to recover". The three rows above are unchanged; ADR 0015 records why its own text once called these tables judgment-tier and why that word was wrong. AGENTS.md carries the four-row version.

@@ -361,11 +361,19 @@ These are measured toolchain behaviors, not style opinions.
 - One **open** planned session per date; lifecycle open → done/skipped (never
   delete). Rest days complete WITHOUT an activity id; every other type requires
   one — done means evidence.
-- **Three data tiers, three recovery stories**: mirror tables (`activities`,
+- **Four data tiers, four recovery stories**: mirror tables (`activities`,
   `streams`) are replace-on-sync and re-pullable — design freely; computed tables
   (`activity_metrics`, `activity_segments`, `daily_load`) rebuild from `analyze`; judgment tables
   (`planned_sessions`, `config`, `ratings`) exist ONLY here — human input must
-  NEVER be a column on a mirror table (a re-sync would silently wipe it).
+  NEVER be a column on a mirror table (a re-sync would silently wipe it); UI
+  coordination tables (`viz_directives`, `viz_focus`, `viz_capabilities`,
+  `viz_views`, `viz_fields`) are disposable — the window recreates them on its
+  next poll, a directive expires 600 s after it is written, the focus row goes
+  stale after 90 s and is deleted on quit, and the capability tables are
+  rewritten at every launch. The engine never reads them, `stride viz` only
+  relays them, and dropping all five costs nothing but the window's next
+  second. They are not judgment: nothing in them is human input, and nothing
+  in them survives its own freshness window.
 - **Session-RPE load is `hours × RPE × 10`** (1h @ RPE 10 = 100, TSS-commensurate
   by construction). Never "simplify" to Foster's raw minutes — ~6× too large,
   corrupts CTL/ATL. Strength-class sports rank the athlete's rating above HR;
@@ -411,6 +419,8 @@ These are measured toolchain behaviors, not style opinions.
   a careful migration. Don't harden migrations against versions no real db is on. The
   ONLY hard rule: never silently destroy judgment-tier data (`ratings`,
   `planned_sessions`, `config`/tokens) — it can't be re-derived. See ADR §6.
+  The bus tables are the opposite case: the e2e suite drops them mid-scenario
+  and every engine command is pinned unmoved.
 - Training weeks are **Monday–Sunday**.
 - Human output philosophy: numbers in tables, meaning in legends, conclusion in a
   verdict line. No graphs — that experiment ran and failed; don't reintroduce.
