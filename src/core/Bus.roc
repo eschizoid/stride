@@ -96,6 +96,15 @@ Bus :: [].{
 	mark_sql : Str
 	mark_sql = "UPDATE viz_directives SET consumed = 1, status = :st, error = NULLIF(:e, ''), applied_at = datetime('now') WHERE id = :id AND consumed = 0"
 
+	# the same mark, returning the id it closed: a statement that returns no
+	# row matched nothing, which means another executor closed the winner
+	# between this one's select and its mark. An executor whose payload
+	# reports the outcome reads this form, since a plain execute cannot tell
+	# one row changed from none; the window, which reports nothing and polls
+	# again, runs the plain form.
+	mark_returning_sql : Str
+	mark_returning_sql = Str.concat(mark_sql, " RETURNING id")
+
 	mark_status : Str -> Str
 	mark_status = |refused| if refused == "" "applied" else "applied_partial"
 
@@ -122,6 +131,10 @@ expect Str.contains(Bus.sentinel_sql, "pragma_table_info('viz_directives')") and
 
 # the sweep and the winner enforce the one published window
 expect Str.contains(Bus.stale_sweep_sql, "-600 seconds") and Str.contains(Bus.winner_sql, "-600 seconds")
+
+# the returning form is the mark and nothing else, so the two executors
+# close a row by one statement
+expect Bus.mark_returning_sql == Str.concat(Bus.mark_sql, " RETURNING id")
 
 expect Bus.mark_status("") == "applied"
 expect Bus.mark_status("trace_day 2026-01-01 not in the picker") == "applied_partial"

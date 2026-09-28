@@ -693,12 +693,21 @@ ReportHealth :: [].{
                     Err(_) => none
                     Ok(w) => {
                         exec!(Bus.supersede_sql, [{ name: ":id", value: Integer(w.id) }])?
+                        # the mark returns the id it closed; no row back means
+                        # another executor closed the winner between this
+                        # cycle's select and its mark, and the cycle reports
+                        # that it lost the race rather than a write it never
+                        # made. A supersede matching nothing is ordinary - no
+                        # older row - and reports nothing.
+                        marked =
+                            if t.ack
+                                Sqlite.query_many!({ path: Path.utf8(path), query: Bus.mark_returning_sql, bindings: [{ name: ":st", value: String(Bus.mark_status("")) }, { name: ":e", value: String("") }, { name: ":id", value: Integer(w.id) }], rows: Sqlite.i64("id") })?
+                            else []
                         status =
-                            if t.ack {
-                                exec!(Bus.mark_sql, [{ name: ":st", value: String(Bus.mark_status("")) }, { name: ":e", value: String("") }, { name: ":id", value: Integer(w.id) }])?
-                                Bus.mark_status("")
-                            } else "pending"
-                        { found: Bool.True, acked: t.ack, id: w.id, status, view: w.v, range: w.rg, cursor_day: w.cd, trace_day: w.td, trace_id: w.ti, ghost_day: w.gd, ghost_id: w.gi }
+                            if !t.ack "pending"
+                            else if List.is_empty(marked) "raced"
+                            else Bus.mark_status("")
+                        { found: Bool.True, acked: status == Bus.mark_status(""), id: w.id, status, view: w.v, range: w.rg, cursor_day: w.cd, trace_day: w.td, trace_id: w.ti, ghost_day: w.gd, ghost_id: w.gi }
                     }
                 }
             }

@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1201)?
+    checks_ran_exactly!(1207)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7240,6 +7240,27 @@ b_viz_tick! = |ctx| {
     # never wedging the lifecycle for one executor and not the other
     _ = sql!(ctx.db, "INSERT INTO viz_directives (view, trace_day) VALUES ('banana', '2099-02-03');")
     check!("a row with an unreadable field is consumed with that field unset, not a crash", strjq!(ctx, ["viz", "tick"], ".data | (.found | tostring) + \"/\" + .status + \"/\" + (.view | tostring) + \"/\" + .trace_day") == "true/applied/-1/2099-02-03")?
+    # the payload echoes the row read into memory; the table says whether the
+    # mark reached THAT row
+    check!("...and the table agrees the hostile row was the one marked", Str.trim(sql!(ctx.db, "SELECT status || '|' || consumed FROM viz_directives WHERE trace_day = '2099-02-03';")) == "applied|1")?
+    # a write that does not land is an error, never a cycle reported as
+    # done: a trigger refuses the mark, and the tick must say so, exit 1,
+    # and leave the row pending for a cycle that can write
+    _ = sql!(ctx.db, "CREATE TRIGGER no_ack BEFORE UPDATE ON viz_directives WHEN NEW.status = 'applied' BEGIN SELECT RAISE(ABORT, 'mark refused'); END;")
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (10);")
+    check!("a mark the database refuses is an error envelope, not an applied payload", strjq!(ctx, ["viz", "tick"], ".error.code") == "database_error")?
+    check!("...and the row it could not mark stays pending", Str.trim(sql!(ctx.db, "SELECT status || '|' || consumed FROM viz_directives WHERE view = 10;")) == "pending|0")?
+    _ = sql!(ctx.db, "DROP TRIGGER no_ack;")
+    check!("...until a cycle that can write marks it", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + (.view | tostring)") == "applied/10")?
+    # two executors on one table: another closer taking the winner between
+    # this cycle's select and its mark leaves the mark matching no row. A
+    # trigger on the supersede plays that closer deterministically; the
+    # cycle must report that it lost the race, never a write it did not make
+    _ = sql!(ctx.db, "CREATE TRIGGER racer AFTER UPDATE OF status ON viz_directives WHEN NEW.status = 'superseded' BEGIN UPDATE viz_directives SET consumed = 1, status = 'applied', applied_at = 'by the other executor' WHERE consumed = 0 AND id = (SELECT MAX(id) FROM viz_directives WHERE consumed = 0); END;")
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (11); INSERT INTO viz_directives (view) VALUES (12);")
+    check!("a winner another executor closed first is reported as raced, not applied", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + (.acked | tostring) + \"/\" + (.view | tostring)") == "raced/false/12")?
+    check!("...and the table carries the other executor's mark, untouched by this cycle", Str.trim(sql!(ctx.db, "SELECT status || '|' || applied_at FROM viz_directives WHERE view = 12;")) == "applied|by the other executor")?
+    _ = sql!(ctx.db, "DROP TRIGGER racer;")
     check!("viz tick payload conforms to its schema", Str.is_empty(Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' viz tick | jq '.data' | jq -r --slurpfile schema schemas/v3/viz-tick.json -f tools/validate.jq"))))?
     _ = sql!(ctx.db, "DROP TABLE viz_directives; DROP TABLE viz_focus;")
     Ok({})
