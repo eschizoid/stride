@@ -7139,9 +7139,12 @@ b_viz_caps! = |ctx| {
     check!("...and its age is seconds, not minutes", sfloat(strjq!(ctx, ["viz"], ".data.focus.age_seconds")) < 30.0)?
     _ = sql!(ctx.db, "UPDATE viz_focus SET updated_at = datetime('now', '-1000 seconds');")
     check!("a row older than the focus staleness is present but not live", strjq!(ctx, ["viz"], ".data.focus | (.present | tostring) + \"/\" + (.live | tostring)") == "true/false")?
-    # the boundary is inclusive: a row exactly as old as the window is live
-    _ = sql!(ctx.db, "UPDATE viz_focus SET updated_at = datetime('now', '-90 seconds');")
-    check!("a row exactly at the staleness boundary is still live", strjq!(ctx, ["viz"], ".data.focus.live | tostring") == "true")?
+    # the boundary is inclusive. The write stamps one clock and the read
+    # computes the age from another, across a process spawn, so 89 s leaves
+    # one second for the wall clock to tick between them; 1000 s above
+    # already pins the far side, and 90 exactly would flake, never lie
+    _ = sql!(ctx.db, "UPDATE viz_focus SET updated_at = datetime('now', '-89 seconds');")
+    check!("a row one second inside the staleness boundary is still live", strjq!(ctx, ["viz"], ".data.focus.live | tostring") == "true")?
     # a table a window from before the id columns created still reads: the
     # row is present, its ids unknown, never reported absent
     _ = sql!(ctx.db, "ALTER TABLE viz_focus DROP COLUMN trace_id;")
@@ -7156,10 +7159,11 @@ b_viz_caps! = |ctx| {
     check!("a cleared row - the window quit - reads as no focus", strjq!(ctx, ["viz"], ".data.focus.present | tostring") == "false")?
     _ = sql!(ctx.db, "DROP TABLE viz_focus;")
     # the NAMES the window publishes equal the directive columns Db.roc's
-    # SQL reads through COALESCE, in both directions; the accepts text is
-    # prose and not pinned, and whether the resolver acts on a field is
-    # pinned by refusals_for's own expects, not here. An empty extraction
-    # fails rather than matching empty against empty.
+    # SQL reads through COALESCE, in both directions. Not pinned here or
+    # anywhere: the accepts text (prose), and whether update!'s resolver
+    # acts on a field - refusals_for's expects judge a resolved selection,
+    # not the fold that resolves it. An empty extraction fails rather than
+    # matching empty against empty.
     field_parity = Str.trim(sh!("pub=$(awk '/^caps_fields = \\[/{p=1} p{print} p&&/\\]/{exit}' src/viz/main.roc | grep -oE 'name: \"[a-z_]+\"' | sed 's/name: \"//; s/\"//' | LC_ALL=C sort -u | tr '\\n' ' '); q=$(grep -oE 'COALESCE\\((view|range|cursor_day|trace_day|ghost_day|trace_id|ghost_id)' src/viz/Db.roc | grep -oE '[a-z_]+$' | LC_ALL=C sort -u | tr '\\n' ' '); if [ -n \"$pub\" ] && [ \"$pub\" = \"$q\" ]; then echo same; else echo \"pub=$pub q=$q\"; fi"))
     check!("the published field names equal the columns the poll reads (${field_parity})", field_parity == "same")?
     check!("viz payload conforms to its schema", Str.is_empty(Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' viz | jq '.data' | jq -r --slurpfile schema schemas/v3/viz.json -f tools/validate.jq 2>&1"))))?

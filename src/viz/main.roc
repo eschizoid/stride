@@ -807,6 +807,42 @@ sel_following_id = |old, old_sel, fresh| {
 	List.fold(List.map_with_index(fresh, |e, i| { e, i }), { sel: 0, found: Bool.False }, |s, x| if x.e.id == cur_id ({ sel: x.i, found: Bool.True }) else s)
 }
 
+# Where the ghost stands after a picker re-read: no ghost stays no ghost
+# (keep, nothing to clear); a ghost whose session is still listed follows
+# it to its new index; a ghost whose session is gone is dismissed, and
+# `keep` false tells the fold to clear its samples, day and duration and
+# to open a new ghost generation. Follows sel_following_id for the same
+# reason the trace does - an index is a position, a session is an id.
+ghost_after_reread : I64, List(TraceId), List(TraceId) -> { sel : I64, keep : Bool }
+ghost_after_reread = |ghost_sel, old, fresh|
+	match I64.to_u64_try(ghost_sel) {
+		Err(_) => { sel: -1, keep: Bool.True }
+		Ok(gu) => {
+			gr = sel_following_id(old, gu, fresh)
+			if gr.found (match U64.to_i64_try(gr.sel) { Ok(gs) => { sel: gs, keep: Bool.True }
+				Err(_) => { sel: -1, keep: Bool.False } }) else { sel: -1, keep: Bool.False }
+		}
+	}
+
+# no ghost: nothing moves and nothing is cleared
+expect ghost_after_reread(-1, [], [{ id: 1, day: "d", name: "n", sport: "Ride", chan: "w" }]) == { sel: -1, keep: Bool.True }
+
+# the ghost's session shifted one slot down behind a newer session: it
+# follows, and stays drawn
+expect {
+	a = { id: 10, day: "2026-09-01", name: "a", sport: "Ride", chan: "w" }
+	b = { id: 11, day: "2026-09-02", name: "b", sport: "Ride", chan: "w" }
+	c = { id: 12, day: "2026-09-03", name: "c", sport: "Ride", chan: "w" }
+	ghost_after_reread(1, [b, a], [c, b, a]) == { sel: 2, keep: Bool.True }
+}
+
+# the ghost's session is gone from the re-read: dismissed, and cleared
+expect {
+	a = { id: 10, day: "2026-09-01", name: "a", sport: "Ride", chan: "w" }
+	b = { id: 11, day: "2026-09-02", name: "b", sport: "Ride", chan: "w" }
+	ghost_after_reread(1, [b, a], [b]) == { sel: -1, keep: Bool.False }
+}
+
 # the shown session keeps its identity across a re-read that inserted a
 # newer session ahead of it, and is reported found
 expect {
@@ -912,7 +948,11 @@ expect {
 	and refusals_for({ ..blank, ghost_id: 1 }, -2, 0, 0, m) == "ghost_id 1 is the session on screen"
 	and refusals_for({ ..blank, ghost_id: 1 }, -2, 1, 1, m) == "ghost_id 1 is Ride, the session is Rowing"
 	# 'none' dismisses; an id beside it is never judged, so nothing is refused
+	# - not an absent id, not the shown session's own id, not one of the
+	# wrong kind (each would otherwise name its own refusal)
 	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 9 }, -2, 0, 0, m) == ""
+	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 1 }, -2, 0, 0, m) == ""
+	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 1 }, -2, 1, 1, m) == ""
 }
 
 # Reports a directive's terminal outcome from the task lane.
@@ -1179,15 +1219,12 @@ update! = |model0, program_input| {
 							# ghost whose session is gone is dismissed - its samples,
 							# day and duration cleared together - rather than left
 							# pointing at whatever session now holds its old index.
-							g = match I64.to_u64_try(acc.ghost_sel) {
-								Ok(gu) => {
-									gr = sel_following_id(acc.trace_ids, gu, fresh)
-									if gr.found (match U64.to_i64_try(gr.sel) { Ok(gs) => { sel: gs, keep: Bool.True }
-										Err(_) => { sel: -1, keep: Bool.False } }) else { sel: -1, keep: Bool.False }
-								}
-								Err(_) => { sel: -1, keep: Bool.True }
-							}
-							{ ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: r.sel, trace_refetch: !r.found and !(List.is_empty(fresh)), ghost_sel: g.sel, ghost: (if g.keep acc.ghost else []), ghost_day: (if g.keep acc.ghost_day else ""), ghost_dur: (if g.keep acc.ghost_dur else 0.0) }
+							# A dismissal here opens a new ghost generation exactly as
+							# a keyboard dismissal does, so a ghost fetch still in
+							# flight for the vanished session lands nowhere instead
+							# of resurrecting its samples beside a cleared selection.
+							g = ghost_after_reread(acc.ghost_sel, acc.trace_ids, fresh)
+							{ ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: r.sel, trace_refetch: !r.found and !(List.is_empty(fresh)), ghost_sel: g.sel, ghost: (if g.keep acc.ghost else []), ghost_day: (if g.keep acc.ghost_day else ""), ghost_dur: (if g.keep acc.ghost_dur else 0.0), ghost_gen: (if g.keep acc.ghost_gen else acc.ghost_gen + 1) }
 						}
 				}
 			Reloaded(fresh) => {
