@@ -1070,15 +1070,19 @@ update! = |model0, program_input| {
 						if d2.dv.id == acc.last_directive.id { ..acc, bus_note: d2.note }
 						else {
 							r = sel_following_id(acc.trace_ids, acc.trace_sel, fresh)
-							# refetch whenever the shown session's index MOVED, not
-							# only when it vanished: a re-read that shifts it (a
-							# session synced in ahead of it) leaves any in-flight
-							# fetch tagged with the old index, which the switch
-							# guard would then drop as stale - stranding the loading
-							# flag with nothing coming. Forcing a fetch for the new
-							# index gives the guard a reply that matches. The empty
-							# cache makes that fetch a miss, so it actually spawns.
-							{ ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: r.sel, trace_refetch: (r.sel != acc.trace_sel or !r.found) and !(List.is_empty(fresh)) }
+							# refetch when the re-read orphaned an in-flight fetch or
+							# lost the session, never merely because an index moved:
+							# a fetch spawned for the old index is tagged with it and
+							# the switch guard would drop it as stale, so a shift
+							# WHILE LOADING must spawn a replacement the guard will
+							# match. A shift while NOT loading needs nothing - the
+							# drawn samples belong to that same session by id and
+							# the header re-reads its new index, so forcing a fetch
+							# there only blanks correct data to "loading" for a frame
+							# (the emptied cache guarantees the miss) before
+							# reloading the identical trace. Vanish always refetches
+							# for the fallback session.
+							{ ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: r.sel, trace_refetch: ((r.sel != acc.trace_sel and acc.trace_loading) or !r.found) and !(List.is_empty(fresh)) }
 						}
 				}
 			Reloaded(fresh) => {
