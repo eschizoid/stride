@@ -477,10 +477,12 @@ flowchart TD
     class coach,window actor
 ```
 
-The three tiers exist because they have three different recovery stories. Mirror is
-replace-on-sync and re-pullable, computed rebuilds from `analyze`, and judgment exists
-nowhere else. Human input never lives on a mirror table, because a re-sync would
-silently wipe it.
+The four tiers exist because they have four different recovery stories. Mirror is
+replace-on-sync and re-pullable, computed rebuilds from `analyze`, judgment exists
+nowhere else, and the agent bus is disposable — the window recreates its lifecycle tables on
+its next poll and its capability tables at launch, their rows expire on their own,
+and no analytics command reads them. Human input never lives on a
+mirror table, because a re-sync would silently wipe it.
 
 **What the engine computes** (all deterministic):
 
@@ -565,7 +567,7 @@ How it stays correct without being told to:
   the next command.
 
 The decisions behind all of this (why Roc and why pinned, the effects-only module
-layout, the three data tiers, the mixed-model load, the versioned JSON envelope, and
+layout, the four data tiers, the mixed-model load, the versioned JSON envelope, and
 the Windows/compiler-migration situation) are recorded in
 [`docs/adr/0000-architecture.md`](docs/adr/0000-architecture.md).
 
