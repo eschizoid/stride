@@ -264,7 +264,10 @@ The focus row has a liveness rule, and a reader must apply it: a row is
 `focus_staleness_seconds` (90 s, three missed heartbeats). A window closed
 by the OS button, or crashed, leaves its last row behind, and without the
 rule that row reads as "the athlete is looking at this" forever. Quitting
-with ESC deletes the row, so **no row** is the clean "nobody is looking".
+with ESC deletes the row, so **no row** is the clean "nobody is looking";
+if that last write fails (a locked database), the row it leaves behind is
+retired by the same staleness rule, and a coach reading within the window
+sees a stale-but-live row for at most 90 s.
 `stride viz --json` applies the rule for you: its `focus` object carries
 `present`, `live` and `age_seconds` beside the fields, so an agent never
 computes the age itself.

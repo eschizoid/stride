@@ -560,13 +560,16 @@ ReportHealth :: [].{
             # staleness. A window closed by the OS button or crashed leaves its
             # last row behind, and `live` is what separates that history from
             # what the athlete sees; the ESC path deletes the row, so absent is
-            # the cleaner "nobody is looking". An unreadable row - a table from
-            # before the id columns, a corrupt timestamp - reports present with
-            # live false and age -1, never a crash: the age is COALESCEd, and a
-            # query the table cannot answer lands on the absent shape.
+            # the cleaner "nobody is looking". Two reads, because the CLI and
+            # the window are separate binaries and rebuild separately: the
+            # columns every window ever wrote come first and decide `present`,
+            # and the id columns come second and may fail against a table a
+            # window from before them created - that reports the row with ids
+            # -1, never as absent. A corrupt timestamp reports present with
+            # live false and age -1: the age is COALESCEd, the row still reads.
             focus_rows = Sqlite.query_many!({
                 path: Path.utf8(path),
-                query: "SELECT view, range, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd, CAST(COALESCE(trace_day, '') AS TEXT) AS td, CAST(COALESCE(ghost_day, '') AS TEXT) AS gd, CAST(COALESCE(trace_id, -1) AS INTEGER) AS ti, CAST(COALESCE(ghost_id, -1) AS INTEGER) AS gi, CAST(updated_at AS TEXT) AS ua, CAST(COALESCE(strftime('%s', 'now') - strftime('%s', updated_at), -1) AS INTEGER) AS age FROM viz_focus WHERE id = 1",
+                query: "SELECT view, range, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd, CAST(COALESCE(trace_day, '') AS TEXT) AS td, CAST(COALESCE(ghost_day, '') AS TEXT) AS gd, CAST(updated_at AS TEXT) AS ua, CAST(COALESCE(strftime('%s', 'now') - strftime('%s', updated_at), -1) AS INTEGER) AS age FROM viz_focus WHERE id = 1",
                 bindings: [],
                 rows: |cols| |stmt| {
                     view = Sqlite.i64("view")(cols)(stmt)?
@@ -574,19 +577,34 @@ ReportHealth :: [].{
                     cd = Sqlite.str("cd")(cols)(stmt)?
                     td = Sqlite.str("td")(cols)(stmt)?
                     gd = Sqlite.str("gd")(cols)(stmt)?
-                    ti = Sqlite.i64("ti")(cols)(stmt)?
-                    gi = Sqlite.i64("gi")(cols)(stmt)?
                     ua = Sqlite.str("ua")(cols)(stmt)?
                     age = Sqlite.i64("age")(cols)(stmt)?
-                    Ok({ view, range, cd, td, gd, ti, gi, ua, age })
+                    Ok({ view, range, cd, td, gd, ua, age })
                 },
             })
+            id_rows = Sqlite.query_many!({
+                path: Path.utf8(path),
+                query: "SELECT CAST(COALESCE(trace_id, -1) AS INTEGER) AS ti, CAST(COALESCE(ghost_id, -1) AS INTEGER) AS gi FROM viz_focus WHERE id = 1",
+                bindings: [],
+                rows: |cols| |stmt| {
+                    ti = Sqlite.i64("ti")(cols)(stmt)?
+                    gi = Sqlite.i64("gi")(cols)(stmt)?
+                    Ok({ ti, gi })
+                },
+            })
+            ids = match id_rows {
+                Err(_) => { ti: -1, gi: -1 }
+                Ok(rows) => match List.first(rows) {
+                    Err(_) => { ti: -1, gi: -1 }
+                    Ok(r) => r
+                }
+            }
             absent = { present: Bool.False, live: Bool.False, age_seconds: -1, updated_at: "", view: -1, range: -1, cursor_day: "", trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1 }
             focus = match focus_rows {
                 Err(_) => absent
                 Ok(rows) => match List.first(rows) {
                     Err(_) => absent
-                    Ok(r) => { present: Bool.True, live: r.age >= 0 and r.age <= s.fstale, age_seconds: r.age, updated_at: r.ua, view: r.view, range: r.range, cursor_day: r.cd, trace_day: r.td, trace_id: r.ti, ghost_day: r.gd, ghost_id: r.gi }
+                    Ok(r) => { present: Bool.True, live: r.age >= 0 and r.age <= s.fstale, age_seconds: r.age, updated_at: r.ua, view: r.view, range: r.range, cursor_day: r.cd, trace_day: r.td, trace_id: ids.ti, ghost_day: r.gd, ghost_id: ids.gi }
                 }
             }
             focus_word = if !focus.present "none" else if focus.live "live" else "stale"

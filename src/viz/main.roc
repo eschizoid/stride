@@ -861,10 +861,12 @@ refusals_for = |dv, cdir, wsel, cur_sel, ids| {
 			if gh6.sport != live6.sport ("ghost_day ${dv.ghost_day} is ${gh6.sport}, the session is ${live6.sport}")
 			else "ghost_day ${dv.ghost_day} is ${Db.chan_name(gh6.chan)}, the session is ${Db.chan_name(live6.chan)}"
 		} else ""),
-		# the same three judgements for a ghost named by id
-		(if dv.ghost_id >= 0 and !(List.any(ids, |gi9| gi9.id == dv.ghost_id)) ("ghost_id ${I64.to_str(dv.ghost_id)} not in the picker") else ""),
-		(if dv.ghost_id >= 0 and dv.ghost_id == entry_at(ids, wsel).id ("ghost_id ${I64.to_str(dv.ghost_id)} is the session on screen") else ""),
-		(if dv.ghost_id >= 0 and dv.ghost_id != entry_at(ids, wsel).id and List.any(ids, |gi8| gi8.id == dv.ghost_id) and !(List.any(ids, |gi7| gi7.id == dv.ghost_id and ghost_matches(entry_at(ids, wsel), gi7))) {
+		# the same three judgements for a ghost named by id. A ghost_day of
+		# 'none' dismisses regardless of ghost_id, so an id beside it is not
+		# judged at all - the resolver never reads it either
+		(if dv.ghost_id >= 0 and dv.ghost_day != "none" and !(List.any(ids, |gi9| gi9.id == dv.ghost_id)) ("ghost_id ${I64.to_str(dv.ghost_id)} not in the picker") else ""),
+		(if dv.ghost_id >= 0 and dv.ghost_day != "none" and dv.ghost_id == entry_at(ids, wsel).id ("ghost_id ${I64.to_str(dv.ghost_id)} is the session on screen") else ""),
+		(if dv.ghost_id >= 0 and dv.ghost_day != "none" and dv.ghost_id != entry_at(ids, wsel).id and List.any(ids, |gi8| gi8.id == dv.ghost_id) and !(List.any(ids, |gi7| gi7.id == dv.ghost_id and ghost_matches(entry_at(ids, wsel), gi7))) {
 			live5 = entry_at(ids, wsel)
 			gh5 = List.fold(ids, live5, |acc, g5| if g5.id == dv.ghost_id g5 else acc)
 			if gh5.sport != live5.sport ("ghost_id ${I64.to_str(dv.ghost_id)} is ${gh5.sport}, the session is ${live5.sport}")
@@ -902,11 +904,15 @@ expect {
 	# an id no picker entry carries; the selection did not move, so it is
 	# judged against the shown session and refused by name
 	refusals_for({ ..blank, trace_id: 9 }, -2, 0, 0, m) == "trace_id 9 not in the picker"
-	# an id that resolved moves the selection, and moving is not a refusal
-	and refusals_for({ ..blank, trace_id: 2 }, -2, 1, 0, m) == ""
+	# the same absent id while the selection MOVED (wsel differs from
+	# cur_sel) is not judged against the shown session at all - the move is
+	# the answer - so nothing is refused; this is the guard's own case
+	and refusals_for({ ..blank, trace_id: 9 }, -2, 1, 0, m) == ""
 	and refusals_for({ ..blank, ghost_id: 9 }, -2, 0, 0, m) == "ghost_id 9 not in the picker"
 	and refusals_for({ ..blank, ghost_id: 1 }, -2, 0, 0, m) == "ghost_id 1 is the session on screen"
 	and refusals_for({ ..blank, ghost_id: 1 }, -2, 1, 1, m) == "ghost_id 1 is Ride, the session is Rowing"
+	# 'none' dismisses; an id beside it is never judged, so nothing is refused
+	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 9 }, -2, 0, 0, m) == ""
 }
 
 # Reports a directive's terminal outcome from the task lane.
@@ -916,6 +922,20 @@ mark_task! = |home, did, refused|
 		Err(_) => {}
 		Ok(db) => Db.mark_directive!(db, did, refused)
 	}
+
+# The frame after ESC leaves once the focus clear has landed, or once half
+# a second (30 frames at the app's 60 fps pacing) has passed without it - a
+# database that will not answer must not hold the window open. Ticks only
+# grow, so the difference cannot wrap.
+exits_now : Bool, U64, U64 -> Bool
+exits_now = |cleared, tick, quit_tick| cleared or tick - quit_tick >= 30
+
+# the clear landing ends the wait at once; without it the wait ends on the
+# 30th frame and not before
+expect exits_now(Bool.True, 100, 100)
+expect !exits_now(Bool.False, 129, 100)
+expect exits_now(Bool.False, 130, 100)
+expect exits_now(Bool.False, 5000, 100)
 
 # The window's last word: delete the focus row on the way out. Either
 # outcome ends the quit - a clear that failed changes nothing the staleness
@@ -1155,7 +1175,19 @@ update! = |model0, program_input| {
 							# a fetch still in flight for it is matched by generation,
 							# not by index, and its samples land under the new index;
 							# samples already drawn are that session's by id.
-							{ ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: r.sel, trace_refetch: !r.found and !(List.is_empty(fresh)) }
+							# The ghost follows its session by id the same way, and a
+							# ghost whose session is gone is dismissed - its samples,
+							# day and duration cleared together - rather than left
+							# pointing at whatever session now holds its old index.
+							g = match I64.to_u64_try(acc.ghost_sel) {
+								Ok(gu) => {
+									gr = sel_following_id(acc.trace_ids, gu, fresh)
+									if gr.found (match U64.to_i64_try(gr.sel) { Ok(gs) => { sel: gs, keep: Bool.True }
+										Err(_) => { sel: -1, keep: Bool.False } }) else { sel: -1, keep: Bool.False }
+								}
+								Err(_) => { sel: -1, keep: Bool.True }
+							}
+							{ ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: r.sel, trace_refetch: !r.found and !(List.is_empty(fresh)), ghost_sel: g.sel, ghost: (if g.keep acc.ghost else []), ghost_day: (if g.keep acc.ghost_day else ""), ghost_dur: (if g.keep acc.ghost_dur else 0.0) }
 						}
 				}
 			Reloaded(fresh) => {
@@ -1200,10 +1232,7 @@ update! = |model0, program_input| {
 	}
 	directive = if is_redelivery ({ has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1 }) else directive0
 	if model.quitting {
-		# the frame after ESC: leave once the focus clear has landed, or once
-		# half a second has passed without it - a database that will not
-		# answer must not hold the window open
-		if model.focus_cleared or model.tick - model.quit_tick >= 30 (Err(Exit(0)))
+		if exits_now(model.focus_cleared, model.tick, model.quit_tick) (Err(Exit(0)))
 		else Ok({ ..model, tick: model.tick + 1 })
 	} else if d.key_pressed(KeyEscape) {
 		if model.home == "" (Err(Exit(0)))
