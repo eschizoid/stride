@@ -276,6 +276,7 @@ load_model! = |font, curve_days, boot| {
 			trace_ids: loaded.tids,
 			trace_sel: 0.U64,
 			trace_refetch: Bool.False,
+			trace_loading: Bool.False,
 			trace_day: match List.first(loaded.tids) {
 				Ok(x) => x.day
 				Err(_) => ""
@@ -1032,7 +1033,7 @@ update! = |model0, program_input| {
 				if w.days != acc.curve_days acc
 				else { ..acc, curve: w.c, curve_prev: w.cpv, curve_lbls: w.lbls, curve_title: w.title, fit_lbl: w.fit_lbl, cp_lbl: w.cp_lbl, fit_cp: w.fit_cp, fit_r2: w.fit_r2, reloading: Bool.False }
 			CurveReloadFailed(days) => if days != acc.curve_days acc else { ..acc, reloading: Bool.False }
-			TraceSwitchFailed => acc
+			TraceSwitchFailed => { ..acc, trace_loading: Bool.False }
 			GhostSwitchFailed => acc
 			# a slow load must not resurrect a dismissed ghost or overwrite a
 			# newer pick: only the result matching the current selection lands
@@ -1080,7 +1081,7 @@ update! = |model0, program_input| {
 				if fresh.curve_days == acc.curve_days merged
 				else { ..merged, curve: acc.curve, curve_prev: acc.curve_prev, curve_lbls: acc.curve_lbls, curve_title: acc.curve_title, curve_days: acc.curve_days, fit_lbl: acc.fit_lbl, cp_lbl: acc.cp_lbl, fit_cp: acc.fit_cp, fit_r2: acc.fit_r2, reloading: acc.reloading }
 			}
-			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day, trace_unit: sw.un, trace_splits: sw.sp }
+			TraceSwitched(sw) => { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_sel: sw.sel, trace_day: sw.day, trace_unit: sw.un, trace_splits: sw.sp, trace_loading: Bool.False }
 		})
 	# the coach's word arrives beside the human's input and steers only what
 	# it names: view, range, a day for the crosshair, a session for the trace
@@ -1318,9 +1319,12 @@ update! = |model0, program_input| {
 		# names a session whose samples are not on screen
 		moving = want_sel2 != model.trace_sel or model.trace_refetch
 		switched = if moving (List.get(model.trace_cache, want_sel2)) else Err(NoSwitch)
-		_ = if moving and (match switched { Ok(_) => Bool.False
-			Err(_) => Bool.True }) {
-			# cache miss only - the normal path answers from memory this frame
+		# a switch that misses the cache fetches off the main loop and blanks the
+		# plot until it lands; a switch that HITS answers from memory this frame,
+		# so only the miss is a load in flight
+		trace_fetch = moving and (match switched { Ok(_) => Bool.False
+			Err(_) => Bool.True })
+		_ = if trace_fetch {
 			home2 = model.home
 			units2 = model.units
 			ids2 = model.trace_ids
@@ -1520,7 +1524,7 @@ update! = |model0, program_input| {
 				Unavailable(u9) => if u9.gw == pixels.w and u9.gh == pixels.h (model.glow) else build_glow!(pixels)
 			}
 		glow_on2 = if d.key_pressed(KeyG) (!model.glow_on) else model.glow_on
-		Ok({ ..model, reloading: (if reload_spawned Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, trace_refetch: Bool.False, ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, reloading: (if reload_spawned Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, trace_refetch: Bool.False, trace_loading: (if trace_fetch Bool.True else model.trace_loading), ghost_sel: want_ghost2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
