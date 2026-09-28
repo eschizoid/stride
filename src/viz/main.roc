@@ -1070,7 +1070,15 @@ update! = |model0, program_input| {
 						if d2.dv.id == acc.last_directive.id { ..acc, bus_note: d2.note }
 						else {
 							r = sel_following_id(acc.trace_ids, acc.trace_sel, fresh)
-							{ ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: r.sel, trace_refetch: !r.found and !(List.is_empty(fresh)) }
+							# refetch whenever the shown session's index MOVED, not
+							# only when it vanished: a re-read that shifts it (a
+							# session synced in ahead of it) leaves any in-flight
+							# fetch tagged with the old index, which the switch
+							# guard would then drop as stale - stranding the loading
+							# flag with nothing coming. Forcing a fetch for the new
+							# index gives the guard a reply that matches. The empty
+							# cache makes that fetch a miss, so it actually spawns.
+							{ ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: r.sel, trace_refetch: (r.sel != acc.trace_sel or !r.found) and !(List.is_empty(fresh)) }
 						}
 				}
 			Reloaded(fresh) => {
