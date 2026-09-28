@@ -685,23 +685,23 @@ Db :: [].{
 		}
 
 	# every RIDE power PR: the best-ever watts per duration rung and the day
-	# each record first landed. The rungs are the activity_power_ladder
-	# view's, not restated here: the view carries each rung's name and its
-	# seconds, and the rung list is read off it - every rung ANY sport has
-	# ever recorded, which is the view's whole ladder once one session has
-	# a stream - so a rung added to the view reaches the record book with no
-	# edit in this file. The Ride record per rung joins onto that list, and
-	# a rung no ride has recorded keeps its row at w 0 / day '': the record
-	# book is index-spaced and its comment holds that every rung is
-	# materialized, so the ladder never shrinks or jumps. Ordering within a
-	# rung is on the TRUE stored watts - the round is presentation, so two
-	# efforts that DISPLAY equal still rank by their real values; only an
-	# exact tie breaks to the earliest ride (a matched record is not a new
-	# one). The query runs once per load (launch and R), never per frame.
+	# each record first landed. The rung list is the engine's
+	# power_ladder_rungs view - every rung the ladder has, whether or not any
+	# session recorded one - and the Ride record per rung joins onto it from
+	# the activity_power_ladder unpivot, so a rung added to the schema
+	# reaches the record book with no edit in this file. A rung no ride has
+	# recorded keeps its row at w 0 / day '': the record book is index-spaced
+	# and materializes every rung, so the ladder never shrinks or jumps, and
+	# the athlete whose longest effort is five minutes still sees the three
+	# rungs above it as unridden. Ordering within a rung is on the TRUE stored
+	# watts - the round is presentation, so two efforts that DISPLAY equal
+	# still rank by their real values; only an exact tie breaks to the
+	# earliest ride (a matched record is not a new one). The query runs once
+	# per load (launch and R), never per frame.
 	PrRung : { rung : Str, secs : I64, w : I64, day : Str }
 	load_prs! : Sqlite.Db => List(PrRung)
 	load_prs! = |db|
-		match Sqlite.query!({ db, query: "WITH rungs AS (SELECT DISTINCT rung, secs FROM activity_power_ladder), best AS (SELECT rung, watts, day FROM (SELECT rung, watts, day, ROW_NUMBER() OVER (PARTITION BY rung ORDER BY watts DESC, start_local ASC) AS rn FROM activity_power_ladder WHERE sport_family = 'Ride') WHERE rn = 1) SELECT CAST(r.rung AS TEXT) AS rung, CAST(r.secs AS INTEGER) AS secs, CAST(COALESCE(ROUND(b.watts), 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM rungs r LEFT JOIN best b ON b.rung = r.rung ORDER BY r.secs ASC", bindings: [] }) {
+		match Sqlite.query!({ db, query: "WITH best AS (SELECT rung, watts, day FROM (SELECT rung, watts, day, ROW_NUMBER() OVER (PARTITION BY rung ORDER BY watts DESC, start_local ASC) AS rn FROM activity_power_ladder WHERE sport_family = 'Ride') WHERE rn = 1) SELECT CAST(r.rung AS TEXT) AS rung, CAST(r.secs AS INTEGER) AS secs, CAST(COALESCE(ROUND(b.watts), 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM power_ladder_rungs r LEFT JOIN best b ON b.rung = r.rung ORDER BY r.secs ASC", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {

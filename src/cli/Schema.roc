@@ -192,6 +192,20 @@ Schema :: [].{
     # else. 0 and NULL in a raw best_* column both mean unrecorded, and
     # the view emits no row for either. Windowed bests, all-time PRs and
     # health reports aggregate this differently, but they unpivot identically.
+    # the ladder's rungs as a LIST, one row each whether or not any session
+    # has recorded one: the unpivot below emits a row only where a session
+    # has a value, so an athlete whose longest effort is five minutes has no
+    # 10-, 20- or 60-minute row there, and a reader that took its rung list
+    # from the unpivot would draw a ladder that shrank with the history. A
+    # rung joins here, and a rung added to the unpivot is added here in the
+    # same edit; the two lists are pinned equal by the e2e suite.
+    power_ladder_rungs_drop =
+        \\DROP VIEW IF EXISTS power_ladder_rungs
+    power_ladder_rungs =
+        \\CREATE VIEW power_ladder_rungs AS
+        \\SELECT '5s' AS rung, 5 AS secs UNION ALL SELECT '15s', 15 UNION ALL SELECT '30s', 30 UNION ALL SELECT '1min', 60
+        \\UNION ALL SELECT '5min', 300 UNION ALL SELECT '10min', 600 UNION ALL SELECT '20min', 1200 UNION ALL SELECT '60min', 3600
+
     activity_power_ladder_drop =
         \\DROP VIEW IF EXISTS activity_power_ladder
     activity_power_ladder =

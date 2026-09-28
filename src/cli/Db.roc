@@ -258,7 +258,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 35
+    schema_version = 36
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -466,7 +466,13 @@ Db :: [].{
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_intensity, bindings: [] })?
         # v31: the power-ladder unpivot and the Monday-week ramp - one
         # definition each, aggregated differently by every consumer.
-        # weekly_ramp reads week_bounds, so it stays after it.
+        # weekly_ramp reads week_bounds, so it stays after it. v36 put the
+        # rung LIST beside the unpivot, since the unpivot has a row only where
+        # a session recorded one and a reader of the list must not lose a rung
+        # nobody has ridden yet; this block runs whole on any bump, so the
+        # list lands on every database that reaches 36.
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.power_ladder_rungs_drop, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.power_ladder_rungs, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_power_ladder_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_power_ladder, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.weekly_ramp_drop, bindings: [] })?
