@@ -323,7 +323,7 @@ run_all! = || {
     # date against a Chicago binary — a whole day apart, and `analyze` regenerates
     # daily_load to the BINARY's today, so the series came up one row short (#200).
     # CI only saw it when a run landed in that window.
-    tz = "America/Chicago"
+    tz = fixture_tz
     today = need("date +%F", Str.trim(sh!("TZ=${tz} date +%F")))?
     d1 = need("date -3d", Str.trim(sh!("TZ=${tz} date -v-3d +%F 2>/dev/null || TZ=${tz} date -d '3 days ago' +%F")))?
     d2 = need("date -1d", Str.trim(sh!("TZ=${tz} date -v-1d +%F 2>/dev/null || TZ=${tz} date -d '1 day ago' +%F")))?
@@ -7103,10 +7103,8 @@ b_cross_surface! = |ctx| {
     # the window's own query, read out of its source so the text this runs is
     # the text the window runs - a loader moved onto week_bounds fails here
     # by name; its dn column is the strip's numerator. It anchors on
-    # sqlite's localtime, the machine clock, while ctx.today is the fixture
-    # zone's date: the two name the same day whenever the machine and
-    # America/Chicago share one, which every run so far has, and a run that
-    # straddles midnight between them fails here rather than passing wrong
+    # sqlite's localtime, and sql! runs sqlite3 under the fixture zone, so
+    # that localtime and ctx.today name the same day on any machine
     plan_q = Str.trim(sh!("grep -oE 'query: \"WITH anchor AS \\(SELECT date\\(date\\(.now., .localtime.\\)[^\"]*plan_current[^\"]*\"' src/viz/Db.roc | sed 's/^query: \"//; s/\"$//'"))
     strip_done = Str.trim(sql!(ctx.db, "SELECT COALESCE(dn, 0) FROM (${plan_q});"))
     bounds_done = Str.trim(sql!(ctx.db, "WITH anchor AS (SELECT mon FROM week_bounds) SELECT COALESCE(CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER), 0) FROM plan_current, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days');"))
@@ -7652,9 +7650,16 @@ sh! = |script|
 # (sqlite3 reports on stderr, sh! discards stderr AND the exit code, and 199
 # of the call sites discard the return) — it surfaced later as an
 # unrelated-looking assertion about state.
+# the fixture's one timezone, read by the context builder for ctx.today and
+# by sql! for every sqlite3 child, so a query the window runs on
+# date('now', 'localtime') names the same day the fixture calls today on any
+# machine - a UTC runner's evening is not the fixture's tomorrow
+fixture_tz : Str
+fixture_tz = "America/Chicago"
+
 sql! : Str, Str => Str
 sql! = |db, query|
-    sh!("sqlite3 -cmd '.timeout 5000' '${db}' 2>'${sqlfail_log}.err' <<'SQLHEREDOC' || { echo \"sqlite3 failed on ${db}:\" >> '${sqlfail_log}'; cat '${sqlfail_log}.err' >> '${sqlfail_log}'; }\n${query}\nSQLHEREDOC")
+    sh!("TZ=${fixture_tz} sqlite3 -cmd '.timeout 5000' '${db}' 2>'${sqlfail_log}.err' <<'SQLHEREDOC' || { echo \"sqlite3 failed on ${db}:\" >> '${sqlfail_log}'; cat '${sqlfail_log}.err' >> '${sqlfail_log}'; }\n${query}\nSQLHEREDOC")
 
 # ONE log for the whole run, at a FIXED path — not `<db>.sqlfail` beside each
 # database, which failed three ways: only a scenario holding that db's path
