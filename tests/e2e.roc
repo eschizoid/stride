@@ -7100,12 +7100,20 @@ b_cross_surface! = |ctx| {
     # still counts the seeded session
     _ = sql!(ctx.db, "CREATE TABLE cs_dl AS SELECT * FROM daily_load WHERE day >= date('${ctx.today}', '-8 days'); DELETE FROM daily_load WHERE day >= date('${ctx.today}', '-8 days');")
     anchors = Str.trim(sql!(ctx.db, "SELECT (SELECT mon FROM week_bounds) || '|' || ${mon_of_today};"))
-    strip_done = Str.trim(sql!(ctx.db, "WITH anchor AS (SELECT ${mon_of_today} AS mon) SELECT CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER) FROM plan_current, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days');"))
+    # the window's own query, read out of its source so the text this runs is
+    # the text the window runs - a loader moved onto week_bounds fails here
+    # by name; its dn column is the strip's numerator. It anchors on
+    # sqlite's localtime, the machine clock, while ctx.today is the fixture
+    # zone's date: the two name the same day whenever the machine and
+    # America/Chicago share one, which every run so far has, and a run that
+    # straddles midnight between them fails here rather than passing wrong
+    plan_q = Str.trim(sh!("grep -oE 'query: \"WITH anchor AS \\(SELECT date\\(date\\(.now., .localtime.\\)[^\"]*plan_current[^\"]*\"' src/viz/Db.roc | sed 's/^query: \"//; s/\"$//'"))
+    strip_done = Str.trim(sql!(ctx.db, "SELECT COALESCE(dn, 0) FROM (${plan_q});"))
     bounds_done = Str.trim(sql!(ctx.db, "WITH anchor AS (SELECT mon FROM week_bounds) SELECT COALESCE(CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER), 0) FROM plan_current, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days');"))
     week_done = strjq!(ctx, ["week"], "[.data[] | select(.status == \"done\")] | length | tostring")
     _ = sql!(ctx.db, "INSERT INTO daily_load SELECT * FROM cs_dl; DROP TABLE cs_dl;")
     check!("with the load frontier a week back the two anchors differ (${anchors})", Str.contains(anchors, "|") and (match Str.split_on(anchors, "|") { [a, b] => a != b  _ => Bool.False }))?
-    check!("the window's plan-strip done count equals the week command's, with a done session seeded (${strip_done})", strip_done != "0" and strip_done == week_done)?
+    check!("the window's plan-strip query, read from its source, counts what the week command counts, with a done session seeded (${strip_done})", !Str.is_empty(plan_q) and strip_done != "0" and strip_done == week_done)?
     check!("...and week_bounds' anchor would NOT count it, which is why the strip stays on the calendar (${bounds_done})", bounds_done == "0")?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${cs_done}; DELETE FROM activities WHERE id = 9502;")
     # end-of-week CTL: weekly_ramp's newest week vs the load series on that
