@@ -303,13 +303,16 @@ polls it about once a second, and every row reaches a status you can read back.
    field list from there, never from memory or a doc: after an upgrade the list is
    whatever the LAST window to run published, so the athlete launches the app once
    and then the vocabulary is current. The in-band error `no_viz_capabilities` means
-   the window has never run against this database, and there is nothing to steer.
+   the window has never run against this database: there is nothing to hand it
+   directly, so ask the athlete to launch the window once (or, per docs/viz.md,
+   pre-create the two bus tables with its DDL and write a directive, which lands
+   only if the window opens within the freshness window).
 2. **Steer with one INSERT.** `sqlite3 ~/.stride/db.sqlite "INSERT INTO viz_directives
    (view, trace_id) VALUES (2, 20355183143);"` — every column is optional and NULL
    means leave that alone, so a directive names only what it changes. The table
-   exists once the window has run against this database (its first launch creates
-   it), which step 1 already established; on a database the window never touched
-   the INSERT fails with "no such table", and there is nothing to steer. A session is
+   exists once the window has finished its first real load against this database,
+   which is what step 1's `no_viz_capabilities` tells you it has not; on a database
+   the window never touched the INSERT fails with "no such table". A session is
    named exactly by its activity id (`trace_id`, `ghost_id`; read the id from
    `stride activities --json`) or loosely by its day (`trace_day`, `ghost_day`, which
    pick that day's newest session); the id wins when both are given. `ghost_day =
@@ -319,10 +322,11 @@ polls it about once a second, and every row reaches a status you can read back.
    viz_directives WHERE id = <id>`. `applied` means every field was honoured;
    `applied_partial` means some were refused and `error` names each one with why
    (`trace_id 1 not in the picker`, `ghost_id 9 is Rowing, the session is Ride`,
-   `range 45 not 30/60/90`); `superseded` means you wrote a newer row before this one
-   was applied; `stale` means it sat unread past the freshness window, because no
-   window was open. A refused field is a fact about the picker or the athlete's data,
-   not a retry — read `error`, then decide.
+   `range 45 not 30/60/90`); `superseded` means a newer row existed by the time
+   anything polled this one — whoever wrote it, the newest wins; `stale` means it sat
+   unread past the freshness window — nothing polled it in time, whether no window
+   was running or one was open and never got there. A refused field is a fact about
+   the picker or the athlete's data, not a retry — read `error`, then decide.
 4. **Observe with freshness.** The window writes what the athlete is looking at to
    `viz_focus`, and `stride viz --json` serves it judged: `focus.present` says a row
    exists, `focus.live` says it is younger than the published `focus_staleness_seconds`.
