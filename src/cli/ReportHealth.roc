@@ -608,9 +608,44 @@ ReportHealth :: [].{
                     Ok(r) => { present: Bool.True, live: r.age >= 0 and r.age <= s.fstale, age_seconds: r.age, updated_at: r.ua, view: r.view, range: r.range, cursor_day: r.cd, trace_day: r.td, trace_id: ids.ti, ghost_day: r.gd, ghost_id: ids.gi }
                 }
             }
+            # the last ten directives, newest first, each with its status and
+            # error, so an agent reads an outcome from the command that
+            # published the vocabulary rather than by parsing the table. Two
+            # reads for the reason focus has two: the id columns arrived after
+            # the table, and a table an older window created lacks them, so
+            # those rows report ids -1 rather than the history going absent.
+            # No table at all is an empty history: the window has never run.
+            hist_rows! = |q|
+                Sqlite.query_many!({
+                    path: Path.utf8(path),
+                    query: q,
+                    bindings: [],
+                    rows: |cols| |stmt| {
+                        id = Sqlite.i64("id")(cols)(stmt)?
+                        created_at = Sqlite.str("hca")(cols)(stmt)?
+                        status = Sqlite.str("hst")(cols)(stmt)?
+                        error = Sqlite.str("her")(cols)(stmt)?
+                        applied_at = Sqlite.str("haa")(cols)(stmt)?
+                        view = Sqlite.i64("hv")(cols)(stmt)?
+                        range = Sqlite.i64("hrg")(cols)(stmt)?
+                        cursor_day = Sqlite.str("hcd")(cols)(stmt)?
+                        trace_day = Sqlite.str("htd")(cols)(stmt)?
+                        ghost_day = Sqlite.str("hgd")(cols)(stmt)?
+                        trace_id = Sqlite.i64("hti")(cols)(stmt)?
+                        ghost_id = Sqlite.i64("hgi")(cols)(stmt)?
+                        Ok({ id, created_at, status, error, applied_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id })
+                    },
+                })
+            history = match hist_rows!("SELECT id, CAST(created_at AS TEXT) AS hca, CAST(status AS TEXT) AS hst, CAST(COALESCE(error, '') AS TEXT) AS her, CAST(COALESCE(applied_at, '') AS TEXT) AS haa, COALESCE(view, -1) AS hv, COALESCE(range, -1) AS hrg, CAST(COALESCE(cursor_day, '') AS TEXT) AS hcd, CAST(COALESCE(trace_day, '') AS TEXT) AS htd, CAST(COALESCE(ghost_day, '') AS TEXT) AS hgd, COALESCE(trace_id, -1) AS hti, COALESCE(ghost_id, -1) AS hgi FROM viz_directives ORDER BY id DESC LIMIT 10") {
+                Ok(rows) => rows
+                Err(_) => match hist_rows!("SELECT id, CAST(created_at AS TEXT) AS hca, CAST(status AS TEXT) AS hst, CAST(COALESCE(error, '') AS TEXT) AS her, CAST(COALESCE(applied_at, '') AS TEXT) AS haa, COALESCE(view, -1) AS hv, COALESCE(range, -1) AS hrg, CAST(COALESCE(cursor_day, '') AS TEXT) AS hcd, CAST(COALESCE(trace_day, '') AS TEXT) AS htd, CAST(COALESCE(ghost_day, '') AS TEXT) AS hgd, -1 AS hti, -1 AS hgi FROM viz_directives ORDER BY id DESC LIMIT 10") {
+                    Ok(rows) => rows
+                    Err(_) => []
+                }
+            }
             focus_word = if !focus.present "none" else if focus.live "live" else "stale"
             if Output.json_mode!({})
-                Output.emit_ok!({ protocol: s.protocol, published_at: s.published, staleness_seconds: s.staleness, focus_staleness_seconds: s.fstale, focus, views, fields })
+                Output.emit_ok!({ protocol: s.protocol, published_at: s.published, staleness_seconds: s.staleness, focus_staleness_seconds: s.fstale, focus, views, fields, history })
             else {
                 Stdout.line!("bus protocol ${(s.protocol).to_str()}, published ${s.published}, directives stale after ${(s.staleness).to_str()}s, focus stale after ${(s.fstale).to_str()}s")?
                 Stdout.line!("focus: ${focus_word}${(if focus.present " - view ${(focus.view).to_str()}, trace ${focus.trace_day} (id ${(focus.trace_id).to_str()}), ${(focus.age_seconds).to_str()}s ago" else "")}")?
@@ -621,6 +656,10 @@ ReportHealth :: [].{
                 Stdout.line!(Render.render_table(
                     ["field", "kind", "accepts"],
                     List.map(fields, |f| [f.name, f.kind, f.accepts]),
+                ))?
+                Stdout.line!(Render.render_table(
+                    ["directive", "written", "status", "error"],
+                    List.map(history, |h| [(h.id).to_str(), h.created_at, h.status, h.error]),
                 ))?
                 Ok({})
             }

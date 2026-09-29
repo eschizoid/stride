@@ -272,6 +272,11 @@ sees a stale-but-live row for at most 90 s.
 `present`, `live` and `age_seconds` beside the fields, so an agent never
 computes the age itself.
 
+The same payload carries `history`: the last ten directives, newest
+first, each with its `status`, `error` and `applied_at`, so verifying a
+directive is a read of the command, not a query on the table. It is
+empty until the window has created the table.
+
 The lifecycle those rows go through — stale, superseded, pending until the
 applying frame reports, applied — is one definition in the pure `core.Bus`
 module, executed by the window every second and by `stride viz tick`, which
@@ -315,6 +320,15 @@ never recorded. "applied" means the frame accepted and acted; async work
 it started (a reload, a session fetch) may still fail and recover by the
 window's own rules. Focus writes are throttled
 (~2/s at most) and only fire when what the human sees actually changed.
+
+One narrow race leaves a wrong history line behind a right final state:
+a directive the window applied, whose ack is delayed by lock contention
+past the next poll, is swept to `superseded` by that poll if a newer row
+has arrived, although the frame did act on it. The screen ends where the
+newest directive says, which is right; the older row's status says it
+never landed, which is not. Telling the two apart needs a sequence number
+the window would carry from read to ack, and this app does not need one:
+a reader who cares looks at focus, not at the losing row.
 
 ## Boundaries this nightly imposes
 
