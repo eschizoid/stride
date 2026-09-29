@@ -1,7 +1,7 @@
 # stride — common actions. `just` alone runs the full test suite.
 
 # overridable: ROC=/path/to/roc STRIDE_LINKER="--linker=legacy" just test
-# The exact compiler version is pinned in .github/workflows/build.yml (nightly-tag), which
+# The exact compiler version is pinned as the `setup-roc` action's nightly-tag default, which
 # is what CI installs and what a contributor should match. This resolves whatever `roc` is
 # on PATH rather than pinning a path, so set ROC= if you keep several versions around.
 roc := env("ROC", "roc")
@@ -437,27 +437,24 @@ e2e:
     ./e2e
 
 # ── the app (src/viz/main.roc — the roc-ray window, ADR 0015) ─────────────────
-# The viz pins ITS OWN compiler (see the header of src/viz/main.roc): roc-ray's
-# platform declares nightly-2026-09-07, not the engine's pin. Point ROC_VIZ at a
-# matching nightly, or leave it and hope the PATH roc is close enough.
+# The viz names its compiler in its OWN app header (see src/viz/main.roc), and
+# roc-ray declares that same nightly, so one tag serves both binaries and the
+# platform. Point ROC_VIZ at a matching nightly, or leave it and hope the PATH
+# roc is close enough.
 # defaults to the pinned viz nightly when installed (tools/make-viz-app.sh and
 # the docs both point there); ROC_VIZ still overrides, PATH roc is the last resort
-viz_pin := `sh -c 'P="$HOME/.local/share/roc/nightly-2026-09-16-a49a16f/roc"; [ -x "$P" ] && echo "$P" || echo roc'`
+viz_pin := `sh -c 'P="$HOME/.local/share/roc/nightly-2026-09-27-a3ce7f1/roc"; [ -x "$P" ] && echo "$P" || echo roc'`
 roc_viz := env("ROC_VIZ", viz_pin)
 
 # open the app window (reads ~/.stride/db.sqlite at launch; ESC quits)
 viz:
     {{roc_viz}} src/viz/main.roc
 
+# The wrapper forgives nothing — it is the one place the assertion-count pins
+# live, and `check` passes roc's own exit code straight through.
 # type-check the viz without opening a window
 viz-check:
     ROC="{{roc_viz}}" sh tools/roc-viz.sh check src/viz/main.roc
-
-# the raw check, without the wrapper that tolerates roc-ray's pin-mismatch
-# warning — plain roc exits non-zero on ANY warning, so this false-fails
-# until roc-ray declares the pinned compiler; kept for the day it does
-viz-check-strict:
-    {{roc_viz}} check src/viz/main.roc
 
 # Run the viz's pure expects (picker filters, ghost rules, axis steps): the
 # window itself stays human-judged, but these are ordinary unit tests, and

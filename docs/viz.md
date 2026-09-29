@@ -185,9 +185,9 @@ cannot be created, the window falls back to its default font.
 Both binaries build on **one compiler** — the tag is the `setup-roc` action's
 default, mirrored in `src/viz/main.roc`'s app header, and `tools/pin-check.sh`
 holds those two copies together while refusing any per-job override. roc-ray
-itself declares an older compiler in its own header, so a viz build emits one
-mismatch warning; `tools/roc-viz.sh` tolerates exactly that warning and nothing
-else, and comes out the day roc-ray names the compiler stride pins.
+declares that same compiler in its own header, so a viz build carries no
+mismatch warning and `tools/roc-viz.sh` forgives none: it runs roc, passes the
+exit code through, and holds a test run to its two assertion counts.
 
 ## Typography
 

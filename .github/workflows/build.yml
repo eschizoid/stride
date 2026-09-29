@@ -167,9 +167,8 @@ jobs:
 
   # The app window (src/viz/main.roc) rides a different platform (roc-ray) on
   # the same compiler as the engine. Nothing above imports it, so without this
-  # job it would land unchecked. It goes through tools/roc-viz.sh because
-  # roc-ray declares an older compiler in its own header, and that lone
-  # mismatch warning would otherwise fail the job.
+  # job it would land unchecked. It goes through tools/roc-viz.sh because that
+  # wrapper is where the window's assertion-count pins live.
   viz-check:
     runs-on: ubuntu-latest
     timeout-minutes: 10

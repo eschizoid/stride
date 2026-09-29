@@ -1,8 +1,49 @@
 # Roc new-compiler notes (syntax, stdlib, platform)
 
-Working reference for the new (Zig) compiler + basic-cli 0.22, learned empirically
+Working reference for the new (Zig) compiler + basic-cli, learned empirically
 against the compiler and roc-lang/roc source during the migration (completed
 2026-08-02). The migration's progress log is gone — this is the part worth keeping.
+
+## Toolchain pin: `nightly-2026-09-27-a3ce7f1`
+
+**Bumped 2026-09-29**, from `nightly-2026-09-16-a49a16f`, alongside basic-cli
+0.23.0 and roc-ray 0.10.0. That tag is the one roc-ray 0.10.0 declares as its
+supported compiler; basic-cli 0.23.0 sets a floor of `nightly-2026-09-23-c7852fd`.
+With all three naming one tag, the viz build has no version skew to forgive.
+
+Three things in the compiler and the platform force source changes:
+
+**Tag unions in return position are open automatically.** An explicit `..`
+there is a `redundant open tag union` warning, and both `roc check` and `roc
+build` exit non-zero on any warning — including warnings raised inside a
+dependency's own source, which is what makes a platform that still writes `..`
+unbuildable on this compiler.
+
+**basic-cli 0.23.0 hands `main!` only the arguments the user typed.** There is
+no program name at index 0, so a parser matching `[_, "summary"]` silently
+reads the first real argument as the slot it meant to skip.
+
+**A call to a let-bound closure whose arguments are all literals is treated as
+compile-time-known**, even when the closure captures a runtime value, so an
+`if` or `match` on the result raises `unconditional condition`. Minimal repro:
+
+```roc
+f = |n| List.any(rows, |r| r > n)   # captures rows
+if f(1.0) "hi" else "lo"            # unconditional condition
+```
+
+The same call written against a module-level function does not fire, and
+neither does a closure call whose argument is itself a parameter. Lifting the
+closure and passing what it captured is the fix that does not depend on which
+of those two properties the analysis is actually keying on.
+
+**basic-webserver has no release that builds warning-free here.** `tests/e2e.roc`
+rides basic-webserver, whose platform source still writes `..` in return
+position (60 sites reach the build on 0.15.0; 0.16.0 and its main branch are
+both older than the implicit-open change). The harness links and its binary
+runs, but `roc build` exits 2 on the warnings, so `just e2e`, `just test` and
+`just e2e-sync` cannot pass until that platform drops its `..`.
+
 
 ## Toolchain pin: `nightly-2026-09-04-c125b82` (the hold below is LIFTED)
 

@@ -212,7 +212,7 @@ sha256sum -c SHA256SUMS.txt --ignore-missing   # checks the asset(s) you downloa
 ### Build from source
 
 Needs `just` and the pinned Roc toolchain. CI installs it with the `roc-lang/setup-roc`
-Action; on a laptop, take the `nightly-tag` from `.github/workflows/build.yml` and download
+Action; on a laptop, take the `nightly-tag` default from `.github/actions/setup-roc/action.yml` and download
 that release from [`roc-lang/nightlies`](https://github.com/roc-lang/nightlies) (the macOS assets are
 `roc_nightly-macos_apple_silicon-*` and `roc_nightly-macos_x86_64-*`). Note `just install` symlinks into `~/.local/bin`,
 which must exist and be on your PATH:
@@ -580,10 +580,10 @@ just install   # build + symlink into ~/.local/bin
 ```
 
 - **Toolchain:** Roc's new (Zig) compiler, pinned by exact nightly tag in the workflow
-  files · [basic-cli 0.22](https://github.com/roc-lang/basic-cli) · builtin JSON. `roc
+  files · [basic-cli 0.23](https://github.com/roc-lang/basic-cli) · builtin JSON. `roc
 check`, `roc test` and a full `roc build` all work. Install the pinned compiler the way
   CI does, via the `roc-lang/setup-roc` Action with the `nightly-tag` from
-  `.github/workflows/build.yml`; locally, download that tag from `roc-lang/nightlies`. **`AGENTS.md` is the maintained source
+  `.github/actions/setup-roc/action.yml`; locally, download that tag from `roc-lang/nightlies`. **`AGENTS.md` is the maintained source
   for build and test conventions**; this section is a summary and defers to it.
 - **Layout:** effects live in modules by concern — `Db.roc` (SQLite + migrations),
   `Strava.roc` (OAuth + sync), and the `Analyze.roc` / report family / `Plan.roc` /

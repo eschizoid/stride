@@ -56,7 +56,7 @@ Db :: [].{
 		# binds all five on every INSERT OR REPLACE), so a NULL is corruption:
 		# the decode fails into the visible error state rather than plotting 0s.
 		q = "SELECT CAST(day AS TEXT) AS day, CAST(ROUND(ctl*10) AS INTEGER) AS c10, CAST(ROUND(atl*10) AS INTEGER) AS a10, CAST(ROUND(tsb*10) AS INTEGER) AS t10, CAST(ROUND(tss*10) AS INTEGER) AS s10 FROM (SELECT day, ctl, atl, tsb, tss FROM daily_load ORDER BY day DESC LIMIT 90) ORDER BY day ASC"
-		match Sqlite.query!({ db, query: q, bindings: [] }) {
+		match db.query!(q, []) {
 			Err(_) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "daily_load query failed - analyzed yet?" }
 			Ok(rows) => {
 				decoded = List.map_try(rows, |r| {
@@ -93,7 +93,7 @@ Db :: [].{
 	# table is empty; the clock view clamps at 0, and a missing row reads 0)
 	load_stale! : Sqlite.Db => I64
 	load_stale! = |db|
-		match Sqlite.query!({ db, query: "SELECT stale_days AS st FROM series_clock", bindings: [] }) {
+		match db.query!("SELECT stale_days AS st FROM series_clock", []) {
 			Err(_) => 0
 			Ok(rows) => match List.first(rows) {
 				Err(_) => 0
@@ -106,7 +106,7 @@ Db :: [].{
 	Ridden : { day : Str, name : Str, ago : I64, err : Str }
 	load_ridden! : Sqlite.Db => Ridden
 	load_ridden! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT today FROM series_clock) SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name, CAST(julianday(today) - julianday(event_date) AS INTEGER) AS ago FROM events, anchor WHERE event_date < today ORDER BY event_date DESC LIMIT 1", bindings: [] }) {
+		match db.query!("WITH anchor AS (SELECT today FROM series_clock) SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name, CAST(julianday(today) - julianday(event_date) AS INTEGER) AS ago FROM events, anchor WHERE event_date < today ORDER BY event_date DESC LIMIT 1", []) {
 			Err(_) => { day: "", name: "", ago: -1, err: "events query failed" }
 			Ok(rows) => match List.first(rows) {
 				# no past event is a normal state, not an error
@@ -133,7 +133,7 @@ Db :: [].{
 
 	load_event! : Sqlite.Db => Event
 	load_event! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT today FROM series_clock) SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name, CAST(julianday(event_date) - julianday(today) AS INTEGER) AS ahead FROM events, anchor WHERE event_date >= today ORDER BY event_date ASC LIMIT 1", bindings: [] }) {
+		match db.query!("WITH anchor AS (SELECT today FROM series_clock) SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name, CAST(julianday(event_date) - julianday(today) AS INTEGER) AS ahead FROM events, anchor WHERE event_date >= today ORDER BY event_date ASC LIMIT 1", []) {
 			Err(_) => { day: "", name: "", ahead: 0, err: "events query failed" }
 			Ok(rows) => match List.first(rows) {
 				# no rows is the normal no-upcoming-event state, not an error
@@ -167,7 +167,7 @@ Db :: [].{
 	load_curve! = |db, days| {
 		q = "SELECT secs AS d, CAST(ROUND(MAX(watts)) AS INTEGER) AS p FROM activity_power_ladder WHERE sport_family = 'Ride' AND start_local >= date('now', '-' || :d || ' days') GROUP BY rung, secs ORDER BY secs"
 
-		match Sqlite.query!({ db, query: q, bindings: [{ name: ":d", value: Integer(days) }] }) {
+		match db.query!(q, [{ name: ":d", value: Integer(days) }]) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -187,7 +187,7 @@ Db :: [].{
 	load_curve_prev! = |db, days| {
 		q = "SELECT secs AS d, CAST(ROUND(MAX(watts)) AS INTEGER) AS p FROM activity_power_ladder WHERE sport_family = 'Ride' AND start_local >= date('now', '-' || :d2 || ' days') AND start_local < date('now', '-' || :d || ' days') GROUP BY rung, secs ORDER BY secs"
 
-		match Sqlite.query!({ db, query: q, bindings: [{ name: ":d", value: Integer(days) }, { name: ":d2", value: Integer(days * 2) }] }) {
+		match db.query!(q, [{ name: ":d", value: Integer(days) }, { name: ":d2", value: Integer(days * 2) }]) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -206,7 +206,7 @@ Db :: [].{
 	# simply absent and reads as rest.
 	load_day_notes! : Sqlite.Db => List({ day : Str, note : Str })
 	load_day_notes! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(substr(start_local, 1, 10) AS TEXT) AS day, CAST(group_concat(name, ' + ') AS TEXT) AS note FROM activities WHERE start_local >= (SELECT date(today, '-400 days') FROM series_clock) GROUP BY day", bindings: [] }) {
+		match db.query!("SELECT CAST(substr(start_local, 1, 10) AS TEXT) AS day, CAST(group_concat(name, ' + ') AS TEXT) AS note FROM activities WHERE start_local >= (SELECT date(today, '-400 days') FROM series_clock) GROUP BY day", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -228,7 +228,7 @@ Db :: [].{
 		# for the schema write lock, a plain sqlite_master read never does. The
 		# sentinel and its target are core.Bus's, beside the statement list
 		# they prove ran.
-		present = match Sqlite.query!({ db, query: Bus.sentinel_sql, bindings: [] }) {
+		present = match db.query!(Bus.sentinel_sql, []) {
 			Err(_) => 0
 			Ok(rows) => match List.first(rows) {
 				Err(_) => 0
@@ -244,7 +244,7 @@ Db :: [].{
 	ensure_bus_ddl! : Sqlite.Db => {}
 	ensure_bus_ddl! = |db|
 		List.for_each!(Bus.ddl, |q| {
-			_ = Sqlite.execute!({ db, query: q, bindings: [] })
+			_ = db.execute!(q, [])
 		})
 
 	# the window's half of capability discovery (#439): what an agent may put
@@ -254,21 +254,21 @@ Db :: [].{
 	# treating their absence as "the window never ran against this database".
 	publish_caps! : Sqlite.Db, List({ id : I64, name : Str }), List({ name : Str, kind : Str, accepts : Str }) => {}
 	publish_caps! = |db, views, fields| {
-		_ = Sqlite.execute!({ db, query: "CREATE TABLE IF NOT EXISTS viz_capabilities (key TEXT PRIMARY KEY, value TEXT NOT NULL)", bindings: [] })
-		_ = Sqlite.execute!({ db, query: "BEGIN IMMEDIATE", bindings: [] })
-		_ = Sqlite.execute!({ db, query: "CREATE TABLE IF NOT EXISTS viz_views (id INTEGER PRIMARY KEY, name TEXT NOT NULL)", bindings: [] })
-		_ = Sqlite.execute!({ db, query: "CREATE TABLE IF NOT EXISTS viz_fields (field TEXT PRIMARY KEY, kind TEXT NOT NULL, accepts TEXT NOT NULL)", bindings: [] })
-		_ = Sqlite.execute!({ db, query: "DELETE FROM viz_capabilities", bindings: [] })
-		_ = Sqlite.execute!({ db, query: "DELETE FROM viz_views", bindings: [] })
-		_ = Sqlite.execute!({ db, query: "DELETE FROM viz_fields", bindings: [] })
-		_ = Sqlite.execute!({ db, query: "INSERT INTO viz_capabilities (key, value) VALUES ('protocol', '1'), ('staleness_seconds', '${(stale_secs).to_str()}'), ('focus_staleness_seconds', '${(focus_stale_secs).to_str()}'), ('published_at', datetime('now'))", bindings: [] })
+		_ = db.execute!("CREATE TABLE IF NOT EXISTS viz_capabilities (key TEXT PRIMARY KEY, value TEXT NOT NULL)", [])
+		_ = db.execute!("BEGIN IMMEDIATE", [])
+		_ = db.execute!("CREATE TABLE IF NOT EXISTS viz_views (id INTEGER PRIMARY KEY, name TEXT NOT NULL)", [])
+		_ = db.execute!("CREATE TABLE IF NOT EXISTS viz_fields (field TEXT PRIMARY KEY, kind TEXT NOT NULL, accepts TEXT NOT NULL)", [])
+		_ = db.execute!("DELETE FROM viz_capabilities", [])
+		_ = db.execute!("DELETE FROM viz_views", [])
+		_ = db.execute!("DELETE FROM viz_fields", [])
+		_ = db.execute!("INSERT INTO viz_capabilities (key, value) VALUES ('protocol', '1'), ('staleness_seconds', '${(stale_secs).to_str()}'), ('focus_staleness_seconds', '${(focus_stale_secs).to_str()}'), ('published_at', datetime('now'))", [])
 		List.for_each!(views, |v| {
-			_ = Sqlite.execute!({ db, query: "INSERT INTO viz_views (id, name) VALUES (:i, :n)", bindings: [{ name: ":i", value: Integer(v.id) }, { name: ":n", value: String(v.name) }] })
+			_ = db.execute!("INSERT INTO viz_views (id, name) VALUES (:i, :n)", [{ name: ":i", value: Integer(v.id) }, { name: ":n", value: String(v.name) }])
 		})
 		List.for_each!(fields, |f| {
-			_ = Sqlite.execute!({ db, query: "INSERT INTO viz_fields (field, kind, accepts) VALUES (:f, :k, :a)", bindings: [{ name: ":f", value: String(f.name) }, { name: ":k", value: String(f.kind) }, { name: ":a", value: String(f.accepts) }] })
+			_ = db.execute!("INSERT INTO viz_fields (field, kind, accepts) VALUES (:f, :k, :a)", [{ name: ":f", value: String(f.name) }, { name: ":k", value: String(f.kind) }, { name: ":a", value: String(f.accepts) }])
 		})
-		_ = Sqlite.execute!({ db, query: "COMMIT", bindings: [] })
+		_ = db.execute!("COMMIT", [])
 	}
 
 	# the bus's constants are core.Bus's, stated once for both binaries: the
@@ -301,7 +301,7 @@ Db :: [].{
 		ensure_bus!(db)
 		# a read gates the writes below: a zero-row UPDATE still takes the
 		# write lock, and this path runs every second forever
-		has_pending = match Sqlite.query!({ db, query: Bus.has_pending_sql, bindings: [] }) {
+		has_pending = match db.query!(Bus.has_pending_sql, []) {
 			Err(_) => Bool.False
 			Ok(prows) => match List.first(prows) {
 				Err(_) => Bool.False
@@ -316,8 +316,8 @@ Db :: [].{
 		# as stale, applied by nobody. The SELECT below refuses stale rows
 		# independently, so one slipping past this sweep is labeled late but
 		# never applied.
-		_ = Sqlite.execute!({ db, query: Bus.stale_sweep_sql, bindings: [] })
-		match Sqlite.query!({ db, query: Bus.winner_sql, bindings: [] }) {
+		_ = db.execute!(Bus.stale_sweep_sql, [])
+		match db.query!(Bus.winner_sql, []) {
 			Err(_) => None
 			Ok(rows) => match List.first(rows) {
 				Err(_) => None
@@ -344,7 +344,7 @@ Db :: [].{
 						# winning row stays PENDING until the frame that applies
 						# it reports back - a crash between read and apply
 						# leaves it retryable instead of silently lost
-						_ = Sqlite.execute!({ db, query: Bus.supersede_sql, bindings: [{ name: ":id", value: Integer(id) }] })
+						_ = db.execute!(Bus.supersede_sql, [{ name: ":id", value: Integer(id) }])
 						Some({ id, view: v, range: rg, cursor_day: cd, trace_day: td, ghost_day: gd, trace_id: ti, ghost_id: gi })
 					}
 				}
@@ -358,7 +358,7 @@ Db :: [].{
 	mark_directive! : Sqlite.Db, I64, Str => {}
 	mark_directive! = |db, id, refused| {
 		st = Bus.mark_status(refused)
-		_ = Sqlite.execute!({ db, query: Bus.mark_sql, bindings: [{ name: ":st", value: String(st) }, { name: ":e", value: String(refused) }, { name: ":id", value: Integer(id) }] })
+		_ = db.execute!(Bus.mark_sql, [{ name: ":st", value: String(st) }, { name: ":e", value: String(refused) }, { name: ":id", value: Integer(id) }])
 	}
 
 	# the window's answer: what the human is looking at, one row, upserted
@@ -367,7 +367,7 @@ Db :: [].{
 	write_focus! : Sqlite.Db, Focus => Try({}, [WriteFailed])
 	write_focus! = |db, f| {
 		ensure_bus!(db)
-		res = Sqlite.execute!({ db, query: Bus.focus_upsert_sql, bindings: [{ name: ":v", value: Integer(f.view) }, { name: ":rg", value: Integer(f.range) }, { name: ":cd", value: String(f.cursor_day) }, { name: ":td", value: String(f.trace_day) }, { name: ":gd", value: String(f.ghost_day) }, { name: ":ti", value: Integer(f.trace_id) }, { name: ":gi", value: Integer(f.ghost_id) }] })
+		res = db.execute!(Bus.focus_upsert_sql, [{ name: ":v", value: Integer(f.view) }, { name: ":rg", value: Integer(f.range) }, { name: ":cd", value: String(f.cursor_day) }, { name: ":td", value: String(f.trace_day) }, { name: ":gd", value: String(f.ghost_day) }, { name: ":ti", value: Integer(f.trace_id) }, { name: ":gi", value: Integer(f.ghost_id) }])
 		match res {
 			Ok(_) => Ok({})
 			Err(_) => Err(WriteFailed)
@@ -380,7 +380,7 @@ Db :: [].{
 	# and the focus staleness window is what retires those.
 	clear_focus! : Sqlite.Db => Try({}, [WriteFailed])
 	clear_focus! = |db|
-		match Sqlite.execute!({ db, query: Bus.focus_clear_sql, bindings: [] }) {
+		match db.execute!(Bus.focus_clear_sql, []) {
 			Ok(_) => Ok({})
 			Err(_) => Err(WriteFailed)
 		}
@@ -396,7 +396,7 @@ Db :: [].{
 	# load_week_tss! reads week_bounds because load is a series question.
 	load_plan_week! : Sqlite.Db => { done : I64, total : I64 }
 	load_plan_week! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT date(date('now', 'localtime'), '-6 days', 'weekday 1') AS mon) SELECT CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER) AS dn, COUNT(*) AS tot FROM plan_current, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days')", bindings: [] }) {
+		match db.query!("WITH anchor AS (SELECT date(date('now', 'localtime'), '-6 days', 'weekday 1') AS mon) SELECT CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER) AS dn, COUNT(*) AS tot FROM plan_current, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days')", []) {
 			Err(_) => { done: 0, total: 0 }
 			Ok(rows) => match List.first(rows) {
 				Err(_) => { done: 0, total: 0 }
@@ -416,7 +416,7 @@ Db :: [].{
 	PlanRow : { day : Str, typ : Str, detail : Str, rationale : Str, done : Bool, skipped : Bool, today : Bool }
 	load_plan! : Sqlite.Db => List(PlanRow)
 	load_plan! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT date('now', 'localtime') AS today) SELECT CAST(target_date AS TEXT) AS d, CAST(COALESCE(session_type, '') AS TEXT) AS t, CAST(COALESCE(detail, '') AS TEXT) AS dt, CAST(COALESCE(rationale, '') AS TEXT) AS ra, (COALESCE(status, '') = 'done') AS dn, (COALESCE(status, '') = 'skipped') AS sk, (target_date = (SELECT today FROM anchor)) AS td FROM plan_current, anchor WHERE target_date >= (SELECT today FROM anchor) AND target_date <= date((SELECT today FROM anchor), '+6 days') ORDER BY target_date, id", bindings: [] }) {
+		match db.query!("WITH anchor AS (SELECT date('now', 'localtime') AS today) SELECT CAST(target_date AS TEXT) AS d, CAST(COALESCE(session_type, '') AS TEXT) AS t, CAST(COALESCE(detail, '') AS TEXT) AS dt, CAST(COALESCE(rationale, '') AS TEXT) AS ra, (COALESCE(status, '') = 'done') AS dn, (COALESCE(status, '') = 'skipped') AS sk, (target_date = (SELECT today FROM anchor)) AS td FROM plan_current, anchor WHERE target_date >= (SELECT today FROM anchor) AND target_date <= date((SELECT today FROM anchor), '+6 days') ORDER BY target_date, id", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.map(rows, |r| match decode_plan_row(r) {
@@ -441,7 +441,7 @@ Db :: [].{
 	# engine's Metrics.weekly_rollup - the progress strip's two numbers
 	load_week_tss! : Sqlite.Db => { this : I64, last : I64 }
 	load_week_tss! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT mon FROM week_bounds) SELECT CAST(ROUND(SUM(CASE WHEN day >= mon THEN tss ELSE 0 END)) AS INTEGER) AS tw, CAST(ROUND(SUM(CASE WHEN day >= date(mon, '-7 days') AND day < mon THEN tss ELSE 0 END)) AS INTEGER) AS lw FROM daily_load, anchor", bindings: [] }) {
+		match db.query!("WITH anchor AS (SELECT mon FROM week_bounds) SELECT CAST(ROUND(SUM(CASE WHEN day >= mon THEN tss ELSE 0 END)) AS INTEGER) AS tw, CAST(ROUND(SUM(CASE WHEN day >= date(mon, '-7 days') AND day < mon THEN tss ELSE 0 END)) AS INTEGER) AS lw FROM daily_load, anchor", []) {
 			Err(_) => { this: 0, last: 0 }
 			Ok(rows) => match List.first(rows) {
 				Err(_) => { this: 0, last: 0 }
@@ -459,7 +459,7 @@ Db :: [].{
 	load_bus_note! : Sqlite.Db => Str
 	load_bus_note! = |db| {
 		ensure_bus!(db)
-		match Sqlite.query!({ db, query: "SELECT CAST(strftime('%m-%d %H:%M', created_at, 'localtime') AS TEXT) AS at, CAST(COALESCE(view, -1) AS INTEGER) AS v, CAST(COALESCE(range, -1) AS INTEGER) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd FROM viz_directives ORDER BY id DESC LIMIT 1", bindings: [] }) {
+		match db.query!("SELECT CAST(strftime('%m-%d %H:%M', created_at, 'localtime') AS TEXT) AS at, CAST(COALESCE(view, -1) AS INTEGER) AS v, CAST(COALESCE(range, -1) AS INTEGER) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd FROM viz_directives ORDER BY id DESC LIMIT 1", []) {
 			Err(_) => "no directives yet"
 			Ok(rows) => match List.first(rows) {
 				Err(_) => "no directives yet"
@@ -488,7 +488,7 @@ Db :: [].{
 	HeatDay : { day : Str, tss : I64, dow : I64 }
 	load_heat! : Sqlite.Db => List(HeatDay)
 	load_heat! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(day AS TEXT) AS d, CAST(ROUND(COALESCE(tss, 0)) AS INTEGER) AS t, CAST(strftime('%w', day) AS INTEGER) AS w FROM (SELECT day, tss FROM daily_load ORDER BY day DESC LIMIT 372) ORDER BY day ASC", bindings: [] }) {
+		match db.query!("SELECT CAST(day AS TEXT) AS d, CAST(ROUND(COALESCE(tss, 0)) AS INTEGER) AS t, CAST(strftime('%w', day) AS INTEGER) AS w FROM (SELECT day, tss FROM daily_load ORDER BY day DESC LIMIT 372) ORDER BY day ASC", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -506,7 +506,7 @@ Db :: [].{
 	ZoneWeek : { wk : Str, z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, easy : I64, moderate : I64, hard : I64 }
 	load_zone_weeks! : Sqlite.Db => List(ZoneWeek)
 	load_zone_weeks! = |db|
-		match Sqlite.query!({ db, query: "WITH mondays(wk) AS (SELECT date(mon, '-77 days') FROM week_bounds UNION ALL SELECT date(wk, '+7 days') FROM mondays WHERE wk < (SELECT mon FROM week_bounds)), agg AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, SUM(z1_s) AS z1, SUM(z2_s) AS z2, SUM(z3_s) AS z3, SUM(z4_s) AS z4, SUM(z5_s) AS z5, SUM(easy_s) AS easy, SUM(moderate_s) AS moderate, SUM(hard_s) AS hard FROM activity_intensity WHERE day >= (SELECT date(mon, '-77 days') FROM week_bounds) GROUP BY awk) SELECT CAST(m.wk AS TEXT) AS wk, CAST(COALESCE(a.z1, 0) AS INTEGER) AS z1, CAST(COALESCE(a.z2, 0) AS INTEGER) AS z2, CAST(COALESCE(a.z3, 0) AS INTEGER) AS z3, CAST(COALESCE(a.z4, 0) AS INTEGER) AS z4, CAST(COALESCE(a.z5, 0) AS INTEGER) AS z5, CAST(COALESCE(a.easy, 0) AS INTEGER) AS easy, CAST(COALESCE(a.moderate, 0) AS INTEGER) AS moderate, CAST(COALESCE(a.hard, 0) AS INTEGER) AS hard FROM mondays m LEFT JOIN agg a ON a.awk = m.wk ORDER BY m.wk ASC", bindings: [] }) {
+		match db.query!("WITH mondays(wk) AS (SELECT date(mon, '-77 days') FROM week_bounds UNION ALL SELECT date(wk, '+7 days') FROM mondays WHERE wk < (SELECT mon FROM week_bounds)), agg AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, SUM(z1_s) AS z1, SUM(z2_s) AS z2, SUM(z3_s) AS z3, SUM(z4_s) AS z4, SUM(z5_s) AS z5, SUM(easy_s) AS easy, SUM(moderate_s) AS moderate, SUM(hard_s) AS hard FROM activity_intensity WHERE day >= (SELECT date(mon, '-77 days') FROM week_bounds) GROUP BY awk) SELECT CAST(m.wk AS TEXT) AS wk, CAST(COALESCE(a.z1, 0) AS INTEGER) AS z1, CAST(COALESCE(a.z2, 0) AS INTEGER) AS z2, CAST(COALESCE(a.z3, 0) AS INTEGER) AS z3, CAST(COALESCE(a.z4, 0) AS INTEGER) AS z4, CAST(COALESCE(a.z5, 0) AS INTEGER) AS z5, CAST(COALESCE(a.easy, 0) AS INTEGER) AS easy, CAST(COALESCE(a.moderate, 0) AS INTEGER) AS moderate, CAST(COALESCE(a.hard, 0) AS INTEGER) AS hard FROM mondays m LEFT JOIN agg a ON a.awk = m.wk ORDER BY m.wk ASC", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -528,7 +528,7 @@ Db :: [].{
 	RampWeek : { wk : Str, tss : I64, ctl10 : I64, ramp10 : I64 }
 	load_ramp_weeks! : Sqlite.Db => List(RampWeek)
 	load_ramp_weeks! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(wk AS TEXT) AS wk, CAST(ROUND(tss) AS INTEGER) AS tss, CAST(ROUND(ctl_end * 10) AS INTEGER) AS ctl10, CAST(ROUND(ramp * 10) AS INTEGER) AS ramp10 FROM weekly_ramp ORDER BY wk ASC", bindings: [] }) {
+		match db.query!("SELECT CAST(wk AS TEXT) AS wk, CAST(ROUND(tss) AS INTEGER) AS tss, CAST(ROUND(ctl_end * 10) AS INTEGER) AS ctl10, CAST(ROUND(ramp * 10) AS INTEGER) AS ramp10 FROM weekly_ramp ORDER BY wk ASC", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -559,7 +559,7 @@ Db :: [].{
 	CareerSport : { sport : Str, sessions : I64, hours10 : I64, dist_m : F64 }
 	load_spine_fams! : Sqlite.Db => List(SpineFam)
 	load_spine_fams! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(fam AS TEXT) AS f, CAST(kind AS TEXT) AS k, COUNT(*) AS n FROM monthly_threshold GROUP BY fam, kind ORDER BY n DESC, fam", bindings: [] }) {
+		match db.query!("SELECT CAST(fam AS TEXT) AS f, CAST(kind AS TEXT) AS k, COUNT(*) AS n FROM monthly_threshold GROUP BY fam, kind ORDER BY n DESC, fam", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -598,7 +598,7 @@ Db :: [].{
 	# once; the per-family arcs all stand on it.
 	load_monthly_base! : Sqlite.Db => List({ month : Str, load : I64, partial : Bool })
 	load_monthly_base! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(month AS TEXT) AS m, CAST(ROUND(load) AS INTEGER) AS ld, CASE WHEN month = strftime('%Y-%m', 'now') THEN 1 ELSE 0 END AS pt FROM monthly_load ORDER BY month ASC", bindings: [] }) {
+		match db.query!("SELECT CAST(month AS TEXT) AS m, CAST(ROUND(load) AS INTEGER) AS ld, CASE WHEN month = strftime('%Y-%m', 'now') THEN 1 ELSE 0 END AS pt FROM monthly_load ORDER BY month ASC", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -615,7 +615,7 @@ Db :: [].{
 	# and the assembler above scores it 0.
 	load_all_thresholds! : Sqlite.Db => List({ fam : Str, month : Str, ftp10 : I64 })
 	load_all_thresholds! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(fam AS TEXT) AS f, CAST(month AS TEXT) AS m, CAST(ROUND(value * 10) AS INTEGER) AS f10 FROM monthly_threshold", bindings: [] }) {
+		match db.query!("SELECT CAST(fam AS TEXT) AS f, CAST(month AS TEXT) AS m, CAST(ROUND(value * 10) AS INTEGER) AS f10 FROM monthly_threshold", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -632,7 +632,7 @@ Db :: [].{
 	# display preference must never be the reason a view fails.
 	units! : Sqlite.Db => [Metric, Imperial]
 	units! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(value AS TEXT) AS v FROM config WHERE key = 'units'", bindings: [] }) {
+		match db.query!("SELECT CAST(value AS TEXT) AS v FROM config WHERE key = 'units'", []) {
 			Err(_) => Metric
 			Ok(rows) =>
 				match List.first(rows) {
@@ -649,7 +649,7 @@ Db :: [].{
 	# the athlete's setting into the loader, and the renderer is the last moment
 	load_career_sports! : Sqlite.Db => List(CareerSport)
 	load_career_sports! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(sport AS TEXT) AS s, sessions AS n, CAST(ROUND(secs / 360.0) AS INTEGER) AS h10, CAST(COALESCE(meters, 0) AS REAL) AS m FROM career_totals ORDER BY sessions DESC, sport", bindings: [] }) {
+		match db.query!("SELECT CAST(sport AS TEXT) AS s, sessions AS n, CAST(ROUND(secs / 360.0) AS INTEGER) AS h10, CAST(COALESCE(meters, 0) AS REAL) AS m FROM career_totals ORDER BY sessions DESC, sport", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -672,7 +672,7 @@ Db :: [].{
 	FamMonth : { fam : Str, month : Str, load : I64, sessions : I64 }
 	load_fam_months! : Sqlite.Db => List(FamMonth)
 	load_fam_months! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(fam AS TEXT) AS f, CAST(month AS TEXT) AS m, load AS ld, sessions AS n FROM monthly_family_load ORDER BY f, m", bindings: [] }) {
+		match db.query!("SELECT CAST(fam AS TEXT) AS f, CAST(month AS TEXT) AS m, load AS ld, sessions AS n FROM monthly_family_load ORDER BY f, m", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -701,7 +701,7 @@ Db :: [].{
 	PrRung : { rung : Str, secs : I64, w : I64, day : Str }
 	load_prs! : Sqlite.Db => List(PrRung)
 	load_prs! = |db|
-		match Sqlite.query!({ db, query: "WITH best AS (SELECT rung, watts, day FROM (SELECT rung, watts, day, ROW_NUMBER() OVER (PARTITION BY rung ORDER BY watts DESC, start_local ASC) AS rn FROM activity_power_ladder WHERE sport_family = 'Ride') WHERE rn = 1) SELECT CAST(r.rung AS TEXT) AS rung, CAST(r.secs AS INTEGER) AS secs, CAST(COALESCE(ROUND(b.watts), 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM power_ladder_rungs r LEFT JOIN best b ON b.rung = r.rung ORDER BY r.secs ASC", bindings: [] }) {
+		match db.query!("WITH best AS (SELECT rung, watts, day FROM (SELECT rung, watts, day, ROW_NUMBER() OVER (PARTITION BY rung ORDER BY watts DESC, start_local ASC) AS rn FROM activity_power_ladder WHERE sport_family = 'Ride') WHERE rn = 1) SELECT CAST(r.rung AS TEXT) AS rung, CAST(r.secs AS INTEGER) AS secs, CAST(COALESCE(ROUND(b.watts), 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM power_ladder_rungs r LEFT JOIN best b ON b.rung = r.rung ORDER BY r.secs ASC", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -717,7 +717,7 @@ Db :: [].{
 	# back from MAX(day), so anything outside that range could never ring a cell
 	load_event_days! : Sqlite.Db => List(Str)
 	load_event_days! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT today FROM series_clock) SELECT DISTINCT CAST(event_date AS TEXT) AS d FROM events, anchor WHERE event_date >= date(today, '-372 days') AND event_date <= today", bindings: [] }) {
+		match db.query!("WITH anchor AS (SELECT today FROM series_clock) SELECT DISTINCT CAST(event_date AS TEXT) AS d FROM events, anchor WHERE event_date >= date(today, '-372 days') AND event_date <= today", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -764,7 +764,7 @@ Db :: [].{
 
 	load_day_detail! : Sqlite.Db, [Metric, Imperial], Str => List(DayLine)
 	load_day_detail! = |db, units, day|
-		match Sqlite.query!({ db, query: "SELECT CAST(a.name AS TEXT) AS name, CAST(a.sport_type AS TEXT) AS sport, CAST(COALESCE(a.moving_time, 0) AS INTEGER) AS secs, CAST(COALESCE(a.distance, 0) AS REAL) AS dist_m, CAST(ROUND(COALESCE(m.tss, 0)) AS INTEGER) AS tss, CAST(ROUND(COALESCE(m.normalized_power, 0)) AS INTEGER) AS np, CAST(ROUND(COALESCE(m.intensity_factor, 0) * 100) AS INTEGER) AS if100, CAST(ROUND(COALESCE(a.avg_hr, 0)) AS INTEGER) AS hr, CAST(ROUND(COALESCE(r.rpe, 0), 1) AS TEXT) AS rpe, CAST(COALESCE(m.z1_s, 0) AS INTEGER) AS z1, CAST(COALESCE(m.z2_s, 0) AS INTEGER) AS z2, CAST(COALESCE(m.z3_s, 0) AS INTEGER) AS z3, CAST(COALESCE(m.z4_s, 0) AS INTEGER) AS z4, CAST(COALESCE(m.z5_s, 0) AS INTEGER) AS z5 FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id LEFT JOIN ratings r ON r.activity_id = a.id WHERE a.start_local >= :d AND a.start_local < date(:d, '+1 day') ORDER BY a.start_local", bindings: [{ name: ":d", value: String(day) }] }) {
+		match db.query!("SELECT CAST(a.name AS TEXT) AS name, CAST(a.sport_type AS TEXT) AS sport, CAST(COALESCE(a.moving_time, 0) AS INTEGER) AS secs, CAST(COALESCE(a.distance, 0) AS REAL) AS dist_m, CAST(ROUND(COALESCE(m.tss, 0)) AS INTEGER) AS tss, CAST(ROUND(COALESCE(m.normalized_power, 0)) AS INTEGER) AS np, CAST(ROUND(COALESCE(m.intensity_factor, 0) * 100) AS INTEGER) AS if100, CAST(ROUND(COALESCE(a.avg_hr, 0)) AS INTEGER) AS hr, CAST(ROUND(COALESCE(r.rpe, 0), 1) AS TEXT) AS rpe, CAST(COALESCE(m.z1_s, 0) AS INTEGER) AS z1, CAST(COALESCE(m.z2_s, 0) AS INTEGER) AS z2, CAST(COALESCE(m.z3_s, 0) AS INTEGER) AS z3, CAST(COALESCE(m.z4_s, 0) AS INTEGER) AS z4, CAST(COALESCE(m.z5_s, 0) AS INTEGER) AS z5 FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id LEFT JOIN ratings r ON r.activity_id = a.id WHERE a.start_local >= :d AND a.start_local < date(:d, '+1 day') ORDER BY a.start_local", [{ name: ":d", value: String(day) }]) {
 			Err(_) => [{ title: "detail query failed", stats: "", extra: "", zones: [] }]
 			Ok(rows) =>
 				if List.is_empty(rows) [{ title: "rest day - no activities", stats: "", extra: "", zones: [] }]
@@ -870,7 +870,7 @@ Db :: [].{
 
 	load_trace_ids! : Sqlite.Db => List({ id : I64, day : Str, name : Str, sport : Str, chan : Str })
 	load_trace_ids! = |db|
-		match Sqlite.query!({ db, query: trace_menu_q, bindings: [{ name: ":lim", value: Integer(trace_menu_limit) }] }) {
+		match db.query!(trace_menu_q, [{ name: ":lim", value: Integer(trace_menu_limit) }]) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -902,7 +902,7 @@ Db :: [].{
 			# array it is an INTEGER value (objects yield text keys), so MAX(i) and
 			# ORDER BY i are numeric — no window function, nothing left unspecified.
 			q = "WITH w AS (SELECT json_each.key AS i, CAST(json_each.value AS INTEGER) AS v FROM streams, json_each(json_extract(streams.raw_json, :chan)) WHERE streams.activity_id = :aid), n AS (SELECT MAX(i)+1 AS c FROM w) SELECT v FROM w, n WHERE i % (MAX(n.c/800,1)) = 0 ORDER BY i"
-			match Sqlite.query!({ db, query: q, bindings: [{ name: ":aid", value: Integer(aid) }, { name: ":chan", value: String(chan) }] }) {
+			match db.query!(q, [{ name: ":aid", value: Integer(aid) }, { name: ":chan", value: String(chan) }]) {
 				Err(_) => []
 				Ok(rows) => List.keep_oks(rows, |r| {
 					v = r.i64("v") ? |_| "bad v"
@@ -927,7 +927,7 @@ Db :: [].{
 	load_stream_arr! : Sqlite.Db, I64, Str => List(F64)
 	load_stream_arr! = |db, aid, path| {
 		q = "SELECT CAST(json_each.value AS REAL) AS v FROM streams, json_each(json_extract(streams.raw_json, :p)) WHERE streams.activity_id = :aid ORDER BY json_each.key"
-		match Sqlite.query!({ db, query: q, bindings: [{ name: ":aid", value: Integer(aid) }, { name: ":p", value: String(path) }] }) {
+		match db.query!(q, [{ name: ":aid", value: Integer(aid) }, { name: ":p", value: String(path) }]) {
 			Err(_) => []
 			Ok(rows) => List.keep_oks(rows, |r| {
 				v = r.f64("v") ? |_| "bad v"
@@ -995,7 +995,7 @@ Db :: [].{
 	load_segs! : Sqlite.Db, I64 => List(Seg)
 	load_segs! = |db, aid| {
 		q = "SELECT CAST(kind AS TEXT) AS kind, start_s, dur_s FROM activity_segments WHERE activity_id = :aid ORDER BY ordinal"
-		match Sqlite.query!({ db, query: q, bindings: [{ name: ":aid", value: Integer(aid) }] }) {
+		match db.query!(q, [{ name: ":aid", value: Integer(aid) }]) {
 			Err(_) => []
 			Ok(rows) => List.keep_oks(rows, |r| {
 				k = r.str("kind") ? |_| "bad kind"
@@ -1015,7 +1015,7 @@ Db :: [].{
 	# hidden the bug.
 	load_dur! : Sqlite.Db, I64 => F32
 	load_dur! = |db, aid|
-		match Sqlite.query!({ db, query: "SELECT CAST(json_extract(raw_json,'$.time.data[#-1]') AS INTEGER) AS t FROM streams WHERE activity_id = :aid", bindings: [{ name: ":aid", value: Integer(aid) }] }) {
+		match db.query!("SELECT CAST(json_extract(raw_json,'$.time.data[#-1]') AS INTEGER) AS t FROM streams WHERE activity_id = :aid", [{ name: ":aid", value: Integer(aid) }]) {
 			Err(_) => 1.0
 			Ok(rows) => match List.first(rows) {
 				Err(_) => 1.0

@@ -5,10 +5,10 @@
 ## init!, update!, and the view dispatch — view_basename enumerates the views
 ## and the nav list is their order.
 ##
-## NOTE the pin below: roc-ray 0.10.0-rc5 declares nightly-2026-09-07, not the
-## engine's toolchain pin. The header carries its own compiler version, so
-## `roc src/viz/main.roc` with a matching nightly is the whole build.
-app [Model, program] { rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0-rc5/8x22d4JXTKSiPvj3Bd3br2u7rEL3baUzEvmSBrCBDvqV.tar.zst", core: "../core/package.roc", roc: "nightly-2026-09-16-a49a16f" }
+## The header carries its own compiler version, so `roc src/viz/main.roc` with a
+## matching nightly is the whole build. roc-ray declares that same compiler, so
+## the two apps and the platform all name one nightly.
+app [Model, program] { rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0/5xecDmRJroKT9fnSiYsGdCKEzNWLnRKGtHJ5CxuCnpb9.tar.zst", core: "../core/package.roc", roc: "nightly-2026-09-27-a3ce7f1" }
 
 import rr.App
 import rr.Assets

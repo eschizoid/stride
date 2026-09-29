@@ -104,38 +104,38 @@ Command := [
 		{ mode: walked.mode, rest: walked.rest }
 	}
 
-	## argv (including the program name at index 0) -> a typed command. Mirrors the
-	## historical `main!` dispatch exactly; behavior-preserving by construction.
+	## The arguments the user typed, with no program name in front of them -> a
+	## typed command. Every arity and count check lives here, in pure code.
 	parse : List(Str) -> Try(Command, ParseErr)
 	parse = |args|
 		match args {
-			[_, "init"] => Ok(Init)
-			[_, "auth"] => Ok(Auth)
-			[_, "sync"] => Ok(Sync(False))
-			[_, "sync", "--all"] => Ok(Sync(True))
+			["init"] => Ok(Init)
+			["auth"] => Ok(Auth)
+			["sync"] => Ok(Sync(False))
+			["sync", "--all"] => Ok(Sync(True))
 			## Retired in #232, with a pointer rather than a bare unknown_command. Every
 			## README, skill and shell history said `stride backfill` until that commit,
 			## and the plan->week rename beside it sets the precedent for redirecting.
-			[_, "backfill", ..] => Err(Usage("sync — `backfill` is retired; `stride sync` drains all missing streams, and `stride sync --all` re-lists from scratch"))
-			[_, "analyze"] => Ok(Analyze)
-			[_, "summary"] => Ok(Summary)
-			[_, "stats"] => Ok(Stats)
-			[_, "plan"] => Ok(Plan)
-			[_, "compare"] => Ok(Compare("week"))
-			[_, "compare", period] => Ok(Compare(period))
-			[_, "activities"] => Ok(Activities(30, ""))
-			[_, "activities", n] => count(n, |c| Activities(c, ""))
-			[_, "activities", n, sport] => count(n, |c| Activities(c, sport))
-			[_, "top", metric] => Ok(Top(metric, 10, ""))
-			[_, "top", metric, n] => count(n, |c| Top(metric, c, ""))
-			[_, "top", metric, n, sport] => count(n, |c| Top(metric, c, sport))
-			[_, "import", src] => Ok(Import(src))
-			[_, "rate", target, rpe_str] => Ok(Rate(target, rpe_str))
-			[_, "doctor"] => Ok(Doctor)
-			[_, "tte", watts] => Ok(Tte(watts))
-			[_, "tte", ..] => Err(Usage("tte <watts> — time to exhaustion at a power you name"))
-			[_, "reps"] => Ok(Reps(""))
-			[_, "reps", date] =>
+			["backfill", ..] => Err(Usage("sync — `backfill` is retired; `stride sync` drains all missing streams, and `stride sync --all` re-lists from scratch"))
+			["analyze"] => Ok(Analyze)
+			["summary"] => Ok(Summary)
+			["stats"] => Ok(Stats)
+			["plan"] => Ok(Plan)
+			["compare"] => Ok(Compare("week"))
+			["compare", period] => Ok(Compare(period))
+			["activities"] => Ok(Activities(30, ""))
+			["activities", n] => count(n, |c| Activities(c, ""))
+			["activities", n, sport] => count(n, |c| Activities(c, sport))
+			["top", metric] => Ok(Top(metric, 10, ""))
+			["top", metric, n] => count(n, |c| Top(metric, c, ""))
+			["top", metric, n, sport] => count(n, |c| Top(metric, c, sport))
+			["import", src] => Ok(Import(src))
+			["rate", target, rpe_str] => Ok(Rate(target, rpe_str))
+			["doctor"] => Ok(Doctor)
+			["tte", watts] => Ok(Tte(watts))
+			["tte", ..] => Err(Usage("tte <watts> — time to exhaustion at a power you name"))
+			["reps"] => Ok(Reps(""))
+			["reps", date] =>
 				if Metrics.is_canonical_date(date) {
 					Ok(Reps(date))
 				} else {
@@ -144,74 +144,74 @@ Command := [
 					# not exist
 					Err(Usage("reps [YYYY-MM-DD] — '${date}' is not a date"))
 				}
-			[_, "zones"] => Ok(Zones)
-			[_, "strength"] => Ok(Strength)
-			[_, "viz"] => Ok(VizCaps)
-			[_, "viz", "tick"] => Ok(VizTick({ ack: True }))
-			[_, "viz", "tick", "--no-ack"] => Ok(VizTick({ ack: False }))
-			[_, "pz"] => Ok(Zones)
+			["zones"] => Ok(Zones)
+			["strength"] => Ok(Strength)
+			["viz"] => Ok(VizCaps)
+			["viz", "tick"] => Ok(VizTick({ ack: True }))
+			["viz", "tick", "--no-ack"] => Ok(VizTick({ ack: False }))
+			["pz"] => Ok(Zones)
 			# a bare asc/desc is a sort on the latest anchor, not a date named "desc"
-			[_, "progress"] => Ok(Progress("", Asc))
-			[_, "progress", "asc"] => Ok(Progress("", Asc))
-			[_, "progress", "desc"] => Ok(Progress("", Desc))
+			["progress"] => Ok(Progress("", Asc))
+			["progress", "asc"] => Ok(Progress("", Asc))
+			["progress", "desc"] => Ok(Progress("", Desc))
 			# a sort word in the DATE position stays a sort word. Without these, `progress
 			# desc asc` fell through to the name+sort arms below and anchored on a workout
 			# named "desc" — the opposite of what the comment above promises.
-			[_, "progress", "asc", ..] => Err(Usage("progress [date] [asc|desc]"))
-			[_, "progress", "desc", ..] => Err(Usage("progress [date] [asc|desc]"))
+			["progress", "asc", ..] => Err(Usage("progress [date] [asc|desc]"))
+			["progress", "desc", ..] => Err(Usage("progress [date] [asc|desc]"))
 			# bound as `date`, not `name`: the handler queries it as a date and answers
 			# `no_workout_on_date`. Called `name` once, and the command table copied that
 			# into its public argument shape, where an agent read it.
-			[_, "progress", date] => Ok(Progress(date, Asc))
-			[_, "progress", date, "asc"] => Ok(Progress(date, Asc))
-			[_, "progress", date, "desc"] => Ok(Progress(date, Desc))
-			[_, "progress", ..] => Err(Usage("progress [date] [asc|desc]"))
-			[_, "activity", id_str] => Ok(Activity(id_str))
-			[_, "load"] => Ok(Load(90))
-			[_, "load", n] => count(n, |c| Load(c))
-			[_, "season"] => Ok(Season)
-			[_, "power-curve"] => Ok(PowerCurve(90, ""))
-			[_, "pc"] => Ok(PowerCurve(90, ""))
-			[_, "power-curve", n] => count(n, |c| PowerCurve(c, ""))
-			[_, "pc", n] => count(n, |c| PowerCurve(c, ""))
-			[_, "power-curve", n, sport] => count(n, |c| PowerCurve(c, sport))
-			[_, "pc", n, sport] => count(n, |c| PowerCurve(c, sport))
-			[_, "pace-curve"] => Ok(PaceCurve(90, ""))
-			[_, "cs"] => Ok(PaceCurve(90, ""))
-			[_, "pace-curve", n] => count(n, |c| PaceCurve(c, ""))
-			[_, "cs", n] => count(n, |c| PaceCurve(c, ""))
-			[_, "pace-curve", n, sport] => count(n, |c| PaceCurve(c, sport))
-			[_, "cs", n, sport] => count(n, |c| PaceCurve(c, sport))
-			[_, "week"] => Ok(WeekView)
-			[_, "week", "all"] => Ok(WeekViewAll)
+			["progress", date] => Ok(Progress(date, Asc))
+			["progress", date, "asc"] => Ok(Progress(date, Asc))
+			["progress", date, "desc"] => Ok(Progress(date, Desc))
+			["progress", ..] => Err(Usage("progress [date] [asc|desc]"))
+			["activity", id_str] => Ok(Activity(id_str))
+			["load"] => Ok(Load(90))
+			["load", n] => count(n, |c| Load(c))
+			["season"] => Ok(Season)
+			["power-curve"] => Ok(PowerCurve(90, ""))
+			["pc"] => Ok(PowerCurve(90, ""))
+			["power-curve", n] => count(n, |c| PowerCurve(c, ""))
+			["pc", n] => count(n, |c| PowerCurve(c, ""))
+			["power-curve", n, sport] => count(n, |c| PowerCurve(c, sport))
+			["pc", n, sport] => count(n, |c| PowerCurve(c, sport))
+			["pace-curve"] => Ok(PaceCurve(90, ""))
+			["cs"] => Ok(PaceCurve(90, ""))
+			["pace-curve", n] => count(n, |c| PaceCurve(c, ""))
+			["cs", n] => count(n, |c| PaceCurve(c, ""))
+			["pace-curve", n, sport] => count(n, |c| PaceCurve(c, sport))
+			["cs", n, sport] => count(n, |c| PaceCurve(c, sport))
+			["week"] => Ok(WeekView)
+			["week", "all"] => Ok(WeekViewAll)
 			# optional fifth argument: a structured target `<reps>x<mm:ss>@<watts>W`
 			# (#198, ADR 0014) — validated in Plan (bad_target), stored beside the prose
-			[_, "week", "add", date, session_type, detail, rationale, target] => Ok(WeekAddT(date, session_type, detail, rationale, target))
-			[_, "week", "add", date, session_type, detail, rationale] => Ok(WeekAdd(date, session_type, detail, rationale))
+			["week", "add", date, session_type, detail, rationale, target] => Ok(WeekAddT(date, session_type, detail, rationale, target))
+			["week", "add", date, session_type, detail, rationale] => Ok(WeekAdd(date, session_type, detail, rationale))
 			## the literal resolves BOTH ids - the latest activity and the open session
 			## on its day. BOTH literal arms sit above the id arms: patterns match in
 			## order, so `complete latest x` would otherwise read as a session id
 			## named "latest" and refuse with the wrong code.
-			[_, "complete", "latest"] => Ok(CompleteLatest)
-			[_, "complete", "latest", ..] => Err(Usage("complete latest — closes the open session on the latest activity's day; it takes no id"))
-			[_, "complete", session_id, activity_id] => Ok(Complete(session_id, activity_id))
-			[_, "complete", session_id] => Ok(CompleteRest(session_id))
-			[_, "skip", session_id, reason, activity_id] => Ok(SkipWith(session_id, reason, activity_id))
-			[_, "skip", session_id, reason] => Ok(Skip(session_id, reason))
+			["complete", "latest"] => Ok(CompleteLatest)
+			["complete", "latest", ..] => Err(Usage("complete latest — closes the open session on the latest activity's day; it takes no id"))
+			["complete", session_id, activity_id] => Ok(Complete(session_id, activity_id))
+			["complete", session_id] => Ok(CompleteRest(session_id))
+			["skip", session_id, reason, activity_id] => Ok(SkipWith(session_id, reason, activity_id))
+			["skip", session_id, reason] => Ok(Skip(session_id, reason))
 			# label-only edit of an existing session, ANY status (#330): `week add` revises
 			# open sessions in place, but a DONE session's label was frozen — the only fix
 			# was a duplicate row plus a skip tombstone, or hand-run SQL.
-			[_, "relabel", session_id, session_type, detail, rationale] => Ok(RelabelWith(session_id, session_type, detail, rationale))
-			[_, "relabel", session_id, session_type, detail] => Ok(Relabel(session_id, session_type, detail))
+			["relabel", session_id, session_type, detail, rationale] => Ok(RelabelWith(session_id, session_type, detail, rationale))
+			["relabel", session_id, session_type, detail] => Ok(Relabel(session_id, session_type, detail))
 			# event targets (#138, ADR 0010's projection side): a date to project toward
-			[_, "event", "add", date, name] => Ok(EventAdd(date, name))
-			[_, "event", "remove", event_id] => Ok(EventRemove(event_id))
-			[_, "events"] => Ok(Events)
+			["event", "add", date, name] => Ok(EventAdd(date, name))
+			["event", "remove", event_id] => Ok(EventRemove(event_id))
+			["events"] => Ok(Events)
 			# taper projection (#189, ADR 0010): consequences of the recorded plan on a
 			# date, or of a caller-passed hypothetical plan — echoed, never stored
-			[_, "project", date, plan] => Ok(ProjectWith(date, plan))
-			[_, "project", date] => Ok(Project(date))
-			[_, "config", "get", key] => Ok(ConfigGet(key))
+			["project", date, plan] => Ok(ProjectWith(date, plan))
+			["project", date] => Ok(Project(date))
+			["config", "get", key] => Ok(ConfigGet(key))
 			# bare `config` LISTS the keys that hold a value (secrets redacted). It was a
 			# Usage error, which made "which config do I actually have set?" a question the
 			# CLI could not answer — `doctor` reports counts, not names. #254 needs it for a
@@ -220,7 +220,7 @@ Command := [
 			# unset the form dropped out silently at exit 0. The filler comes from here now,
 			# so it cannot be stale, and the skip is decided by an EMPTY LIST — a fact the
 			# recipe checks — instead of by an error code that could mean two things.
-			[_, "config"] => Ok(ConfigList)
+			["config"] => Ok(ConfigList)
 			# Its own literal, and a distinct verb rather than `set` with a magic value. NOT
 			# order-dependent — review moved this arm below `set` and everything stayed green,
 			# because the two are disjoint by arity (4 argv entries vs 5) as well as by
@@ -229,35 +229,34 @@ Command := [
 			# removal for unrecognised keys, refusal for numeric ones and an empty WRITE for
 			# managed free-text ones — three behaviours on one gesture, and only one of them
 			# was removal (#276).
-			[_, "config", "unset", key] => Ok(ConfigUnset(key))
-			[_, "config", "set", key, val] => Ok(ConfigSet(key, val))
-			[_, "--version"] => Ok(Version)
-			[_, "week", ..] => Err(Usage("week add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — or bare `week` for this week's sessions, `week all` for the whole log"))
+			["config", "unset", key] => Ok(ConfigUnset(key))
+			["config", "set", key, val] => Ok(ConfigSet(key, val))
+			["--version"] => Ok(Version)
+			["week", ..] => Err(Usage("week add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — or bare `week` for this week's sessions, `week all` for the whole log"))
 			# `plan` and `week` traded names, so muscle memory sends the old forms here.
 			# Point each one at its actual replacement rather than a generic arity moan —
 			# `plan all` meant the session log, which is now `week all`, not `week add`.
-			[_, "plan", "all", ..] => Err(Usage("week all — `plan` is now the planning bundle; the session log moved to `week`"))
-			[_, "plan", "add", ..] => Err(Usage("week add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — `plan add` moved to `week add`"))
-			[_, "plan", ..] => Err(Usage("plan takes no arguments — it bundles summary + open sessions + recent activities"))
-			[_, "complete", ..] => Err(Usage("complete <session_id> [activity_id]"))
-			[_, "skip", ..] => Err(Usage("skip <session_id> \"<reason>\" [activity_id|none]"))
-			[_, "relabel", ..] => Err(Usage("relabel <session_id> <type> \"<detail>\" [\"<rationale>\"]"))
-			[_, "event", ..] => Err(Usage("event add <YYYY-MM-DD> \"<name>\"  |  event remove <event_id>"))
-			[_, "project", ..] => Err(Usage("project <YYYY-MM-DD> [\"<YYYY-MM-DD>=<RxMM:SS@WWWW>,...\"]"))
-			[_, "activity", ..] => Err(Usage("activity <activity_id>"))
-			[_, "config", ..] => Err(Usage("config get <key>  |  config set <key> <value>  |  config unset <key>"))
+			["plan", "all", ..] => Err(Usage("week all — `plan` is now the planning bundle; the session log moved to `week`"))
+			["plan", "add", ..] => Err(Usage("week add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — `plan add` moved to `week add`"))
+			["plan", ..] => Err(Usage("plan takes no arguments — it bundles summary + open sessions + recent activities"))
+			["complete", ..] => Err(Usage("complete <session_id> [activity_id]"))
+			["skip", ..] => Err(Usage("skip <session_id> \"<reason>\" [activity_id|none]"))
+			["relabel", ..] => Err(Usage("relabel <session_id> <type> \"<detail>\" [\"<rationale>\"]"))
+			["event", ..] => Err(Usage("event add <YYYY-MM-DD> \"<name>\"  |  event remove <event_id>"))
+			["project", ..] => Err(Usage("project <YYYY-MM-DD> [\"<YYYY-MM-DD>=<RxMM:SS@WWWW>,...\"]"))
+			["activity", ..] => Err(Usage("activity <activity_id>"))
+			["config", ..] => Err(Usage("config get <key>  |  config set <key> <value>  |  config unset <key>"))
 			# asking for help — bare, or by any of the conventional spellings —
 			# is not a failure and must not become one (#163 broke `--help` by
 			# deleting the old catch-all that had silently served it)
-			[_] => Err(ShowHelp)
 			[] => Err(ShowHelp)
-			[_, "--help"] => Err(ShowHelp)
-			[_, "-h"] => Err(ShowHelp)
-			[_, "help"] => Err(ShowHelp)
+			["--help"] => Err(ShowHelp)
+			["-h"] => Err(ShowHelp)
+			["help"] => Err(ShowHelp)
 			# a leading token stride DOES have, that reached here, is a real
 			# command invoked with the wrong arguments — saying "no such command
 			# sync" would be false. Only a name stride does not have is unknown.
-			[_, name, ..] =>
+			[name, ..] =>
 				if List.contains(command_names, name) {
 					Err(Usage("${name} — wrong arguments for this command; run `stride` for every command's form"))
 				} else {
@@ -534,118 +533,118 @@ Command := [
 
 # ── tests (ALL forms — migration preserves coverage, does not trim it) ──
 expect
-	match Command.parse(["stride", "init"]) {
+	match Command.parse(["init"]) {
 		Ok(Init) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "--version"]) {
+	match Command.parse(["--version"]) {
 		Ok(Version) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "compare"]) {
+	match Command.parse(["compare"]) {
 		Ok(Compare("week")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "compare", "month"]) {
+	match Command.parse(["compare", "month"]) {
 		Ok(Compare("month")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "activities"]) {
+	match Command.parse(["activities"]) {
 		Ok(Activities(30, "")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "activities", "10"]) {
+	match Command.parse(["activities", "10"]) {
 		Ok(Activities(10, "")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "activities", "10", "rowing"]) {
+	match Command.parse(["activities", "10", "rowing"]) {
 		Ok(Activities(10, "rowing")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "activities", "banana"]) {
+	match Command.parse(["activities", "banana"]) {
 		Err(BadCount("banana")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "top", "tss"]) {
+	match Command.parse(["top", "tss"]) {
 		Ok(Top("tss", 10, "")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "top", "tss", "5"]) {
+	match Command.parse(["top", "tss", "5"]) {
 		Ok(Top("tss", 5, "")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "top", "tss", "x"]) {
+	match Command.parse(["top", "tss", "x"]) {
 		Err(BadCount("x")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "load"]) {
+	match Command.parse(["load"]) {
 		Ok(Load(90)) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "load", "7"]) {
+	match Command.parse(["load", "7"]) {
 		Ok(Load(7)) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "power-curve"]) {
+	match Command.parse(["power-curve"]) {
 		Ok(PowerCurve(90, "")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "pc", "60"]) {
+	match Command.parse(["pc", "60"]) {
 		Ok(PowerCurve(60, "")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "pc", "60", "Ride"]) {
+	match Command.parse(["pc", "60", "Ride"]) {
 		Ok(PowerCurve(60, "Ride")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "power-curve", "nope"]) {
+	match Command.parse(["power-curve", "nope"]) {
 		Err(BadCount("nope")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "pz"]) {
+	match Command.parse(["pz"]) {
 		Ok(Zones) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "zones"]) {
+	match Command.parse(["zones"]) {
 		Ok(Zones) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "progress"]) {
+	match Command.parse(["progress"]) {
 		Ok(Progress("", Asc)) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "progress", "2026-01-01"]) {
+	match Command.parse(["progress", "2026-01-01"]) {
 		Ok(Progress("2026-01-01", Asc)) => True
 		_ => False
 	}
 # a bare sort word is a sort, not a date anchor
 expect
-	match Command.parse(["stride", "progress", "desc"]) {
+	match Command.parse(["progress", "desc"]) {
 		Ok(Progress("", Desc)) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "progress", "2026-01-01", "desc"]) {
+	match Command.parse(["progress", "2026-01-01", "desc"]) {
 		Ok(Progress("2026-01-01", Desc)) => True
 		_ => False
 	}
@@ -654,122 +653,122 @@ expect
 # reaching the database returns "no detected interval structure on asc", a data
 # fact about a date that does not exist.
 expect
-	match Command.parse(["stride", "reps", "asc"]) {
+	match Command.parse(["reps", "asc"]) {
 		Err(Usage(u)) => Str.contains(u, "not a date")
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "reps", "notadate"]) {
+	match Command.parse(["reps", "notadate"]) {
 		Err(Usage(u)) => Str.contains(u, "not a date")
 		_ => False
 	}
 # a well-formed date and the bare form still parse (Command is opaque, so the
 # assertion has to match rather than compare)
 expect
-	match Command.parse(["stride", "reps", "2026-08-16"]) {
+	match Command.parse(["reps", "2026-08-16"]) {
 		Ok(Reps(d)) => d == "2026-08-16"
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "reps"]) {
+	match Command.parse(["reps"]) {
 		Ok(Reps(d)) => d == ""
 		_ => False
 	}
 # a date-SHAPED string that is not a real day is still refused
 expect
-	match Command.parse(["stride", "reps", "2026-13-45"]) {
+	match Command.parse(["reps", "2026-13-45"]) {
 		Err(Usage(u)) => Str.contains(u, "not a date")
 		_ => False
 	}
 
 expect
-	match Command.parse(["stride", "progress", "2026-01-01", "sideways"]) {
+	match Command.parse(["progress", "2026-01-01", "sideways"]) {
 		Err(Usage(u)) => Str.contains(u, "asc|desc")
 		_ => False
 	}
 # a sort word in the DATE position is never a date: `progress desc asc` must refuse
 # rather than anchor on a workout named "desc"
 expect
-	match Command.parse(["stride", "progress", "desc", "asc"]) {
+	match Command.parse(["progress", "desc", "asc"]) {
 		Err(Usage(u)) => Str.contains(u, "asc|desc")
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "progress", "asc", "desc"]) {
+	match Command.parse(["progress", "asc", "desc"]) {
 		Err(Usage(u)) => Str.contains(u, "asc|desc")
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "week"]) {
+	match Command.parse(["week"]) {
 		Ok(WeekView) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "week", "all"]) {
+	match Command.parse(["week", "all"]) {
 		Ok(WeekViewAll) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "week", "add", "2026-01-01", "vo2max", "d", "r"]) {
+	match Command.parse(["week", "add", "2026-01-01", "vo2max", "d", "r"]) {
 		Ok(WeekAdd("2026-01-01", "vo2max", "d", "r")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "complete", "3", "101"]) {
+	match Command.parse(["complete", "3", "101"]) {
 		Ok(Complete("3", "101")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "complete", "3"]) {
+	match Command.parse(["complete", "3"]) {
 		Ok(CompleteRest("3")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "skip", "3", "sick"]) {
+	match Command.parse(["skip", "3", "sick"]) {
 		Ok(Skip("3", "sick")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "skip", "3", "rode outdoors instead", "19755802565"]) {
+	match Command.parse(["skip", "3", "rode outdoors instead", "19755802565"]) {
 		Ok(SkipWith("3", "rode outdoors instead", "19755802565")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "config", "get", "ftp"]) {
+	match Command.parse(["config", "get", "ftp"]) {
 		Ok(ConfigGet("ftp")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "config", "unset", "hr_z2_max_ride"]) {
+	match Command.parse(["config", "unset", "hr_z2_max_ride"]) {
 		Ok(ConfigUnset("hr_z2_max_ride")) => True
 		_ => False
 	}
 
 expect
-	match Command.parse(["stride", "config", "set", "ftp", "250"]) {
+	match Command.parse(["config", "set", "ftp", "250"]) {
 		Ok(ConfigSet("ftp", "250")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "week", "add"]) {
+	match Command.parse(["week", "add"]) {
 		Err(Usage("week add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — or bare `week` for this week's sessions, `week all` for the whole log")) => True
 		_ => False
 	}
 # the old spellings must land on their REPLACEMENT, not on generic help — `plan all`
 # meant the session log, so it points at `week all`, not at `week add`
 expect
-	match Command.parse(["stride", "plan", "all"]) {
+	match Command.parse(["plan", "all"]) {
 		Err(Usage(u)) => Str.contains(u, "week all")
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "plan", "add", "2026-01-01", "vo2max", "d", "r"]) {
+	match Command.parse(["plan", "add", "2026-01-01", "vo2max", "d", "r"]) {
 		Err(Usage(u)) => Str.contains(u, "week add")
 		_ => False
 	}
 # bare `plan` is the bundle and takes no arguments
 expect
-	match Command.parse(["stride", "plan"]) {
+	match Command.parse(["plan"]) {
 		Ok(Plan) => True
 		_ => False
 	}
@@ -777,7 +776,7 @@ expect
 # as bare `plan` and bare `week` above: the shortest spelling of a command should answer
 # the question the reader has, not scold them for not asking it precisely enough.
 expect
-	match Command.parse(["stride", "config"]) {
+	match Command.parse(["config"]) {
 		Ok(ConfigList) => True
 		_ => False
 	}
@@ -787,27 +786,27 @@ expect
 # `bad_value` message points them at it. Both existing expects pinned the exact string, so
 # the omission would have been a silent lie only in the message, not in the guard (#276).
 expect
-	match Command.parse(["stride", "config", "unset"]) {
+	match Command.parse(["config", "unset"]) {
 		Err(Usage("config get <key>  |  config set <key> <value>  |  config unset <key>")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "config", "get"]) {
+	match Command.parse(["config", "get"]) {
 		Err(Usage("config get <key>  |  config set <key> <value>  |  config unset <key>")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "config", "set", "timezone"]) {
+	match Command.parse(["config", "set", "timezone"]) {
 		Err(Usage("config get <key>  |  config set <key> <value>  |  config unset <key>")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride", "wat"]) {
+	match Command.parse(["wat"]) {
 		Err(UnknownCmd("wat")) => True
 		_ => False
 	}
 expect
-	match Command.parse(["stride"]) {
+	match Command.parse([]) {
 		Err(ShowHelp) => True
 		_ => False
 	}
@@ -815,7 +814,7 @@ expect
 
 # asking for help is never an error, however it is spelled (#163)
 expect {
-    help_forms = [["stride"], ["stride", "--help"], ["stride", "-h"], ["stride", "help"]]
+    help_forms = [[], ["--help"], ["-h"], ["help"]]
     List.all(help_forms, |f|
         match Command.parse(f) {
             Err(ShowHelp) => True
@@ -826,20 +825,20 @@ expect {
 # a REAL command with wrong arguments is a usage error naming itself, never
 # "no such command" — the message must not assert something false
 expect {
-    match Command.parse(["stride", "sync", "extra"]) {
+    match Command.parse(["sync", "extra"]) {
         Err(Usage(u)) => Str.contains(u, "sync")
         _ => False
     }
 }
 expect {
-    match Command.parse(["stride", "top"]) {
+    match Command.parse(["top"]) {
         Err(Usage(_)) => True
         _ => False
     }
 }
 # ...and a name stride genuinely lacks is still unknown
 expect {
-    match Command.parse(["stride", "wat"]) {
+    match Command.parse(["wat"]) {
         Err(UnknownCmd("wat")) => True
         _ => False
     }
@@ -869,59 +868,59 @@ expect Command.example_of("<key>") == ""
 expect Command.example_of("<YYYY-MM-DD>") == ""
 expect Command.example_of("<activity_id>") == ""
 
-expect match Command.parse(["stride", "init"]) { Ok(Init) => True  _ => False }
-expect match Command.parse(["stride", "auth"]) { Ok(Auth) => True  _ => False }
-expect match Command.parse(["stride", "sync"]) { Ok(Sync(False)) => True  _ => False }
-expect match Command.parse(["stride", "sync", "--all"]) { Ok(Sync(True)) => True  _ => False }
-expect match Command.parse(["stride", "analyze"]) { Ok(Analyze) => True  _ => False }
-expect match Command.parse(["stride", "summary"]) { Ok(Summary) => True  _ => False }
-expect match Command.parse(["stride", "stats"]) { Ok(Stats) => True  _ => False }
-expect match Command.parse(["stride", "doctor"]) { Ok(Doctor) => True  _ => False }
-expect match Command.parse(["stride", "import", "x.zip"]) { Ok(Import("x.zip")) => True  _ => False }
-expect match Command.parse(["stride", "rate", "1", "5"]) { Ok(Rate("1", "5")) => True  _ => False }
-expect match Command.parse(["stride", "activity", "7"]) { Ok(Activity("7")) => True  _ => False }
-expect match Command.parse(["stride", "zones"]) { Ok(Zones) => True  _ => False }
-expect match Command.parse(["stride", "viz"]) { Ok(VizCaps) => True  _ => False }
-expect match Command.parse(["stride", "viz", "tick"]) { Ok(VizTick({ ack: True })) => True  _ => False }
-expect match Command.parse(["stride", "viz", "tick", "--no-ack"]) { Ok(VizTick({ ack: False })) => True  _ => False }
-expect match Command.parse(["stride", "viz", "tick", "--ack"]) { Err(_) => True  _ => False }
-expect match Command.parse(["stride", "viz", "extra"]) { Err(_) => True  _ => False }
-expect match Command.parse(["stride", "pz"]) { Ok(Zones) => True  _ => False }
-expect match Command.parse(["stride", "compare"]) { Ok(Compare("week")) => True  _ => False }
-expect match Command.parse(["stride", "activities"]) { Ok(Activities(30, "")) => True  _ => False }
-expect match Command.parse(["stride", "top", "np"]) { Ok(Top("np", 10, "")) => True  _ => False }
-expect match Command.parse(["stride", "load"]) { Ok(Load(90)) => True  _ => False }
-expect match Command.parse(["stride", "power-curve"]) { Ok(PowerCurve(90, "")) => True  _ => False }
-expect match Command.parse(["stride", "pc"]) { Ok(PowerCurve(90, "")) => True  _ => False }
-expect match Command.parse(["stride", "progress"]) { Ok(Progress("", Asc)) => True  _ => False }
-expect match Command.parse(["stride", "week"]) { Ok(WeekView) => True  _ => False }
-expect match Command.parse(["stride", "plan"]) { Ok(Plan) => True  _ => False }
-expect match Command.parse(["stride", "complete", "3", "9"]) { Ok(Complete("3", "9")) => True  _ => False }
-expect match Command.parse(["stride", "skip", "3", "sick"]) { Ok(Skip("3", "sick")) => True  _ => False }
-expect match Command.parse(["stride", "relabel", "45", "threshold", "3x12 @ 230W"]) { Ok(Relabel("45", "threshold", "3x12 @ 230W")) => True  _ => False }
-expect match Command.parse(["stride", "relabel", "45", "threshold", "3x12 @ 230W", "day-swapped with Sunday"]) { Ok(RelabelWith("45", "threshold", "3x12 @ 230W", "day-swapped with Sunday")) => True  _ => False }
-expect match Command.parse(["stride", "relabel", "45"]) { Err(Usage(_)) => True  _ => False }
-expect match Command.parse(["stride", "week", "add", "2026-01-01", "threshold", "3x12", "build", "3x12:00@230W"]) { Ok(WeekAddT("2026-01-01", "threshold", "3x12", "build", "3x12:00@230W")) => True  _ => False }
-expect match Command.parse(["stride", "event", "add", "2026-10-15", "Fall Century"]) { Ok(EventAdd("2026-10-15", "Fall Century")) => True  _ => False }
-expect match Command.parse(["stride", "event", "remove", "3"]) { Ok(EventRemove("3")) => True  _ => False }
-expect match Command.parse(["stride", "events"]) { Ok(Events) => True  _ => False }
-expect match Command.parse(["stride", "project", "2026-10-15"]) { Ok(Project("2026-10-15")) => True  _ => False }
-expect match Command.parse(["stride", "project", "2026-10-15", "2026-09-15=3x12:00@230W"]) { Ok(ProjectWith("2026-10-15", "2026-09-15=3x12:00@230W")) => True  _ => False }
-expect match Command.parse(["stride", "project"]) { Err(Usage(_)) => True  _ => False }
-expect match Command.parse(["stride", "event", "add", "2026-10-15"]) { Err(Usage(_)) => True  _ => False }
-expect match Command.parse(["stride", "config", "get", "ftp"]) { Ok(ConfigGet("ftp")) => True  _ => False }
-expect match Command.parse(["stride", "tte", "250"]) { Ok(Tte("250")) => True  _ => False }
-expect match Command.parse(["stride", "reps"]) { Ok(Reps("")) => True  _ => False }
-expect match Command.parse(["stride", "season"]) { Ok(Season) => True  _ => False }
-expect match Command.parse(["stride", "--version"]) { Ok(Version) => True  _ => False }
-expect match Command.parse(["stride", "--help"]) { Err(ShowHelp) => True  _ => False }
-expect match Command.parse(["stride", "-h"]) { Err(ShowHelp) => True  _ => False }
-expect match Command.parse(["stride", "help"]) { Err(ShowHelp) => True  _ => False }
+expect match Command.parse(["init"]) { Ok(Init) => True  _ => False }
+expect match Command.parse(["auth"]) { Ok(Auth) => True  _ => False }
+expect match Command.parse(["sync"]) { Ok(Sync(False)) => True  _ => False }
+expect match Command.parse(["sync", "--all"]) { Ok(Sync(True)) => True  _ => False }
+expect match Command.parse(["analyze"]) { Ok(Analyze) => True  _ => False }
+expect match Command.parse(["summary"]) { Ok(Summary) => True  _ => False }
+expect match Command.parse(["stats"]) { Ok(Stats) => True  _ => False }
+expect match Command.parse(["doctor"]) { Ok(Doctor) => True  _ => False }
+expect match Command.parse(["import", "x.zip"]) { Ok(Import("x.zip")) => True  _ => False }
+expect match Command.parse(["rate", "1", "5"]) { Ok(Rate("1", "5")) => True  _ => False }
+expect match Command.parse(["activity", "7"]) { Ok(Activity("7")) => True  _ => False }
+expect match Command.parse(["zones"]) { Ok(Zones) => True  _ => False }
+expect match Command.parse(["viz"]) { Ok(VizCaps) => True  _ => False }
+expect match Command.parse(["viz", "tick"]) { Ok(VizTick({ ack: True })) => True  _ => False }
+expect match Command.parse(["viz", "tick", "--no-ack"]) { Ok(VizTick({ ack: False })) => True  _ => False }
+expect match Command.parse(["viz", "tick", "--ack"]) { Err(_) => True  _ => False }
+expect match Command.parse(["viz", "extra"]) { Err(_) => True  _ => False }
+expect match Command.parse(["pz"]) { Ok(Zones) => True  _ => False }
+expect match Command.parse(["compare"]) { Ok(Compare("week")) => True  _ => False }
+expect match Command.parse(["activities"]) { Ok(Activities(30, "")) => True  _ => False }
+expect match Command.parse(["top", "np"]) { Ok(Top("np", 10, "")) => True  _ => False }
+expect match Command.parse(["load"]) { Ok(Load(90)) => True  _ => False }
+expect match Command.parse(["power-curve"]) { Ok(PowerCurve(90, "")) => True  _ => False }
+expect match Command.parse(["pc"]) { Ok(PowerCurve(90, "")) => True  _ => False }
+expect match Command.parse(["progress"]) { Ok(Progress("", Asc)) => True  _ => False }
+expect match Command.parse(["week"]) { Ok(WeekView) => True  _ => False }
+expect match Command.parse(["plan"]) { Ok(Plan) => True  _ => False }
+expect match Command.parse(["complete", "3", "9"]) { Ok(Complete("3", "9")) => True  _ => False }
+expect match Command.parse(["skip", "3", "sick"]) { Ok(Skip("3", "sick")) => True  _ => False }
+expect match Command.parse(["relabel", "45", "threshold", "3x12 @ 230W"]) { Ok(Relabel("45", "threshold", "3x12 @ 230W")) => True  _ => False }
+expect match Command.parse(["relabel", "45", "threshold", "3x12 @ 230W", "day-swapped with Sunday"]) { Ok(RelabelWith("45", "threshold", "3x12 @ 230W", "day-swapped with Sunday")) => True  _ => False }
+expect match Command.parse(["relabel", "45"]) { Err(Usage(_)) => True  _ => False }
+expect match Command.parse(["week", "add", "2026-01-01", "threshold", "3x12", "build", "3x12:00@230W"]) { Ok(WeekAddT("2026-01-01", "threshold", "3x12", "build", "3x12:00@230W")) => True  _ => False }
+expect match Command.parse(["event", "add", "2026-10-15", "Fall Century"]) { Ok(EventAdd("2026-10-15", "Fall Century")) => True  _ => False }
+expect match Command.parse(["event", "remove", "3"]) { Ok(EventRemove("3")) => True  _ => False }
+expect match Command.parse(["events"]) { Ok(Events) => True  _ => False }
+expect match Command.parse(["project", "2026-10-15"]) { Ok(Project("2026-10-15")) => True  _ => False }
+expect match Command.parse(["project", "2026-10-15", "2026-09-15=3x12:00@230W"]) { Ok(ProjectWith("2026-10-15", "2026-09-15=3x12:00@230W")) => True  _ => False }
+expect match Command.parse(["project"]) { Err(Usage(_)) => True  _ => False }
+expect match Command.parse(["event", "add", "2026-10-15"]) { Err(Usage(_)) => True  _ => False }
+expect match Command.parse(["config", "get", "ftp"]) { Ok(ConfigGet("ftp")) => True  _ => False }
+expect match Command.parse(["tte", "250"]) { Ok(Tte("250")) => True  _ => False }
+expect match Command.parse(["reps"]) { Ok(Reps("")) => True  _ => False }
+expect match Command.parse(["season"]) { Ok(Season) => True  _ => False }
+expect match Command.parse(["--version"]) { Ok(Version) => True  _ => False }
+expect match Command.parse(["--help"]) { Err(ShowHelp) => True  _ => False }
+expect match Command.parse(["-h"]) { Err(ShowHelp) => True  _ => False }
+expect match Command.parse(["help"]) { Err(ShowHelp) => True  _ => False }
 
 # a help spelling with junk after it is still a help spelling, not an unknown
 # command — the falsehood item 2 removed, surviving in a corner
 expect {
-    match Command.parse(["stride", "--help", "extra"]) {
+    match Command.parse(["--help", "extra"]) {
         Err(Usage(u)) => Str.contains(u, "--help")
         _ => False
     }
@@ -929,35 +928,35 @@ expect {
 
 # format flags (#162): stripped from any position, last wins, args preserved
 expect {
-    r = Command.split_format_args(["stride", "summary", "--json"])
-    r.mode == ForceJson and r.rest == ["stride", "summary"]
+    r = Command.split_format_args(["summary", "--json"])
+    r.mode == ForceJson and r.rest == ["summary"]
 }
 expect {
-    r = Command.split_format_args(["stride", "--json", "activities", "5"])
-    r.mode == ForceJson and r.rest == ["stride", "activities", "5"]
+    r = Command.split_format_args(["--json", "activities", "5"])
+    r.mode == ForceJson and r.rest == ["activities", "5"]
 }
 expect {
-    r = Command.split_format_args(["stride", "--human", "--json", "summary"])
-    r.mode == ForceJson and r.rest == ["stride", "summary"]
+    r = Command.split_format_args(["--human", "--json", "summary"])
+    r.mode == ForceJson and r.rest == ["summary"]
 }
 expect {
-    r = Command.split_format_args(["stride", "--json", "--human", "summary"])
-    r.mode == ForceHuman and r.rest == ["stride", "summary"]
+    r = Command.split_format_args(["--json", "--human", "summary"])
+    r.mode == ForceHuman and r.rest == ["summary"]
 }
 expect {
-    r = Command.split_format_args(["stride", "summary"])
-    r.mode == Auto and r.rest == ["stride", "summary"]
+    r = Command.split_format_args(["summary"])
+    r.mode == Auto and r.rest == ["summary"]
 }
 # `--` ends flag parsing: a literal "--json" argument survives intact, and the
 # terminator itself never reaches the command parser
 expect {
-    r = Command.split_format_args(["stride", "skip", "5", "--", "--json"])
-    r.mode == Auto and r.rest == ["stride", "skip", "5", "--json"]
+    r = Command.split_format_args(["skip", "5", "--", "--json"])
+    r.mode == Auto and r.rest == ["skip", "5", "--json"]
 }
 expect {
-    r = Command.split_format_args(["stride", "--json", "skip", "5", "--", "--human"])
-    r.mode == ForceJson and r.rest == ["stride", "skip", "5", "--human"]
+    r = Command.split_format_args(["--json", "skip", "5", "--", "--human"])
+    r.mode == ForceJson and r.rest == ["skip", "5", "--human"]
 }
-expect match Command.parse(["stride", "pace-curve"]) { Ok(PaceCurve(90, "")) => True  _ => False }
-expect match Command.parse(["stride", "cs"]) { Ok(PaceCurve(90, "")) => True  _ => False }
-expect match Command.parse(["stride", "pace-curve", "60", "Run"]) { Ok(PaceCurve(60, "Run")) => True  _ => False }
+expect match Command.parse(["pace-curve"]) { Ok(PaceCurve(90, "")) => True  _ => False }
+expect match Command.parse(["cs"]) { Ok(PaceCurve(90, "")) => True  _ => False }
+expect match Command.parse(["pace-curve", "60", "Run"]) { Ok(PaceCurve(60, "Run")) => True  _ => False }

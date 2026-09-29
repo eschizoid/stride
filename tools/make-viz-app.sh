@@ -23,8 +23,8 @@ APP="$APP_DIR/Stride.app"
 C="$APP/Contents"
 
 echo "building the viz binary ($ROC_VIZ)..."
-# through roc-viz.sh for the same reason every CI viz job is: roc-ray declares
-# an older compiler than stride pins, and roc exits non-zero on that warning
+# through roc-viz.sh for the same reason every CI viz job is: the wrapper is
+# where the viz's assertion-count pins live, and it carries roc's exit code
 ROC="$ROC_VIZ" sh tools/roc-viz.sh build src/viz/main.roc --output="$WORK/stride-viz" --opt=dev
 
 mkdir -p "$C/MacOS" "$C/Resources"

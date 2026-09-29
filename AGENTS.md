@@ -57,7 +57,7 @@ sh tools/adapter-fixtures.sh # every strength-notes adapter is registered, in pi
 sh tools/command-claims.sh # commands the docs name vs the binary's own table (needs ./stride)
 just layer-check           # every engine import points down the layer table (ADR 0016)
 just pin-check             # every workflow nightly-tag site agrees with the two compiler pins
-just viz-check             # type-check the window through the pin-warning-tolerant wrapper
+just viz-check             # type-check the window on the viz nightly, through the count-pinning wrapper
 just viz-test              # the window's expects + assertion-count pins, on the viz nightly
 just issue-claims          # issue-state claims in comments (needs `gh` auth)
 ```
@@ -88,7 +88,7 @@ nightlies: the ENGINE pin is the default in `.github/actions/setup-roc/action.ym
 - A failed build leaves a stale binary that e2e would happily "pass" against; `just
   test` orders steps to prevent this. Don't run `just e2e` after a failed build.
 - Toolchain: the new (Zig) compiler, pinned by exact nightly tag (engine and viz
-  pins: see *Compiler pins* under Code conventions) · basic-cli **0.22** · builtin
+  pins: see *Compiler pins* under Code conventions) · basic-cli **0.23** · builtin
   JSON. `~/.local/bin/roc` is a SYMLINK to the engine nightly; a bare `roc` in the
   justfile rides it — pin the explicit path in anything that must not depend on that
   link.
@@ -298,7 +298,7 @@ These are measured toolchain behaviors, not style opinions.
 
 ### Platform APIs
 
-- **Verify against the docs before writing** (basic-cli 0.22 docs, or package source in
+- **Verify against the docs before writing** (basic-cli 0.23 docs, or package source in
   `~/.cache/roc/packages/`) — alpha APIs drift.
 - **`Sqlite.query!` on a row that may not exist fails the command.** Use `query_many!`
   and match the empty list — this is how config loading must read any possibly-absent
