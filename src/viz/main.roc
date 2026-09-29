@@ -1476,29 +1476,23 @@ update! = |model0, program_input| {
 				List.fold(List.map_with_index(model.days, |dy, di| { dy, di }), -2, |acc, x| if x.dy == directive.cursor_day (match U64.to_i64_try(total2 - 1 - x.di) { Ok(cb2) => cb2
 					Err(_) => acc }) else acc)
 			} else -2
-		# the frame-true pre-click cursor: arrows and directives applied, row
-		# clicks not yet - THIS is the scroll state the table renders from,
-		# so click and hover hit-tests share it
+		# the pre-click cursor: arrows and directives applied, row
+		# clicks not yet - the scroll state a click resolves against; the
+		# hover resolves against the post-click state it is about to draw
 		cursor_pre = if cursor_dir >= 0 cursor_dir else cursor
 		row_hit =
-			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and (if model.detail_day != "" (m.x < Table.panel_edge(win.w)) else m.x < win.w - 40.0) and m.y >= 134.0 {
+			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and m.x < Table.table_edge(win.w, model.detail_day) and m.y >= Table.rows_top {
 				total = List.len(model.data)
-				w = Table.window_of(total, cursor_pre, Table.rows_fit(win.h))
-				kept = w.kept
-				rowcount = w.rows
-				# floored, not rounded: rounding flips to the NEXT row past a
-				# row's midline and made lower-half clicks select the neighbor
-				ri = match F32.round_to_u64_try(F32.div_floor_by(m.y - 134.0, 24.0) + 0.1) {
-					Ok(r) => r
-					Err(_) => 99
+				# the page laid out for the pre-click state: rows have their own heights, so the
+				# hit is looked up by span rather than divided out of a pitch
+				match Table.row_at(Table.page_for(model, cursor_pre, model.detail_day), m.y) {
+					Row(dayidx) =>
+						match U64.to_i64_try(total - 1 - dayidx) {
+							Ok(cb) => { hit: Bool.True, cb }
+							Err(_) => { hit: Bool.False, cb: -1 }
+						}
+					None => { hit: Bool.False, cb: -1 }
 				}
-				if ri < rowcount and total > 0 {
-					dayidx = kept - rowcount + ri
-					match U64.to_i64_try(total - 1 - dayidx) {
-						Ok(cb) => { hit: Bool.True, cb }
-						Err(_) => { hit: Bool.False, cb: -1 }
-					}
-				} else { hit: Bool.False, cb: -1 }
 			} else { hit: Bool.False, cb: -1 }
 		# a clicked row opens the day's detail panel in place (same row again
 		# closes it); the crosshair follows so tabbing to the board lines up
@@ -1678,8 +1672,8 @@ update! = |model0, program_input| {
 		# per-chip, not one wide band: the 8px gaps between chips are not
 		# clickable and must not claim the pointer
 		over_chip = (view2 == 0 or view2 == 1) and m.y >= 64.0 and m.y <= 86.0 and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0))
-		row_count = Table.window_of(List.len(model.data), cursor2, Table.rows_fit(win.h)).rows
-		over_row = view2 == 3 and m.x >= 36.0 and (if detail_day2 != "" (m.x < Table.panel_edge(win.w)) else m.x < win.w - 40.0) and m.y >= 134.0 and m.y < 134.0 + U64.to_f32(row_count) * 24.0
+		over_row = view2 == 3 and m.x >= 36.0 and m.x < Table.table_edge(win.w, detail_day2) and (match Table.row_at(Table.page_for(model, cursor2, detail_day2), m.y) { Row(_) => Bool.True
+			None => Bool.False })
 		over_nav = m.y >= 30.0 and m.y <= 54.0 and (List.fold(List.map_with_index(model.nav, |nv3, vi3| { nv3, vi3 }), Bool.False, |acc, x| {
 			nx3 = win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.vi3) * nav_pitch
 			if m.x >= nx3 and m.x <= nx3 + nav_width Bool.True else acc
