@@ -43,8 +43,8 @@ printf '%s\n' "$out"
 # the pins for a one-off, never disable them. Adding or removing an
 # assertion means updating the matching pin ON PURPOSE.
 case "${1:-}" in test)
-  want="${EXPECT_TESTS:-167}"
-  want_viz="${EXPECT_VIZ_ASSERTS:-150}"
+  want="${EXPECT_TESTS:-173}"
+  want_viz="${EXPECT_VIZ_ASSERTS:-156}"
   have_viz=$(grep -ch '^[[:space:]]*\(expect\|and \)' src/viz/*.roc 2>/dev/null | awk '{s+=$1} END {print s+0}')
   if [ "$have_viz" != "$want_viz" ]; then
     echo "roc-viz: src/viz declares $have_viz assertion lines (expect + and), the pin says $want_viz - update the pin ON PURPOSE or restore the assertion" >&2
@@ -63,7 +63,7 @@ case "${1:-}" in test)
   ;;
 esac
 
-printf '%s\n' "$out" | grep -q '0 errors and 1 warning' || {
+printf '%s\n' "$out" | grep -Eq '(^|[^0-9])0 errors and 1 warning' || {
   echo "roc-viz: refusing to tolerate this - it is not the lone pin-mismatch warning" >&2
   exit "$rc"
 }
