@@ -9,9 +9,9 @@ import Wrap
 Table :: [].{
 	# The artifact's accessibility table, native: as many recent days as the
 	# window height holds, as numbers, with the day's session names beside
-	# them. Cells draw as immediate text — a page of short strings a frame is
-	# nothing to raylib, and preparing them would double the Model for a
-	# static view.
+	# them. Cells draw as immediate text, and the page is laid out afresh
+	# each frame from a few dozen short strings: cheap, and it keeps a
+	# static view out of the Model.
 
 	# where the open detail panel begins, minus breathing room - THE boundary
 	# every table element and every hit-test shares, at any window width
@@ -22,8 +22,9 @@ Table :: [].{
 	}
 
 	# how many rows this window height holds at the base height: the ceiling
-	# on a page, before any row grows. Never fewer than 5, so a tiny window
-	# still shows something scrollable.
+	# on a page, before any row grows. Never below 5, so the scroll floor
+	# has rows to work with in a tiny window; the height gate decides how
+	# many of them actually draw.
 	rows_fit : F32 -> U64
 	rows_fit = |win_h| {
 		match F32.round_to_u64_try(F32.div_floor_by(rows_avail(win_h), row_base)) {
@@ -39,8 +40,6 @@ Table :: [].{
 	rows_top : F32
 	rows_top = 134.0
 
-	# a row is one line of cells; a session note that wraps adds a line
-	# under the first, and the row grows by line_h for each
 	row_base : F32
 	row_base = 24.0
 
@@ -51,11 +50,15 @@ Table :: [].{
 	note_lines_max : U64
 	note_lines_max = 2
 
+	# a row is one line of cells; a session note that wraps to a second
+	# line grows the row by line_h. Lines are capped at note_lines_max,
+	# so a row is never taller than that many lines.
 	row_h : U64 -> F32
 	row_h = |lines| row_base + U64.to_f32(if lines > 0 (lines - 1) else 0) * line_h
 
 	# where the table stops on the right: the open detail panel's edge, or
-	# the window's - THE boundary every element and every hit-test shares
+	# the window's. The draw and both hit-tests read this one value; cells
+	# and the session column keep 60px clear of it.
 	table_edge : F32, Str -> F32
 	table_edge = |win_w, detail_day| if detail_day != "" (panel_edge(win_w)) else win_w - 40.0
 
@@ -65,20 +68,32 @@ Table :: [].{
 	note_budget = |edge|
 		match F32.round_to_u64_try(F32.div_floor_by(edge - session_x - 10.0, 8.0)) {
 			Ok(b) => if b < 12 (12.U64) else b
-			# failure means cramped, not roomy - clamp to the floor
+			# a negative span - the column sits right of the edge - lands here
 			Err(_) => 12.U64
 		}
 
-	# the session column's lines for a day, through the rule every surface
-	# that shows the athlete's own words shares
-	note_lines : List({ day : Str, note : Str }), Str, U64 -> List(Str)
-	note_lines = |notes, day, budget| Wrap.fit(Db.note_for(notes, day), budget, note_lines_max)
+	# the session column draws only when it keeps 60px clear of the edge;
+	# with the detail panel open on a narrow window it does not
+	note_shown : F32 -> Bool
+	note_shown = |edge| session_x < edge - 60.0
+
+	# the session column's lines for a day, through the rule the form
+	# board's card and the plan card share; none when the column is hidden,
+	# so a row never grows for lines nothing paints
+	note_lines : List({ day : Str, note : Str }), Str, F32 -> List(Str)
+	note_lines = |notes, day, edge|
+		if note_shown(edge) (Wrap.fit(Db.note_for(notes, day), note_budget(edge), note_lines_max)) else []
+
+	# a row's height for a day at a table edge: THE rule page_for lays rows
+	# out by, so an expect can pin it without a Model
+	row_h_for : List({ day : Str, note : Str }), Str, F32 -> F32
+	row_h_for = |notes, day, edge| row_h(List.len(note_lines(notes, day, edge)))
 
 	# THE table-window math: one implementation, used by render, row clicks
-	# and hover alike, so hit-tests can never drift from what draws.
+	# and hover alike: one geometry, fed the pre-click state of the frame.
 	#
 	# cursor counts days back from the newest. A page is the newest rows that
-	# fit above the hint, oldest at the top: it ends at `kept` (the series
+	# fit above the hint, oldest at the top: it ends before index `kept` (the series
 	# minus the scroll) and takes rows backward from there while their
 	# heights fit `avail` and their count fits `fit`. Rows have different
 	# heights, so the scroll floor is not a count: the last page must still
@@ -114,12 +129,13 @@ Table :: [].{
 	}
 
 	# the page this model renders for a scroll and panel state - the SAME
-	# call the draw makes, so a click lands on the row the eye sees
+	# geometry the draw uses, so a click lands on the row the eye sees when
+	# the caller passes the state the frame drew with
 	page_for : Ui.Model, I64, Str -> Page
 	page_for = |model, cursor, detail_day| {
-		budget = note_budget(table_edge(model.win.w, detail_day))
+		edge = table_edge(model.win.w, detail_day)
 		h_of = |i| match List.get(model.days, i) {
-			Ok(d) => row_h(List.len(note_lines(model.day_notes, d, budget)))
+			Ok(d) => row_h_for(model.day_notes, d, edge)
 			Err(_) => row_base
 		}
 		page_of(List.len(model.data), cursor, rows_fit(model.win.h), rows_avail(model.win.h), h_of)
@@ -158,9 +174,10 @@ Table :: [].{
 		total = List.len(model.data)
 		page = page_for(model, model.cursor, model.detail_day)
 		kept = page.kept
-		budget = note_budget(edge)
 		# no rows, no arithmetic on them — the indicator only speaks over data
 		if total > 0 {
+			# a page over data always holds its newest row, so the arm below is
+			# only the match being total
 			first = match List.first(page.rows) { Ok(r) => r.i + 1
 				Err(_) => kept }
 			pos_note = "days ${U64.to_str(first)}-${U64.to_str(kept)} of ${U64.to_str(total)}"
@@ -190,8 +207,8 @@ Table :: [].{
 			})
 			# the session column: the day's names, wrapped through the shared
 			# rule; the row is already as tall as these lines need
-			if session_x < edge - 60.0 {
-				List.for_each!(List.map_with_index(note_lines(model.day_notes, day, budget), |ln, li| { ln, li }), |x|
+			if note_shown(edge) {
+				List.for_each!(List.map_with_index(note_lines(model.day_notes, day, edge), |ln, li| { ln, li }), |x|
 					Text.from(x.ln, model.font).size(13).draw!(frame, { pos: { x: session_x, y: ry + U64.to_f32(x.li) * line_h }, color: Theme.ink_muted, align: (Top, Left) }))
 			}
 		})
@@ -303,4 +320,17 @@ expect {
 	p = { back: 0.U64, kept: 2.U64, rows: [{ i: 0.U64, top: 134.0, h: 24.0 }, { i: 1.U64, top: 158.0, h: 40.0 }] }
 	Table.row_at(p, 140.0) == Row(0) and Table.row_at(p, 190.0) == Row(1)
 	and Table.row_at(p, 198.0) == None and Table.row_at(p, 100.0) == None
+}
+
+# a hidden session column adds no height: with the detail panel open on a
+# 1100px-wide window the column is clear of nothing, so a two-activity day
+# is one line; at full width the same day wraps and the row grows
+expect {
+	notes = [{ day: "2026-01-01", note: "45 min Full Body Strength with Rad Lopez + Evening Ride around the lake" }]
+	hidden = Table.table_edge(1100.0, "2026-01-01")
+	shown = Table.table_edge(1100.0, "")
+	!(Table.note_shown(hidden)) and Table.note_shown(shown)
+	and (Table.row_h_for(notes, "2026-01-01", hidden) - 24.0).abs() < 0.001
+	and (Table.row_h_for(notes, "2026-01-01", shown) - 40.0).abs() < 0.001
+	and Table.note_lines(notes, "2026-01-01", hidden) == []
 }

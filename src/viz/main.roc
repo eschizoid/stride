@@ -1477,13 +1477,13 @@ update! = |model0, program_input| {
 					Err(_) => acc }) else acc)
 			} else -2
 		# the frame-true pre-click cursor: arrows and directives applied, row
-		# clicks not yet - THIS is the scroll state the table renders from,
-		# so click and hover hit-tests share it
+		# clicks not yet - the scroll state a click resolves against; the
+		# hover resolves against the post-click state it is about to draw
 		cursor_pre = if cursor_dir >= 0 cursor_dir else cursor
 		row_hit =
 			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and m.x < Table.table_edge(win.w, model.detail_day) and m.y >= Table.rows_top {
 				total = List.len(model.data)
-				# the page the frame drew: rows have their own heights, so the
+				# the page laid out for the pre-click state: rows have their own heights, so the
 				# hit is looked up by span rather than divided out of a pitch
 				match Table.row_at(Table.page_for(model, cursor_pre, model.detail_day), m.y) {
 					Row(dayidx) =>
