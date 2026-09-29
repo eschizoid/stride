@@ -258,7 +258,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 36
+    schema_version = 37
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -459,6 +459,9 @@ Db :: [].{
         # it — a fresh or old db must gain the column before the view names it.
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.plan_current_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.plan_current, bindings: [] })?
+        # v37: the series clock BEFORE week_bounds, which reads it
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.series_clock_drop, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.series_clock, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.week_bounds_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.week_bounds, bindings: [] })?
         # v30: the per-activity intensity classification, shared with the viz
@@ -488,6 +491,11 @@ Db :: [].{
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.strength_coverage_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.strength_coverage, bindings: [] })?
         # v33: the same quantity for every family, with its kind beside it
+        # v37: the family-month keys BEFORE the two views that join them
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_family_month_drop, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_family_month, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_family_load_drop, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_family_load, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_threshold_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_threshold, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_planned_sessions_date_id ON planned_sessions (target_date, id)", bindings: [] })

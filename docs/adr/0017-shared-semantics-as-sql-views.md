@@ -183,3 +183,17 @@ repo pins.
 The convergence changes nothing else in this ADR. The package never needed it,
 the views still hold every definition about rows, and each binary still keeps
 its own driver.
+
+## Update 2026-09-29: the series clock and the family-month keys
+
+Two more expressions the window used to copy are views. `series_clock`
+answers `today` (the last analyzed day, or the wall clock while
+`daily_load` is empty), `last_day` and `stale_days`; `week_bounds` derives
+its Monday from it, and the window's event tiles, heat ring and staleness
+badge anchor on it instead of each restating `COALESCE(MAX(day), ...)`.
+`activity_family_month` names each activity's family and calendar month
+once, `monthly_family_load` sums load and sessions on those keys for the
+window's career ground, and `monthly_threshold` keys both its arms on the
+same view, so a change to the family rule reaches every consumer at once.
+The e2e suite reads the window's queries out of its source and compares
+each view with the expression it replaced.

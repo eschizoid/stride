@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1223)?
+    checks_ran_exactly!(1227)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7071,6 +7071,21 @@ b_cross_surface! = |ctx| {
     rung_list = Str.trim(sql!(ctx.db, "SELECT group_concat(rung || '=' || secs) FROM (SELECT rung, secs FROM power_ladder_rungs ORDER BY secs);"))
     unpivot_list = Str.trim(sql!(ctx.db, "SELECT group_concat(rung || '=' || secs) FROM (SELECT DISTINCT rung, secs FROM activity_power_ladder ORDER BY secs);"))
     check!("the rung view and the unpivot name the same rungs (${rung_list})", !Str.is_empty(rung_list) and rung_list == unpivot_list)?
+    # the series clock and the family-month keys are views the window reads
+    # rather than expressions it copies: each window query is read out of
+    # src/viz/Db.roc so the text this checks IS the text the window runs, and
+    # the view's answer is compared with the expression it replaced
+    stale_q = Str.trim(sh!("grep -oE 'query: \"SELECT stale_days AS st FROM series_clock\"' src/viz/Db.roc | sed 's/^query: \"//; s/\"$//'"))
+    clock_pair = Str.trim(sql!(ctx.db, "SELECT (SELECT today FROM series_clock) || '|' || COALESCE(MAX(day), date('now', 'localtime')) || '|' || (SELECT mon FROM week_bounds) || '|' || date(COALESCE(MAX(day), date('now', 'localtime')), '-6 days', 'weekday 1') FROM daily_load;"))
+    check!("the window's staleness query, read from its source, reads the series clock; the clock's today and week_bounds' Monday equal the expressions they replaced (${clock_pair})", !Str.is_empty(stale_q) and (match Str.split_on(clock_pair, "|") { [a, b, c, d] => a == b and c == d  _ => Bool.False }))?
+    anchor_count = Str.trim(sh!("grep -c \"WITH anchor AS (SELECT today FROM series_clock)\" src/viz/Db.roc"))
+    check!("every window anchor on the series' today reads the clock view - three loaders, none copying MAX(day) (${anchor_count})", anchor_count == "3" and Str.trim(sh!("grep -c \"COALESCE(MAX(day)\" src/viz/Db.roc")) == "0")?
+    fam_q = Str.trim(sh!("grep -oE 'query: \"SELECT CAST\\(fam AS TEXT\\) AS f[^\"]*monthly_family_load[^\"]*\"' src/viz/Db.roc | sed 's/^query: \"//; s/\"$//'"))
+    fam_view = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(f || '/' || m || '=' || ld || ':' || n), '') FROM (${fam_q});"))
+    fam_raw = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(f || '/' || m || '=' || ld || ':' || n), '') FROM (SELECT CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS f, substr(CAST(a.start_local AS TEXT), 1, 7) AS m, CAST(ROUND(COALESCE(SUM(am.tss), 0)) AS INTEGER) AS ld, COUNT(*) AS n FROM activities a JOIN activity_metrics am ON am.activity_id = a.id GROUP BY f, m ORDER BY f, m);"))
+    check!("the window's family-month query, read from its source, reads the shared view and equals the grouping expression it replaced, with rows (${fam_view})", !Str.is_empty(fam_q) and !Str.is_empty(fam_view) and fam_view == fam_raw)?
+    key_pair = Str.trim(sql!(ctx.db, "SELECT (SELECT COUNT(*) FROM monthly_threshold) || '|' || (SELECT COUNT(*) FROM (SELECT DISTINCT fam, month FROM activity_family_month fm JOIN activity_metrics m ON m.activity_id = fm.activity_id WHERE COALESCE(m.ftp_used, 0) > 0 OR COALESCE(m.threshold_pace_used, 0) > 0));"))
+    check!("monthly_threshold keys its spine on the same family-month view: one threshold row per keyed month (${key_pair})", (match Str.split_on(key_pair, "|") { [a, b] => a == b and a != "0"  _ => Bool.False }))?
     # a partial ladder: with every session's long rungs unrecorded, the
     # unpivot loses three rungs and the record book must not - the rows
     # stay, at zero, so the index-spaced ladder never shrinks. The saved
