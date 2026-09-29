@@ -236,7 +236,8 @@ Board :: [].{
 						# series, then what was actually done that day - wrapped, so the
 						# card grows with the day's activity names, up to four lines,
 						# then the shared rule cuts; flipped left when the cursor nears
-						# the right edge. Size-11 mono glyphs advance ~6.7px.
+						# the right edge. Size-11 glyphs of the default font advance
+						# 6.7px on average, the value the shared rule pins.
 						tip_w = 240.0
 						note_lines = Wrap.fit(Db.note_for(model.day_notes, day), Wrap.cols_for(tip_w - 20.0, 6.7), 4)
 						tip_h = 107.0 + U64.to_f32(List.len(note_lines)) * 14.0 + 9.0

@@ -6,15 +6,17 @@ Wrap :: [].{
 	# card and the table's session column, the coach's prescription in the
 	# plan card) go through here, so one rule decides what gets cut.
 
-	# greedy word wrap: every line at most n bytes. Words are kept whole
-	# where they fit and split at a code point boundary where they do not,
-	# so a device-written token with no spaces still stays inside its
-	# column. Bytes stand in for columns: a multi-byte name wraps early,
-	# never past the edge. Runs of spaces count as one.
+	# greedy word wrap: every line at most n bytes, except a single code
+	# point wider than n, which is taken whole so the split makes progress.
+	# Words are kept whole where they fit and split at a code point boundary
+	# where they do not, so a device-written token with no spaces still
+	# stays inside its column. Bytes stand in for columns: a multi-byte name
+	# wraps early, never past the edge. A run of spaces is one separator, and
+	# a leading or trailing run is dropped.
 	wrap : Str, U64 -> List(Str)
 	wrap = |s, n| {
 		words = List.keep_if(Str.split_on(s, " "), |w| w != "")
-		pieces = List.join_map(words, |w| chunk(w, n))
+		pieces = List.keep_if(List.join_map(words, |w| chunk(w, n)), |p| p != "")
 		folded = List.fold(pieces, { lines: [], cur: "" }, |acc, w|
 			if acc.cur == "" { lines: acc.lines, cur: w }
 			else if Str.count_utf8_bytes(acc.cur) + 1 + Str.count_utf8_bytes(w) <= n { lines: acc.lines, cur: "${acc.cur} ${w}" }
@@ -23,7 +25,9 @@ Wrap :: [].{
 	}
 
 	# a word as pieces of at most n bytes, each ending on a code point
-	# boundary; n of 0 reads as 1 so the split always makes progress
+	# boundary, except a first code point wider than n, which is taken whole;
+	# n of 0 reads as 1 so the split always makes progress. The split can
+	# leave an empty last piece, which wrap drops.
 	chunk : Str, U64 -> List(Str)
 	chunk = |w, n| {
 		bytes = Str.to_utf8(w)
@@ -38,10 +42,10 @@ Wrap :: [].{
 		}
 	}
 
-	# the largest cut at or before `at` that does not land inside a code
-	# point: a UTF-8 continuation byte has its top two bits set to 10, so
-	# the cut backs off past every one of them, down to 0 when the first
-	# code point alone is wider than `at`
+	# the largest cut at or before `at`, an index into `bytes`, that does not
+	# land inside a code point: a UTF-8 continuation byte has its top two
+	# bits set to 10, so the cut backs off past every one of them, down to 0
+	# when the first code point alone is wider than `at`
 	boundary : List(U8), U64 -> U64
 	boundary = |bytes, at|
 		List.fold(List.map_with_index(List.repeat({}, at + 1), |_u, k| at - k), at + 1, |acc, i|
@@ -52,6 +56,8 @@ Wrap :: [].{
 				Err(_) => i
 			})
 
+	# the UTF-8 lead-byte table: a code point is 1 byte below 0x80, 2 below
+	# 0xE0, 3 below 0xF0, else 4
 	first_point_len : List(U8) -> U64
 	first_point_len = |bytes|
 		match List.first(bytes) {
@@ -96,9 +102,9 @@ expect Wrap.wrap("abcdefghijkl", 5) == ["abcde", "fghij", "kl"]
 expect Wrap.wrap("aa supercalifragilistic", 10) == ["aa", "supercalif", "ragilistic"]
 expect Wrap.wrap("one  two ", 4) == ["one", "two"]
 expect Wrap.wrap("Tréning à vélo", 5) == ["Trén", "ing", "à", "vélo"]
-expect Wrap.cols_for(240.0, 6.6) == 36
+expect Wrap.cols_for(240.0, 6.7) == 35
 expect Wrap.cols_for(220.0, 6.7) == 32
-expect Wrap.cols_for(10.0, 6.6) == 24
+expect Wrap.cols_for(10.0, 6.7) == 24
 expect Wrap.fit("one two three four", 9, 4) == ["one two", "three", "four"]
 expect Wrap.fit("one two three four", 9, 2) == ["one two", "three..."]
 expect Wrap.fit("one two three four", 9, 0) == ["one tw..."]
