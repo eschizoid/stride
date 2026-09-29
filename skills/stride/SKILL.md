@@ -306,7 +306,10 @@ polls it about once a second, and every row reaches a status you can read back.
    the window has never run against this database, and there is nothing to steer.
 2. **Steer with one INSERT.** `sqlite3 ~/.stride/db.sqlite "INSERT INTO viz_directives
    (view, trace_id) VALUES (2, 20355183143);"` — every column is optional and NULL
-   means leave that alone, so a directive names only what it changes. A session is
+   means leave that alone, so a directive names only what it changes. The table
+   exists once the window has run against this database (its first launch creates
+   it), which step 1 already established; on a database the window never touched
+   the INSERT fails with "no such table", and there is nothing to steer. A session is
    named exactly by its activity id (`trace_id`, `ghost_id`; read the id from
    `stride activities --json`) or loosely by its day (`trace_day`, `ghost_day`, which
    pick that day's newest session); the id wins when both are given. `ghost_day =
