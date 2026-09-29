@@ -323,7 +323,7 @@ run_all! = || {
     # date against a Chicago binary — a whole day apart, and `analyze` regenerates
     # daily_load to the BINARY's today, so the series came up one row short (#200).
     # CI only saw it when a run landed in that window.
-    tz = "America/Chicago"
+    tz = fixture_tz
     today = need("date +%F", Str.trim(sh!("TZ=${tz} date +%F")))?
     d1 = need("date -3d", Str.trim(sh!("TZ=${tz} date -v-3d +%F 2>/dev/null || TZ=${tz} date -d '3 days ago' +%F")))?
     d2 = need("date -1d", Str.trim(sh!("TZ=${tz} date -v-1d +%F 2>/dev/null || TZ=${tz} date -d '1 day ago' +%F")))?
@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1211)?
+    checks_ran_exactly!(1217)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7058,6 +7058,62 @@ b_cross_surface! = |ctx| {
     cli_curve = strjq!(ctx, ["power-curve", "3650", "Ride"], "[.data.points[] | select(.watts > 0) | (.dur_s | tostring) + \":\" + ((.watts * 10 | round) | tostring)] | join(\",\")")
     view_curve = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(s), '') FROM (SELECT secs || ':' || CAST(ROUND(MAX(watts) * 10) AS INTEGER) AS s FROM activity_power_ladder WHERE sport_family = 'Ride' AND start_local >= date('${ctx.today}', '-3650 days') GROUP BY rung, secs ORDER BY secs);"))
     check!("the CLI power curve equals the ladder view at every rung (${cli_curve})", !Str.is_empty(cli_curve) and cli_curve == view_curve)?
+    # the window's record book joins the Ride record per rung onto the
+    # engine's power_ladder_rungs view. Its query is read out of src/viz/Db.roc
+    # rather than copied here, so the text this runs IS the text the window
+    # runs; it must equal the CLI's all-time Ride curve at every rung the CLI
+    # reports, and the rung list it stands on must equal the unpivot's - a
+    # rung added to one and not the other fails here by name
+    prs_q = Str.trim(sh!("grep -oE 'query: \"WITH best AS[^\"]*power_ladder_rungs[^\"]*\"' src/viz/Db.roc | sed 's/^query: \"//; s/\"$//'"))
+    book = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(secs || ':' || w), '') FROM (${prs_q});"))
+    cli_book = strjq!(ctx, ["power-curve", "3650", "Ride"], "[.data.points[] | (.dur_s | tostring) + \":\" + ((.watts | round) | tostring)] | join(\",\")")
+    check!("the window's record-book query, read from its source, equals the CLI's all-time Ride curve at every rung (${book})", !Str.is_empty(prs_q) and !Str.is_empty(book) and book == cli_book)?
+    rung_list = Str.trim(sql!(ctx.db, "SELECT group_concat(rung || '=' || secs) FROM (SELECT rung, secs FROM power_ladder_rungs ORDER BY secs);"))
+    unpivot_list = Str.trim(sql!(ctx.db, "SELECT group_concat(rung || '=' || secs) FROM (SELECT DISTINCT rung, secs FROM activity_power_ladder ORDER BY secs);"))
+    check!("the rung view and the unpivot name the same rungs (${rung_list})", !Str.is_empty(rung_list) and rung_list == unpivot_list)?
+    # a partial ladder: with every session's long rungs unrecorded, the
+    # unpivot loses three rungs and the record book must not - the rows
+    # stay, at zero, so the index-spaced ladder never shrinks. The saved
+    # values live in a REAL table, not a TEMP one: every sql! is its own
+    # sqlite3 process, and a temp table dies with the process that made it,
+    # so a temp-table save leaves the restore with nothing to restore
+    _ = sql!(ctx.db, "CREATE TABLE cs_long AS SELECT activity_id, best_600s_w, best_20min_w, best_3600s_w FROM activity_metrics; UPDATE activity_metrics SET best_600s_w = NULL, best_20min_w = NULL, best_3600s_w = NULL;")
+    short_unpivot = Str.trim(sql!(ctx.db, "SELECT COUNT(DISTINCT rung) FROM activity_power_ladder;"))
+    short_book = Str.trim(sql!(ctx.db, "SELECT COUNT(*) || '/' || SUM(CASE WHEN w = 0 THEN 1 ELSE 0 END) FROM (${prs_q});"))
+    _ = sql!(ctx.db, "UPDATE activity_metrics SET best_600s_w = (SELECT best_600s_w FROM cs_long WHERE cs_long.activity_id = activity_metrics.activity_id), best_20min_w = (SELECT best_20min_w FROM cs_long WHERE cs_long.activity_id = activity_metrics.activity_id), best_3600s_w = (SELECT best_3600s_w FROM cs_long WHERE cs_long.activity_id = activity_metrics.activity_id); DROP TABLE cs_long;")
+    check!("with the long rungs unrecorded the unpivot has five rungs and the record book still eight, three at zero (${short_unpivot} / ${short_book})", short_unpivot == "5" and short_book == "8/3")?
+    # the plan strip's week is today's calendar week, the anchor the `week`
+    # command uses, not week_bounds' (the series' last analyzed week): the
+    # done count the window's query yields equals the `week` payload's
+    # count of done rows
+    # a done session is seeded on today so both sides count at least one -
+    # 0 == 0 would hold with either anchor and prove nothing - and removed
+    # after, since later fixtures count sessions by position
+    mon_of_today = "date('${ctx.today}', '-' || ((CAST(strftime('%w','${ctx.today}') AS INTEGER) + 6) % 7) || ' days')"
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance, elevation) VALUES (9502, 'cross-surface done ride', 'Ride', '${ctx.today}T07:00:00Z', 3600, 25000, 0);")
+    cs_done = Str.trim(strjq!(ctx, ["week", "add", "${ctx.today}", "endurance", "cross-surface done", "counted by both surfaces"], ".data.id"))
+    _ = strjq!(ctx, ["complete", cs_done, "9502"], ".data.id")
+    # the two anchors coincide whenever the last analyzed day is in today's
+    # week - six days of seven, since the fixture analyzed yesterday - so the
+    # load frontier is moved a week back for the check and restored after;
+    # week_bounds then names LAST week's Monday and only today's anchor
+    # still counts the seeded session
+    _ = sql!(ctx.db, "CREATE TABLE cs_dl AS SELECT * FROM daily_load WHERE day >= date('${ctx.today}', '-8 days'); DELETE FROM daily_load WHERE day >= date('${ctx.today}', '-8 days');")
+    anchors = Str.trim(sql!(ctx.db, "SELECT (SELECT mon FROM week_bounds) || '|' || ${mon_of_today};"))
+    # the window's own query, read out of its source so the text this runs is
+    # the text the window runs - a loader moved onto week_bounds fails here
+    # by name; its dn column is the strip's numerator. It anchors on
+    # sqlite's localtime, and sql! runs sqlite3 under the fixture zone, so
+    # that localtime and ctx.today name the same day on any machine
+    plan_q = Str.trim(sh!("grep -oE 'query: \"WITH anchor AS \\(SELECT date\\(date\\(.now., .localtime.\\)[^\"]*plan_current[^\"]*\"' src/viz/Db.roc | sed 's/^query: \"//; s/\"$//'"))
+    strip_done = Str.trim(sql!(ctx.db, "SELECT COALESCE(dn, 0) FROM (${plan_q});"))
+    bounds_done = Str.trim(sql!(ctx.db, "WITH anchor AS (SELECT mon FROM week_bounds) SELECT COALESCE(CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER), 0) FROM plan_current, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days');"))
+    week_done = strjq!(ctx, ["week"], "[.data[] | select(.status == \"done\")] | length | tostring")
+    _ = sql!(ctx.db, "INSERT INTO daily_load SELECT * FROM cs_dl; DROP TABLE cs_dl;")
+    check!("with the load frontier a week back the two anchors differ (${anchors})", Str.contains(anchors, "|") and (match Str.split_on(anchors, "|") { [a, b] => a != b  _ => Bool.False }))?
+    check!("the window's plan-strip query, read from its source, counts what the week command counts, with a done session seeded (${strip_done})", !Str.is_empty(plan_q) and strip_done != "0" and strip_done == week_done)?
+    check!("...and week_bounds' anchor would NOT count it, which is why the strip stays on the calendar (${bounds_done})", bounds_done == "0")?
+    _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${cs_done}; DELETE FROM activities WHERE id = 9502;")
     # end-of-week CTL: weekly_ramp's newest week vs the load series on that
     # week's last loaded day, both in thousandths
     wk_ctl = Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(ctl_end * 1000) AS INTEGER) FROM weekly_ramp ORDER BY wk DESC LIMIT 1;"))
@@ -7594,9 +7650,16 @@ sh! = |script|
 # (sqlite3 reports on stderr, sh! discards stderr AND the exit code, and 199
 # of the call sites discard the return) — it surfaced later as an
 # unrelated-looking assertion about state.
+# the fixture's one timezone, read by the context builder for ctx.today and
+# by sql! for every sqlite3 child, so a query the window runs on
+# date('now', 'localtime') names the same day the fixture calls today on any
+# machine - a UTC runner's evening is not the fixture's tomorrow
+fixture_tz : Str
+fixture_tz = "America/Chicago"
+
 sql! : Str, Str => Str
 sql! = |db, query|
-    sh!("sqlite3 -cmd '.timeout 5000' '${db}' 2>'${sqlfail_log}.err' <<'SQLHEREDOC' || { echo \"sqlite3 failed on ${db}:\" >> '${sqlfail_log}'; cat '${sqlfail_log}.err' >> '${sqlfail_log}'; }\n${query}\nSQLHEREDOC")
+    sh!("TZ=${fixture_tz} sqlite3 -cmd '.timeout 5000' '${db}' 2>'${sqlfail_log}.err' <<'SQLHEREDOC' || { echo \"sqlite3 failed on ${db}:\" >> '${sqlfail_log}'; cat '${sqlfail_log}.err' >> '${sqlfail_log}'; }\n${query}\nSQLHEREDOC")
 
 # ONE log for the whole run, at a FIXED path — not `<db>.sqlfail` beside each
 # database, which failed three ways: only a scenario holding that db's path
