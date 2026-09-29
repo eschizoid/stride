@@ -13,8 +13,8 @@ Table :: [].{
 	# each frame from a few dozen short strings: cheap, and it keeps a
 	# static view out of the Model.
 
-	# where the open detail panel begins, minus breathing room - THE boundary
-	# every table element and every hit-test shares, at any window width
+	# where the open detail panel begins, minus breathing room: the panel
+	# draws from it, and table_edge reads it while the panel is open
 	panel_edge : F32 -> F32
 	panel_edge = |win_w| {
 		pw2 = F32.min(480.0, win_w / 2.0 - 36.0)
@@ -68,7 +68,7 @@ Table :: [].{
 	note_budget = |edge|
 		match F32.round_to_u64_try(F32.div_floor_by(edge - session_x - 10.0, 8.0)) {
 			Ok(b) => if b < 12 (12.U64) else b
-			# a negative span - the column sits right of the edge - lands here
+			# defensive: note_shown keeps the span positive before this is read
 			Err(_) => 12.U64
 		}
 
@@ -90,7 +90,8 @@ Table :: [].{
 	row_h_for = |notes, day, edge| row_h(List.len(note_lines(notes, day, edge)))
 
 	# THE table-window math: one implementation, used by render, row clicks
-	# and hover alike: one geometry, fed the pre-click state of the frame.
+	# and hover alike: one geometry. The click feeds it the pre-click state
+	# of the frame, the hover the post-click state, the draw the committed model.
 	#
 	# cursor counts days back from the newest. A page is the newest rows that
 	# fit above the hint, oldest at the top: it ends before index `kept` (the series

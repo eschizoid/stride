@@ -1476,7 +1476,7 @@ update! = |model0, program_input| {
 				List.fold(List.map_with_index(model.days, |dy, di| { dy, di }), -2, |acc, x| if x.dy == directive.cursor_day (match U64.to_i64_try(total2 - 1 - x.di) { Ok(cb2) => cb2
 					Err(_) => acc }) else acc)
 			} else -2
-		# the frame-true pre-click cursor: arrows and directives applied, row
+		# the pre-click cursor: arrows and directives applied, row
 		# clicks not yet - the scroll state a click resolves against; the
 		# hover resolves against the post-click state it is about to draw
 		cursor_pre = if cursor_dir >= 0 cursor_dir else cursor
