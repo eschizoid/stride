@@ -290,6 +290,54 @@ means for every date below. `stride config unset <key> --json` REMOVES a stored 
 | `stride reps [date] --json` | rep-level comparison: the anchor session's detected work blocks beside the same-shaped blocks of earlier sessions, returning `{anchor_date, anchor_activity_id, shape, sport_family, sessions}`. `shape` `{rep_count, mean_dur_s, band_lo_s, band_hi_s, signal}` IS the comparability rule (same sport family, same rep count, same rep-duration band, and the same signal, so watts never sit beside m/s, and never later than the anchor). `matched_total` is how many sessions matched BEFORE the 12-row window, so you can see what you are not seeing. Sessions carry per-rep `avg_signal`/`avg_hr`, `mean_signal` (unweighted mean of the reps), `fade_signal` (last rep minus first, signed), `hr_rise_bpm`+`_known` (known only when BOTH end reps carry HR), and `min_dur_s`/`max_dur_s`/`uniformity`. That last trio is each row's own spread, because whether an uneven session is "the same workout" is YOUR judgment, not the engine's. In-band errors: `no_detected_intervals`, `no_intervals_on_date`, `irregular_anchor` (the anchor's own blocks vary too much to be one repeated shape) |
 | `stride progress [date] [asc\|desc] --json` | `{anchor_date, anchor_scored, groups:[{name, grouped_by, lens, sessions, hidden, hidden_lens, hidden_scope}]}`. `lens` is `ef`\|`speed_hr`\|`rpe` (sport-aware), and each session carries a `score` in that lens. `grouped_by` says which key built the group. `structure` applies when the anchor-day session has detected work segments AND passes the same uniformity gate `reps` applies to anchors (1.6× rep-duration spread). Its mates are found by reps' shape predicate (sport family, exact rep count, mean rep duration band, signal), so the trend spans every session of that WORKOUT whatever the classes were named. It excludes different workouts sharing a name. `name` is the fallback for sessions without detected structure, for irregular anchors reps would refuse as `irregular_anchor`, and for a shaped session whose structure group has nothing the lens can score. Trust a `structure` trend over a `name` trend when both could answer the question. Class names are evidence of neither sameness nor difference. Bare = latest analyzed workout; `desc` lists newest first without changing the trend. **`anchor_scored: false` means a workout anchored on that date could not be scored by its group's lens, so it is absent from that group's `sessions[]` and the trends exclude it**. Do not read the trend as covering the session you asked about. In-band errors: `no_workout_on_date`, `unscorable`, `no_scorable_workouts`. `hidden` is how many sessions of that workout are NOT in `sessions`, withheld either by the group's distance SCOPE (auto-named groups match by distance) or by its LENS (EF needs power+HR, speed/HR needs distance+HR, RPE needs a rating). Read `sessions` as the whole history ONLY when `hidden` is 0. A group holding one session with `hidden: 10` is a workout done eleven times, not once. `hidden_lens` and `hidden_scope` split it by cause and sum to it. The LENS half is USUALLY the fixable one: the session is in this workout's history and the lens cannot score it, so supplying what it needs (a power stream, a heart-rate strap, a rating) normally brings the row into the table. The exception is a session that already carries the field but records an impossible value: an average heart rate outside 35 to 220 bpm is refused by the EF and speed/HR lenses. No amount of wearing the strap changes that, because the strap was worn and the reading itself is broken. Before telling the athlete to go fix their kit, read `avg_hr_scored` on the `progress` sessions. That field is the number the lens divided by, and from #311 it is the in-band mean of the session's HR stream whenever one spans at least half the longer of its own extent and the session's moving time. A stored `avg_hr` outside 35 to 220 is therefore NOT sufficient to conclude the row was refused: if the stream is good the row scores anyway, and the two fields will disagree. The lens refused when `avg_hr_scored` itself is out of band, which happens when there was no usable stream to fall back from. For rows missing from `sessions[]` entirely, `stride activities --json` gives you ids to work from and carries `avg_hr_scored` too (#319), so one call narrows it. An `avg_hr_scored` outside 35 to 220 means those lenses refused the row. NOT the converse: the lenses also need a normalized-power `load_model` (EF) or distance and moving time (speed/HR), so sessions can sit inside the bound and be refused anyway. An in-band reading is necessary, not sufficient. A LARGE gap between the two HR fields says Strava's summary came off a lossy stream; any gap does not: nearly every row differs by a stored rounding, and only a rare few by more than 15 bpm. `progress` gives a count and no ids. If `avg_hr` is already present and implausible, the remedy is repairing or deleting that activity, not equipment. `stride activity <id>`'s `baselines.ef` refuses such a row (`known: false` with `current: 0`), so an absent EF there is corroboration that the reading is broken rather than a verdict about fitness (#305). Corroboration about `avg_hr_scored`, not about `avg_hr`: a session with an impossible stored reading and a healthy stream publishes a normal EF, and that is correct. Note it does NOT tell you which: `hr_known` and `power_known` both still read true on that payload, so an impossible heart rate and a genuinely missing signal look the same. Check `avg_hr` yourself. The SCOPE half is not fixable and is not about the same training: those sessions belong to a different distance bucket of the same auto-named workout. Branch on the split, not on the total. |
 
+## Steering the window (the bus)
+
+The desktop window reads the same database, and you can drive it while you coach —
+put the session you are discussing on screen, ghost the one you are comparing it
+to, park the cursor on the day in question. No sockets: you write a row, the window
+polls it about once a second, and every row reaches a status you can read back.
+
+1. **Discover before you steer.** `stride viz --json` is the window's own statement
+   of what it accepts — the view numbers, every directive field with what it takes,
+   the staleness windows — and the window rewrites it at every launch. Read the
+   field list from there, never from memory or a doc: after an upgrade the list is
+   whatever the LAST window to run published, so the athlete launches the app once
+   and then the vocabulary is current. The in-band error `no_viz_capabilities` means
+   the window has never run against this database, and there is nothing to steer.
+2. **Steer with one INSERT.** `sqlite3 ~/.stride/db.sqlite "INSERT INTO viz_directives
+   (view, trace_id) VALUES (2, 20355183143);"` — every column is optional and NULL
+   means leave that alone, so a directive names only what it changes. A session is
+   named exactly by its activity id (`trace_id`, `ghost_id`; read the id from
+   `stride activities --json`) or loosely by its day (`trace_day`, `ghost_day`, which
+   pick that day's newest session); the id wins when both are given. `ghost_day =
+   'none'` dismisses the ghost. Never name a session by day when the athlete has two
+   that day.
+3. **Verify by id, not by hope.** Read the row back: `SELECT status, error FROM
+   viz_directives WHERE id = <id>`. `applied` means every field was honoured;
+   `applied_partial` means some were refused and `error` names each one with why
+   (`trace_id 1 not in the picker`, `ghost_id 9 is Rowing, the session is Ride`,
+   `range 45 not 30/60/90`); `superseded` means you wrote a newer row before this one
+   was applied; `stale` means it sat unread past the freshness window, because no
+   window was open. A refused field is a fact about the picker or the athlete's data,
+   not a retry — read `error`, then decide.
+4. **Observe with freshness.** The window writes what the athlete is looking at to
+   `viz_focus`, and `stride viz --json` serves it judged: `focus.present` says a row
+   exists, `focus.live` says it is younger than the published `focus_staleness_seconds`.
+   A window closed by the OS leaves its last row behind, so a row that is present but
+   not live is history; `present` false is a clean quit (ESC deletes the row) or a
+   window that never ran. Read `live`, never the timestamp.
+5. **Focus is context, not evidence.** What the athlete is looking at tells you what
+   they are asking about; it tells you nothing about their training. Every claim you
+   make still comes from the query commands. Steer when the athlete would benefit from
+   seeing the thing you are talking about; answer, and do not steer, when they asked a
+   question the numbers settle. A directive is a suggestion to the screen, and the
+   athlete's own clicks win the moment they make them.
+
+`stride viz tick` runs one poll-and-mark cycle of the same lifecycle without a window,
+for tests; it consumes directives, so never run it while a window is open unless you
+mean to take that window's directive from it. The full contract, including the
+lifecycle's every state, is in docs/viz.md.
+
 ## Conventions & gotchas
 
 - **Training weeks run Monday to Sunday by default.** Plan and present weeks with
