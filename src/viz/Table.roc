@@ -4,6 +4,7 @@ import rr.Text
 import Db
 import Theme
 import Ui
+import Wrap
 
 Table :: [].{
 	# The artifact's accessibility table, native: as many recent days as the
@@ -97,9 +98,11 @@ Table :: [].{
 			}
 			day = match List.get(days, x.i) { Ok(d) => d
 				Err(_) => "" }
-			note = Db.note_for(model.day_notes, day)
-			short = if Str.count_utf8_bytes(note) > budget (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(note), budget - 2)), "..")) else note
-			cells = [day, Db.fmt_f(x.r.ctl), Db.fmt_f(x.r.atl), Db.fmt_f(x.r.tsb), Db.fmt_f(x.r.tss), short]
+			# one line per row: the shared rule cuts the note at the column's
+			# budget and ends it in the same ellipsis the form board's card uses
+			note_line = match List.first(Wrap.fit(Db.note_for(model.day_notes, day), budget, 1)) { Ok(l) => l
+				Err(_) => "" }
+			cells = [day, Db.fmt_f(x.r.ctl), Db.fmt_f(x.r.atl), Db.fmt_f(x.r.tsb), Db.fmt_f(x.r.tss), note_line]
 			# the artifact's row separators
 			frame.line!({ start: { x: 36.0, y: ry + 19.0 }, end: { x: edge, y: ry + 19.0 }, stroke: Draw.stroke(Color.with_alpha(Color.white, 14), 1) })
 			List.for_each!(List.map_with_index(cells, |c, j| { c, j }), |cell| {
