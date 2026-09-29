@@ -5,6 +5,7 @@ import Db
 import Hud
 import Theme
 import Ui
+import Wrap
 
 Board :: [].{
 	lo_of : List(Db.Point) -> F32
@@ -232,11 +233,15 @@ Board :: [].{
 							Err(_) => ""
 						}
 						# the artifact's tooltip: date header, then a colored row per
-						# series; flipped left when the cursor nears the right edge
-						tip_w = 168.0
+						# series, then what was actually done that day - wrapped, so the
+						# card grows with the day's activity names instead of cutting
+						# them; flipped left when the cursor nears the right edge
+						tip_w = 240.0
+						note_lines = Wrap.fit(Db.note_for(model.day_notes, day), Wrap.cols_for(tip_w - 20.0, 6.6), 4)
+						tip_h = 107.0 + U64.to_f32(List.len(note_lines)) * 14.0 + 9.0
 						tip_x = if hx + 14.0 + tip_w > win_w - pad_r (hx - 14.0 - tip_w) else hx + 14.0
 						tip_y = pad_t + 8.0
-						frame.rounded_rectangle!({ x: tip_x, y: tip_y, width: tip_w, height: 130.0, radius: 6.0, segments: 6, style: Draw.filled(Theme.card) })
+						frame.rounded_rectangle!({ x: tip_x, y: tip_y, width: tip_w, height: tip_h, radius: 6.0, segments: 6, style: Draw.filled(Theme.card) })
 						Text.from(day, model.font).size(12).draw!(frame, { pos: { x: tip_x + 10.0, y: tip_y + 8.0 }, color: Color.white, align: (Top, Left) })
 						rows = [
 							{ lbl: "Fitness", v: Db.fmt_f(hp.ctl), c: ctl_c },
@@ -249,10 +254,8 @@ Board :: [].{
 							Text.from(x.r.lbl, model.font).size(12).draw!(frame, { pos: { x: tip_x + 10.0, y: ry }, color: x.r.c, align: (Top, Left) })
 							Text.from(x.r.v, model.font).size(12).draw!(frame, { pos: { x: tip_x + tip_w - 10.0, y: ry }, color: Color.white, align: (Top, Right) })
 						})
-						# what was actually done that day — truncated to the card
-						note = Db.note_for(model.day_notes, day)
-						short = if Str.count_utf8_bytes(note) > 24 (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(note), 22)), "..")) else note
-						Text.from(short, model.font).size(11).draw!(frame, { pos: { x: tip_x + 10.0, y: tip_y + 107.0 }, color: ink_faint, align: (Top, Left) })
+						List.for_each!(List.map_with_index(note_lines, |ln, li| { ln, li }), |x|
+							Text.from(x.ln, model.font).size(11).draw!(frame, { pos: { x: tip_x + 10.0, y: tip_y + 107.0 + U64.to_f32(x.li) * 14.0 }, color: ink_faint, align: (Top, Left) }))
 					}
 					Err(_) => {}
 				}
