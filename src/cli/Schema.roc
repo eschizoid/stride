@@ -155,14 +155,29 @@ Schema :: [].{
         \\            ORDER BY (COALESCE(p2.status, 'open') <> 'skipped') DESC, p2.id DESC
         \\            LIMIT 1)
 
+    # the series' own clock: `today` is the last analyzed day, so every
+    # surface that says "as of" or counts days back agrees with the plot,
+    # and the wall clock answers only while daily_load is empty (stride's
+    # time-mode config can shift its day away from localtime, and
+    # daily_load is built against stride's day). `stale_days` is how far
+    # the wall clock is past the series, 0 when analyze ran today.
+    series_clock_drop =
+        \\DROP VIEW IF EXISTS series_clock
+    series_clock =
+        \\CREATE VIEW series_clock AS
+        \\SELECT COALESCE(MAX(day), date('now', 'localtime')) AS today,
+        \\       CAST(MAX(0, CAST(julianday(date('now', 'localtime')) - julianday(COALESCE(MAX(day), date('now', 'localtime'))) AS INTEGER)) AS INTEGER) AS stale_days
+        \\FROM daily_load
+
     # the Monday of the series' current week — the week alignment every
-    # weekly number must share (matches Metrics.weekly_rollup)
+    # weekly number must share (matches Metrics.weekly_rollup) — derived
+    # from the clock so the plot and the week agree on today
     week_bounds_drop =
         \\DROP VIEW IF EXISTS week_bounds
     week_bounds =
         \\CREATE VIEW week_bounds AS
-        \\SELECT date(COALESCE(MAX(day), date('now', 'localtime')), '-6 days', 'weekday 1') AS mon
-        \\FROM daily_load
+        \\SELECT date(today, '-6 days', 'weekday 1') AS mon
+        \\FROM series_clock
 
     # one row per activity: its day, seconds by zone, and seconds by intensity
     # class. easy/moderate/hard prefer the pi_* split (power-derived with
@@ -298,29 +313,59 @@ Schema :: [].{
         \\DROP VIEW IF EXISTS strength_coverage
     strength_coverage =
         \\CREATE VIEW strength_coverage AS
-        \\SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month,
-        \\       CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS fam,
+        \\SELECT fm.month AS month,
+        \\       fm.fam AS fam,
         \\       SUM(CASE WHEN EXISTS (SELECT 1 FROM strength_sets s WHERE s.activity_id = a.id) THEN 1 ELSE 0 END) AS covered,
         \\       COUNT(*) AS total
-        \\FROM activities a
-        \\WHERE COALESCE(a.sport_family, a.sport_type) = 'WeightTraining'
-        \\GROUP BY substr(CAST(a.start_local AS TEXT), 1, 7), COALESCE(a.sport_family, a.sport_type)
+        \\FROM activities a JOIN activity_family_month fm ON fm.activity_id = a.id
+        \\WHERE fm.fam = 'WeightTraining'
+        \\GROUP BY fm.fam, fm.month
+
+    # one row per activity with the two keys every per-family month series
+    # groups on: the family (the stored `sport_family`, falling back to
+    # `sport_type` for a row written before the canonicalizing trigger) and
+    # the calendar month of its local start. strength_coverage,
+    # monthly_threshold and monthly_family_load group on both keys through it,
+    # and monthly_ride_ftp takes its month from it, so a rule changed here
+    # changes every view that joins it at once.
+    activity_family_month_drop =
+        \\DROP VIEW IF EXISTS activity_family_month
+    activity_family_month =
+        \\CREATE VIEW activity_family_month AS
+        \\SELECT id AS activity_id,
+        \\       CAST(COALESCE(sport_family, sport_type) AS TEXT) AS fam,
+        \\       substr(CAST(start_local AS TEXT), 1, 7) AS month
+        \\FROM activities
+
+    # a family's load and session count per month, the window's career
+    # ground per family; `monthly_load` pools every sport for the same months
+    monthly_family_load_drop =
+        \\DROP VIEW IF EXISTS monthly_family_load
+    monthly_family_load =
+        \\CREATE VIEW monthly_family_load AS
+        \\SELECT fm.fam AS fam, fm.month AS month,
+        \\       CAST(ROUND(COALESCE(SUM(m.tss), 0)) AS INTEGER) AS load,
+        \\       COUNT(*) AS sessions
+        \\FROM activity_family_month fm JOIN activity_metrics m ON m.activity_id = fm.activity_id
+        \\GROUP BY fm.fam, fm.month
 
     monthly_threshold_drop =
         \\DROP VIEW IF EXISTS monthly_threshold
     monthly_threshold =
         \\CREATE VIEW monthly_threshold AS
-        \\SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month,
-        \\       CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS fam,
+        \\SELECT fm.month AS month,
+        \\       fm.fam AS fam,
         \\       CASE WHEN COALESCE(m.ftp_used, 0) > 0 THEN 'power' ELSE 'pace' END AS kind,
         \\       CAST(CASE WHEN COALESCE(m.ftp_used, 0) > 0 THEN m.ftp_used ELSE m.threshold_pace_used END AS REAL) AS value
         \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
+        \\JOIN activity_family_month fm ON fm.activity_id = a.id
         \\WHERE (COALESCE(m.ftp_used, 0) > 0 OR COALESCE(m.threshold_pace_used, 0) > 0)
         \\  AND a.id = (SELECT a2.id FROM activities a2
         \\              JOIN activity_metrics m2 ON m2.activity_id = a2.id
+        \\              JOIN activity_family_month fm2 ON fm2.activity_id = a2.id
         \\              WHERE (COALESCE(m2.ftp_used, 0) > 0 OR COALESCE(m2.threshold_pace_used, 0) > 0)
-        \\                AND COALESCE(a2.sport_family, a2.sport_type) = COALESCE(a.sport_family, a.sport_type)
-        \\                AND substr(CAST(a2.start_local AS TEXT), 1, 7) = substr(CAST(a.start_local AS TEXT), 1, 7)
+        \\                AND fm2.fam = fm.fam
+        \\                AND fm2.month = fm.month
         \\              ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)
         \\-- tonnage is not a threshold: this view is the monthly SPINE series,
         \\-- keyed by kind, and the strength arm sums a month's lifted mass
@@ -342,15 +387,15 @@ Schema :: [].{
         \\-- unmeasured one: no row, which the career spine bridges with
         \\-- dashes rather than a value.
         \\UNION ALL
-        \\SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month,
-        \\       CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS fam,
+        \\SELECT fm.month AS month,
+        \\       fm.fam AS fam,
         \\       'tonnage' AS kind,
         \\       CAST(SUM(s.sets * s.reps * s.weight_kg) AS REAL) AS value
         \\FROM activities a JOIN strength_sets s ON s.activity_id = a.id
-        \\JOIN strength_coverage c ON c.month = substr(CAST(a.start_local AS TEXT), 1, 7)
-        \\                        AND c.fam = COALESCE(a.sport_family, a.sport_type)
+        \\JOIN activity_family_month fm ON fm.activity_id = a.id
+        \\JOIN strength_coverage c ON c.month = fm.month AND c.fam = fm.fam
         \\WHERE c.covered * 3 >= c.total
-        \\GROUP BY substr(CAST(a.start_local AS TEXT), 1, 7), COALESCE(a.sport_family, a.sport_type)
+        \\GROUP BY fm.fam, fm.month
 
     # the FTP the engine scored each month's LAST power-scored Ride-family
     # activity with. Deliberately NOT season's ftp_end - that is a
@@ -365,13 +410,15 @@ Schema :: [].{
         \\DROP VIEW IF EXISTS monthly_ride_ftp
     monthly_ride_ftp =
         \\CREATE VIEW monthly_ride_ftp AS
-        \\SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month,
+        \\SELECT fm.month AS month,
         \\       CAST(m.ftp_used AS REAL) AS ftp
         \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
+        \\JOIN activity_family_month fm ON fm.activity_id = a.id
         \\WHERE COALESCE(m.ftp_used, 0) > 0 AND a.sport_family = 'Ride'
         \\  AND a.id = (SELECT a2.id FROM activities a2
         \\              JOIN activity_metrics m2 ON m2.activity_id = a2.id
+        \\              JOIN activity_family_month fm2 ON fm2.activity_id = a2.id
         \\              WHERE COALESCE(m2.ftp_used, 0) > 0 AND a2.sport_family = 'Ride'
-        \\                AND substr(CAST(a2.start_local AS TEXT), 1, 7) = substr(CAST(a.start_local AS TEXT), 1, 7)
+        \\                AND fm2.month = fm.month
         \\              ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)
 }

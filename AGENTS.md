@@ -221,8 +221,8 @@ A second Roc app shares the database: the roc-ray window (`src/viz/main.roc`;
 its own `Db` — but both build on one compiler and import the pure `src/core`
 package (#458): a definition BOTH surfaces state goes there (Fmt, Sports,
 Units), one only a single binary uses stays in that binary. Cross-surface
-QUERY semantics still live in SQL views (`activity_intensity`, `weekly_ramp`,
-`activity_power_ladder`, `plan_current`, `week_bounds` — ADR 0017): change
+QUERY semantics still live in SQL views (every `CREATE VIEW` in
+`src/cli/Schema.roc`; ADR 0017 says why): change
 semantics in the view, never by copying its SQL into a query.
 
 The window is steered and observed through bus tables in the same database —

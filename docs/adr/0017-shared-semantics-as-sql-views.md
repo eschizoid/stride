@@ -27,8 +27,8 @@ The first two views are these.
   non-skipped row wins, and a skipped tombstone counts only when nothing
   replaced it.
 - `week_bounds` returns the Monday of the series' current week as
-  `date(COALESCE(MAX(day), date('now','localtime')), '-6 days', 'weekday 1')`,
-  which is verified for all seven weekdays and matches the alignment of
+  `date(today, '-6 days', 'weekday 1')` over `series_clock` (whose `today` is
+  `COALESCE(MAX(day), date('now','localtime'))`), verified for all seven weekdays and matching the alignment of
   `Metrics.weekly_rollup`. An empty daily_load anchors the result on the wall
   clock.
 
@@ -183,3 +183,20 @@ repo pins.
 The convergence changes nothing else in this ADR. The package never needed it,
 the views still hold every definition about rows, and each binary still keeps
 its own driver.
+
+## Update 2026-09-29: the series clock and the family-month keys
+
+Two more expressions the window used to copy are views. `series_clock`
+answers `today` (the last analyzed day, or the wall clock while
+`daily_load` is empty) and `stale_days` (clamped at 0); `week_bounds`
+derives its Monday from it, and the window's event tiles, heat ring, note
+strip and staleness badge anchor on it instead of each restating
+`COALESCE(MAX(day), ...)`. `activity_family_month` names each activity's
+family and calendar month once; `monthly_family_load` sums load and
+sessions on those keys for the window's career ground; `monthly_threshold`
+and `strength_coverage` group on both keys through it and `monthly_ride_ftp`
+takes its month from it, so the rule has one home for every view that joins
+it. The e2e suite reads the window's queries out of its source, so a loader
+moved off a view fails by name, and compares each rewritten view row for
+row with the definition it replaced, and checks the tonnage arm's sum on a
+seeded covered month.

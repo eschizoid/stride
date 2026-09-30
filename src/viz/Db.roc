@@ -89,11 +89,11 @@ Db :: [].{
 	# marker and the plot share one clock; the wall clock only answers when
 	# daily_load is empty. Stride's time-mode config can shift its current day
 	# away from localtime, and daily_load is built against stride's day.
-	# days the wall clock is past MAX(day) — 0 when analyze ran today or the
-	# table is empty (NULL diff decodes as Err and lands on the 0 default)
+	# days the wall clock is past the series (0 when analyze ran today or the
+	# table is empty; the clock view clamps at 0, and a missing row reads 0)
 	load_stale! : Sqlite.Db => I64
 	load_stale! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(julianday(date('now','localtime')) - julianday(MAX(day)) AS INTEGER) AS st FROM daily_load", bindings: [] }) {
+		match Sqlite.query!({ db, query: "SELECT stale_days AS st FROM series_clock", bindings: [] }) {
 			Err(_) => 0
 			Ok(rows) => match List.first(rows) {
 				Err(_) => 0
@@ -106,7 +106,7 @@ Db :: [].{
 	Ridden : { day : Str, name : Str, ago : I64, err : Str }
 	load_ridden! : Sqlite.Db => Ridden
 	load_ridden! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT COALESCE(MAX(day), date('now','localtime')) AS today FROM daily_load) SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name, CAST(julianday(today) - julianday(event_date) AS INTEGER) AS ago FROM events, anchor WHERE event_date < today ORDER BY event_date DESC LIMIT 1", bindings: [] }) {
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT today FROM series_clock) SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name, CAST(julianday(today) - julianday(event_date) AS INTEGER) AS ago FROM events, anchor WHERE event_date < today ORDER BY event_date DESC LIMIT 1", bindings: [] }) {
 			Err(_) => { day: "", name: "", ago: -1, err: "events query failed" }
 			Ok(rows) => match List.first(rows) {
 				# no past event is a normal state, not an error
@@ -133,7 +133,7 @@ Db :: [].{
 
 	load_event! : Sqlite.Db => Event
 	load_event! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT COALESCE(MAX(day), date('now','localtime')) AS today FROM daily_load) SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name, CAST(julianday(event_date) - julianday(today) AS INTEGER) AS ahead FROM events, anchor WHERE event_date >= today ORDER BY event_date ASC LIMIT 1", bindings: [] }) {
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT today FROM series_clock) SELECT CAST(event_date AS TEXT) AS event_date, CAST(name AS TEXT) AS name, CAST(julianday(event_date) - julianday(today) AS INTEGER) AS ahead FROM events, anchor WHERE event_date >= today ORDER BY event_date ASC LIMIT 1", bindings: [] }) {
 			Err(_) => { day: "", name: "", ahead: 0, err: "events query failed" }
 			Ok(rows) => match List.first(rows) {
 				# no rows is the normal no-upcoming-event state, not an error
@@ -206,7 +206,7 @@ Db :: [].{
 	# simply absent and reads as rest.
 	load_day_notes! : Sqlite.Db => List({ day : Str, note : Str })
 	load_day_notes! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(substr(start_local, 1, 10) AS TEXT) AS day, CAST(group_concat(name, ' + ') AS TEXT) AS note FROM activities WHERE start_local >= date(COALESCE((SELECT MAX(day) FROM daily_load), date('now', 'localtime')), '-400 days') GROUP BY day", bindings: [] }) {
+		match Sqlite.query!({ db, query: "SELECT CAST(substr(start_local, 1, 10) AS TEXT) AS day, CAST(group_concat(name, ' + ') AS TEXT) AS note FROM activities WHERE start_local >= (SELECT date(today, '-400 days') FROM series_clock) GROUP BY day", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -672,7 +672,7 @@ Db :: [].{
 	FamMonth : { fam : Str, month : Str, load : I64, sessions : I64 }
 	load_fam_months! : Sqlite.Db => List(FamMonth)
 	load_fam_months! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS f, CAST(substr(a.start_local, 1, 7) AS TEXT) AS m, CAST(ROUND(COALESCE(SUM(am.tss), 0)) AS INTEGER) AS ld, COUNT(*) AS n FROM activities a JOIN activity_metrics am ON am.activity_id = a.id GROUP BY f, m ORDER BY f, m", bindings: [] }) {
+		match Sqlite.query!({ db, query: "SELECT CAST(fam AS TEXT) AS f, CAST(month AS TEXT) AS m, load AS ld, sessions AS n FROM monthly_family_load ORDER BY f, m", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -717,7 +717,7 @@ Db :: [].{
 	# back from MAX(day), so anything outside that range could never ring a cell
 	load_event_days! : Sqlite.Db => List(Str)
 	load_event_days! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT COALESCE(MAX(day), date('now','localtime')) AS today FROM daily_load) SELECT DISTINCT CAST(event_date AS TEXT) AS d FROM events, anchor WHERE event_date >= date(today, '-372 days') AND event_date <= today", bindings: [] }) {
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT today FROM series_clock) SELECT DISTINCT CAST(event_date AS TEXT) AS d FROM events, anchor WHERE event_date >= date(today, '-372 days') AND event_date <= today", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
