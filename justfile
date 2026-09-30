@@ -446,9 +446,12 @@ e2e:
 viz_pin := `sh -c 'P="$HOME/.local/share/roc/nightly-2026-09-27-a3ce7f1/roc"; [ -x "$P" ] && echo "$P" || echo roc'`
 roc_viz := env("ROC_VIZ", viz_pin)
 
-# open the app window (reads ~/.stride/db.sqlite at launch; ESC quits)
+# open the app window (ESC quits). The path argument is the window's one
+# filesystem grant: it declares that directory and nothing else, and a home
+# resolved at launch cannot be written into the source the grant lives in.
+# Without it the window still opens and says it has no database.
 viz:
-    {{roc_viz}} src/viz/main.roc
+    {{roc_viz}} src/viz/main.roc -- "$HOME/.stride"
 
 # The wrapper forgives nothing — it is the one place the assertion-count pins
 # live, and `check` passes roc's own exit code straight through.

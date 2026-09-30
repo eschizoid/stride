@@ -111,7 +111,9 @@ Ui :: [].{
 		data : List(Db.Point),
 		days : List(Str),
 		day_notes : List({ day : Str, note : Str }),
-		home : Str,
+		# the athlete's own directory, as the launcher declared it; "" when
+		# the window was started without one and has no database to read
+		stride_dir : Str,
 		tick : U64,
 		view_anim : U64,
 		last_focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64 },

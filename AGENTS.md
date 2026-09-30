@@ -216,7 +216,17 @@ nightlies: the ENGINE pin is the default in `.github/actions/setup-roc/action.ym
 A second Roc app shares the database: the roc-ray window (`src/viz/main.roc`;
 `just viz` opens it). It pins ITS OWN compiler in its app header —
 `tools/pin-check.sh` holds every workflow `nightly-tag:` site to that pin; set
-`ROC_VIZ` to a matching nightly locally. The two apps bind different PLATFORMS
+`ROC_VIZ` to a matching nightly locally. **The window declares what it may
+touch, in its own source.** roc-ray decides a filesystem grant from the TEXT
+of a path, and `~/.stride` sits under a home known only at run time, so the
+launcher resolves it and passes it as the first argument and the startup
+config is built from argv (`App.init_for_args`). The grants are that
+directory read-write, the checkout read-only, and the one program `stride` —
+nothing else, so a new effect in the window is a new declaration, and an
+undeclared facility stops the app rather than failing quietly. Every launch
+path passes the directory: the `viz` recipe, the macOS `.app` launcher in
+`tools/make-viz-app.sh`, and the linux and windows launchers the release
+workflow writes. The two apps bind different PLATFORMS
 (basic-cli vs roc-ray), so effectful modules cannot be shared — each carries
 its own `Db` — but both build on one compiler and import the pure `src/core`
 package (#458): a definition BOTH surfaces state goes there (Fmt, Sports,

@@ -133,7 +133,7 @@ Career :: [].{
 		Text.from(caption, font).size(11).draw!(frame, { pos: { x: x + 16.0, y: y + 42.0 }, color: Theme.ink_faint, align: (Top, Left) })
 	}
 
-	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
+	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
 		win_w = model.win.w
 		win_h = model.win.h

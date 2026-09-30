@@ -336,10 +336,14 @@ a reader who cares looks at focus, not at the losing row.
 
 - No F64→F32 narrowing exists, so the SQL query CASTs to integer tenths and
   the app divides by 10 — the numeric boundary belongs to SQL.
-- No Env module on the platform; the home directory is read by capturing
-  shell output through `Cmd` — `printenv HOME` on unix, cmd's echo of
-  `%USERPROFILE%` on Windows (the same variable the CLI falls back to) — on
-  every load, which means at launch and again on each `R`.
+- What the window may touch is declared in its own source, and a declaration
+  is matched against the text of a path. The athlete's directory sits under a
+  home known only at run time, so it cannot be written there: the launcher
+  resolves it and passes it as the first argument, and the startup config is
+  built from argv. The window declares that directory read-write, the
+  checkout read-only (the dev-run `assets/fonts` and `img`), and the single
+  program `stride`. Nothing else — no environment, no network, no shell.
+  Launched with no argument, the window opens and says it has no database.
 - `has` is a reserved word; uppercase identifiers are types.
 
 ## The power view (TAB)
@@ -369,7 +373,8 @@ against `stride power-curve 90 Ride --json`.
 
 **CP, W′ and r2 come from the engine**, not from a second regression here. The fit
 is `Metrics.hyperbolic_fit`'s job and a copy in the viz would drift from it, so the
-view shells out to `stride power-curve --json` and extracts each field
+view runs `stride power-curve --json` directly — no shell between, so the
+window can declare that one program and nothing else — and extracts each field
 independently — key ORDER cannot silently break the parse, and a missing field
 shows "CP fit unavailable" rather than a fit of zeros.
 

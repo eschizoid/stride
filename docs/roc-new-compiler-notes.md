@@ -37,12 +37,36 @@ neither does a closure call whose argument is itself a parameter. Lifting the
 closure and passing what it captured is the fix that does not depend on which
 of those two properties the analysis is actually keying on.
 
+**roc-ray 0.10.0 routes every external service through `App.Io`.** `update!`
+takes it as a third argument, and files, SQLite, subprocesses and captures are
+reached through it rather than by ambient path: `io.sqlite().open!(dir, name)`
+beneath a `Files.Dir`, `dir.read_bytes!(rel)`, `io.commands().run_utf8!(cmd)`,
+`io.capture().screenshot!(path)`. Opening a directory or a database is legal
+in `init!` and in tasks and refused in `update!`, so a loader that needs one
+runs where the window already spawned its work.
+
+What an app may touch is declared in its startup config, and a filesystem
+declaration is matched against the TEXT of the path. A directory under a home
+resolved at run time therefore cannot be declared from a literal: the config
+comes from argv through `App.init_for_args`, and the launcher passes the path.
+An undeclared facility stops the app with a message naming the declaration to
+add, which is why removing one is a usable negative control.
+
 **basic-webserver has no release that builds warning-free here.** `tests/e2e.roc`
 rides basic-webserver, whose platform source still writes `..` in return
-position (60 sites reach the build on 0.15.0; 0.16.0 and its main branch are
-both older than the implicit-open change). The harness links and its binary
-runs, but `roc build` exits 2 on the warnings, so `just e2e`, `just test` and
-`just e2e-sync` cannot pass until that platform drops its `..`.
+position: 60 sites reach the build on 0.15.0, and its main branch produces the
+same 60, in the same nine files, with the same per-file counts. The harness
+links and its binary runs, but `roc build` exits 2 on the warnings, so `just
+e2e`, `just test` and `just e2e-sync` cannot pass on the released package.
+
+The fix belongs in that package, and it is 60 removals of `, ..` and nothing
+else — no signature widens, no behaviour changes, because the compiler now
+opens those unions itself. Against a patched copy of 0.15.0, supplied with
+`roc build --replace-dep <the 0.15.0 URL> <copy>/main.roc`, the harness builds
+at zero warnings and both suites pass. Nothing in this repo works around it:
+there is no flag that downgrades a warning, and a wrapper that swallowed one
+would swallow the next real warning too. The gate stays red until an upstream
+release carries the removal.
 
 
 ## Toolchain pin: `nightly-2026-09-04-c125b82` (the hold below is LIFTED)

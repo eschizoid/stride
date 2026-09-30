@@ -5,7 +5,9 @@
 # its own binary (no roc needed at launch); the stride logo becomes the icon.
 #
 # The launcher widens PATH before exec: a GUI app inherits launchd's minimal
-# PATH, and the board shells out to `stride` (CP fit) and `sh`/`printenv`.
+# PATH, and the board runs `stride` for the CP fit. It also passes the
+# athlete's directory, which is the window's one filesystem grant and cannot
+# be written into the source because it sits under a home resolved at launch.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -64,7 +66,7 @@ if [ -f "$res/img/stride-icon.png" ]; then
   fi
 fi
 cd "$HOME"
-exec "$here/stride-viz"
+exec "$here/stride-viz" "$HOME/.stride"
 SH
 chmod +x "$C/MacOS/launcher" "$C/MacOS/stride-viz"
 

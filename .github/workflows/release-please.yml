@@ -235,8 +235,10 @@ jobs:
           cp assets/fonts/*.ttf assets/fonts/OFL-*.txt stage/stride-app/fonts/
           cat > stage/stride-app/stride-app <<'SH'
           #!/bin/sh
-          # a desktop launch inherits a minimal PATH, and the window shells out
-          # to `stride` for the CP fit
+          # a desktop launch inherits a minimal PATH, and the window runs
+          # `stride` for the CP fit. It also passes the athlete's directory: that
+          # is the window's one filesystem grant, and a home resolved at launch
+          # cannot be written into the source the grant is declared in.
           PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
           export PATH
           # the window reads ~/.stride/fonts; seed it from the copies shipped
@@ -257,7 +259,7 @@ jobs:
             fi
           fi
           cd "$HOME"
-          exec "$here/stride-viz"
+          exec "$here/stride-viz" "$HOME/.stride"
           SH
           chmod +x stage/stride-app/stride-app stage/stride-app/stride-viz
           test -s stage/stride-app/stride-viz
@@ -326,7 +328,7 @@ jobs:
           if not exist "%USERPROFILE%\.stride\fonts" mkdir "%USERPROFILE%\.stride\fonts" >nul 2>&1
           for %%f in ("%here%fonts\*.ttf") do call :seed "%%~ff"
           cd /d "%USERPROFILE%"
-          start "" "%here%stride-viz.exe"
+          start "" "%here%stride-viz.exe" "%USERPROFILE%\.stride"
           exit /b 0
           :seed
           rem every %var% read below sits on its OWN line - cmd expands at

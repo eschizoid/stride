@@ -14,10 +14,8 @@ import rr.App
 import rr.Assets
 import rr.Capture
 import rr.Camera
-import rr.Cmd
 import rr.Color
 import rr.Draw
-import rr.Files
 import rr.Mouse
 import rr.Sqlite
 import rr.Task
@@ -44,22 +42,53 @@ Model : Ui.Model
 
 program = { init!, update!, render! }
 
+# What the window may touch, declared in the source the way this platform
+# requires. The athlete's own directory is the one grant that cannot be
+# written here as a literal: it lives under a home directory known only at
+# run time, and a declaration is decided from the text of the path. So the
+# launcher resolves it and passes it as the first argument, and the config is
+# built from argv. Launched without one, the window still opens — it declares
+# nothing beyond the checkout and says on its face that it has no database.
+#
+# The checkout grant is read-only and covers the dev-run asset paths
+# (assets/fonts, img); the engine is named exactly, so `stride` may run and
+# nothing else. Captures need no grant: the platform allows them beneath the
+# configured output directory.
+stride_dir_of : List(Str) -> Str
+stride_dir_of = |args| match List.get(args, 1) { Ok(a) => a
+	Err(_) => "" }
+
+config_for_args : List(Str) -> App.Config
+config_for_args = |args| {
+	base =
+		App.default
+			.with_title("Stride")
+			.with_size({ width: Theme.win_w, height: Theme.win_h })
+			.with_frame_pacing(Capped(60))
+			.with_resizable(Bool.True)
+			# ESC is handled by update!, not by raylib's own exit key: quitting first
+			# clears the focus row so a coach never reads a closed window as live, and
+			# only a frame the window drives can spawn that write before it exits
+			.with_exit_key(NoExitKey)
+			.with_min_size({ width: DisplayScale.min_width, height: DisplayScale.min_height })
+			.with_output_dir("captures")
+			.with_permission(WorkingDirectory(ReadOnly))
+			.with_permission(Command("stride"))
+	dir = stride_dir_of(args)
+	if dir == "" base else base.with_permission(Directory(dir, ReadWrite))
+}
+
+# the athlete's directory and the authority to reach it, together: every
+# loader below opens its own handle from these, because a Dir may be opened
+# in init! or in a task and never in update!, and each task does its own open.
+Access : { io : App.Io, dir : Str }
+
 init! : App.Init(Model, [AssetPathInvalid, AssetNotFound, AssetReadFailed, FontLoadFailed, ResourceLimit])
-init! = App.init(
-	App.default
-		.with_title("Stride")
-		.with_size({ width: Theme.win_w, height: Theme.win_h })
-		.with_frame_pacing(Capped(60))
-		.with_resizable(Bool.True)
-# ESC is handled by update!, not by raylib's own exit key: quitting first
-# clears the focus row so a coach never reads a closed window as live, and
-# only a frame the window drives can spawn that write before it exits
-.with_exit_key(NoExitKey)
-		.with_min_size({ width: DisplayScale.min_width, height: DisplayScale.min_height })
-		.with_output_dir("captures"),
-	|_startup| {
+init! = App.init_for_args(
+	config_for_args,
+	|io| {
 		font = Draw.default_font!()
-		load_model!(font, 90, Bool.True)
+		load_model!({ io, dir: stride_dir_of(io.args!()) }, font, 90, Bool.True)
 	},
 )
 
@@ -67,19 +96,51 @@ init! = App.init(
 # call — the database for every series, plus the engine's power-curve command
 # for the CP fit. init! runs it once at launch, and the R key runs it again
 # without reopening.
-# One brand face at one size, from wherever it lives: the repo's assets/ in a
-# dev checkout, ~/.stride/fonts when launched as the app bundle, and the
-# platform default font when neither answers — the board must open regardless.
-brand_font! : Str, Str, I32, Text.Font => Text.Font
-brand_font! = |home, name, size, fallback| {
-	bytes = match Files.read_bytes!("assets/fonts/${name}") {
-		Ok(b) => b
-		# no HOME means no second location — never probe /.stride at the root
-		Err(_) => if home == "" [] else match Files.read_bytes!("${home}/.stride/fonts/${name}") {
+
+# The database the engine writes, opened from the declared directory. Opening
+# creates nothing that matters: the directory is the athlete's own and the
+# engine made it long before the window ran.
+open_db! : Access => Try(Sqlite.Db, [NoStrideDir, Unreachable])
+open_db! = |acc|
+	if acc.dir == "" Err(NoStrideDir)
+	else match acc.io.files().open_dir!(acc.dir) {
+		Err(_) => Err(Unreachable)
+		Ok(d) => match acc.io.sqlite().open!(d, "db.sqlite") {
+			Ok(db) => Ok(db)
+			Err(_) => Err(Unreachable)
+		}
+	}
+
+# a file the athlete's directory holds, or [] when it does not
+stride_bytes! : Access, Str => List(U8)
+stride_bytes! = |acc, rel|
+	if acc.dir == "" []
+	else match acc.io.files().open_dir_read!(acc.dir) {
+		Err(_) => []
+		Ok(d) => match d.read_bytes!(rel) {
 			Ok(b) => b
 			Err(_) => []
 		}
 	}
+
+# a file the checkout holds, or [] when it does not
+checkout_bytes! : Access, Str, Str => List(U8)
+checkout_bytes! = |acc, sub, name|
+	match acc.io.files().open_dir_read!(sub) {
+		Err(_) => []
+		Ok(d) => match d.read_bytes!(name) {
+			Ok(b) => b
+			Err(_) => []
+		}
+	}
+
+# One brand face at one size, from wherever it lives: the repo's assets/ in a
+# dev checkout, ~/.stride/fonts when launched as the app bundle, and the
+# platform default font when neither answers — the board must open regardless.
+brand_font! : Access, Str, I32, Text.Font => Text.Font
+brand_font! = |acc, name, size, fallback| {
+	from_checkout = checkout_bytes!(acc, "assets/fonts", name)
+	bytes = if !List.is_empty(from_checkout) from_checkout else stride_bytes!(acc, "fonts/${name}")
 	if List.is_empty(bytes) fallback
 	else match Draw.font_from_bytes!({ format: Ttf, bytes, size }) {
 		Ok(f) => f
@@ -87,30 +148,15 @@ brand_font! = |home, name, size, fallback| {
 	}
 }
 
-# The home directory on every platform, without an Env module: the platform
-# has no Env, but Cmd captures stdout, so a shell answers. printenv serves
-# unix; Windows ships no printenv, so cmd's own echo of %USERPROFILE% answers
-# there — the same variable the CLI's home_dir! falls back to, so both
-# surfaces resolve the identical ~/.stride/db.sqlite (Windows accepts the
-# mixed-separator join, and the CLI writes that exact spelling already).
-# cmd echoes the pattern back verbatim when the variable is unset, so that
-# spelling means unresolved, not a home named %USERPROFILE%. A missing
-# binary surfaces as Err from the spawn, never a crash - the degraded state
-# #442 exhibited is this platform behaving that way.
 # the mark, from the authored file: the repo's img/ in a dev checkout,
 # ~/.stride/img when launched as the app bundle (the launcher seeds it the
 # way it seeds fonts). Splash-only, so nothing loads it outside boot.
-load_logo! : Str, Bool => [NoLogo, Logo(Texture.Texture)]
-load_logo! = |home, boot|
+load_logo! : Access, Bool => [NoLogo, Logo(Texture.Texture)]
+load_logo! = |acc, boot|
 	if !boot NoLogo
 	else {
-		bytes = match Files.read_bytes!("img/stride-icon.png") {
-			Ok(b) => b
-			Err(_) => if home == "" [] else match Files.read_bytes!("${home}/.stride/img/stride-icon.png") {
-				Ok(b) => b
-				Err(_) => []
-			}
-		}
+		from_checkout = checkout_bytes!(acc, "img", "stride-icon.png")
+		bytes = if !List.is_empty(from_checkout) from_checkout else stride_bytes!(acc, "img/stride-icon.png")
 		if List.is_empty(bytes) NoLogo
 		else match Assets.texture_from_bytes!({ format: Png, bytes }) {
 			Ok(t) => Logo(t)
@@ -118,35 +164,20 @@ load_logo! = |home, boot|
 		}
 	}
 
-resolve_home! : {} => Str
-resolve_home! = |{}| {
-	unix = match Cmd.run_utf8!(Cmd.with_args(Cmd.new("printenv"), ["HOME"])) {
-		Ok(out) => Str.trim(out.stdout)
-		Err(_) => ""
-	}
-	if unix != "" unix
-	else match Cmd.run_utf8!(Cmd.with_args(Cmd.new("cmd"), ["/C", "echo %USERPROFILE%"])) {
-		Ok(out) => {
-			win = Str.trim(out.stdout)
-			if win == "%USERPROFILE%" "" else win
-		}
-		Err(_) => ""
-	}
-}
+# The empty shape every loader falls back to: the boot skeleton the splash
+# renders over, and the answer when there is no database to read. The series
+# error is the only part that varies, and it is what the board prints on its
+# face, so a window that cannot reach the athlete's data says why.
+skeleton : Str -> _
+skeleton = |err|
+	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric }
 
-# boot=True builds the instant skeleton the splash renders over: no home
-# resolution, no database, no engine call - the window opens on frame one
-# and the real load runs in a spawned task that answers with Reloaded.
-load_model! : Text.Font, I64, Bool => Try(Ui.Model, [ResourceLimit, ..])
-load_model! = |font, curve_days, boot| {
-		# ~/.stride/db.sqlite, resolved on every load. Resolution is one
-		# printenv - cheap enough for the boot skeleton, which needs it to
-		# find the seeded logo; only the database and engine work are slow.
-		home = resolve_home!({})
-		db_path = Str.concat(home, "/.stride/db.sqlite")
-		loaded = if boot or home == "" {
-			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric }
-		} else match Sqlite.Db.open!(db_path) {
+# boot=True builds the instant skeleton the splash renders over: no database
+# and no engine call - the window opens on frame one and the real load runs
+# in a spawned task that answers with Reloaded.
+load_model! : Access, Text.Font, I64, Bool => Try(Ui.Model, [ResourceLimit])
+load_model! = |acc, font, curve_days, boot| {
+		loaded = if boot { skeleton("") } else match open_db!(acc) {
 			Ok(db) => {
 				Db.publish_caps!(db, caps_views, caps_fields)
 				s = Db.load_series!(db)
@@ -190,11 +221,12 @@ load_model! = |font, curve_days, boot| {
 				cpv = Db.load_curve_prev!(db, curve_days)
 				{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, rw, csp, cs, cfm, prs, tcache, un }
 			}
-			Err(_) => { s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot open ${db_path}" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric }
+			Err(NoStrideDir) => skeleton("no stride directory — the launcher passes it as the first argument")
+			Err(Unreachable) => skeleton("cannot open ${acc.dir}/db.sqlite")
 		}
 		ev = Db.find_idx(loaded.s.days, loaded.e.day)
-		# the fit shells out to the engine; the skeleton cannot afford it
-		fit = if boot ({ cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }) else Db.load_fit!(curve_days)
+		# the fit runs the engine; the skeleton cannot afford it
+		fit = if boot ({ cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }) else Db.load_fit!(acc.io.commands(), curve_days)
 		fit_text =
 			if fit.ok
 				"CP ${Db.fmt_f(fit.cp)} W · W' ${Db.fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${Db.fmt_f(fit.r2)} from ${Db.fmt_i(fit.points)} bests"
@@ -204,10 +236,10 @@ load_model! = |font, curve_days, boot| {
 		# glyphs to captions loses thin strokes between samples. Titles and
 		# KPI digits have their own larger atlases. Missing fonts fall back
 		# to the platform's built-in face.
-		head = brand_font!(home, "Quicksand-Medium.ttf", 24, font)
-		title_font = brand_font!(home, "Quicksand-Medium.ttf", 48, font)
-		mono_big = brand_font!(home, "JetBrainsMono-Regular.ttf", 48, font)
-		mono = brand_font!(home, "JetBrainsMono-Regular.ttf", 24, font)
+		head = brand_font!(acc, "Quicksand-Medium.ttf", 24, font)
+		title_font = brand_font!(acc, "Quicksand-Medium.ttf", 48, font)
+		mono_big = brand_font!(acc, "JetBrainsMono-Regular.ttf", 48, font)
+		mono = brand_font!(acc, "JetBrainsMono-Regular.ttf", 24, font)
 		mk! = |txt, sz| Text.from(txt, if sz >= 24 title_font else head).size(sz).prepare!()
 		mkm! = |txt, sz| Text.from(txt, mono).size(sz).prepare!()
 		mkb! = |txt, sz| Text.from(txt, mono_big).size(sz).prepare!()
@@ -331,7 +363,7 @@ load_model! = |font, curve_days, boot| {
 			cp_lbl: mkm!("CP ${Db.fmt_f(fit.cp)}W", 12)?,
 			data: loaded.s.data,
 			days: loaded.s.days,
-			home,
+			stride_dir: acc.dir,
 			tick: 0,
 			view_anim: 0,
 			last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1 },
@@ -378,7 +410,7 @@ load_model! = |font, curve_days, boot| {
 			# a freshly loaded model is never mid-reload; the flag is raised in
 			# update! when a chip/R spawns the next load and cleared when it lands
 			reloading: Bool.False,
-			logo: load_logo!(home, boot),
+			logo: load_logo!(acc, boot),
 			font: mono,
 			hint: mk!("1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   V record   G glow   ESC quit", 13)?,
 			empty: mk!("no data yet - sync and analyze first, then reopen", 16)?,
@@ -463,15 +495,15 @@ build_glow! = |win|
 # session's trace and duration (no segments - the ghost is a line, not a
 # block chart). The caller already cleared the drawn overlay when the
 # selection moved, so a failure leaves no ghost, never a stale one.
-ghost_task! : Str, List(TraceId), I64, U64 => Msg
-ghost_task! = |home, ids, gsel, gen|
-	if home == "" GhostSwitchFailed
+ghost_task! : Access, List(TraceId), I64, U64 => Msg
+ghost_task! = |acc, ids, gsel, gen|
+	if acc.dir == "" GhostSwitchFailed
 	else match I64.to_u64_try(gsel) {
 		Err(_) => GhostSwitchFailed
 		Ok(gu) => match List.get(ids, gu) {
 			Err(_) => GhostSwitchFailed
 			Ok(entry) =>
-				match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
+				match open_db!(acc) {
 					Err(_) => GhostSwitchFailed
 					Ok(db) => {
 						tr = Db.load_trace!(db, entry.id, entry.chan)
@@ -485,13 +517,13 @@ ghost_task! = |home, ids, gsel, gen|
 # Same task lane, the live session: re-reads one session's trace, segments
 # and duration and reports back as a message. Any failure keeps the session
 # the window already had.
-trace_task! : Str, [Metric, Imperial], List(TraceId), U64, U64 => Msg
-trace_task! = |home, units, ids, sel, gen|
-	if home == "" TraceSwitchFailed(gen)
+trace_task! : Access, [Metric, Imperial], List(TraceId), U64, U64 => Msg
+trace_task! = |acc, units, ids, sel, gen|
+	if acc.dir == "" TraceSwitchFailed(gen)
 	else match List.get(ids, sel) {
 		Err(_) => TraceSwitchFailed(gen)
 		Ok(entry) =>
-			match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
+			match open_db!(acc) {
 				Err(_) => TraceSwitchFailed(gen)
 				Ok(db) => {
 					tr = Db.load_trace!(db, entry.id, entry.chan)
@@ -507,10 +539,10 @@ trace_task! = |home, units, ids, sel, gen|
 # model, not a fresh config read: the window's setting is what launch (or R)
 # loaded, and one panel re-reading it mid-session would disagree with every
 # other surface until the next reload.
-detail_task! : Str, [Metric, Imperial], Str => Msg
-detail_task! = |home, units, day|
-	if home == "" DayDetail({ day, lines: [{ title: "no database path", stats: "", extra: "", zones: [] }] })
-	else match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
+detail_task! : Access, [Metric, Imperial], Str => Msg
+detail_task! = |acc, units, day|
+	if acc.dir == "" DayDetail({ day, lines: [{ title: "no database path", stats: "", extra: "", zones: [] }] })
+	else match open_db!(acc) {
 		Err(_) => DayDetail({ day, lines: [{ title: "cannot open the database", stats: "", extra: "", zones: [] }] })
 		Ok(db) => DayDetail({ day, lines: Db.load_day_detail!(db, units, day) })
 	}
@@ -525,10 +557,10 @@ detail_task! = |home, units, day|
 # picker for it would pay the query once per poll for as long as the
 # acknowledgement keeps losing the write, for a directive that will not be
 # applied again anyway.
-poll_task! : Str, I64 => Msg
-poll_task! = |home, last_id|
-	if home == "" DirectiveNone
-	else match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
+poll_task! : Access, I64 => Msg
+poll_task! = |acc, last_id|
+	if acc.dir == "" DirectiveNone
+	else match open_db!(acc) {
 		Err(_) => DirectiveNone
 		Ok(db) => {
 			note = Db.load_bus_note!(db)
@@ -1015,9 +1047,9 @@ expect {
 }
 
 # Reports a directive's terminal outcome from the task lane.
-mark_task! : Str, I64, Str => {}
-mark_task! = |home, did, refused|
-	match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
+mark_task! : Access, I64, Str => {}
+mark_task! = |acc, did, refused|
+	match open_db!(acc) {
 		Err(_) => {}
 		Ok(db) => Db.mark_directive!(db, did, refused)
 	}
@@ -1039,9 +1071,9 @@ expect exits_now(Bool.False, 5000, 100)
 # The window's last word: delete the focus row on the way out. Either
 # outcome ends the quit - a clear that failed changes nothing the staleness
 # window will not retire on its own.
-clear_focus_task! : Str => Msg
-clear_focus_task! = |home|
-	match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
+clear_focus_task! : Access => Msg
+clear_focus_task! = |acc|
+	match open_db!(acc) {
 		Err(_) => FocusCleared
 		Ok(db) => match Db.clear_focus!(db) {
 			Ok(_) => FocusCleared
@@ -1050,10 +1082,10 @@ clear_focus_task! = |home|
 	}
 
 # The window's answer: upsert what the human is looking at
-focus_task! : Str, Db.Focus => Msg
-focus_task! = |home, f|
-	if home == "" FocusWriteFailed
-	else match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
+focus_task! : Access, Db.Focus => Msg
+focus_task! = |acc, f|
+	if acc.dir == "" FocusWriteFailed
+	else match open_db!(acc) {
 		Err(_) => FocusWriteFailed
 		Ok(db) => match Db.write_focus!(db, f) {
 			Ok(_) => FocusWritten
@@ -1073,23 +1105,21 @@ focus_task! = |home, f|
 # loader, which is what R is for.
 CurveWindow : { days : I64, c : List(Db.CurvePt), cpv : List(Db.CurvePt), lbls : List({ p : Text.Prepared, d : I64 }), title : Text.Prepared, fit_lbl : Text.Prepared, cp_lbl : Text.Prepared, fit_cp : F32, fit_r2 : F32 }
 
-load_curve_window! : Text.Font, I64 => Try(CurveWindow, [ResourceLimit, ..])
-load_curve_window! = |font, curve_days| {
-	home = resolve_home!({})
-	db_path = Str.concat(home, "/.stride/db.sqlite")
-	read = if home == "" ({ c: [], cpv: [] }) else match Sqlite.Db.open!(db_path) {
+load_curve_window! : Access, Text.Font, I64 => Try(CurveWindow, [ResourceLimit])
+load_curve_window! = |acc, font, curve_days| {
+	read = match open_db!(acc) {
 		Ok(db) => { c: Db.load_curve!(db, curve_days), cpv: Db.load_curve_prev!(db, curve_days) }
 		Err(_) => { c: [], cpv: [] }
 	}
-	fit = Db.load_fit!(curve_days)
+	fit = Db.load_fit!(acc.io.commands(), curve_days)
 	fit_text =
 		if fit.ok
 			"CP ${Db.fmt_f(fit.cp)} W · W' ${Db.fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${Db.fmt_f(fit.r2)} from ${Db.fmt_i(fit.points)} bests"
 		else "CP fit unavailable - the engine did not answer"
 	# the same two faces the full loader prepares these labels with, so a
 	# window switch cannot re-set the curve in a different type
-	head = brand_font!(home, "Quicksand-Medium.ttf", 24, font)
-	mono = brand_font!(home, "JetBrainsMono-Regular.ttf", 24, font)
+	head = brand_font!(acc, "Quicksand-Medium.ttf", 24, font)
+	mono = brand_font!(acc, "JetBrainsMono-Regular.ttf", 24, font)
 	mk! = |txt, sz| Text.from(txt, head).size(sz).prepare!()
 	mkm! = |txt, sz| Text.from(txt, mono).size(sz).prepare!()
 	lbls = List.map_try!(read.c, |x| {
@@ -1121,7 +1151,7 @@ Msg : [
 	GhostSwitched({ tr : List(F32), du : F32, gen : U64, day : Str }),
 	GhostSwitchFailed,
 	Shot(Try({}, Capture.ScreenshotError)),
-	RecCmd({}),
+	RecCmd(Try({}, [PermissionDenied])),
 	MarkDone({}),
 	Reloaded(Ui.Model),
 	ReloadFailed,
@@ -1207,8 +1237,8 @@ caps_fields = [
 	{ name: "ghost_id", kind: "integer", accepts: "an activity id among the trace picker's sessions, of the same kind as the session shown; takes precedence over ghost_day, and 'none' in ghost_day still dismisses" },
 ]
 
-update! : Model, App.Input(Msg) => Try(Model, [Exit(I64), ..])
-update! = |model0, program_input| {
+update! : Model, App.Input(Msg), App.Io => Try(Model, [Exit(I64)])
+update! = |model0, program_input, io| {
 	d = program_input.devices
 	# task answers land as messages; fold them in before this frame's input.
 	# A finished reload keeps the UI state the user has moved since spawning.
@@ -1320,21 +1350,21 @@ update! = |model0, program_input| {
 	# apply NOTHING - re-applying fought the user's own input every second
 	# for as long as a CLI write transaction held the lock
 	is_redelivery = directive0.has_d and directive0.id == model.last_directive.id
-	_ = if is_redelivery and model.home != "" {
-		homer = model.home
+	_ = if is_redelivery and model.stride_dir != "" {
+		accr = { io, dir: model.stride_dir }
 		rid = model.last_directive.id
 		rref = model.last_directive.refused
-		Task.spawn!(program_input, || MarkDone(mark_task!(homer, rid, rref)))
+		Task.spawn!(program_input, || MarkDone(mark_task!(accr, rid, rref)))
 	}
 	directive = if is_redelivery ({ has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1 }) else directive0
 	if model.quitting {
 		if exits_now(model.focus_cleared, model.tick, model.quit_tick) (Err(Exit(0)))
 		else Ok({ ..model, tick: model.tick + 1 })
 	} else if d.key_pressed(KeyEscape) {
-		if model.home == "" (Err(Exit(0)))
+		if model.stride_dir == "" (Err(Exit(0)))
 		else {
-			homeq = model.home
-			_ = Task.spawn!(program_input, || clear_focus_task!(homeq))
+			accq = { io, dir: model.stride_dir }
+			_ = Task.spawn!(program_input, || clear_focus_task!(accq))
 			Ok({ ..model, quitting: Bool.True, quit_tick: model.tick, tick: model.tick + 1 })
 		}
 	} else {
@@ -1410,20 +1440,20 @@ update! = |model0, program_input| {
 		# docs is a committed illustration, not a capture.
 		_ = if d.key_pressed(KeyS) {
 			shot_name = Str.concat(view_basename(view), ".png")
-			Task.spawn!(program_input, || Shot(Capture.screenshot!(shot_name)))
+			Task.spawn!(program_input, || Shot(io.capture().screenshot!(shot_name)))
 		}
 		# V toggles a recording of whatever is on screen: WebM, full scale,
 		# 30fps, FixedStep timing - the deterministic regenerable session
 		# graphic #372 promised. Named for the view it started on.
 		_ = if d.key_pressed(KeyV) {
 			match program_input.capture {
-				Active(_) => Task.spawn!(program_input, || RecCmd(Capture.stop!()))
+				Active(_) => Task.spawn!(program_input, || RecCmd(io.capture().stop!()))
 				_ => {
 					rec_name = Str.concat(view_basename(view), ".webm")
 					# max_frames 0 is the platform's "record until Capture.stop"
 					# sentinel, not a zero-frame cap - V is the stop
 					rec = Capture.default.with_format(WebM).with_path(rec_name).with_fps(30).with_max_frames(0).with_scale(Full).with_timing(FixedStep)
-					Task.spawn!(program_input, || RecCmd(Capture.start!(rec)))
+					Task.spawn!(program_input, || RecCmd(io.capture().start!(rec)))
 				}
 			}
 		}
@@ -1513,10 +1543,10 @@ update! = |model0, program_input| {
 		# spawn unconditionally: detail_task! answers "no database path" itself,
 		# so a missing HOME shows that instead of loading... forever
 		_ = if row_hit.hit and detail_day2 != "" {
-			homed = model.home
+			accd = { io, dir: model.stride_dir }
 			unitsd = model.units
 			dayd = detail_day2
-			Task.spawn!(program_input, || detail_task!(homed, unitsd, dayd))
+			Task.spawn!(program_input, || detail_task!(accd, unitsd, dayd))
 		}
 		view2 = view
 		# a directive naming a day parks the crosshair there
@@ -1557,10 +1587,10 @@ update! = |model0, program_input| {
 		# whatever fetch the previous selection still had in flight
 		trace_gen2 = if moving (model.trace_gen + 1) else model.trace_gen
 		_ = if trace_fetch {
-			home2 = model.home
+			acc2 = { io, dir: model.stride_dir }
 			units2 = model.units
 			ids2 = model.trace_ids
-			Task.spawn!(program_input, || trace_task!(home2, units2, ids2, want_sel2, trace_gen2))
+			Task.spawn!(program_input, || trace_task!(acc2, units2, ids2, want_sel2, trace_gen2))
 		}
 		# the trace camera: wheel zooms anchored at the cursor's moment, a held
 		# left drag pans, 0 resets - and a session switch resets (the window
@@ -1613,9 +1643,9 @@ update! = |model0, program_input| {
 		ghost_gen2 = if want_ghost2 != model.ghost_sel (model.ghost_gen + 1) else model.ghost_gen
 		_ = if want_ghost2 != model.ghost_sel and want_ghost2 >= 0 and (match ghost_hit { Ok(_) => Bool.False
 			Err(_) => Bool.True }) {
-			home3 = model.home
+			acc3 = { io, dir: model.stride_dir }
 			ids3 = model.trace_ids
-			Task.spawn!(program_input, || ghost_task!(home3, ids3, want_ghost2, ghost_gen2))
+			Task.spawn!(program_input, || ghost_task!(acc3, ids3, want_ghost2, ghost_gen2))
 		}
 		# any ghost change clears the overlay this frame: a failed load leaves
 		# no ghost rather than the previous one
@@ -1657,13 +1687,15 @@ update! = |model0, program_input| {
 		# A chip is a window change, and takes the three-read path.
 		_ = if d.key_pressed(KeyR) {
 			f2 = model.font
-			Task.spawn!(program_input, || match load_model!(f2, want_days, Bool.False) {
+			acc2r = { io, dir: model.stride_dir }
+			Task.spawn!(program_input, || match load_model!(acc2r, f2, want_days, Bool.False) {
 				Ok(m2) => Reloaded(m2)
 				Err(_) => ReloadFailed
 			})
 		} else if want_days != model.curve_days {
 			f3 = model.font
-			Task.spawn!(program_input, || match load_curve_window!(f3, want_days) {
+			acc3r = { io, dir: model.stride_dir }
+			Task.spawn!(program_input, || match load_curve_window!(acc3r, f3, want_days) {
 				Ok(w) => CurveReloaded(w)
 				Err(_) => CurveReloadFailed(want_days)
 			})
@@ -1691,17 +1723,18 @@ update! = |model0, program_input| {
 		# splash - kick the real load exactly once, the same task R runs
 		_ = if model.booting and model.tick == 0 {
 			f0 = model.font
-			Task.spawn!(program_input, || match load_model!(f0, 90, Bool.False) {
+			acc0r = { io, dir: model.stride_dir }
+			Task.spawn!(program_input, || match load_model!(acc0r, f0, 90, Bool.False) {
 				Ok(m2) => Reloaded(m2)
 				Err(_) => ReloadFailed
 			})
 		}
 		# no HOME means no database path means no bus — spawning would only
 		# manufacture failing tasks every tick, forever
-		_ = if tick % 60 == 0 and model.home != "" {
-			homep = model.home
+		_ = if tick % 60 == 0 and model.stride_dir != "" {
+			accp = { io, dir: model.stride_dir }
 			lastp = model.last_directive.id
-			Task.spawn!(program_input, || poll_task!(homep, lastp))
+			Task.spawn!(program_input, || poll_task!(accp, lastp))
 		}
 		# focus mirrors the screen: view, range, the crosshair day, the session
 		cur_day =
@@ -1741,9 +1774,9 @@ update! = |model0, program_input| {
 		# heartbeat regardless: updated_at is the coach's liveness signal, and a
 		# window idle on one view for an hour is still a window
 		last_focus =
-			if model.home != "" and ((focus_now != model.last_focus and tick % 30 == 0) or tick % focus_beat_ticks == 0) {
-				homef = model.home
-				_ = Task.spawn!(program_input, || focus_task!(homef, focus_now))
+			if model.stride_dir != "" and ((focus_now != model.last_focus and tick % 30 == 0) or tick % focus_beat_ticks == 0) {
+				accf = { io, dir: model.stride_dir }
+				_ = Task.spawn!(program_input, || focus_task!(accf, focus_now))
 				focus_now
 			} else model.last_focus
 		# the directive's outcome, reported by THIS frame - the one that
@@ -1752,11 +1785,11 @@ update! = |model0, program_input| {
 		# accepted and acted; async completions it started (a reload, a
 		# cache-miss fetch) may still fail and recover by their own rules.
 		refused9 = if directive.has_d and directive.id >= 0 (refusals_for(directive, cursor_dir, want_sel2, model.trace_sel, model.trace_ids)) else ""
-		_ = if directive.has_d and directive.id >= 0 and model.home != "" {
-			homem = model.home
+		_ = if directive.has_d and directive.id >= 0 and model.stride_dir != "" {
+			accm = { io, dir: model.stride_dir }
 			did = directive.id
 			refm = refused9
-			Task.spawn!(program_input, || MarkDone(mark_task!(homem, did, refm)))
+			Task.spawn!(program_input, || MarkDone(mark_task!(accm, did, refm)))
 		}
 		glow2 =
 			match model.glow {
@@ -1838,7 +1871,7 @@ nav_icon! = |frame, v, x, y, c| {
 	}
 }
 
-scene! : Model, Draw.Frame => Try({}, [Exit(I64), ..])
+scene! : Model, Draw.Frame => Try({}, [Exit(I64)])
 scene! = |model, frame| {
 	frame.rectangle!({ x: 0.0, y: 0.0, width: model.win.w, height: model.win.h, style: Draw.filled(Theme.bg) })
 	frame.rounded_rectangle!({ x: 16.0, y: 16.0, width: model.win.w - 32.0, height: model.win.h - 32.0, radius: 14.0, segments: 10, style: Draw.filled(Theme.panel) })
@@ -1940,7 +1973,7 @@ scene! = |model, frame| {
 # gradient with a comet at the pen, the mountain peak pops when a sweep
 # completes, and the whole figure loops until Reloaded lands. Everything is
 # geometry over the tick - no asset, nothing to load before the loader.
-splash! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
+splash! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 splash! = |model, frame| {
 	# the splash clears to the TILE's own ground - RGB(1, 2, 9), a
 	# representative pick from the interior of img/stride-icon.png away
@@ -2093,11 +2126,11 @@ splash_route! = |model, frame, cx, cy, pi, mixc| {
 # UI zoom transforms geometry directly into the framebuffer. The optional
 # bloom target uses window coordinates, with the same camera inside it;
 # only the additive halo is sampled from a texture, never the base text.
-scaled_scene! : Model, Draw.Frame => Try({}, [Exit(I64), ScopeLimit, ..])
+scaled_scene! : Model, Draw.Frame => Try({}, [Exit(I64), ScopeLimit])
 scaled_scene! = |model, frame|
 	frame.with_camera!(Camera.default.with_zoom(model.ui_scale), |f| scene!(model, f))
 
-render! : Model, Draw.Frame => Try({}, [Exit(I64), ScopeLimit, ..])
+render! : Model, Draw.Frame => Try({}, [Exit(I64), ScopeLimit])
 render! = |model, frame| {
 	if model.booting {
 		frame.with_camera!(Camera.default.with_zoom(model.ui_scale), |f| splash!(model, f))

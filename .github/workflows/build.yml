@@ -221,10 +221,11 @@ jobs:
           file stride-viz-linux
 
   # The one Windows-shaped viz failure so far was resolution, not linking
-  # (#442: no printenv, so HOME came back empty and every view rendered its
-  # empty state). Linking here proves the roc-ray x64win host stays viable,
-  # and the comment-stripped grep proves the USERPROFILE fallback exists in
-  # the CODE that built, not merely in a comment about it - the window
+  # (#442: the window could not find the home directory, so every view
+  # rendered its empty state). The window no longer resolves it at all - the
+  # launcher passes the directory, and that argument is also the app's one
+  # filesystem grant - so what needs holding is the WINDOWS launcher passing
+  # it. Linking here proves the roc-ray x64win host stays viable; the window
   # itself cannot run headless on a runner.
   viz-link-windows:
     runs-on: windows-2025
@@ -239,7 +240,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sed 's/#.*//' src/viz/main.roc | grep -q 'echo %USERPROFILE%'
+          # rem lines stripped first: the claim must live in the launcher the
+          # release writes, not in a comment describing it
+          sed 's/^ *rem .*//' .github/workflows/release-please.yml | grep -q 'stride-viz.exe" "%USERPROFILE%'
           sh tools/roc-viz.sh build src/viz/main.roc --output=stride-viz.exe --opt=dev
           test -s stride-viz.exe
 

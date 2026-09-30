@@ -19,7 +19,7 @@ Ramp :: [].{
 	verdict : F32 -> Color.Rgba
 	verdict = |rv| if rv > danger (Theme.alarm_c) else if rv > 0.0 (Theme.tsb_c) else Theme.ink_faint
 
-	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
+	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
 		win_w = model.win.w
 		win_h = model.win.h

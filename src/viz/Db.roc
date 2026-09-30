@@ -1024,28 +1024,48 @@ Db :: [].{
 			}
 		}
 
-	# CP / W' / r2 come from the ENGINE, not from a second regression here: the fit
-	# is Metrics.hyperbolic_fit's job and a copy would drift from it. Each field is
-	# extracted independently so JSON key ORDER cannot silently break the parse; an
-	# empty field means the shell or the command failed, and the view says so rather
-	# than drawing a fit of zeros.
-	load_fit! : I64 => Fit
-	load_fit! = |days| {
-		script = "J=$(stride power-curve ${I64.to_str(days)} Ride --json 2>/dev/null); for k in cp w_prime fit_r2 fit_points; do printf '%s ' \"$(printf '%s' \"$J\" | sed -n \"s/.*\\\"$k\\\":\\([-0-9.eE]*\\).*/\\1/p\" | head -1)\"; done"
-		out = match Cmd.run_utf8!(Cmd.with_args(Cmd.new("sh"), ["-c", script])) {
-			Ok(o) => Str.trim(o.stdout)
+	# The number that follows `"<key>":` in a JSON object, as text. A scan for
+	# one key rather than a parse of the whole document, and one key at a time,
+	# so key ORDER cannot silently break it. "" when the key is absent, which
+	# the caller reads as "the engine did not answer" rather than as a zero.
+	json_number : Str, Str -> Str
+	json_number = |doc, key|
+		match Str.split_on(doc, "\"${key}\":") {
+			[_, rest, ..] => {
+				# the run of numeric bytes that opens the remainder; `done`
+				# freezes the accumulator at the first byte that cannot be part
+				# of a JSON number, so a later digit elsewhere is never joined on
+				taken = List.fold(Str.to_utf8(rest), { out: [], done: Bool.False }, |acc, b|
+					if acc.done {
+						acc
+					} else if (b >= '0' and b <= '9') or b == '-' or b == '+' or b == '.' or b == 'e' or b == 'E' {
+						{ ..acc, out: List.append(acc.out, b) }
+					} else {
+						{ ..acc, done: Bool.True }
+					})
+				match Str.from_utf8(taken.out) { Ok(s) => s
+					Err(_) => "" }
+			}
+			_ => ""
+		}
+	# CP / W' / r2 come from the ENGINE, not from a second regression here: the
+	# fit is Metrics.hyperbolic_fit's job and a copy would drift from it. The
+	# engine binary is run directly, with no shell between: the window declares
+	# exactly `stride` and nothing else, so there is no interpreter to hand an
+	# argument to. A field that does not parse is -1, and the view says the fit
+	# is unavailable rather than drawing a fit of zeros.
+	load_fit! : Cmd.Runner, I64 => Fit
+	load_fit! = |runner, days| {
+		out = match runner.run_utf8!(Cmd.with_args(Cmd.new("stride"), ["power-curve", I64.to_str(days), "Ride", "--json"])) {
+			Ok(o) => if o.exit_code == 0 o.stdout else ""
 			Err(_) => ""
 		}
-		parts = Str.split_on(out, " ")
-		num = |i| match List.get(parts, i) {
-			Ok(s) => match F32.from_str(s) { Ok(v) => v
-				Err(_) => -1.0 }
-			Err(_) => -1.0
-		}
-		cp = num(0)
-		wp = num(1)
-		r2 = num(2)
-		fp = num(3)
+		num = |key| match F32.from_str(json_number(out, key)) { Ok(v) => v
+			Err(_) => -1.0 }
+		cp = num("cp")
+		wp = num("w_prime")
+		r2 = num("fit_r2")
+		fp = num("fit_points")
 		{ cp, w_prime: wp, r2, points: fp, ok: cp >= 0.0 and wp >= 0.0 and r2 >= 0.0 and fp >= 0.0 }
 	}
 
@@ -1056,3 +1076,13 @@ Db :: [].{
 			|acc, x| if x.day == target ({ found: Bool.True, idx: x.index }) else acc,
 		)
 }
+
+# the engine's power-curve JSON, read one key at a time: the value that
+# follows the key, stopping at the byte that ends the number, and "" for a
+# key the document does not carry
+expect Db.json_number("{\"cp\":243.5,\"w_prime\":21000.0}", "cp") == "243.5"
+expect Db.json_number("{\"cp\":243.5,\"w_prime\":21000.0}", "w_prime") == "21000.0"
+expect Db.json_number("{\"fit_r2\":-1.25e-3}", "fit_r2") == "-1.25e-3"
+expect Db.json_number("{\"cp\":243.5}", "fit_points") == ""
+# a key whose value is not a number yields "", never the text beside it
+expect Db.json_number("{\"model\":\"power_stream\",\"cp\":9}", "model") == ""
