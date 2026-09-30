@@ -155,9 +155,6 @@ Schema :: [].{
         \\            ORDER BY (COALESCE(p2.status, 'open') <> 'skipped') DESC, p2.id DESC
         \\            LIMIT 1)
 
-    # the Monday of the series' current week — the week alignment every
-    # weekly number must share (matches Metrics.weekly_rollup)
-    # the series' own clock: `today` is the last analyzed day, so every
     # surface that says "as of" or counts days back agrees with the plot,
     # and the wall clock answers only while daily_load is empty (stride's
     # time-mode config can shift its day away from localtime, and
@@ -171,6 +168,9 @@ Schema :: [].{
         \\       CAST(MAX(0, CAST(julianday(date('now', 'localtime')) - julianday(COALESCE(MAX(day), date('now', 'localtime'))) AS INTEGER)) AS INTEGER) AS stale_days
         \\FROM daily_load
 
+    # the Monday of the series' current week — the week alignment every
+    # weekly number must share (matches Metrics.weekly_rollup) — derived
+    # from the clock so the plot and the week agree on today
     week_bounds_drop =
         \\DROP VIEW IF EXISTS week_bounds
     week_bounds =
@@ -323,9 +323,10 @@ Schema :: [].{
     # one row per activity with the two keys every per-family month series
     # groups on: the family (the stored `sport_family`, falling back to
     # `sport_type` for a row written before the canonicalizing trigger) and
-    # the calendar month of its local start. Every per-family month view -
-    # strength_coverage, monthly_threshold, monthly_ride_ftp, monthly_family_load
-    # - joins it, so a family rule changed here changes them all at once.
+    # the calendar month of its local start. strength_coverage,
+    # monthly_threshold and monthly_family_load group on both keys through it,
+    # and monthly_ride_ftp takes its month from it, so a rule changed here
+    # changes every view that joins it at once.
     activity_family_month_drop =
         \\DROP VIEW IF EXISTS activity_family_month
     activity_family_month =

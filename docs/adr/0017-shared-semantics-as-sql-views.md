@@ -188,12 +188,15 @@ its own driver.
 
 Two more expressions the window used to copy are views. `series_clock`
 answers `today` (the last analyzed day, or the wall clock while
-`daily_load` is empty), `last_day` and `stale_days`; `week_bounds` derives
-its Monday from it, and the window's event tiles, heat ring and staleness
-badge anchor on it instead of each restating `COALESCE(MAX(day), ...)`.
-`activity_family_month` names each activity's family and calendar month
-once, `monthly_family_load` sums load and sessions on those keys for the
-window's career ground, and `monthly_threshold` keys both its arms on the
-same view, so a change to the family rule reaches every consumer at once.
-The e2e suite reads the window's queries out of its source and compares
-each view with the expression it replaced.
+`daily_load` is empty) and `stale_days` (clamped at 0); `week_bounds`
+derives its Monday from it, and the window's event tiles, heat ring, note
+strip and staleness badge anchor on it instead of each restating
+`COALESCE(MAX(day), ...)`. `activity_family_month` names each activity's
+family and calendar month once; `monthly_family_load` sums load and
+sessions on those keys for the window's career ground; `monthly_threshold`
+and `strength_coverage` group on both keys through it and `monthly_ride_ftp`
+takes its month from it, so the rule has one home for every view that joins
+it. The e2e suite reads the window's queries out of its source, so a loader
+moved off a view fails by name, and compares each rewritten view row for
+row with the definition it replaced, the tonnage arm on a seeded covered
+month.

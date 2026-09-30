@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1230)?
+    checks_ran_exactly!(1233)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7090,14 +7090,32 @@ b_cross_surface! = |ctx| {
     # replaced (spelled here as main had them), on the suite's own rows: an
     # EXCEPT empty both ways, and a count so an empty EXCEPT is never vacuous
     mt_old = "SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month, CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS fam, CASE WHEN COALESCE(m.ftp_used, 0) > 0 THEN 'power' ELSE 'pace' END AS kind, CAST(CASE WHEN COALESCE(m.ftp_used, 0) > 0 THEN m.ftp_used ELSE m.threshold_pace_used END AS REAL) AS value FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE (COALESCE(m.ftp_used, 0) > 0 OR COALESCE(m.threshold_pace_used, 0) > 0) AND a.id = (SELECT a2.id FROM activities a2 JOIN activity_metrics m2 ON m2.activity_id = a2.id WHERE (COALESCE(m2.ftp_used, 0) > 0 OR COALESCE(m2.threshold_pace_used, 0) > 0) AND COALESCE(a2.sport_family, a2.sport_type) = COALESCE(a.sport_family, a.sport_type) AND substr(CAST(a2.start_local AS TEXT), 1, 7) = substr(CAST(a.start_local AS TEXT), 1, 7) ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)"
-    mt_diff = Str.trim(sql!(ctx.db, "SELECT (SELECT COUNT(*) FROM (SELECT month, fam, kind, value FROM monthly_threshold WHERE kind <> 'tonnage' EXCEPT ${mt_old})) || '/' || (SELECT COUNT(*) FROM (${mt_old} EXCEPT SELECT month, fam, kind, value FROM monthly_threshold WHERE kind <> 'tonnage')) || '/' || (SELECT COUNT(*) FROM monthly_threshold WHERE kind <> 'tonnage');"))
-    check!("monthly_threshold's spine arms equal the definition they replaced, row for row, with rows (${mt_diff})", (match Str.split_on(mt_diff, "/") { [a, b, n] => a == "0" and b == "0" and n != "0"  _ => Bool.False }))?
+    mt_diff = Str.trim(sql!(ctx.db, "SELECT (SELECT COUNT(*) FROM (SELECT month, fam, kind, value FROM monthly_threshold WHERE kind <> 'tonnage' EXCEPT ${mt_old})) || '/' || (SELECT COUNT(*) FROM (${mt_old} EXCEPT SELECT month, fam, kind, value FROM monthly_threshold WHERE kind <> 'tonnage')) || '/' || (SELECT COUNT(*) FROM monthly_threshold WHERE kind <> 'tonnage') || '/' || (SELECT COUNT(*) FROM (${mt_old}));"))
+    check!("monthly_threshold's spine arms equal the definition they replaced, row for row, with rows (${mt_diff})", (match Str.split_on(mt_diff, "/") { [a, b, n, o] => a == "0" and b == "0" and n != "0" and n == o  _ => Bool.False }))?
     sc_old = "SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month, CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS fam, SUM(CASE WHEN EXISTS (SELECT 1 FROM strength_sets s WHERE s.activity_id = a.id) THEN 1 ELSE 0 END) AS covered, COUNT(*) AS total FROM activities a WHERE COALESCE(a.sport_family, a.sport_type) = 'WeightTraining' GROUP BY substr(CAST(a.start_local AS TEXT), 1, 7), COALESCE(a.sport_family, a.sport_type)"
-    sc_diff = Str.trim(sql!(ctx.db, "SELECT (SELECT COUNT(*) FROM (SELECT month, fam, covered, total FROM strength_coverage EXCEPT ${sc_old})) || '/' || (SELECT COUNT(*) FROM (${sc_old} EXCEPT SELECT month, fam, covered, total FROM strength_coverage)) || '/' || (SELECT COUNT(*) FROM strength_coverage);"))
-    check!("strength_coverage equals the definition it replaced, row for row, with rows (${sc_diff})", (match Str.split_on(sc_diff, "/") { [a, b, n] => a == "0" and b == "0" and n != "0"  _ => Bool.False }))?
+    sc_diff = Str.trim(sql!(ctx.db, "SELECT (SELECT COUNT(*) FROM (SELECT month, fam, covered, total FROM strength_coverage EXCEPT ${sc_old})) || '/' || (SELECT COUNT(*) FROM (${sc_old} EXCEPT SELECT month, fam, covered, total FROM strength_coverage)) || '/' || (SELECT COUNT(*) FROM strength_coverage) || '/' || (SELECT COUNT(*) FROM (${sc_old}));"))
+    check!("strength_coverage equals the definition it replaced, row for row, with rows (${sc_diff})", (match Str.split_on(sc_diff, "/") { [a, b, n, o] => a == "0" and b == "0" and n != "0" and n == o  _ => Bool.False }))?
     rf_old = "SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month, CAST(m.ftp_used AS REAL) AS ftp FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.ftp_used, 0) > 0 AND a.sport_family = 'Ride' AND a.id = (SELECT a2.id FROM activities a2 JOIN activity_metrics m2 ON m2.activity_id = a2.id WHERE COALESCE(m2.ftp_used, 0) > 0 AND a2.sport_family = 'Ride' AND substr(CAST(a2.start_local AS TEXT), 1, 7) = substr(CAST(a.start_local AS TEXT), 1, 7) ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)"
-    rf_diff = Str.trim(sql!(ctx.db, "SELECT (SELECT COUNT(*) FROM (SELECT month, ftp FROM monthly_ride_ftp EXCEPT ${rf_old})) || '/' || (SELECT COUNT(*) FROM (${rf_old} EXCEPT SELECT month, ftp FROM monthly_ride_ftp)) || '/' || (SELECT COUNT(*) FROM monthly_ride_ftp);"))
-    check!("monthly_ride_ftp equals the definition it replaced, row for row, with rows (${rf_diff})", (match Str.split_on(rf_diff, "/") { [a, b, n] => a == "0" and b == "0" and n != "0"  _ => Bool.False }))?
+    rf_diff = Str.trim(sql!(ctx.db, "SELECT (SELECT COUNT(*) FROM (SELECT month, ftp FROM monthly_ride_ftp EXCEPT ${rf_old})) || '/' || (SELECT COUNT(*) FROM (${rf_old} EXCEPT SELECT month, ftp FROM monthly_ride_ftp)) || '/' || (SELECT COUNT(*) FROM monthly_ride_ftp) || '/' || (SELECT COUNT(*) FROM (${rf_old}));"))
+    check!("monthly_ride_ftp equals the definition it replaced, row for row, with rows (${rf_diff})", (match Str.split_on(rf_diff, "/") { [a, b, n, o] => a == "0" and b == "0" and n != "0" and n == o  _ => Bool.False }))?
+    # the note strip spells its anchor as a window on the clock's today; a
+    # loader moved back onto the wall clock would pass the MAX(day) guard,
+    # so its text is pinned by name
+    note_anchor = Str.trim(sh!("grep -c \"(SELECT date(today, '-400 days') FROM series_clock)\" src/viz/Db.roc"))
+    check!("the note strip's 400-day window anchors on the clock view (${note_anchor})", note_anchor == "1")?
+    # a series ahead of the wall clock reads fresh, not negative: the clamp
+    # is only observable with a future day, which the sandbox never has
+    _ = sql!(ctx.db, "INSERT INTO daily_load (day, tss, ctl, atl, tsb) VALUES (date('${ctx.today}', '+30 days'), 0, 0, 0, 0);")
+    ahead = Str.trim(sql!(ctx.db, "SELECT today || '|' || stale_days FROM series_clock;"))
+    _ = sql!(ctx.db, "DELETE FROM daily_load WHERE day = date('${ctx.today}', '+30 days');")
+    check!("a load day ahead of the wall clock is the series' today and reads 0 stale days, not negative (${ahead})", (match Str.split_on(ahead, "|") { [d, st] => d != ctx.today and st == "0"  _ => Bool.False }))?
+    # the tonnage arm on a covered month: one strength session with sets in
+    # a month no other strength session shares, so coverage is whole and the
+    # arm yields exactly that month's lifted mass on the shared keys
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance, elevation) VALUES (9601, 'cross-surface lift', 'WeightTraining', '2019-01-15T07:00:00Z', 3600, 0, 0); INSERT INTO strength_sets (activity_id, ordinal, exercise, sets, reps, weight_kg, source) VALUES (9601, 1, 'squat', 3, 5, 100.0, 'e2e'), (9601, 2, 'bench', 4, 5, 60.0, 'e2e');")
+    tonnage = Str.trim(sql!(ctx.db, "SELECT COUNT(*) || '/' || COALESCE(MAX(CAST(value AS INTEGER)), 0) || '/' || (SELECT covered || ':' || total FROM strength_coverage WHERE month = '2019-01') FROM monthly_threshold WHERE kind = 'tonnage' AND month = '2019-01' AND fam = 'WeightTraining';"))
+    _ = sql!(ctx.db, "DELETE FROM strength_sets WHERE activity_id = 9601; DELETE FROM activities WHERE id = 9601;")
+    check!("the spine's tonnage arm sums a covered month's sets on the shared keys: 3x5x100 + 4x5x60 (${tonnage})", tonnage == "1/2700/1:1")?
     # a partial ladder: with every session's long rungs unrecorded, the
     # unpivot loses three rungs and the record book must not - the rows
     # stay, at zero, so the index-spaced ladder never shrinks. The saved

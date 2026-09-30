@@ -480,12 +480,14 @@ Db :: [].{
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_power_ladder, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.weekly_ramp_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.weekly_ramp, bindings: [] })?
-        # v32: the career trio - totals per sport, month load, month-close FTP
+        # v32: the career trio - totals per sport and month load here; the
+        # month-close FTP follows the family-month keys it joins (v37)
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.career_totals_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.career_totals, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_load_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_load, bindings: [] })?
-        # v37: the family-month keys BEFORE every view that joins them
+        # v37: the family-month keys BEFORE every view that joins them - the
+        # month-close FTP, coverage, the family load and the spine
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_family_month_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_family_month, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_ride_ftp_drop, bindings: [] })?
@@ -493,9 +495,10 @@ Db :: [].{
         # v35 (#521): coverage BEFORE the spine view, which joins it
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.strength_coverage_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.strength_coverage, bindings: [] })?
-        # v33: the same quantity for every family, with its kind beside it
+        # v37: a family's load and sessions per month, on the shared keys
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_family_load_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_family_load, bindings: [] })?
+        # v33: the same quantity for every family, with its kind beside it
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_threshold_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_threshold, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_planned_sessions_date_id ON planned_sessions (target_date, id)", bindings: [] })
