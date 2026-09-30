@@ -7091,12 +7091,12 @@ b_cross_surface! = |ctx| {
     # rather than expressions it copies: each window query is read out of
     # src/viz/Db.roc so the text this checks IS the text the window runs, and
     # the view's answer is compared with the expression it replaced
-    stale_q = Str.trim(sh!("grep -oE 'query: \"SELECT stale_days AS st FROM series_clock\"' src/viz/Db.roc | sed 's/^query: \"//; s/\"$//'"))
+    stale_q = Str.trim(sh!("grep -oE 'db\\.query!\\(\"SELECT stale_days AS st FROM series_clock\"' src/viz/Db.roc | sed 's/^db\\.query!(\"//; s/\"$//'"))
     clock_pair = Str.trim(sql!(ctx.db, "SELECT (SELECT today FROM series_clock) || '|' || COALESCE(MAX(day), date('now', 'localtime')) || '|' || (SELECT mon FROM week_bounds) || '|' || date(COALESCE(MAX(day), date('now', 'localtime')), '-6 days', 'weekday 1') FROM daily_load;"))
     check!("the window's staleness query, read from its source, reads the series clock; the clock's today and week_bounds' Monday equal the expressions they replaced (${clock_pair})", !Str.is_empty(stale_q) and (match Str.split_on(clock_pair, "|") { [a, b, c, d] => a == b and c == d  _ => Bool.False }))?
     anchor_count = Str.trim(sh!("grep -c \"WITH anchor AS (SELECT today FROM series_clock)\" src/viz/Db.roc"))
-    check!("every window anchor on the series' today reads the clock view - three loaders spell the anchor, no query text names MAX(day) (${anchor_count})", anchor_count == "3" and Str.trim(sh!("grep -c 'query: \"[^\"]*MAX(day)' src/viz/Db.roc")) == "0")?
-    fam_q = Str.trim(sh!("grep -oE 'query: \"SELECT CAST\\(fam AS TEXT\\) AS f[^\"]*monthly_family_load[^\"]*\"' src/viz/Db.roc | sed 's/^query: \"//; s/\"$//'"))
+    check!("every window anchor on the series' today reads the clock view - three loaders spell the anchor, no query text names MAX(day) (${anchor_count})", anchor_count == "3" and Str.trim(sh!("grep -c 'db\\.query!(\"[^\"]*MAX(day)' src/viz/Db.roc")) == "0")?
+    fam_q = Str.trim(sh!("grep -oE 'db\\.query!\\(\"SELECT CAST\\(fam AS TEXT\\) AS f[^\"]*monthly_family_load[^\"]*\"' src/viz/Db.roc | sed 's/^db\\.query!(\"//; s/\"$//'"))
     fam_view = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(f || '/' || m || '=' || ld || ':' || n), '') FROM (${fam_q});"))
     fam_raw = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(f || '/' || m || '=' || ld || ':' || n), '') FROM (SELECT CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS f, substr(CAST(a.start_local AS TEXT), 1, 7) AS m, CAST(ROUND(COALESCE(SUM(am.tss), 0)) AS INTEGER) AS ld, COUNT(*) AS n FROM activities a JOIN activity_metrics am ON am.activity_id = a.id GROUP BY f, m ORDER BY f, m);"))
     check!("the window's family-month query, read from its source, reads the shared view and equals the grouping expression it replaced, with rows (${fam_view})", !Str.is_empty(fam_q) and !Str.is_empty(fam_view) and fam_view == fam_raw)?
