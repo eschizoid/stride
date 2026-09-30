@@ -763,12 +763,14 @@ Analyze :: [].{
         # power sports use the power split — even mid-derivation, when pi_ftp is still 0 (the split
         # is then all-zero, and corrects once FTP derives on the next pass). ONLY power-LESS
         # activities fall to the pace split. Gate on actual power samples, not pi_ftp, so a power
-        # ride on the first analyze pass isn't mislabeled by pace.
+        # ride on the first analyze pass isn't mislabeled by pace. The pace split is for
+        # pace-routed sports only: any other sport's threshold speed derives from its own
+        # sessions, so a walk with the watch running would read as hours of hard work.
         pintensity =
             if !(List.is_empty(watts_pairs))
                 Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
             else
-                Metrics.time_in_pace_intensity(gas_1s_pairs, threshold_speed)
+                Metrics.time_in_pace_intensity((if Sports.pace_routed(row.sport) gas_1s_pairs else []), threshold_speed)
 
         # the fallback chain lives in Metrics.tss_ladder (pure, expect-tested)
         nn = |x|
