@@ -36,7 +36,7 @@ Intensity comes from power for any sport that has a power stream, judged against
 sport's own FTP. `Metrics.time_in_power_intensity` splits stream time into easy (<76% FTP),
 moderate (76-90%) and hard (≥91%). Summary polarization, the "hard" column in activities
 and week, and the activity detail all read power-intensity when it is present. They fall
-back to the pace split for any distance sport without watts, and to HR zones only when
+back to the pace split for any endurance-class distance sport without watts, and to HR zones only when
 there is neither. TSS and IF are likewise judged against the sport's own FTP, so a rowing
 effort is not scored against a cycling number.
 

@@ -384,7 +384,7 @@ lifecycle's every state, is in docs/viz.md.
   `progress` sessions carry only `decoupling_known` and no other flag on purpose: rows exist only
   because the group lens scored them.
 - Zone seconds are **HR-based** (universal across sports). Power feeds TSS/NP, and
-  pace feeds the intensity split for any DISTANCE sport without power (a pool swim
+  pace feeds the intensity split for any endurance-class DISTANCE sport without power (a pool swim
   qualifies, since only a distance stream is needed, not GPS or altitude).
 - Load ladder for ENDURANCE sports: stream-NP → Strava weighted watts → avg watts →
   **pace (rtss)** → hrTSS (zone-weighted) → avg-HR → **session-RPE** → relative_effort.

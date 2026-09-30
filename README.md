@@ -492,7 +492,7 @@ mirror table, because a re-sync would silently wipe it.
      (`device_watts: false`) — an estimate is not a measurement — and also when the sport
      has no derived FTP yet, since scoring against an FTP of 0 would compute a TSS of 0
      _and_ block every rung below it.
-  2. **Pace** (rTSS), for runs and swims (the pace-routed sports) with a usable distance stream, once that sport has a
+  2. **Pace** (rTSS), for any endurance-class sport with a usable distance stream, once that sport has a
      derived 20-minute threshold speed. Altitude is optional: with it the pace is
      grade-adjusted, without it raw speed scores. This is why a meterless outdoor ride
      scores by pace rather than falling to HR — the common case for meterless outdoor rides.
@@ -507,7 +507,7 @@ mirror table, because a re-sync would silently wipe it.
   derived from that at read time rather than stored.
 
 - **Normalized power** — 30-second rolling average over 1 Hz-resampled streams.
-- **Grade-adjusted pace (rTSS)** — for runs and swims with a distance stream, a pool swim included: normalized graded
+- **Grade-adjusted pace (rTSS)** — for any endurance-class sport with a distance stream, a pool swim included: normalized graded
   pace vs a **derived** per-sport threshold pace (best 20-min graded speed × 0.95), used
   when power isn't available. Sports without a distance stream fall through to HR.
 - **Power-duration curve + Critical Power** — best power held at every duration (5 s–60 min)

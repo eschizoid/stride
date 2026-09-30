@@ -764,13 +764,15 @@ Analyze :: [].{
         # is then all-zero, and corrects once FTP derives on the next pass). ONLY power-LESS
         # activities fall to the pace split. Gate on actual power samples, not pi_ftp, so a power
         # ride on the first analyze pass isn't mislabeled by pace. The pace split is for
-        # pace-routed sports only: any other sport's threshold speed derives from its own
-        # sessions, so a walk with the watch running would read as hours of hard work.
+        # endurance-class sports only, the same gate as the pace rung: a strength-like
+        # session's threshold speed derives from its own sessions, so a Workout with the
+        # watch left running would read as hours of hard work.
         pintensity =
             if !(List.is_empty(watts_pairs))
                 Metrics.time_in_power_intensity(watts_pairs, pi_ftp)
             else
-                Metrics.time_in_pace_intensity((if Sports.pace_routed(row.sport) gas_1s_pairs else []), threshold_speed)
+                Metrics.time_in_pace_intensity((match Sports.class(row.sport) { Endurance => gas_1s_pairs
+                    StrengthLike => [] }), threshold_speed)
 
         # the fallback chain lives in Metrics.tss_ladder (pure, expect-tested)
         nn = |x|
@@ -1171,5 +1173,5 @@ Analyze :: [].{
     # on every row already in the db, so the feature reading it is inert for exactly the
     # history that would make it useful — the whole activity archive. 33 adds the #188
     # speed ladder (best_300s_speed / best_600s_speed).
-    metrics_rev = 36
+    metrics_rev = 37
 }
