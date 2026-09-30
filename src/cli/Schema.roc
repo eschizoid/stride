@@ -168,7 +168,6 @@ Schema :: [].{
     series_clock =
         \\CREATE VIEW series_clock AS
         \\SELECT COALESCE(MAX(day), date('now', 'localtime')) AS today,
-        \\       MAX(day) AS last_day,
         \\       CAST(MAX(0, CAST(julianday(date('now', 'localtime')) - julianday(COALESCE(MAX(day), date('now', 'localtime'))) AS INTEGER)) AS INTEGER) AS stale_days
         \\FROM daily_load
 
@@ -313,19 +312,20 @@ Schema :: [].{
         \\DROP VIEW IF EXISTS strength_coverage
     strength_coverage =
         \\CREATE VIEW strength_coverage AS
-        \\SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month,
-        \\       CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS fam,
+        \\SELECT fm.month AS month,
+        \\       fm.fam AS fam,
         \\       SUM(CASE WHEN EXISTS (SELECT 1 FROM strength_sets s WHERE s.activity_id = a.id) THEN 1 ELSE 0 END) AS covered,
         \\       COUNT(*) AS total
-        \\FROM activities a
-        \\WHERE COALESCE(a.sport_family, a.sport_type) = 'WeightTraining'
-        \\GROUP BY substr(CAST(a.start_local AS TEXT), 1, 7), COALESCE(a.sport_family, a.sport_type)
+        \\FROM activities a JOIN activity_family_month fm ON fm.activity_id = a.id
+        \\WHERE fm.fam = 'WeightTraining'
+        \\GROUP BY fm.fam, fm.month
 
     # one row per activity with the two keys every per-family month series
     # groups on: the family (the stored `sport_family`, falling back to
     # `sport_type` for a row written before the canonicalizing trigger) and
-    # the calendar month of its local start. Shared as a view so a family
-    # rule changed here changes every consumer at once.
+    # the calendar month of its local start. Every per-family month view -
+    # strength_coverage, monthly_threshold, monthly_ride_ftp, monthly_family_load
+    # - joins it, so a family rule changed here changes them all at once.
     activity_family_month_drop =
         \\DROP VIEW IF EXISTS activity_family_month
     activity_family_month =
@@ -408,13 +408,15 @@ Schema :: [].{
         \\DROP VIEW IF EXISTS monthly_ride_ftp
     monthly_ride_ftp =
         \\CREATE VIEW monthly_ride_ftp AS
-        \\SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month,
+        \\SELECT fm.month AS month,
         \\       CAST(m.ftp_used AS REAL) AS ftp
         \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
+        \\JOIN activity_family_month fm ON fm.activity_id = a.id
         \\WHERE COALESCE(m.ftp_used, 0) > 0 AND a.sport_family = 'Ride'
         \\  AND a.id = (SELECT a2.id FROM activities a2
         \\              JOIN activity_metrics m2 ON m2.activity_id = a2.id
+        \\              JOIN activity_family_month fm2 ON fm2.activity_id = a2.id
         \\              WHERE COALESCE(m2.ftp_used, 0) > 0 AND a2.sport_family = 'Ride'
-        \\                AND substr(CAST(a2.start_local AS TEXT), 1, 7) = substr(CAST(a.start_local AS TEXT), 1, 7)
+        \\                AND fm2.month = fm.month
         \\              ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)
 }

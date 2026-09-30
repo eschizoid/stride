@@ -27,8 +27,8 @@ The first two views are these.
   non-skipped row wins, and a skipped tombstone counts only when nothing
   replaced it.
 - `week_bounds` returns the Monday of the series' current week as
-  `date(COALESCE(MAX(day), date('now','localtime')), '-6 days', 'weekday 1')`,
-  which is verified for all seven weekdays and matches the alignment of
+  `date(today, '-6 days', 'weekday 1')` over `series_clock` (whose `today` is
+  `COALESCE(MAX(day), date('now','localtime'))`), verified for all seven weekdays and matching the alignment of
   `Metrics.weekly_rollup`. An empty daily_load anchors the result on the wall
   clock.
 

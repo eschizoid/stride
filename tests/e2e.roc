@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1227)?
+    checks_ran_exactly!(1230)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7079,13 +7079,25 @@ b_cross_surface! = |ctx| {
     clock_pair = Str.trim(sql!(ctx.db, "SELECT (SELECT today FROM series_clock) || '|' || COALESCE(MAX(day), date('now', 'localtime')) || '|' || (SELECT mon FROM week_bounds) || '|' || date(COALESCE(MAX(day), date('now', 'localtime')), '-6 days', 'weekday 1') FROM daily_load;"))
     check!("the window's staleness query, read from its source, reads the series clock; the clock's today and week_bounds' Monday equal the expressions they replaced (${clock_pair})", !Str.is_empty(stale_q) and (match Str.split_on(clock_pair, "|") { [a, b, c, d] => a == b and c == d  _ => Bool.False }))?
     anchor_count = Str.trim(sh!("grep -c \"WITH anchor AS (SELECT today FROM series_clock)\" src/viz/Db.roc"))
-    check!("every window anchor on the series' today reads the clock view - three loaders, none copying MAX(day) (${anchor_count})", anchor_count == "3" and Str.trim(sh!("grep -c \"COALESCE(MAX(day)\" src/viz/Db.roc")) == "0")?
+    check!("every window anchor on the series' today reads the clock view - three loaders spell the anchor, no query text names MAX(day) (${anchor_count})", anchor_count == "3" and Str.trim(sh!("grep -c 'query: \"[^\"]*MAX(day)' src/viz/Db.roc")) == "0")?
     fam_q = Str.trim(sh!("grep -oE 'query: \"SELECT CAST\\(fam AS TEXT\\) AS f[^\"]*monthly_family_load[^\"]*\"' src/viz/Db.roc | sed 's/^query: \"//; s/\"$//'"))
     fam_view = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(f || '/' || m || '=' || ld || ':' || n), '') FROM (${fam_q});"))
     fam_raw = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(f || '/' || m || '=' || ld || ':' || n), '') FROM (SELECT CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS f, substr(CAST(a.start_local AS TEXT), 1, 7) AS m, CAST(ROUND(COALESCE(SUM(am.tss), 0)) AS INTEGER) AS ld, COUNT(*) AS n FROM activities a JOIN activity_metrics am ON am.activity_id = a.id GROUP BY f, m ORDER BY f, m);"))
     check!("the window's family-month query, read from its source, reads the shared view and equals the grouping expression it replaced, with rows (${fam_view})", !Str.is_empty(fam_q) and !Str.is_empty(fam_view) and fam_view == fam_raw)?
-    key_pair = Str.trim(sql!(ctx.db, "SELECT (SELECT COUNT(*) FROM monthly_threshold) || '|' || (SELECT COUNT(*) FROM (SELECT DISTINCT fam, month FROM activity_family_month fm JOIN activity_metrics m ON m.activity_id = fm.activity_id WHERE COALESCE(m.ftp_used, 0) > 0 OR COALESCE(m.threshold_pace_used, 0) > 0));"))
+    key_pair = Str.trim(sql!(ctx.db, "SELECT (SELECT COUNT(*) FROM monthly_threshold WHERE kind <> 'tonnage') || '|' || (SELECT COUNT(*) FROM (SELECT DISTINCT fam, month FROM activity_family_month fm JOIN activity_metrics m ON m.activity_id = fm.activity_id WHERE COALESCE(m.ftp_used, 0) > 0 OR COALESCE(m.threshold_pace_used, 0) > 0));"))
     check!("monthly_threshold keys its spine on the same family-month view: one threshold row per keyed month (${key_pair})", (match Str.split_on(key_pair, "|") { [a, b] => a == b and a != "0"  _ => Bool.False }))?
+    # the three rewritten views, row for row against the definitions they
+    # replaced (spelled here as main had them), on the suite's own rows: an
+    # EXCEPT empty both ways, and a count so an empty EXCEPT is never vacuous
+    mt_old = "SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month, CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS fam, CASE WHEN COALESCE(m.ftp_used, 0) > 0 THEN 'power' ELSE 'pace' END AS kind, CAST(CASE WHEN COALESCE(m.ftp_used, 0) > 0 THEN m.ftp_used ELSE m.threshold_pace_used END AS REAL) AS value FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE (COALESCE(m.ftp_used, 0) > 0 OR COALESCE(m.threshold_pace_used, 0) > 0) AND a.id = (SELECT a2.id FROM activities a2 JOIN activity_metrics m2 ON m2.activity_id = a2.id WHERE (COALESCE(m2.ftp_used, 0) > 0 OR COALESCE(m2.threshold_pace_used, 0) > 0) AND COALESCE(a2.sport_family, a2.sport_type) = COALESCE(a.sport_family, a.sport_type) AND substr(CAST(a2.start_local AS TEXT), 1, 7) = substr(CAST(a.start_local AS TEXT), 1, 7) ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)"
+    mt_diff = Str.trim(sql!(ctx.db, "SELECT (SELECT COUNT(*) FROM (SELECT month, fam, kind, value FROM monthly_threshold WHERE kind <> 'tonnage' EXCEPT ${mt_old})) || '/' || (SELECT COUNT(*) FROM (${mt_old} EXCEPT SELECT month, fam, kind, value FROM monthly_threshold WHERE kind <> 'tonnage')) || '/' || (SELECT COUNT(*) FROM monthly_threshold WHERE kind <> 'tonnage');"))
+    check!("monthly_threshold's spine arms equal the definition they replaced, row for row, with rows (${mt_diff})", (match Str.split_on(mt_diff, "/") { [a, b, n] => a == "0" and b == "0" and n != "0"  _ => Bool.False }))?
+    sc_old = "SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month, CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS fam, SUM(CASE WHEN EXISTS (SELECT 1 FROM strength_sets s WHERE s.activity_id = a.id) THEN 1 ELSE 0 END) AS covered, COUNT(*) AS total FROM activities a WHERE COALESCE(a.sport_family, a.sport_type) = 'WeightTraining' GROUP BY substr(CAST(a.start_local AS TEXT), 1, 7), COALESCE(a.sport_family, a.sport_type)"
+    sc_diff = Str.trim(sql!(ctx.db, "SELECT (SELECT COUNT(*) FROM (SELECT month, fam, covered, total FROM strength_coverage EXCEPT ${sc_old})) || '/' || (SELECT COUNT(*) FROM (${sc_old} EXCEPT SELECT month, fam, covered, total FROM strength_coverage)) || '/' || (SELECT COUNT(*) FROM strength_coverage);"))
+    check!("strength_coverage equals the definition it replaced, row for row, with rows (${sc_diff})", (match Str.split_on(sc_diff, "/") { [a, b, n] => a == "0" and b == "0" and n != "0"  _ => Bool.False }))?
+    rf_old = "SELECT substr(CAST(a.start_local AS TEXT), 1, 7) AS month, CAST(m.ftp_used AS REAL) AS ftp FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.ftp_used, 0) > 0 AND a.sport_family = 'Ride' AND a.id = (SELECT a2.id FROM activities a2 JOIN activity_metrics m2 ON m2.activity_id = a2.id WHERE COALESCE(m2.ftp_used, 0) > 0 AND a2.sport_family = 'Ride' AND substr(CAST(a2.start_local AS TEXT), 1, 7) = substr(CAST(a.start_local AS TEXT), 1, 7) ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)"
+    rf_diff = Str.trim(sql!(ctx.db, "SELECT (SELECT COUNT(*) FROM (SELECT month, ftp FROM monthly_ride_ftp EXCEPT ${rf_old})) || '/' || (SELECT COUNT(*) FROM (${rf_old} EXCEPT SELECT month, ftp FROM monthly_ride_ftp)) || '/' || (SELECT COUNT(*) FROM monthly_ride_ftp);"))
+    check!("monthly_ride_ftp equals the definition it replaced, row for row, with rows (${rf_diff})", (match Str.split_on(rf_diff, "/") { [a, b, n] => a == "0" and b == "0" and n != "0"  _ => Bool.False }))?
     # a partial ladder: with every session's long rungs unrecorded, the
     # unpivot loses three rungs and the record book must not - the rows
     # stay, at zero, so the index-spaced ladder never shrinks. The saved

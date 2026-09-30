@@ -485,15 +485,15 @@ Db :: [].{
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.career_totals, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_load_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_load, bindings: [] })?
+        # v37: the family-month keys BEFORE every view that joins them
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_family_month_drop, bindings: [] })?
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_family_month, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_ride_ftp_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_ride_ftp, bindings: [] })?
         # v35 (#521): coverage BEFORE the spine view, which joins it
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.strength_coverage_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.strength_coverage, bindings: [] })?
         # v33: the same quantity for every family, with its kind beside it
-        # v37: the family-month keys BEFORE the two views that join them
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_family_month_drop, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_family_month, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_family_load_drop, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_family_load, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_threshold_drop, bindings: [] })?

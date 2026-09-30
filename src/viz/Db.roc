@@ -89,8 +89,8 @@ Db :: [].{
 	# marker and the plot share one clock; the wall clock only answers when
 	# daily_load is empty. Stride's time-mode config can shift its current day
 	# away from localtime, and daily_load is built against stride's day.
-	# days the wall clock is past MAX(day) — 0 when analyze ran today or the
-	# table is empty (NULL diff decodes as Err and lands on the 0 default)
+	# days the wall clock is past the series (0 when analyze ran today or the
+	# table is empty; the clock view clamps at 0, and a missing row reads 0)
 	load_stale! : Sqlite.Db => I64
 	load_stale! = |db|
 		match Sqlite.query!({ db, query: "SELECT stale_days AS st FROM series_clock", bindings: [] }) {
@@ -206,7 +206,7 @@ Db :: [].{
 	# simply absent and reads as rest.
 	load_day_notes! : Sqlite.Db => List({ day : Str, note : Str })
 	load_day_notes! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(substr(start_local, 1, 10) AS TEXT) AS day, CAST(group_concat(name, ' + ') AS TEXT) AS note FROM activities WHERE start_local >= date(COALESCE((SELECT MAX(day) FROM daily_load), date('now', 'localtime')), '-400 days') GROUP BY day", bindings: [] }) {
+		match Sqlite.query!({ db, query: "SELECT CAST(substr(start_local, 1, 10) AS TEXT) AS day, CAST(group_concat(name, ' + ') AS TEXT) AS note FROM activities WHERE start_local >= (SELECT date(today, '-400 days') FROM series_clock) GROUP BY day", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
