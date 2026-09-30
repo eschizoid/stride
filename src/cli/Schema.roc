@@ -155,6 +155,7 @@ Schema :: [].{
         \\            ORDER BY (COALESCE(p2.status, 'open') <> 'skipped') DESC, p2.id DESC
         \\            LIMIT 1)
 
+    # the series' own clock: `today` is the last analyzed day, so every
     # surface that says "as of" or counts days back agrees with the plot,
     # and the wall clock answers only while daily_load is empty (stride's
     # time-mode config can shift its day away from localtime, and

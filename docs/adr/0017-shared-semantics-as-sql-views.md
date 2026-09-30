@@ -198,5 +198,5 @@ and `strength_coverage` group on both keys through it and `monthly_ride_ftp`
 takes its month from it, so the rule has one home for every view that joins
 it. The e2e suite reads the window's queries out of its source, so a loader
 moved off a view fails by name, and compares each rewritten view row for
-row with the definition it replaced, the tonnage arm on a seeded covered
-month.
+row with the definition it replaced, and checks the tonnage arm's sum on a
+seeded covered month.
