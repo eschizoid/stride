@@ -122,7 +122,7 @@
       }
     },
     "history": {
-      "description": "The last ten directives, newest first, each with the status and error the lifecycle recorded, so an agent verifies an outcome here rather than by parsing the table. Empty when the window has never created the table. Rows written by a window from before the id columns report trace_id and ghost_id as -1.",
+      "description": "The last ten directives, newest first, each with the status and error the lifecycle recorded, so an agent verifies an outcome here rather than by parsing the table. Empty while no directive has been written. A -1 in trace_id or ghost_id means the directive did not name that session, the value could not be read as an integer, or the row predates the id columns; fields decode one by one, so a hostile value in one column never hides the row.",
       "type": "array",
       "items": {
         "type": "object",

@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1221)?
+    checks_ran_exactly!(1223)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7246,8 +7246,8 @@ b_viz_caps! = |ctx| {
     none_parity = Str.trim(sh!("na=$(grep -cE \"name: \\\"ghost_(day|id)\\\".*'none'\" src/viz/main.roc); nr=$(grep -c 'directive.ghost_day == \"none\"' src/viz/main.roc); m=$(grep -cE '\\(if dv\\.ghost_(id >= 0|day != \"\")' src/viz/main.roc); g=$(grep -E '\\(if dv\\.ghost_(id >= 0|day != \"\")' src/viz/main.roc | grep -c '!= \"none\"'); if [ \"$na\" = 2 ] && [ \"$nr\" = 1 ] && [ \"$m\" -gt 0 ] && [ \"$m\" = \"$g\" ]; then echo same; else echo \"accepts=$na resolver=$nr segments=$m guarded=$g\"; fi"))
     check!("'none' dismisses in the accepts, the resolver, and every ghost refusal segment (${none_parity})", none_parity == "same")?
     # the directive history, newest first, capped at ten: an agent reads its
-    # outcome from the payload rather than from the table. No table is an
-    # empty list, not a refusal - the window has simply never run.
+    # outcome from the payload rather than from the table. No table, or a
+    # table with no rows, is an empty list, not a refusal.
     check!("viz history is empty before the window ever created the table", strjq!(ctx, ["viz"], ".data.history | length") == "0")?
     _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_directives (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL DEFAULT (datetime('now')), view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT, ghost_day TEXT, consumed INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', error TEXT, applied_at TEXT, trace_id INTEGER, ghost_id INTEGER);")
     _ = sql!(ctx.db, "INSERT INTO viz_directives (view, trace_id, consumed, status, error, applied_at) VALUES (2, 1, 1, 'applied_partial', 'trace_id 1 not in the picker', datetime('now'));")
@@ -7256,6 +7256,14 @@ b_viz_caps! = |ctx| {
     check!("...and applied_at is a string, empty until the frame reports", strjq!(ctx, ["viz"], "[.data.history[] | (.applied_at | length > 0 | tostring)] | join(\",\")") == "false,true")?
     _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (0),(0),(0),(0),(0),(0),(0),(0),(0),(0),(0);")
     check!("history is capped at ten and keeps the newest", strjq!(ctx, ["viz"], "(.data.history | length | tostring) + \"/\" + (.data.history[0].id | tostring)") == "10/13")?
+    # a hostile row - text where an integer belongs, which a raw INSERT can
+    # write - keeps its id and every readable field and erases nothing
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES ('banana');")
+    check!("a directive with text in an integer column still lists, that field -1, the nine around it intact", strjq!(ctx, ["viz"], "(.data.history | length | tostring) + \"/\" + (.data.history[0] | (.id | tostring) + \":\" + (.view | tostring) + \":\" + .status)") == "10/14:-1:pending")?
+    # a table from before the id columns: the history still lists, ids -1
+    _ = sql!(ctx.db, "ALTER TABLE viz_directives DROP COLUMN trace_id;")
+    _ = sql!(ctx.db, "ALTER TABLE viz_directives DROP COLUMN ghost_id;")
+    check!("a directive table without the id columns still lists its rows, ids -1", strjq!(ctx, ["viz"], "(.data.history | length | tostring) + \"/\" + ([.data.history[] | .trace_id] | unique | tostring) + \"/\" + (.data.history[0].id | tostring)") == "10/[-1]/14")?
     check!("viz payload conforms to its schema", Str.is_empty(Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' viz | jq '.data' | jq -r --slurpfile schema schemas/v3/viz.json -f tools/validate.jq 2>&1"))))?
     # a HALF-written publish — tables present, scalars gone — must refuse the
     # same way as no publish at all: protocol 0 is not a protocol

@@ -275,7 +275,9 @@ computes the age itself.
 The same payload carries `history`: the last ten directives, newest
 first, each with its `status`, `error` and `applied_at`, so verifying a
 directive is a read of the command, not a query on the table. It is
-empty until the window has created the table.
+empty while no directive has been written. An id of -1 means the
+directive did not name that session, the value could not be read as an
+integer, or the row predates the id columns.
 
 The lifecycle those rows go through — stale, superseded, pending until the
 applying frame reports, applied — is one definition in the pure `core.Bus`

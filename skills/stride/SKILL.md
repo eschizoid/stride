@@ -319,7 +319,8 @@ polls it about once a second, and every row reaches a status you can read back.
    'none'` dismisses the ghost. Never name a session by day when the athlete has two
    that day.
 3. **Verify by id, not by hope.** Read the row back from `stride viz --json`, whose
-   `history` lists the last ten directives newest first, or with `SELECT status, error FROM
+   `history` lists the last ten directives newest first (empty while none has been
+   written), or with `SELECT status, error FROM
    viz_directives WHERE id = <id>`. `applied` means every field was honoured;
    `applied_partial` means some were refused and `error` names each one with why
    (`trace_id 1 not in the picker`, `ghost_id 9 is Rowing, the session is Ride`,

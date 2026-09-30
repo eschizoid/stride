@@ -614,7 +614,16 @@ ReportHealth :: [].{
             # reads for the reason focus has two: the id columns arrived after
             # the table, and a table an older window created lacks them, so
             # those rows report ids -1 rather than the history going absent.
-            # No table at all is an empty history: the window has never run.
+            # Fields decode one by one, as the tick's do: a row an agent wrote
+            # with text in an integer column keeps its id and every readable
+            # field, so one hostile row cannot erase the nine around it. -1
+            # in an id therefore means unset, unreadable, or written before
+            # the column existed; the status and error say which matters.
+            # No table at all is an empty history, as is a table with no rows.
+            h_int = |r, fallback| match r { Ok(x) => x
+                Err(_) => fallback }
+            h_str = |r| match r { Ok(x) => x
+                Err(_) => "" }
             hist_rows! = |q|
                 Sqlite.query_many!({
                     path: Path.utf8(path),
@@ -622,17 +631,17 @@ ReportHealth :: [].{
                     bindings: [],
                     rows: |cols| |stmt| {
                         id = Sqlite.i64("id")(cols)(stmt)?
-                        created_at = Sqlite.str("hca")(cols)(stmt)?
-                        status = Sqlite.str("hst")(cols)(stmt)?
-                        error = Sqlite.str("her")(cols)(stmt)?
-                        applied_at = Sqlite.str("haa")(cols)(stmt)?
-                        view = Sqlite.i64("hv")(cols)(stmt)?
-                        range = Sqlite.i64("hrg")(cols)(stmt)?
-                        cursor_day = Sqlite.str("hcd")(cols)(stmt)?
-                        trace_day = Sqlite.str("htd")(cols)(stmt)?
-                        ghost_day = Sqlite.str("hgd")(cols)(stmt)?
-                        trace_id = Sqlite.i64("hti")(cols)(stmt)?
-                        ghost_id = Sqlite.i64("hgi")(cols)(stmt)?
+                        created_at = h_str(Sqlite.str("hca")(cols)(stmt))
+                        status = h_str(Sqlite.str("hst")(cols)(stmt))
+                        error = h_str(Sqlite.str("her")(cols)(stmt))
+                        applied_at = h_str(Sqlite.str("haa")(cols)(stmt))
+                        view = h_int(Sqlite.i64("hv")(cols)(stmt), -1)
+                        range = h_int(Sqlite.i64("hrg")(cols)(stmt), -1)
+                        cursor_day = h_str(Sqlite.str("hcd")(cols)(stmt))
+                        trace_day = h_str(Sqlite.str("htd")(cols)(stmt))
+                        ghost_day = h_str(Sqlite.str("hgd")(cols)(stmt))
+                        trace_id = h_int(Sqlite.i64("hti")(cols)(stmt), -1)
+                        ghost_id = h_int(Sqlite.i64("hgi")(cols)(stmt), -1)
                         Ok({ id, created_at, status, error, applied_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id })
                     },
                 })
