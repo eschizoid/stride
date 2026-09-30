@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.17.0](https://github.com/eschizoid/stride/compare/v0.16.0...v0.17.0) (2026-09-30)
+
+
+### Features
+
+* **viz:** a day names its newest session, and the capability text is pinned ([#554](https://github.com/eschizoid/stride/issues/554)) ([67ccd0a](https://github.com/eschizoid/stride/commit/67ccd0a2a62519a76d373022edde2975dfb7888c))
+* **viz:** directives name sessions by id, and focus carries a liveness rule ([#550](https://github.com/eschizoid/stride/issues/550)) ([7406ea9](https://github.com/eschizoid/stride/commit/7406ea98410cf1f4677d5200a879827877a4dc6a))
+* **viz:** four visual reads that misled, made honest ([6a16c53](https://github.com/eschizoid/stride/commit/6a16c5361e2c78f6d2d1fecb99ce2ec6b9f8e278))
+* **viz:** stride viz --json serves the last ten directives ([#562](https://github.com/eschizoid/stride/issues/562)) ([6a080e0](https://github.com/eschizoid/stride/commit/6a080e0136c300975e3805c6619b01ef9ddc4625))
+* **viz:** the career arc shows the sport it names ([2daeb92](https://github.com/eschizoid/stride/commit/2daeb92999c2edfd409a6a372228065bd253caaa))
+* **viz:** the directive lifecycle is one definition, and viz tick runs it headless ([#553](https://github.com/eschizoid/stride/issues/553)) ([98ca2b1](https://github.com/eschizoid/stride/commit/98ca2b148fab4d7ea21a74b62228bcf8a72609c5))
+
+
+### Bug Fixes
+
+* **viz:** a fetch reply is matched to its request by generation, not index ([#549](https://github.com/eschizoid/stride/issues/549)) ([28611ca](https://github.com/eschizoid/stride/commit/28611ca46a979928f83d23118f36fea9c49b8238))
+* **viz:** a session-naming directive is judged against the database ([#541](https://github.com/eschizoid/stride/issues/541)) ([0ab108c](https://github.com/eschizoid/stride/commit/0ab108cec76204ece7984f83814e74377036c28f))
+* **viz:** a window switch reads three tables, and its note keeps clear ([bdde6e1](https://github.com/eschizoid/stride/commit/bdde6e1c007d2aa737f2dcef13722ada946727b5))
+* **viz:** give career its own nav mark ([6ac428b](https://github.com/eschizoid/stride/commit/6ac428b021e4ad107f63766fde2d0959bd7fd2fb))
+* **viz:** table rows grow to hold a wrapped session note ([#560](https://github.com/eschizoid/stride/issues/560)) ([1891759](https://github.com/eschizoid/stride/commit/1891759758830598f150a5c71e26ec7023f9b7aa))
+* **viz:** the ellipsis glyph is not in the atlas, so no literal uses it ([1e26f23](https://github.com/eschizoid/stride/commit/1e26f231412ab101ccf7a171dc555bac80b17220))
+* **viz:** the record book reads its rungs off a view the schema owns ([#556](https://github.com/eschizoid/stride/issues/556)) ([0f876a2](https://github.com/eschizoid/stride/commit/0f876a21b9f7ee37c4128eec24578a568e1df2fc))
+* **viz:** the trace says "loading" while it fetches, not "no samples" ([#543](https://github.com/eschizoid/stride/issues/543)) ([ede55a0](https://github.com/eschizoid/stride/commit/ede55a03f9ee01459b060faa48c37317658585d2))
+* **viz:** TraceSwitched applies only the reply for the current selection ([#545](https://github.com/eschizoid/stride/issues/545)) ([eddec2c](https://github.com/eschizoid/stride/commit/eddec2c21c5121b9adfed8664e7c59650e13db37))
+* **viz:** wrap the day's activity names in the form board card ([#559](https://github.com/eschizoid/stride/issues/559)) ([4b4e44e](https://github.com/eschizoid/stride/commit/4b4e44e19d6375135b6b7480fb183ddcfa9f4f6f))
+
+
+### Performance Improvements
+
+* **viz:** load only the shown session at boot, the rest on demand ([18173a1](https://github.com/eschizoid/stride/commit/18173a152eb62006431b44a3be28add5bac25d82))
+
 ## [0.16.0](https://github.com/eschizoid/stride/compare/v0.15.0...v0.16.0) (2026-09-24)
 
 
