@@ -169,7 +169,7 @@ fi
 # ── Pin agreement. THE INVARIANT — stated once here; other comments point at it. ──
 #
 # The pin is a checked-in set of (schema, property-set, required-set, JSON path) rows,
-# one per object: 81 objects, 81 rows. Keying by PATH is what makes the comparison
+# one per object, as many rows as objects. Keying by PATH is what makes the comparison
 # total — every object has its own row, so any object that gains a field, loses one,
 # stops being pinned, appears, disappears, moves, or trades shapes with a neighbour
 # moves a row. Two weaker keys were tried first and each missed something:
@@ -277,8 +277,8 @@ if [ "$n" -gt 0 ]; then
 fi
 # Both counts asserted EXACTLY, not as floors: under a floor, rows can stop matching
 # while the gate prints the same clean line a healthy tree prints.
-EXPECT_PINNED=52
-EXPECT_LITERALS=41
+EXPECT_PINNED=53
+EXPECT_LITERALS=42
 if [ "$pinned" != "$EXPECT_PINNED" ] || [ "$literals" != "$EXPECT_LITERALS" ]; then
   echo "skill-shapes: enforced $pinned doc-pinned objects and matched $literals brace literals;"
   echo "skill-shapes: expected $EXPECT_PINNED and $EXPECT_LITERALS. If intended, update these"

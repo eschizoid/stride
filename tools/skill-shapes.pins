@@ -84,7 +84,8 @@ version.json	version	version	-	$
 viz-tick.json	acked,cursor_day,found,ghost_day,ghost_id,id,range,status,trace_day,trace_id,view	acked,cursor_day,found,ghost_day,ghost_id,id,range,status,trace_day,trace_id,view	-	$
 viz.json	accepts,kind,name	accepts,kind,name	doc	properties.fields.items
 viz.json	age_seconds,cursor_day,ghost_day,ghost_id,live,present,range,trace_day,trace_id,updated_at,view	age_seconds,cursor_day,ghost_day,ghost_id,live,present,range,trace_day,trace_id,updated_at,view	doc	properties.focus
-viz.json	fields,focus,focus_staleness_seconds,protocol,published_at,staleness_seconds,views	fields,focus,focus_staleness_seconds,protocol,published_at,staleness_seconds,views	doc	$
+viz.json	applied_at,created_at,cursor_day,error,ghost_day,ghost_id,id,range,status,trace_day,trace_id,view	applied_at,created_at,cursor_day,error,ghost_day,ghost_id,id,range,status,trace_day,trace_id,view	doc	properties.history.items
+viz.json	fields,focus,focus_staleness_seconds,history,protocol,published_at,staleness_seconds,views	fields,focus,focus_staleness_seconds,history,protocol,published_at,staleness_seconds,views	doc	$
 viz.json	id,name	id,name	doc	properties.views.items
 week.json	activity_id,completed_activity_id,created_at,day,detail,done_date,id,rationale,session_type,skipped_reason,status,status_shown,substitute_activity_id,superseded_activity_id,target_date	activity_id,completed_activity_id,created_at,day,detail,done_date,id,rationale,session_type,skipped_reason,status,status_shown,substitute_activity_id,superseded_activity_id,target_date	-	items
 week_add.json	id,session_type,target_date,target_dur_s,target_known,target_reps,target_watts	id,session_type,target_date,target_dur_s,target_known,target_reps,target_watts	-	$
