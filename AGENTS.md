@@ -44,6 +44,11 @@ just build     # the binary, --opt=dev (see below); STRIDE_LINKER= is an escape 
 just install   # build + symlink to ~/.local/bin/stride
 ```
 
+Until a basic-webserver release carries the implicit-open-union removal, `just e2e` (and
+so `just test` and `just e2e-sync`) fails at the harness build on this pin with that
+package's 60 warnings; the binary the failed build still writes runs the suite, and
+docs/roc-new-compiler-notes.md has the full account.
+
 CI runs more than `just test`, and a green `just test` is not a green build. These are the
 rest of it, all runnable locally — run them before pushing. Every one is network-free
 except `issue-claims`, which reads the tracker:
@@ -221,8 +226,10 @@ touch, in its own source.** roc-ray decides a filesystem grant from the TEXT
 of a path, and `~/.stride` sits under a home known only at run time, so the
 launcher resolves it and passes it as the first argument and the startup
 config is built from argv (`App.init_for_args`). The grants are that
-directory read-write, the checkout read-only, and the one program `stride` —
-nothing else, so a new effect in the window is a new declaration, and an
+directory read-write, the launch directory read-only (the checkout for `just
+viz`, the athlete's home for the packaged launchers, which change to it first),
+and the one program `stride`; captures are allowed beneath `./captures` without
+a declaration. Nothing else, so a new effect in the window is a new declaration, and an
 undeclared facility stops the app rather than failing quietly. Every launch
 path passes the directory: the `viz` recipe, the macOS `.app` launcher in
 `tools/make-viz-app.sh`, and the linux and windows launchers the release

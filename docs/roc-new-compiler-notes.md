@@ -11,7 +11,7 @@ against the compiler and roc-lang/roc source during the migration (completed
 supported compiler; basic-cli 0.23.0 sets a floor of `nightly-2026-09-23-c7852fd`.
 With all three naming one tag, the viz build has no version skew to forgive.
 
-Three things in the compiler and the platform force source changes:
+Four things in the compiler and the platform force source changes:
 
 **Tag unions in return position are open automatically.** An explicit `..`
 there is a `redundant open tag union` warning, and both `roc check` and `roc
@@ -52,7 +52,23 @@ comes from argv through `App.init_for_args`, and the launcher passes the path.
 An undeclared facility stops the app with a message naming the declaration to
 add, which is why removing one is a usable negative control.
 
-
+**basic-webserver has no release that builds warning-free on this pin.**
+`tests/e2e.roc` rides basic-webserver, whose released platform source still
+writes `..` in return position: 60 sites reach the build on 0.15.0, and its
+main branch carried the same 60 until roc-lang/basic-webserver#237 removed
+them (60 platform sites, 121 example sites, their pin moved to this nightly;
+their own CI stays red on six examples until roc-gregorian ships without its
+five `..` sites). The harness links and its binary runs, but `roc build`
+exits non-zero on the warnings, so `just e2e`, `just test` and `just
+e2e-sync` cannot pass on the released package, and the e2e job stays red
+until a release carries the removal. Nothing in this repo works around it:
+the two apps share one compiler on purpose, there is no flag that downgrades
+a warning, and a wrapper that swallowed one would swallow the next real
+warning too. Against a patched copy of 0.15.0 supplied with `roc build
+--replace-dep <the 0.15.0 URL> <copy>/main.roc`, the harness builds at zero
+warnings and both suites pass, which is how this branch's engine changes
+were verified; the day the release lands, the harness's platform URL moves
+and the gate goes green.
 
 ## Toolchain pin: `nightly-2026-09-04-c125b82` (the hold below is LIFTED)
 
@@ -273,7 +289,7 @@ MISCOMPILED this codebase (issue #32's intermittent SIGABRT; it also silently dr
   contains/find_first/keep_if/take_first/take_last`, `Str.trim/split_on/with_ascii_lowercased`,
   `${}` interpolation.
 
-## Platform (basic-cli 0.22)
+## Platform (basic-cli 0.23)
 
 - Header: `app [main!] { pf: platform "…/0.22.0/….tar.zst" }`. HTTP data types
   (Method/Request/Response) come from the `http` package, not `pf`.
@@ -298,7 +314,7 @@ MISCOMPILED this codebase (issue #32's intermittent SIGABRT; it also silently dr
   (import pf.Path). There is no `Path.from_str`; reaching for it fails the build with
   DOES NOT EXIST.
 - **Never `Sqlite.query!` a maybe-absent key.** Load optional config with `query_many!`
-  and treat the empty list as absent. (On basic-cli 0.21/0.22 a missing row returns
+  and treat the empty list as absent. (On basic-cli 0.21 through 0.23 a missing row returns
   `Err(NoRowsReturned)`, so an unhandled `?` exits 1. The deterministic SIGABRT this
   note used to claim was the alpha4 / 0.20 behaviour — the rule is unchanged, the
   failure mode is milder than advertised.)

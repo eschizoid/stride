@@ -340,9 +340,11 @@ a reader who cares looks at focus, not at the losing row.
   is matched against the text of a path. The athlete's directory sits under a
   home known only at run time, so it cannot be written there: the launcher
   resolves it and passes it as the first argument, and the startup config is
-  built from argv. The window declares that directory read-write, the
-  checkout read-only (the dev-run `assets/fonts` and `img`), and the single
-  program `stride`. Nothing else — no environment, no network, no shell.
+  built from argv. The window declares that directory read-write, the launch
+  directory read-only (the checkout for `just viz`; the athlete's home for the
+  packaged launchers, which change to it before they exec), and the single
+  program `stride`. Captures are allowed beneath `./captures` without a
+  declaration. Nothing else: no environment, no network, no shell.
   Launched with no argument, the window opens and says it has no database.
 - `has` is a reserved word; uppercase identifiers are types.
 

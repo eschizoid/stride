@@ -137,11 +137,27 @@ jobs:
       # its only payload-vs-schema check in CI.
       - name: Run mock-backed e2e suite
         run: ROC=roc just e2e-sync
+
+  # The three checks that need neither a window nor the e2e harness: the docs'
+  # command names against the binary's table, the compiler pins, and the
+  # issue-state claims. Their own job, so a red harness build (the e2e job
+  # stops at its first failing step) cannot take them down with it.
+  claims:
+    needs: check-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Roc (new compiler)
+        uses: ./.github/actions/setup-roc
+      - name: Install just
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq just
+      - name: Build stride (the command table is the oracle below)
+        run: roc build src/cli/main.roc --output=stride --opt=dev
       # Deterministic and network-free, so it runs BEFORE issue-claims: that one needs the
       # tracker, and a GitHub outage there would otherwise mean this check — which can
       # always run — never does.
       #
-      # The oracle is the binary's own command table, which this job built two steps up.
+      # The oracle is the binary's own command table, which this job built one step up.
       # The SCRIPT, not `just command-claims`, and the difference is not cosmetic: the
       # recipe depends on `build` for local use, `just` has no up-to-date check, and
       # `roc build` is 16 of the recipe's 18 seconds — so through the recipe this step
@@ -175,7 +191,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Roc (the viz pin, not the engine pin)
+      - name: Set up Roc
         uses: ./.github/actions/setup-roc
 
       - name: Type-check the app window
@@ -198,7 +214,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Roc (the viz pin, not the engine pin)
+      - name: Set up Roc
         uses: ./.github/actions/setup-roc
 
       - name: raylib's link dependencies
@@ -233,7 +249,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Roc (the viz pin, not the engine pin)
+      - name: Set up Roc
         uses: ./.github/actions/setup-roc
 
       - name: Link the window
@@ -242,7 +258,7 @@ jobs:
           set -euo pipefail
           # rem lines stripped first: the claim must live in the launcher the
           # release writes, not in a comment describing it
-          sed 's/^ *rem .*//' .github/workflows/release-please.yml | grep -q 'stride-viz.exe" "%USERPROFILE%'
+          sed -e 's/^ *rem .*//' -e 's/^ *#.*//' .github/workflows/release-please.yml | grep -q 'stride-viz.exe" "%USERPROFILE%'
           sh tools/roc-viz.sh build src/viz/main.roc --output=stride-viz.exe --opt=dev
           test -s stride-viz.exe
 

@@ -48,12 +48,15 @@ program = { init!, update!, render! }
 # run time, and a declaration is decided from the text of the path. So the
 # launcher resolves it and passes it as the first argument, and the config is
 # built from argv. Launched without one, the window still opens — it declares
-# nothing beyond the checkout and says on its face that it has no database.
+# nothing beyond the launch directory and says on its face that it has no
+# database.
 #
-# The checkout grant is read-only and covers the dev-run asset paths
-# (assets/fonts, img); the engine is named exactly, so `stride` may run and
-# nothing else. Captures need no grant: the platform allows them beneath the
-# configured output directory.
+# The launch-directory grant is read-only: for `just viz` that is the checkout
+# (the dev-run assets/fonts and img), and for the packaged launchers, which
+# change to the home directory before they exec, it is the athlete's home.
+# The engine is named exactly, so `stride` may run and nothing else. Captures
+# need no grant: the platform allows them beneath the configured output
+# directory, ./captures.
 stride_dir_of : List(Str) -> Str
 stride_dir_of = |args| match List.get(args, 1) { Ok(a) => a
 	Err(_) => "" }
