@@ -512,6 +512,15 @@ run_sync! = || {
 
     _ = sync_stride!(bin, home, base, ["analyze"])
     check!("2 mock activities synced", sync_strjq!(bin, home, base, ["activities"], ".data | length") == "2")?
+    # an FTP needs two sessions of the family with a best (#574), so 501 gets a
+    # mate the mock never lists: `synced_at NULL` exempts it from prune_deleted!
+    # on every later sync (incremental and --all), its stream is seeded here and
+    # again after the drain block's unscoped wipe so no drain ever fetches it and
+    # the fetch counts stay the mock's, and it leaves once 501's last TSS check
+    # has run, before the drain scenarios that count fetches by id
+    _ = sql!(db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) VALUES (599,'Mock Power Ride Mate','Ride','2026-07-20T10:00:00Z',1300,8000.0,0.0,NULL);")
+    _ = seed_power_stream!(db, 599, 1300, 200)
+    _ = sync_stride!(bin, home, base, ["analyze"])
     # 501's mock streams are a constant 200W. FTP is DERIVED, not configured (#26): best 20-min
     # power 200 x 0.95 = 190, so NP 200 @ derived FTP 190 => IF 1.053, TSS ~110.8 for the hour.
     # Pin the exact value (not just >0) so the whole stream->best20->deriveFTP->NP->TSS path is checked.
@@ -579,6 +588,9 @@ run_sync! = || {
     # which runs BEFORE the drain — and it is what makes the seed date a free
     # choice, since the queue query carries no date predicate.
     _ = sql!(db, "DELETE FROM streams;")
+    # the mate's stream comes back at once, so the drain below has nothing of
+    # its own to fetch and 72 stays the mock's count
+    _ = seed_power_stream!(db, 599, 1300, 200)
     _ = sql!(db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) WITH RECURSIVE seq(x) AS (SELECT 901 UNION ALL SELECT x+1 FROM seq WHERE x<970) SELECT x,'seed','Ride','2026-08-01T10:00:00Z',3600,1000.0,0.0,NULL FROM seq;")
     # The seed asserted BEFORE the run: `pending_streams == 0` below is a pure
     # absence, and a seed that silently did nothing satisfies it perfectly.
@@ -642,6 +654,8 @@ run_sync! = || {
     check!("...and --all does not claim it checked only the 30-day window", !(Str.contains(all_human, "30-day window")))?
 
     check_near!("501's metrics are restored after the drain block", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 110.8, 1.0)?
+    # the mate leaves here: the drain scenarios below count fetches by id
+    _ = sql!(db, "DELETE FROM activities WHERE id = 599; DELETE FROM activity_metrics WHERE activity_id = 599; DELETE FROM streams WHERE activity_id = 599;")
 
     # #208: the two config reads on the SYNC path. Both swallowed an unreadable
     # value — last_sync_epoch folded into "never synced" (a silent full re-pull,
