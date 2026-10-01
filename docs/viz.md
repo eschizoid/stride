@@ -55,7 +55,11 @@ The fifth TAB stop answers "what do I do today" without asking anyone: the
 prescribed session and its rationale in a card, the week's ladder with type
 chips and done/today/upcoming states, this week's load beside last week's,
 and the coach corner - the newest bus directive, on screen. Steerable like
-everything else: a directive with view 4 opens it.
+everything else: a directive with view 4 opens it. "Today" here, and the week
+the strip counts, is the athlete's civil day resolved the way the CLI resolves
+it (config `timezone`, then `utc_offset_minutes`, then UTC), not the machine
+clock, so the window and `stride week` name the same Monday wherever the
+machine is set.
 
 ## The heat view
 

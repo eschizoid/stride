@@ -385,6 +385,65 @@ Db :: [].{
 			Err(_) => Err(WriteFailed)
 		}
 
+	# "today" for the calendar questions below (the plan strip's week, the
+	# plan rows' today flag): the athlete's civil day, resolved the way the
+	# CLI resolves it - config `timezone` (IANA, through the system tz db, so
+	# DST-correct) first, then `utc_offset_minutes`, then UTC. The machine
+	# clock's zone is not consulted, so the window and `stride week` name the
+	# same Monday on a laptop set to another zone. The value is a sqlite
+	# modifier, "<minutes east of UTC> minutes", applied to 'now'.
+	today_mod! : Sqlite.Db => Str
+	today_mod! = |db| "${I64.to_str(local_offset_minutes!(db))} minutes"
+
+	local_offset_minutes! : Sqlite.Db => I64
+	local_offset_minutes! = |db| {
+		fixed = match I64.from_str(config_value!(db, "utc_offset_minutes")) { Ok(n) => n
+			Err(_) => 0 }
+		tz = config_value!(db, "timezone")
+		if tz == "" fixed
+		else match zone_offset_now!(tz) { Ok(off) => off
+			# an unknown zone falls back to the fixed offset, as the CLI does
+			Err(_) => fixed }
+	}
+
+	# a config value, or "" when the key is absent or unreadable; the keys
+	# are compile-time constants
+	config_value! : Sqlite.Db, Str => Str
+	config_value! = |db, key|
+		match Sqlite.query!({ db, query: "SELECT CAST(value AS TEXT) AS v FROM config WHERE key = '${key}';", bindings: [] }) {
+			Ok(rows) => match List.first(rows) { Ok(r) => match r.str("v") { Ok(v) => Str.trim(v)
+					Err(_) => "" }
+				Err(_) => "" }
+			Err(_) => ""
+		}
+
+	# the zone's offset right now, through the shell the CLI uses: the system
+	# tz db has the DST rules, and `date +%z` under TZ reports the offset in
+	# force. The zone name travels as a positional argument, so a hostile
+	# string cannot break out of the quoting.
+	zone_offset_now! : Str => Try(I64, [BadTz])
+	zone_offset_now! = |tz| {
+		cmd = "if [ -f \"/usr/share/zoneinfo/$1\" ]; then TZ=\"$1\" date +%z; else echo INVALID; fi"
+		match Cmd.run_utf8!(Cmd.with_args(Cmd.new("sh"), ["-c", cmd, "sh", tz])) {
+			Ok(out) => parse_utc_offset(out.stdout)
+			Err(_) => Err(BadTz)
+		}
+	}
+
+	# "+HHMM" / "-HHMM", what `date +%z` prints, to minutes east of UTC
+	parse_utc_offset : Str -> Try(I64, [BadTz])
+	parse_utc_offset = |raw|
+		match Str.trim(raw).to_utf8() {
+			[sign, h1, h2, m1, m2] => {
+				digit = |b| if b >= 48 and b <= 57 Ok(b.to_i64() - 48) else Err(BadTz)
+				hh = (digit(h1)? * 10) + digit(h2)?
+				mm = (digit(m1)? * 10) + digit(m2)?
+				mag = (hh * 60) + mm
+				if sign == 45 Ok(-mag) else if sign == 43 Ok(mag) else Err(BadTz)
+			}
+			_ => Err(BadTz)
+		}
+
 	# the Monday-aligned CURRENT week's completion count - the progress strip's
 	# numerator and denominator (the display ladder below is forward-looking
 	# and cannot count done sessions meaningfully). The week is TODAY's, the
@@ -395,8 +454,11 @@ Db :: [].{
 	# count is a calendar question, so it stays on the calendar. The sibling
 	# load_week_tss! reads week_bounds because load is a series question.
 	load_plan_week! : Sqlite.Db => { done : I64, total : I64 }
-	load_plan_week! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT date(date('now', 'localtime'), '-6 days', 'weekday 1') AS mon) SELECT CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER) AS dn, COUNT(*) AS tot FROM plan_current, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days')", bindings: [] }) {
+	load_plan_week! = |db| load_plan_week_at!(db, today_mod!(db))
+
+	load_plan_week_at! : Sqlite.Db, Str => { done : I64, total : I64 }
+	load_plan_week_at! = |db, today_mod|
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT date(date('now', '${today_mod}'), '-6 days', 'weekday 1') AS mon) SELECT CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER) AS dn, COUNT(*) AS tot FROM plan_current, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days')", bindings: [] }) {
 			Err(_) => { done: 0, total: 0 }
 			Ok(rows) => match List.first(rows) {
 				Err(_) => { done: 0, total: 0 }
@@ -410,13 +472,17 @@ Db :: [].{
 			}
 		}
 
-	# the prescribed days ahead of the WALL-CLOCK today - prescriptions are
-	# calendar items the athlete reads on the real day, so the plan view is
-	# the one place the series clock does not rule (PMC reads keep it).
+	# the prescribed days ahead of the athlete's civil today (today_mod!) -
+	# prescriptions are calendar items the athlete reads on the real day, so
+	# the plan view is the one place the series clock does not rule (PMC
+	# reads keep it).
 	PlanRow : { day : Str, typ : Str, detail : Str, rationale : Str, done : Bool, skipped : Bool, today : Bool }
 	load_plan! : Sqlite.Db => List(PlanRow)
-	load_plan! = |db|
-		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT date('now', 'localtime') AS today) SELECT CAST(target_date AS TEXT) AS d, CAST(COALESCE(session_type, '') AS TEXT) AS t, CAST(COALESCE(detail, '') AS TEXT) AS dt, CAST(COALESCE(rationale, '') AS TEXT) AS ra, (COALESCE(status, '') = 'done') AS dn, (COALESCE(status, '') = 'skipped') AS sk, (target_date = (SELECT today FROM anchor)) AS td FROM plan_current, anchor WHERE target_date >= (SELECT today FROM anchor) AND target_date <= date((SELECT today FROM anchor), '+6 days') ORDER BY target_date, id", bindings: [] }) {
+	load_plan! = |db| load_plan_at!(db, today_mod!(db))
+
+	load_plan_at! : Sqlite.Db, Str => List(PlanRow)
+	load_plan_at! = |db, today_mod|
+		match Sqlite.query!({ db, query: "WITH anchor AS (SELECT date('now', '${today_mod}') AS today) SELECT CAST(target_date AS TEXT) AS d, CAST(COALESCE(session_type, '') AS TEXT) AS t, CAST(COALESCE(detail, '') AS TEXT) AS dt, CAST(COALESCE(rationale, '') AS TEXT) AS ra, (COALESCE(status, '') = 'done') AS dn, (COALESCE(status, '') = 'skipped') AS sk, (target_date = (SELECT today FROM anchor)) AS td FROM plan_current, anchor WHERE target_date >= (SELECT today FROM anchor) AND target_date <= date((SELECT today FROM anchor), '+6 days') ORDER BY target_date, id", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.map(rows, |r| match decode_plan_row(r) {
@@ -1056,3 +1122,8 @@ Db :: [].{
 			|acc, x| if x.day == target ({ found: Bool.True, idx: x.index }) else acc,
 		)
 }
+
+expect Db.parse_utc_offset("-0500") == Ok(-300)
+expect Db.parse_utc_offset("+0530") == Ok(330)
+expect Db.parse_utc_offset("+0000") == Ok(0)
+expect Db.parse_utc_offset("INVALID") == Err(BadTz)
