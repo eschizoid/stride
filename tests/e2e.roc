@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1248)?
+    checks_ran_exactly!(1251)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6451,6 +6451,13 @@ b_period_pace! = |ctx| {
     _ = seed_power_stream!(ctx.db, 819, 2400, 60)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("the second soft pedal gives the family its FTP and the first is rescored onto power", Str.trim(sql!(ctx.db, "SELECT load_model || '/' || CAST(ROUND(COALESCE(ftp_used, 0)) AS INTEGER) FROM activity_metrics WHERE activity_id=817;")) == "power_stream/57")?
+    # the session report's power split reads the FTP the session was scored
+    # with (#582): 60 W is hard against its era's 57 and easy against today's
+    # 190, so the report's hard seconds equal the split analyze stored and are
+    # not zero
+    rep817 = Str.trim(strjq!(ctx, ["activity", "817"], ".data.power_intensity.hard_s | tostring"))
+    st817 = Str.trim(sql!(ctx.db, "SELECT CAST(COALESCE(pi_hard_s, -1) AS INTEGER) FROM activity_metrics WHERE activity_id=817;"))
+    check!("a session's power split is judged against the FTP it was scored with, not today's (${rep817}/${st817})", rep817 == st817 and rep817 != "0" and rep817 != "-1")?
     check!("a broken FTP cannot score a ride at an impossible intensity", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=818;")) == "hr_avg")?
     check!("...its load is the humble rung's", sfloat(Str.trim(sql!(ctx.db, "SELECT COALESCE(tss,0) FROM activity_metrics WHERE activity_id=818;"))) < 100.0)?
     check!("...and the refused ratio is not stored as an intensity", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id=818 AND intensity_factor IS NULL;")) == "1")?
@@ -7022,6 +7029,23 @@ b_progress_structure! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (975,'Steady Solo','Ride','2025-07-15T17:00:00Z',3600,20000,148),(976,'Steady Solo','Ride','2025-07-05T10:00:00Z',3600,20000,151);")
     seed_power_stream!(ctx.db, 975, 3600, 190)
     seed_power_stream!(ctx.db, 976, 3600, 185)
+    # a CP fit needs bests that fall with duration, which steady streams never
+    # give: a ramp ride (five minutes at 320 W, then 200 W) on the 10th gives the
+    # family best_300 320, best_600 260 and best_20min 230, so every ride dated
+    # after it in the 90-day window fits a critical power. Against that fit the
+    # tank model does not run on an estimated-watts stream (#582): 1041 reads
+    # not known while the measured 975 beside it is, so a missing fit cannot
+    # pass the first half. Both the ramp and 1041 leave before the progress
+    # checks below, and the rescore puts 975 and 976 back on their own FTP
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (1042,'Ramp','Ride','2025-07-10T06:00:00Z',3600,20000,150);")
+    seed_ramp_stream!(ctx.db, 1042, 3600, 320, 300, 200)
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr,device_watts) VALUES (1041,'Estimated Steady','Ride','2025-07-16T10:00:00Z',3600,20000,150,0);")
+    seed_power_stream!(ctx.db, 1041, 3600, 200)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    wb1041 = strjq!(ctx, ["activity", "1041"], ".data.w_prime_balance | (.known | tostring) + \"/\" + (.cp_used | round | tostring)")
+    wb975 = strjq!(ctx, ["activity", "975"], ".data.w_prime_balance | (.known | tostring) + \"/\" + (.cp_used | round | tostring)")
+    check!("no W-prime balance is known for an estimated-watts ride, where the measured ride beside it has one against the same fit (${wb1041} vs ${wb975})", Str.starts_with(wb1041, "false/") and wb1041 != "false/0" and Str.starts_with(wb975, "true/") and wb975 != "true/0")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (1041, 1042); DELETE FROM activity_metrics WHERE activity_id IN (1041, 1042); DELETE FROM streams WHERE activity_id IN (1041, 1042); DELETE FROM activity_segments WHERE activity_id IN (1041, 1042);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("the anchor day yields exactly one structure group", strjq!(ctx, ["progress", "2025-07-15"], "[.data.groups[] | select(.grouped_by == \"structure\")] | length") == "1")?
     check!("...holding all three same-shape sessions across three names", strjq!(ctx, ["progress", "2025-07-15"], "[.data.groups[] | select(.grouped_by == \"structure\")][0].sessions | length") == "3")?
@@ -7682,6 +7706,20 @@ b_device_watts! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("estimated watts fall through to HR", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=401;")) == "hr_avg")?
     check!("NULL device_watts still scores as measured", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=402;")) == "avg_watts")?
+    # an estimated-watts STREAM is a model's output too: analyze drops it before
+    # any power figure, and the session report drops it the same way, so the
+    # report's split equals the stored one (both empty) rather than a split of
+    # Strava's estimate against the family's FTP (#582). The stream leaves
+    # with the check; 401 stays as it was
+    _ = seed_power_stream!(ctx.db, 401, 1300, 200)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    rep401 = Str.trim(strjq!(ctx, ["activity", "401"], ".data.power_intensity.hard_s | tostring"))
+    # the stored FTP is in the message and the condition: against 0 the ungated
+    # report would also find no hard seconds, and the check would say nothing
+    st401 = Str.trim(sql!(ctx.db, "SELECT CAST(COALESCE(pi_hard_s, -1) AS INTEGER) || '/' || CAST(ROUND(COALESCE(ftp_used, 0)) AS INTEGER) FROM activity_metrics WHERE activity_id=401;"))
+    check!("the session report drops an estimated-watts stream as analyze does, so its split is the stored empty one, against a real FTP (${rep401} vs ${st401})", rep401 == "0" and st401 == "0/190")?
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 401;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     # one pace-scored activity that SURVIVES to b_doctor!, so the confidence
     # cross-check can guard the rtss rung — b_period_pace! seeds one and deletes
     # it, which is why the rung was invisible there. A threshold speed needs two
@@ -8010,6 +8048,18 @@ seed_power_stream! = |db, id, n, w| {
     _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
     {}
 }
+
+# a ramp: the first hi_s samples at w_hi, the rest at w_lo, so the bests fall
+# with duration the way a critical-power fit needs
+seed_ramp_stream! : Str, I64, U64, U64, U64, U64 => {}
+seed_ramp_stream! = |db, id, n, w_hi, hi_s, w_lo| {
+    times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
+    watts = Str.join_with(List.map(int_seq(n), |i| U64.to_str(if i < hi_s w_hi else w_lo)), ",")
+    raw = "{\"time\":{\"data\":[${times}]},\"watts\":{\"data\":[${watts}]}}"
+    _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
+    {}
+}
+
 # power + HR where the HR is in band only inside a WINDOW, the rest of the samples reading 0.
 # The stream's extent and its usable span are then different numbers, which is the only way to
 # exercise the coverage gate's denominator: everywhere else the two coincide and `moving_time`

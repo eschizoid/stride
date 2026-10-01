@@ -44,6 +44,7 @@ ReportSessions :: [].{
                 \\       CAST(COALESCE(m.tss,0) AS REAL) AS tss, CAST(COALESCE(m.normalized_power,0) AS REAL) AS np_w,
                 \\       CAST(COALESCE(m.intensity_factor,0) AS REAL) AS intensity,
                 \\       CAST(COALESCE(m.ftp_used,0) AS REAL) AS ftp_used,
+                \\       COALESCE(a.device_watts, 1) AS dw,
                 \\       COALESCE(m.z1_s,0) AS z1_s, COALESCE(m.z2_s,0) AS z2_s, COALESCE(m.z3_s,0) AS z3_s,
                 \\       COALESCE(m.z4_s,0) AS z4_s, COALESCE(m.z5_s,0) AS z5_s,
                 \\       CAST(COALESCE(a.avg_hr,0) AS REAL) AS avg_hr,
@@ -90,7 +91,8 @@ ReportSessions :: [].{
                 hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
                 zones_known = Sqlite.i64("zones_known")(cols)(stmt)?
                 load_model = Sqlite.str("load_model")(cols)(stmt)?
-                Ok({ id, date, sport, family, name, moving_time, distance_m, tss, np_w, intensity, ftp_used, z1_s, z2_s, z3_s, z4_s, z5_s, avg_hr, avg_hr_scored, decoupling_pct, decoupling_known: decoupling_known != 0, decoupling_signal, power_known: power_known != 0, intensity_known: intensity_known != 0, hr_known: hr_known != 0, zones_known: zones_known != 0, load_model })
+                dw = Sqlite.i64("dw")(cols)(stmt)?
+                Ok({ id, date, sport, family, name, moving_time, distance_m, tss, np_w, intensity, ftp_used, dw: dw != 0, z1_s, z2_s, z3_s, z4_s, z5_s, avg_hr, avg_hr_scored, decoupling_pct, decoupling_known: decoupling_known != 0, decoupling_signal, power_known: power_known != 0, intensity_known: intensity_known != 0, hr_known: hr_known != 0, zones_known: zones_known != 0, load_model })
             },
         })?
         match List.first(rows) {
@@ -123,10 +125,11 @@ ReportSessions :: [].{
                     }
                 hard_s = a.z4_s + a.z5_s
                 # intensity from POWER (truer than HR for power sports — HR threshold can
-                # sit on a zone boundary). Cycling uses the FTP the ride was scored with;
-                # non-cycling power sports need their own threshold (not yet configured),
-                # so they get 0 here and fall back to the HR "hard" signal.
-                pi_ftp = Db.sport_ftp!(path, a.sport)?
+                # sit on a zone boundary), against the FTP the session was scored with:
+                # the stored ftp_used is the sport's threshold in force on the session's
+                # own date (ADR 0005), 0 when none derived, so this split is the one
+                # analyze stored rather than today's threshold applied to an old ride.
+                pi_ftp = a.ftp_used
                 # detected interval structure (ADR 0008) — computed tier, may be empty
                 seg_rows = Sqlite.query_many!({
                     path: Path.utf8(path),
@@ -166,7 +169,11 @@ ReportSessions :: [].{
                                 decoded = Streams.decode_streams(raw_opt)
                                 streams = decoded.streams
                                 hr_pairs = List.keep_if(Streams.stream_pairs(streams.time, streams.heartrate), |p| Metrics.valid_hr(p.v))
-                                watts_pairs = List.keep_if(Streams.stream_pairs(streams.time, streams.watts), |p| Metrics.valid_watts(p.v))
+                                # estimated watts (device_watts false) are a model's output, not a
+                                # measurement: analyze drops the whole stream before any power
+                                # figure, so the report drops it the same way and its bests and
+                                # split agree with what analyze stored
+                                watts_pairs = if a.dw (List.keep_if(Streams.stream_pairs(streams.time, streams.watts), |p| Metrics.valid_watts(p.v))) else []
                                 watts_1s_pairs = Metrics.resample_1s_pairs(watts_pairs, Hold)
                                 best = |w|
                                     match Metrics.best_rolling_mean_1s(watts_1s_pairs, w) {
@@ -206,10 +213,11 @@ ReportSessions :: [].{
                 # tag serializes as the STRING "True" (the trap this repo keeps
                 # rediscovering — pinned in e2e for the other flags)
                 wbal_known : Bool
-                wbal_known = cpfit.cp > 0.0 and (match raw_opt { NotNull(_) => True  Null => False })
+                # an estimated-watts stream is no measurement of the tank either
+                wbal_known = cpfit.cp > 0.0 and a.dw and (match raw_opt { NotNull(_) => True  Null => False })
                 wbal =
                     match raw_opt {
-                        NotNull(_) if cpfit.cp > 0.0 => {
+                        NotNull(_) if cpfit.cp > 0.0 and a.dw => {
                             decoded2 = Streams.decode_streams(raw_opt)
                             wp = List.keep_if(Streams.stream_pairs(decoded2.streams.time, decoded2.streams.watts), |p| Metrics.valid_watts(p.v))
                             series = Metrics.w_prime_balance(Metrics.resample_1s_pairs(wp, Hold), { cp: cpfit.cp, w_prime: cpfit.w_prime })
