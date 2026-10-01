@@ -1494,8 +1494,9 @@ update! = |model0, program_input| {
 					None => { hit: Bool.False, cb: -1 }
 				}
 			} else { hit: Bool.False, cb: -1 }
-		# a clicked row opens the day's detail panel in place (same row again
-		# closes it); the crosshair follows so tabbing to the board lines up
+		# a clicked row opens the day's detail panel (same row again closes
+		# it); rows keep their place while the session column still fits beside
+		# the panel, and the crosshair follows so tabbing to the board lines up
 		clicked_day =
 			if row_hit.hit {
 				total4 = List.len(model.days)

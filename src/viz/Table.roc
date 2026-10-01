@@ -58,24 +58,26 @@ Table :: [].{
 
 	# where the table stops on the right: the open detail panel's edge, or
 	# the window's. The draw and both hit-tests read this one value; cells
-	# and the session column keep 60px clear of it.
+	# keep 60px clear of it, and the session column draws only where twelve
+	# of its glyphs fit before it (note_shown).
 	table_edge : F32, Str -> F32
 	table_edge = |win_w, detail_day| if detail_day != "" (panel_edge(win_w)) else win_w - 40.0
 
-	# the session column's monospace budget: it runs from its column to the
-	# table's edge at ~8px per glyph, never under 12 columns
-	note_budget : F32 -> U64
-	note_budget = |edge|
-		match F32.round_to_u64_try(F32.div_floor_by(edge - session_x - 10.0, 8.0)) {
-			Ok(b) => if b < 12 (12.U64) else b
-			# defensive: note_shown keeps the span positive before this is read
-			Err(_) => 12.U64
-		}
+	# the session column's monospace columns at a table edge: the span from
+	# the column to the edge at ~8px per glyph, negative when the column sits
+	# right of the edge. The column draws only when at least 12 fit, and its
+	# budget is this same count, so its text never draws past the edge.
+	note_cols : F32 -> I64
+	note_cols = |edge|
+		match F32.round_to_i64_try(F32.div_floor_by(edge - session_x - 10.0, 8.0)) { Ok(c) => c
+			Err(_) => 0 }
 
-	# the session column draws only when it keeps 60px clear of the edge;
-	# with the detail panel open on a narrow window it does not
 	note_shown : F32 -> Bool
-	note_shown = |edge| session_x < edge - 60.0
+	note_shown = |edge| note_cols(edge) >= 12
+
+	note_budget : F32 -> U64
+	note_budget = |edge| match I64.to_u64_try(note_cols(edge)) { Ok(b) => if b < 12 (12.U64) else b
+		Err(_) => 12 }
 
 	# the session column's lines for a day, through the rule the form
 	# board's card and the plan card share; none when the column is hidden,
@@ -84,10 +86,49 @@ Table :: [].{
 	note_lines = |notes, day, edge|
 		if note_shown(edge) (Wrap.fit(Db.note_for(notes, day), note_budget(edge), note_lines_max)) else []
 
-	# a row's height for a day at a table edge: THE rule page_for lays rows
-	# out by, so an expect can pin it without a Model
-	row_h_for : List({ day : Str, note : Str }), Str, F32 -> F32
-	row_h_for = |notes, day, edge| row_h(List.len(note_lines(notes, day, edge)))
+	# a row's height for a day: lines counted at the FULL-width budget while
+	# the column is shown at `edge`, so opening the detail panel narrows the
+	# text but moves no row; a hidden column makes every row one line. THE
+	# rule page_for lays rows out by, so an expect can pin it without a Model
+	row_h_for : List({ day : Str, note : Str }), Str, F32, F32 -> F32
+	row_h_for = |notes, day, edge, full_edge|
+		if note_shown(edge) (row_h(List.len(note_lines(notes, day, full_edge)))) else row_base
+
+	# the lines the column DRAWS for a day: wrapped at the budget of `edge`
+	# but cut to the line count the row was sized for (its full-width count),
+	# so a narrowed column ends in "..." inside its row instead of drawing a
+	# second line over the row below
+	note_lines_at : List({ day : Str, note : Str }), Str, F32, F32 -> List(Str)
+	note_lines_at = |notes, day, edge, full_edge|
+		if note_shown(edge) (Wrap.fit(Db.note_for(notes, day), note_budget(edge), List.len(note_lines(notes, day, full_edge)))) else []
+
+	# the row height for a day in a window: the panel state picks the edge
+	# the column is measured at, the window's width the edge its lines are
+	# counted at. page_for lays rows out by this, so an expect can pin the
+	# wiring, not only the rule
+	row_h_at : List({ day : Str, note : Str }), Str, F32, Str -> F32
+	row_h_at = |notes, day, win_w, detail_day|
+		row_h_for(notes, day, table_edge(win_w, detail_day), table_edge(win_w, ""))
+
+	# the lines the column draws for a day in a window, by the same two
+	# edges row_h_at sizes the row with; the draw reads this, so the cut and
+	# the height cannot be wired to different edges
+	note_lines_in : List({ day : Str, note : Str }), Str, F32, Str -> List(Str)
+	note_lines_in = |notes, day, win_w, detail_day|
+		note_lines_at(notes, day, table_edge(win_w, detail_day), table_edge(win_w, ""))
+
+	# how many leading panel blocks fit in `room` px: the first always, then
+	# each next one while the stack still fits. A block that does not fit
+	# ends the stack; a shorter block after it never jumps the gap, so the
+	# panel shows a prefix of the day's sessions and a count of the rest
+	blocks_fit : List(F32), F32 -> U64
+	blocks_fit = |heights, room| {
+		st = List.fold(heights, { n: 0.U64, y: 0.0, stopped: Bool.False }, |s, h|
+			if s.stopped s
+			else if s.n == 0 or s.y + h <= room ({ n: s.n + 1, y: s.y + h, stopped: Bool.False })
+			else { ..s, stopped: Bool.True })
+		st.n
+	}
 
 	# THE table-window math: one implementation, used by render, row clicks
 	# and hover alike: one geometry. The click feeds it the pre-click state
@@ -134,9 +175,8 @@ Table :: [].{
 	# the caller passes the state the frame drew with
 	page_for : Ui.Model, I64, Str -> Page
 	page_for = |model, cursor, detail_day| {
-		edge = table_edge(model.win.w, detail_day)
 		h_of = |i| match List.get(model.days, i) {
-			Ok(d) => row_h_for(model.day_notes, d, edge)
+			Ok(d) => row_h_at(model.day_notes, d, model.win.w, detail_day)
 			Err(_) => row_base
 		}
 		page_of(List.len(model.data), cursor, rows_fit(model.win.h), rows_avail(model.win.h), h_of)
@@ -207,9 +247,9 @@ Table :: [].{
 				}
 			})
 			# the session column: the day's names, wrapped through the shared
-			# rule; the row is already as tall as these lines need
+			# rule, cut to the lines the row was sized for
 			if note_shown(edge) {
-				List.for_each!(List.map_with_index(note_lines(model.day_notes, day, edge), |ln, li| { ln, li }), |x|
+				List.for_each!(List.map_with_index(note_lines_in(model.day_notes, day, win_w, model.detail_day), |ln, li| { ln, li }), |x|
 					Text.from(x.ln, model.font).size(13).draw!(frame, { pos: { x: session_x, y: ry + U64.to_f32(x.li) * line_h }, color: Theme.ink_muted, align: (Top, Left) }))
 			}
 		})
@@ -220,38 +260,46 @@ Table :: [].{
 			# construction, so render and hit-tests cannot drift
 			px = panel_edge(win_w) + 24.0
 			pw2 = win_w - 36.0 - px
-			ph2 = 78.0 + U64.to_f32(List.len(model.detail)) * 92.0
+			ph2 = 78.0 + List.fold(model.detail, 0.0, |acc, ln| acc + 92.0 + U64.to_f32(List.len(Wrap.fit(ln.title, Wrap.cols_for(pw2 - 36.0, 7.8), 2)) - 1) * 16.0)
 			ph2c = if ph2 > win_h - 150.0 (win_h - 150.0) else ph2
 			frame.rounded_rectangle!({ x: px, y: 100.0, width: pw2, height: ph2c, radius: 10.0, segments: 8, style: Draw.filled(Theme.card) })
 			Text.from(model.detail_day, model.font).size(15).draw!(frame, { pos: { x: px + 18.0, y: 116.0 }, color: Color.white, align: (Top, Left) })
 			if List.is_empty(model.detail) {
 				Text.from("loading...", model.font).size(12).draw!(frame, { pos: { x: px + 18.0, y: 148.0 }, color: ink_muted, align: (Top, Left) })
 			}
-			# only the lines that fit the panel draw; the tail becomes a count
-			# each activity block: title, load line, physiology line, zone bar
-			line_fit = match F32.round_to_u64_try(F32.div_floor_by(win_h - 150.0 - 48.0 - 20.0, 92.0)) {
-				Ok(f) => if f == 0 (1.U64) else f
-				Err(_) => 1.U64
-			}
-			shown = List.take_first(model.detail, line_fit)
-			List.for_each!(List.map_with_index(shown, |ln, li| { ln, li }), |x| {
-				ly = 148.0 + U64.to_f32(x.li) * 92.0
-				Text.from(x.ln.title, model.font).size(13).draw!(frame, { pos: { x: px + 18.0, y: ly }, color: Theme.ctl_c, align: (Top, Left) })
-				Text.from(x.ln.stats, model.font).size(12).draw!(frame, { pos: { x: px + 18.0, y: ly + 19.0 }, color: Color.white, align: (Top, Left) })
-				Text.from(x.ln.extra, model.font).size(11).draw!(frame, { pos: { x: px + 18.0, y: ly + 37.0 }, color: ink_muted, align: (Top, Left) })
+			# each activity block: title (wrapped to two lines through the shared
+			# rule, so a long name grows its block instead of running off the
+			# card), load line, physiology line, zone bar. Only the blocks that
+			# fit the panel draw; the tail becomes a count
+			title_cols = Wrap.cols_for(pw2 - 36.0, 7.8)
+			blocks = List.map(model.detail, |ln| {
+				lines = Wrap.fit(ln.title, title_cols, 2)
+				{ ln, lines, h: 92.0 + U64.to_f32(List.len(lines) - 1) * 16.0 }
+			})
+			room = win_h - 150.0 - 48.0 - 20.0
+			taken = List.fold(List.take_first(blocks, blocks_fit(List.map(blocks, |b| b.h), room)), { out: [], y: 148.0 }, |st, b|
+				{ out: List.append(st.out, { b, top: st.y }), y: st.y + b.h })
+			shown = taken.out
+			List.for_each!(shown, |x| {
+				ly = x.top
+				List.for_each!(List.map_with_index(x.b.lines, |tl, ti| { tl, ti }), |t|
+					Text.from(t.tl, model.font).size(13).draw!(frame, { pos: { x: px + 18.0, y: ly + U64.to_f32(t.ti) * 16.0 }, color: Theme.ctl_c, align: (Top, Left) }))
+				body_y = ly + U64.to_f32(List.len(x.b.lines) - 1) * 16.0
+				Text.from(x.b.ln.stats, model.font).size(12).draw!(frame, { pos: { x: px + 18.0, y: body_y + 19.0 }, color: Color.white, align: (Top, Left) })
+				Text.from(x.b.ln.extra, model.font).size(11).draw!(frame, { pos: { x: px + 18.0, y: body_y + 37.0 }, color: ink_muted, align: (Top, Left) })
 				# the session's TIME by zone (seconds in, proportions out), as a
 				# stacked bar in the intensity ramp
-				ztot = List.fold(x.ln.zones, 0, |a2, z| a2 + z)
+				ztot = List.fold(x.b.ln.zones, 0, |a2, z| a2 + z)
 				if ztot > 0 {
 					bw2 = pw2 - 36.0
-					_ = List.fold_try!(List.map_with_index(x.ln.zones, |z, zi| { z, zi }), 0.0, |xacc, zz| {
+					_ = List.fold_try!(List.map_with_index(x.b.ln.zones, |z, zi| { z, zi }), 0.0, |xacc, zz| {
 						seg = bw2 * I64.to_f32(zz.z) / I64.to_f32(ztot)
 						zc = match List.get(Theme.zone_ramp, zz.zi) { Ok(c2) => c2
 							Err(_) => Theme.ink_faint }
 						if seg > 1.5 {
 							# -1 leaves a hairline gap between segments; the guard
 							# keeps the drawn width strictly positive
-							frame.rectangle!({ x: px + 18.0 + xacc, y: ly + 56.0, width: seg - 1.0, height: 8.0, style: Draw.filled(zc) })
+							frame.rectangle!({ x: px + 18.0 + xacc, y: body_y + 56.0, width: seg - 1.0, height: 8.0, style: Draw.filled(zc) })
 						}
 						Ok(xacc + seg)
 					})
@@ -259,7 +307,7 @@ Table :: [].{
 			})
 			hidden = List.len(model.detail) - List.len(shown)
 			if hidden > 0 {
-				Text.from("+ ${U64.to_str(hidden)} more (enlarge the window)", model.font).size(11).draw!(frame, { pos: { x: px + 18.0, y: 148.0 + U64.to_f32(List.len(shown)) * 92.0 }, color: ink_faint, align: (Top, Left) })
+				Text.from("+ ${U64.to_str(hidden)} more (enlarge the window)", model.font).size(11).draw!(frame, { pos: { x: px + 18.0, y: taken.y }, color: ink_faint, align: (Top, Left) })
 			}
 		}
 		model.table_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
@@ -331,7 +379,41 @@ expect {
 	hidden = Table.table_edge(1100.0, "2026-01-01")
 	shown = Table.table_edge(1100.0, "")
 	!(Table.note_shown(hidden)) and Table.note_shown(shown)
-	and (Table.row_h_for(notes, "2026-01-01", hidden) - 24.0).abs() < 0.001
-	and (Table.row_h_for(notes, "2026-01-01", shown) - 40.0).abs() < 0.001
+	and (Table.row_h_for(notes, "2026-01-01", hidden, shown) - 24.0).abs() < 0.001
+	and (Table.row_h_for(notes, "2026-01-01", shown, shown) - 40.0).abs() < 0.001
 	and Table.note_lines(notes, "2026-01-01", hidden) == []
 }
+
+# the column shows only where twelve glyphs fit, and its budget is that same
+# count, so no width lets it draw past the edge. Rows keep their full-width
+# height while the column is shown, so opening the panel on a wide window
+# narrows the text and moves no row; the drawn lines are cut to that height
+expect {
+	notes = [{ day: "2026-01-01", note: "45 min Full Body Strength with Rad Lopez + Evening Ride around the lake" }]
+	narrow = Table.session_x + 10.0 + 11.0 * 8.0
+	twelve = Table.session_x + 10.0 + 12.0 * 8.0
+	!(Table.note_shown(narrow)) and Table.note_shown(twelve) and Table.note_budget(twelve) == 12
+	and (Table.row_h_for(notes, "2026-01-01", twelve, Table.table_edge(1100.0, "")) - 40.0).abs() < 0.001
+	and (Table.row_h_for(notes, "2026-01-01", twelve, 1600.0) - 24.0).abs() < 0.001
+	and List.len(Table.note_lines_at(notes, "2026-01-01", twelve, 1600.0)) == 1
+	and List.len(Table.note_lines_at(notes, "2026-01-01", twelve, Table.table_edge(1100.0, ""))) == 2
+}
+
+# the wiring page_for lays rows out by: in a 1600px window the long note is
+# one line at full width and stays one line with the panel open, where its
+# column still shows, so no row moves; in a 1100px window the panel hides
+# the column and the same row drops to one line
+expect {
+	notes = [{ day: "2026-01-01", note: "45 min Full Body Strength with Rad Lopez + Evening Ride around the lake" }]
+	(Table.row_h_at(notes, "2026-01-01", 1600.0, "") - 24.0).abs() < 0.001
+	and (Table.row_h_at(notes, "2026-01-01", 1600.0, "2026-01-01") - 24.0).abs() < 0.001
+	and (Table.row_h_at(notes, "2026-01-01", 1100.0, "") - 40.0).abs() < 0.001
+	and (Table.row_h_at(notes, "2026-01-01", 1100.0, "2026-01-01") - 24.0).abs() < 0.001
+	and List.len(Table.note_lines_in(notes, "2026-01-01", 1600.0, "2026-01-01")) == 1
+	and List.len(Table.note_lines_in(notes, "2026-01-01", 1100.0, "2026-01-01")) == 0
+}
+
+# the panel shows a prefix of the day's blocks: once one does not fit, a
+# shorter one after it does not jump the gap; the first block always draws
+expect Table.blocks_fit([92.0, 92.0, 92.0, 108.0, 92.0], 382.0) == 3
+expect Table.blocks_fit([500.0], 382.0) == 1
