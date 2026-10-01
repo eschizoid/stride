@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1248)?
+    checks_ran_exactly!(1249)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6451,6 +6451,13 @@ b_period_pace! = |ctx| {
     _ = seed_power_stream!(ctx.db, 819, 2400, 60)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("the second soft pedal gives the family its FTP and the first is rescored onto power", Str.trim(sql!(ctx.db, "SELECT load_model || '/' || CAST(ROUND(COALESCE(ftp_used, 0)) AS INTEGER) FROM activity_metrics WHERE activity_id=817;")) == "power_stream/57")?
+    # the session report's power split reads the FTP the session was scored
+    # with (#582): 60 W is hard against its era's 57 and coasting against
+    # today's 190, so the report's hard seconds equal the split analyze stored
+    # and are not zero
+    rep817 = Str.trim(strjq!(ctx, ["activity", "817"], ".data.power_intensity.hard_s | tostring"))
+    st817 = Str.trim(sql!(ctx.db, "SELECT CAST(COALESCE(pi_hard_s, -1) AS INTEGER) FROM activity_metrics WHERE activity_id=817;"))
+    check!("a session's power split is judged against the FTP it was scored with, not today's (${rep817}/${st817})", rep817 == st817 and rep817 != "0" and rep817 != "-1")?
     check!("a broken FTP cannot score a ride at an impossible intensity", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=818;")) == "hr_avg")?
     check!("...its load is the humble rung's", sfloat(Str.trim(sql!(ctx.db, "SELECT COALESCE(tss,0) FROM activity_metrics WHERE activity_id=818;"))) < 100.0)?
     check!("...and the refused ratio is not stored as an intensity", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id=818 AND intensity_factor IS NULL;")) == "1")?
