@@ -86,13 +86,13 @@ Table :: [].{
 	note_lines = |notes, day, edge|
 		if note_shown(edge) (Wrap.fit(Db.note_for(notes, day), note_budget(edge), note_lines_max)) else []
 
-	# a row's height for a day: lines counted at the FULL-width budget while
-	# the column is shown at `edge`, so opening the detail panel narrows the
-	# text but moves no row; a hidden column makes every row one line. THE
-	# rule page_for lays rows out by, so an expect can pin it without a Model
-	row_h_for : List({ day : Str, note : Str }), Str, F32, F32 -> F32
-	row_h_for = |notes, day, edge, full_edge|
-		if note_shown(edge) (row_h(List.len(note_lines(notes, day, full_edge)))) else row_base
+	# a row's height for a day: lines counted at the FULL-width budget whether
+	# or not the column is shown, so opening the detail panel narrows or hides
+	# the text but moves no row (a hidden column leaves blank room under the
+	# cells rather than re-flowing the page). THE rule page_for lays rows out
+	# by, so an expect can pin it without a Model
+	row_h_for : List({ day : Str, note : Str }), Str, F32 -> F32
+	row_h_for = |notes, day, full_edge| row_h(List.len(note_lines(notes, day, full_edge)))
 
 	# the lines the column DRAWS for a day: wrapped at the budget of `edge`
 	# but cut to the line count the row was sized for (its full-width count),
@@ -102,17 +102,17 @@ Table :: [].{
 	note_lines_at = |notes, day, edge, full_edge|
 		if note_shown(edge) (Wrap.fit(Db.note_for(notes, day), note_budget(edge), List.len(note_lines(notes, day, full_edge)))) else []
 
-	# the row height for a day in a window: the panel state picks the edge
-	# the column is measured at, the window's width the edge its lines are
-	# counted at. page_for lays rows out by this, so an expect can pin the
+	# the row height for a day in a window: the window's width alone sizes
+	# it, never the panel state, so the page lays out the same with the panel
+	# open or closed. page_for lays rows out by this, so an expect can pin the
 	# wiring, not only the rule
-	row_h_at : List({ day : Str, note : Str }), Str, F32, Str -> F32
-	row_h_at = |notes, day, win_w, detail_day|
-		row_h_for(notes, day, table_edge(win_w, detail_day), table_edge(win_w, ""))
+	row_h_at : List({ day : Str, note : Str }), Str, F32 -> F32
+	row_h_at = |notes, day, win_w| row_h_for(notes, day, table_edge(win_w, ""))
 
-	# the lines the column draws for a day in a window, by the same two
-	# edges row_h_at sizes the row with; the draw reads this, so the cut and
-	# the height cannot be wired to different edges
+	# the lines the column draws for a day in a window: wrapped at the edge
+	# the panel leaves, cut to the line count row_h_at sizes the row with
+	# (the full-width edge); the draw reads this, so the cut and the height
+	# cannot be wired to different edges
 	note_lines_in : List({ day : Str, note : Str }), Str, F32, Str -> List(Str)
 	note_lines_in = |notes, day, win_w, detail_day|
 		note_lines_at(notes, day, table_edge(win_w, detail_day), table_edge(win_w, ""))
@@ -170,16 +170,23 @@ Table :: [].{
 		{ back, kept, rows }
 	}
 
-	# the page this model renders for a scroll and panel state - the SAME
-	# geometry the draw uses, so a click lands on the row the eye sees when
-	# the caller passes the state the frame drew with
-	page_for : Ui.Model, I64, Str -> Page
-	page_for = |model, cursor, detail_day| {
-		h_of = |i| match List.get(model.days, i) {
-			Ok(d) => row_h_at(model.day_notes, d, model.win.w, detail_day)
+	# the page this model renders for a scroll - the SAME geometry the draw
+	# uses, so a click lands on the row the eye sees when the caller passes
+	# the cursor the frame drew with. The panel state is not an input: the
+	# page is the same with the panel open or closed, and page_in's
+	# signature has no field to carry it
+	page_for : Ui.Model, I64 -> Page
+	page_for = |model, cursor| page_in(model.days, model.day_notes, List.len(model.data), cursor, model.win.w, model.win.h)
+
+	# the page for a series of `total` rows named by `days`, in a window of
+	# the given size: heights by the window width alone, rows by its height
+	page_in : List(Str), List({ day : Str, note : Str }), U64, I64, F32, F32 -> Page
+	page_in = |days, notes, total, cursor, win_w, win_h| {
+		h_of = |i| match List.get(days, i) {
+			Ok(d) => row_h_at(notes, d, win_w)
 			Err(_) => row_base
 		}
-		page_of(List.len(model.data), cursor, rows_fit(model.win.h), rows_avail(model.win.h), h_of)
+		page_of(total, cursor, rows_fit(win_h), rows_avail(win_h), h_of)
 	}
 
 	# the series index of the row under a y, if any
@@ -213,7 +220,7 @@ Table :: [].{
 		# the arrow cursor scrolls the window back through the whole series:
 		# cursor N shows the page ending N days before the latest
 		total = List.len(model.data)
-		page = page_for(model, model.cursor, model.detail_day)
+		page = page_for(model, model.cursor)
 		kept = page.kept
 		# no rows, no arithmetic on them — the indicator only speaks over data
 		if total > 0 {
@@ -371,44 +378,47 @@ expect {
 	and Table.row_at(p, 198.0) == None and Table.row_at(p, 100.0) == None
 }
 
-# a hidden session column adds no height: with the detail panel open on a
-# 1100px-wide window the column is clear of nothing, so a two-activity day
-# is one line; at full width the same day wraps and the row grows
+# a hidden session column keeps the row's height: with the detail panel
+# open on a 1100px-wide window the column is clear of nothing and draws no
+# lines, but a two-activity day stays the two lines it is at full width, so
+# no row moves when the panel opens or closes. The page itself is laid out
+# by page_in, whose inputs carry no panel state, so the row is 40px tall on
+# the page as well as by the rule
 expect {
 	notes = [{ day: "2026-01-01", note: "45 min Full Body Strength with Rad Lopez + Evening Ride around the lake" }]
 	hidden = Table.table_edge(1100.0, "2026-01-01")
 	shown = Table.table_edge(1100.0, "")
+	page = Table.page_in(["2026-01-01"], notes, 1, 0, 1100.0, 700.0)
 	!(Table.note_shown(hidden)) and Table.note_shown(shown)
-	and (Table.row_h_for(notes, "2026-01-01", hidden, shown) - 24.0).abs() < 0.001
-	and (Table.row_h_for(notes, "2026-01-01", shown, shown) - 40.0).abs() < 0.001
-	and Table.note_lines(notes, "2026-01-01", hidden) == []
+	and (Table.row_h_at(notes, "2026-01-01", 1100.0) - 40.0).abs() < 0.001
+	and Table.note_lines_in(notes, "2026-01-01", 1100.0, "2026-01-01") == []
+	and (match List.first(page.rows) { Ok(r) => (r.h - 40.0).abs() < 0.001
+		Err(_) => Bool.False })
 }
 
 # the column shows only where twelve glyphs fit, and its budget is that same
 # count, so no width lets it draw past the edge. Rows keep their full-width
-# height while the column is shown, so opening the panel on a wide window
-# narrows the text and moves no row; the drawn lines are cut to that height
+# height, so opening the panel on a wide window narrows the text and moves
+# no row; the drawn lines are cut to that height
 expect {
 	notes = [{ day: "2026-01-01", note: "45 min Full Body Strength with Rad Lopez + Evening Ride around the lake" }]
 	narrow = Table.session_x + 10.0 + 11.0 * 8.0
 	twelve = Table.session_x + 10.0 + 12.0 * 8.0
 	!(Table.note_shown(narrow)) and Table.note_shown(twelve) and Table.note_budget(twelve) == 12
-	and (Table.row_h_for(notes, "2026-01-01", twelve, Table.table_edge(1100.0, "")) - 40.0).abs() < 0.001
-	and (Table.row_h_for(notes, "2026-01-01", twelve, 1600.0) - 24.0).abs() < 0.001
+	and (Table.row_h_for(notes, "2026-01-01", Table.table_edge(1100.0, "")) - 40.0).abs() < 0.001
+	and (Table.row_h_for(notes, "2026-01-01", 1600.0) - 24.0).abs() < 0.001
 	and List.len(Table.note_lines_at(notes, "2026-01-01", twelve, 1600.0)) == 1
 	and List.len(Table.note_lines_at(notes, "2026-01-01", twelve, Table.table_edge(1100.0, ""))) == 2
 }
 
 # the wiring page_for lays rows out by: in a 1600px window the long note is
-# one line at full width and stays one line with the panel open, where its
-# column still shows, so no row moves; in a 1100px window the panel hides
-# the column and the same row drops to one line
+# one line, in a 1100px window two, and the panel state is not an input, so
+# no row moves when it opens; the drawn lines follow the column (one at
+# 1600px with the panel open, none at 1100px where the panel hides it)
 expect {
 	notes = [{ day: "2026-01-01", note: "45 min Full Body Strength with Rad Lopez + Evening Ride around the lake" }]
-	(Table.row_h_at(notes, "2026-01-01", 1600.0, "") - 24.0).abs() < 0.001
-	and (Table.row_h_at(notes, "2026-01-01", 1600.0, "2026-01-01") - 24.0).abs() < 0.001
-	and (Table.row_h_at(notes, "2026-01-01", 1100.0, "") - 40.0).abs() < 0.001
-	and (Table.row_h_at(notes, "2026-01-01", 1100.0, "2026-01-01") - 24.0).abs() < 0.001
+	(Table.row_h_at(notes, "2026-01-01", 1600.0) - 24.0).abs() < 0.001
+	and (Table.row_h_at(notes, "2026-01-01", 1100.0) - 40.0).abs() < 0.001
 	and List.len(Table.note_lines_in(notes, "2026-01-01", 1600.0, "2026-01-01")) == 1
 	and List.len(Table.note_lines_in(notes, "2026-01-01", 1100.0, "2026-01-01")) == 0
 }
