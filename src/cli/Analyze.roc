@@ -381,26 +381,35 @@ Analyze :: [].{
         \\  0)
 
     # The pace twin of period_ftp_sql (ADR 0005, as amended): the sport's best 20-minute
-    # grade-adjusted SPEED over the 60 days ending on THIS activity's date, × 0.95, with the
-    # same cold-start forward-fill. ONE global number anchored to today would score a
+    # grade-adjusted SPEED over the 60 days ending on THIS activity's date, × 0.95, with a
+    # cold-start forward-fill gated to the sport's first 60 days (power's is not: #574).
+    # ONE global number anchored to today would score a
     # 2021 run against 2026 fitness and — because the window moves whenever a recent
     # metrics row is deleted — invalidate every activity of that sport at once (#79).
     # Speeds are metres per second, so the ×1000 comparisons downstream are mm/s.
+    # A threshold needs TWO sessions with a best in its window (#567): with one,
+    # the best is that session's own, the ratio is 1.05 by construction, and a
+    # lone four-hour walk scores hours at threshold. With fewer the arm yields
+    # NULL. The cold-start arm fills only sessions inside the sport's first 60
+    # days, so a lone session later in the sport's history is not scored
+    # against that first period: both arms NULL, the COALESCE lands on 0, and
+    # the pace rung declines.
     period_threshold_sql : Str
     period_threshold_sql =
         \\COALESCE(
-        \\  NULLIF((SELECT MAX(t2.best_20min_speed) * 0.95
+        \\  NULLIF((SELECT CASE WHEN COUNT(t2.best_20min_speed) >= 2 THEN MAX(t2.best_20min_speed) * 0.95 END
         \\          FROM activity_metrics t2 JOIN activities b2 ON b2.id = t2.activity_id
         \\          WHERE b2.sport_type = a.sport_type
         \\            AND b2.start_local <= a.start_local
         \\            AND b2.start_local >= date(a.start_local, '-60 days')), 0),
-        \\  NULLIF((SELECT MAX(t3.best_20min_speed) * 0.95
+        \\  NULLIF((SELECT CASE WHEN COUNT(t3.best_20min_speed) >= 2 THEN MAX(t3.best_20min_speed) * 0.95 END
         \\          FROM activity_metrics t3 JOIN activities b3 ON b3.id = t3.activity_id
         \\          WHERE b3.sport_type = a.sport_type
         \\            AND date(b3.start_local) <= date((SELECT MIN(b4.start_local) FROM activities b4
-        \\                                              WHERE b4.sport_type = a.sport_type), '+60 days')), 0),
+        \\                                              WHERE b4.sport_type = a.sport_type), '+60 days')
+        \\            AND date(a.start_local) <= date((SELECT MIN(b5.start_local) FROM activities b5
+        \\                                              WHERE b5.sport_type = a.sport_type), '+60 days')), 0),
         \\  0)
-
     # Each activity input that feeds scoring, expressed ONCE as a SQL expression. The
     # SELECT that stores the value (inputs_select_sql) and the predicate that compares it
     # (inputs_changed_sql) both interpolate these — except `e_sport`/`e_start`, which the
