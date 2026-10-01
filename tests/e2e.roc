@@ -7697,8 +7697,10 @@ b_device_watts! = |ctx| {
     _ = seed_power_stream!(ctx.db, 401, 1300, 200)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     rep401 = Str.trim(strjq!(ctx, ["activity", "401"], ".data.power_intensity.hard_s | tostring"))
-    st401 = Str.trim(sql!(ctx.db, "SELECT CAST(COALESCE(pi_hard_s, -1) AS INTEGER) FROM activity_metrics WHERE activity_id=401;"))
-    check!("the session report drops an estimated-watts stream as analyze does, so its split is the stored empty one (${rep401}/${st401})", rep401 == "0" and st401 == "0")?
+    # the stored FTP is in the message and the condition: against 0 the ungated
+    # report would also find no hard seconds, and the check would say nothing
+    st401 = Str.trim(sql!(ctx.db, "SELECT CAST(COALESCE(pi_hard_s, -1) AS INTEGER) || '/' || CAST(ROUND(COALESCE(ftp_used, 0)) AS INTEGER) FROM activity_metrics WHERE activity_id=401;"))
+    check!("the session report drops an estimated-watts stream as analyze does, so its split is the stored empty one, against a real FTP (${rep401} vs ${st401})", rep401 == "0" and st401 == "0/190")?
     _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 401;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     # one pace-scored activity that SURVIVES to b_doctor!, so the confidence

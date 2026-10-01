@@ -213,10 +213,11 @@ ReportSessions :: [].{
                 # tag serializes as the STRING "True" (the trap this repo keeps
                 # rediscovering — pinned in e2e for the other flags)
                 wbal_known : Bool
-                wbal_known = cpfit.cp > 0.0 and (match raw_opt { NotNull(_) => True  Null => False })
+                # an estimated-watts stream is no measurement of the tank either
+                wbal_known = cpfit.cp > 0.0 and a.dw and (match raw_opt { NotNull(_) => True  Null => False })
                 wbal =
                     match raw_opt {
-                        NotNull(_) if cpfit.cp > 0.0 => {
+                        NotNull(_) if cpfit.cp > 0.0 and a.dw => {
                             decoded2 = Streams.decode_streams(raw_opt)
                             wp = List.keep_if(Streams.stream_pairs(decoded2.streams.time, decoded2.streams.watts), |p| Metrics.valid_watts(p.v))
                             series = Metrics.w_prime_balance(Metrics.resample_1s_pairs(wp, Hold), { cp: cpfit.cp, w_prime: cpfit.w_prime })
