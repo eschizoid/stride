@@ -241,13 +241,16 @@ Db :: [].{
     derive_sport_ftp! = |path, sport| {
         # RECENT form: best 20-min power over the last 60 days, not all-time. An old peak
         # shouldn't keep judging today's rides as easy — FTP tracks current fitness.
+        # An FTP needs two sessions of the family with a best in the window (#574),
+        # the rule period_ftp_sql scores by; with one, the best is that session's
+        # own and the estimate reads 0, as its ftp_used does.
         cutoff = Metrics.days_to_date_str(local_today_days!(path) - 60)
         best = Sqlite.query!({
             path: Path.utf8(path),
             # family population (#151): compare the STORED sport_family column —
             # the canonical head is computed in Roc and bound, keeping the
             # predicate sargable (same rule period_ftp_sql uses in Analyze)
-            query: "SELECT CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_family = :fam AND a.start_local >= :cutoff",
+            query: "SELECT CAST(COALESCE(CASE WHEN COUNT(NULLIF(m.best_20min_w, 0)) >= 2 THEN MAX(m.best_20min_w) END, 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_family = :fam AND a.start_local >= :cutoff",
             bindings: [{ name: ":fam", value: String(Sports.canonical(sport)) }, { name: ":cutoff", value: String(cutoff) }],
             row: Sqlite.f64("b"),
         })?

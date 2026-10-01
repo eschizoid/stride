@@ -392,8 +392,11 @@ lifecycle's every state, is in docs/viz.md.
   because the athlete is the better sensor there. The ladder is a mixed model, not
   "TSS"; `load_model` on each row records which rung scored it.
 - **FTP is DERIVED, never configured.** Per sport, per activity era: best 20-min power
-  × 0.95 over the 60 days up to each activity (`summary.ftp` = `{best_20min_w_60d,
-  estimated_ftp_w}` for rides). The `ftp` / `ftp_<sport>` config keys are REFUSED with
+  × 0.95 over the 60 days up to each activity, once two sessions of the family carry a
+  20-minute best there (a lone session would be its own threshold) (`summary.ftp` = `{best_20min_w_60d,
+  estimated_ftp_w}` for rides: the best is the raw measurement over the inclusive 59-day
+  display window, the estimate follows the two-session rule over the 60-day scoring
+  window and reads 0 without it). The `ftp` / `ftp_<sport>` config keys are REFUSED with
   error code `derived_key`. There is nothing to fix when FTP moves; INTERPRET the
   trajectory instead (a rising `estimated_ftp_w` is fitness, a falling one is
   detraining or a power-data gap; check `doctor` coverage before concluding).

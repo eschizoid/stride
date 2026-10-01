@@ -510,6 +510,10 @@ Report :: [].{
         # Inclusive >= cutoffs: today plus 27/59 prior days are true 28/60-day windows.
         cutoff28 = Metrics.days_to_date_str(anchor - 27)
         cutoff60 = Metrics.days_to_date_str(anchor - 59)
+        # the estimate's window is the one scoring and the plan derive by: the 60
+        # days before the anchor (Db.derive_sport_ftp! and period_ftp_sql both
+        # reach back `-60 days`), one day wider than the inclusive display windows
+        cutoff_ftp = Metrics.days_to_date_str(anchor - 60)
 
         zsum = zone_sum!(path, cutoff28)?
 
@@ -524,6 +528,20 @@ Report :: [].{
                 \\WHERE a.sport_family = :fam AND a.start_local >= :cutoff
             ,
             bindings: [{ name: ":fam", value: String(Sports.canonical("Ride")) }, { name: ":cutoff", value: String(cutoff60) }],
+            row: Sqlite.f64("b"),
+        })?
+
+        # the best the ESTIMATE stands on: the same window, but only once two
+        # sessions of the family carry a best there (#574, the rule scoring uses),
+        # so a lone ride reports its measured best and an estimate of 0
+        ftp_best_row = Sqlite.query!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT CAST(COALESCE(CASE WHEN COUNT(NULLIF(m.best_20min_w, 0)) >= 2 THEN MAX(m.best_20min_w) END, 0) AS REAL) AS b FROM activity_metrics m
+                \\JOIN activities a ON a.id = m.activity_id
+                \\WHERE a.sport_family = :fam AND a.start_local >= :cutoff
+            ,
+            bindings: [{ name: ":fam", value: String(Sports.canonical("Ride")) }, { name: ":cutoff", value: String(cutoff_ftp) }],
             row: Sqlite.f64("b"),
         })?
 
@@ -819,7 +837,7 @@ Report :: [].{
             form_coverage_90d: cov90,
             ftp: {
                 best_20min_w_60d: best20_row,
-                estimated_ftp_w: Metrics.ftp_from_best_20min(best20_row),
+                estimated_ftp_w: Metrics.ftp_from_best_20min(ftp_best_row),
                 # trajectory (#159): the PRIOR 60d window's best beside the current —
                 # which way the demonstrated ceiling moved; known=false = no power
                 # in that window (a delta against nothing is not 0)

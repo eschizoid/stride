@@ -1347,11 +1347,25 @@ Render :: [].{
         )
     }
 
+    # the estimate follows the two-session rule (#574) while the best is a raw
+    # measurement, so a lone session has a best and no FTP: say so rather than
+    # print a 0 W figure derived from a real number. The derived line names the
+    # best the estimate stands on, which is the estimate over 0.95 exactly (the
+    # derivation is best × 0.95); the raw best beside it reads the inclusive
+    # 59-day display window, one day narrower than the estimate's, so the two
+    # can differ at the window's edge
     ftp_calibration_lines = |ftp|
-        [
-            "",
-            "  FTP (60d): ~${fmt0(ftp.estimated_ftp_w)}W — derived from your best 20-min power ${fmt0(ftp.best_20min_w_60d)}W",
-        ]
+        if ftp.estimated_ftp_w > 0 {
+            [
+                "",
+                "  FTP (60d): ~${fmt0(ftp.estimated_ftp_w)}W — derived from your best 20-min power ${fmt0(ftp.estimated_ftp_w / 0.95)}W",
+            ]
+        } else {
+            [
+                "",
+                "  FTP (60d): none yet — one session carries a 20-min best (${fmt0(ftp.best_20min_w_60d)}W); an FTP needs two in the window",
+            ]
+        }
     # ── season screen (#139, ADR 0011) ──────────────────────────────────
     # Blocks bounded by absence, described by measurement. No phase names; the trend is
     # a fitted line reported by its ENDPOINTS, because a slope plus a low r2 gets read
