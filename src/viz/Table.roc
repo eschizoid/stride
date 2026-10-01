@@ -110,6 +110,13 @@ Table :: [].{
 	row_h_at = |notes, day, win_w, detail_day|
 		row_h_for(notes, day, table_edge(win_w, detail_day), table_edge(win_w, ""))
 
+	# the lines the column draws for a day in a window, by the same two
+	# edges row_h_at sizes the row with; the draw reads this, so the cut and
+	# the height cannot be wired to different edges
+	note_lines_in : List({ day : Str, note : Str }), Str, F32, Str -> List(Str)
+	note_lines_in = |notes, day, win_w, detail_day|
+		note_lines_at(notes, day, table_edge(win_w, detail_day), table_edge(win_w, ""))
+
 	# how many leading panel blocks fit in `room` px: the first always, then
 	# each next one while the stack still fits. A block that does not fit
 	# ends the stack; a shorter block after it never jumps the gap, so the
@@ -242,7 +249,7 @@ Table :: [].{
 			# the session column: the day's names, wrapped through the shared
 			# rule, cut to the lines the row was sized for
 			if note_shown(edge) {
-				List.for_each!(List.map_with_index(note_lines_at(model.day_notes, day, edge, table_edge(win_w, "")), |ln, li| { ln, li }), |x|
+				List.for_each!(List.map_with_index(note_lines_in(model.day_notes, day, win_w, model.detail_day), |ln, li| { ln, li }), |x|
 					Text.from(x.ln, model.font).size(13).draw!(frame, { pos: { x: session_x, y: ry + U64.to_f32(x.li) * line_h }, color: Theme.ink_muted, align: (Top, Left) }))
 			}
 		})
@@ -402,6 +409,8 @@ expect {
 	and (Table.row_h_at(notes, "2026-01-01", 1600.0, "2026-01-01") - 24.0).abs() < 0.001
 	and (Table.row_h_at(notes, "2026-01-01", 1100.0, "") - 40.0).abs() < 0.001
 	and (Table.row_h_at(notes, "2026-01-01", 1100.0, "2026-01-01") - 24.0).abs() < 0.001
+	and List.len(Table.note_lines_in(notes, "2026-01-01", 1600.0, "2026-01-01")) == 1
+	and List.len(Table.note_lines_in(notes, "2026-01-01", 1100.0, "2026-01-01")) == 0
 }
 
 # the panel shows a prefix of the day's blocks: once one does not fit, a
