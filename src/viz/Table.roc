@@ -109,9 +109,10 @@ Table :: [].{
 	row_h_at : List({ day : Str, note : Str }), Str, F32 -> F32
 	row_h_at = |notes, day, win_w| row_h_for(notes, day, table_edge(win_w, ""))
 
-	# the lines the column draws for a day in a window, by the same two
-	# edges row_h_at sizes the row with; the draw reads this, so the cut and
-	# the height cannot be wired to different edges
+	# the lines the column draws for a day in a window: wrapped at the edge
+	# the panel leaves, cut to the line count row_h_at sizes the row with
+	# (the full-width edge); the draw reads this, so the cut and the height
+	# cannot be wired to different edges
 	note_lines_in : List({ day : Str, note : Str }), Str, F32, Str -> List(Str)
 	note_lines_in = |notes, day, win_w, detail_day|
 		note_lines_at(notes, day, table_edge(win_w, detail_day), table_edge(win_w, ""))
@@ -172,14 +173,20 @@ Table :: [].{
 	# the page this model renders for a scroll - the SAME geometry the draw
 	# uses, so a click lands on the row the eye sees when the caller passes
 	# the cursor the frame drew with. The panel state is not an input: the
-	# page is the same with the panel open or closed
+	# page is the same with the panel open or closed, and page_in's
+	# signature has no field to carry it
 	page_for : Ui.Model, I64 -> Page
-	page_for = |model, cursor| {
-		h_of = |i| match List.get(model.days, i) {
-			Ok(d) => row_h_at(model.day_notes, d, model.win.w)
+	page_for = |model, cursor| page_in(model.days, model.day_notes, List.len(model.data), cursor, model.win.w, model.win.h)
+
+	# the page for a series of `total` rows named by `days`, in a window of
+	# the given size: heights by the window width alone, rows by its height
+	page_in : List(Str), List({ day : Str, note : Str }), U64, I64, F32, F32 -> Page
+	page_in = |days, notes, total, cursor, win_w, win_h| {
+		h_of = |i| match List.get(days, i) {
+			Ok(d) => row_h_at(notes, d, win_w)
 			Err(_) => row_base
 		}
-		page_of(List.len(model.data), cursor, rows_fit(model.win.h), rows_avail(model.win.h), h_of)
+		page_of(total, cursor, rows_fit(win_h), rows_avail(win_h), h_of)
 	}
 
 	# the series index of the row under a y, if any
@@ -374,15 +381,19 @@ expect {
 # a hidden session column keeps the row's height: with the detail panel
 # open on a 1100px-wide window the column is clear of nothing and draws no
 # lines, but a two-activity day stays the two lines it is at full width, so
-# no row moves when the panel opens or closes
+# no row moves when the panel opens or closes. The page itself is laid out
+# by page_in, whose inputs carry no panel state, so the row is 40px tall on
+# the page as well as by the rule
 expect {
 	notes = [{ day: "2026-01-01", note: "45 min Full Body Strength with Rad Lopez + Evening Ride around the lake" }]
 	hidden = Table.table_edge(1100.0, "2026-01-01")
 	shown = Table.table_edge(1100.0, "")
+	page = Table.page_in(["2026-01-01"], notes, 1, 0, 1100.0, 700.0)
 	!(Table.note_shown(hidden)) and Table.note_shown(shown)
-	and (Table.row_h_for(notes, "2026-01-01", shown) - 40.0).abs() < 0.001
-	and Table.note_lines(notes, "2026-01-01", hidden) == []
-	and Table.note_lines_at(notes, "2026-01-01", hidden, shown) == []
+	and (Table.row_h_at(notes, "2026-01-01", 1100.0) - 40.0).abs() < 0.001
+	and Table.note_lines_in(notes, "2026-01-01", 1100.0, "2026-01-01") == []
+	and (match List.first(page.rows) { Ok(r) => (r.h - 40.0).abs() < 0.001
+		Err(_) => Bool.False })
 }
 
 # the column shows only where twelve glyphs fit, and its budget is that same
