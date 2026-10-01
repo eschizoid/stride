@@ -135,6 +135,23 @@ resolve_home! = |{}| {
 	}
 }
 
+# the directory the window was launched from: ./captures hangs off it, so a
+# status row names the file by an absolute path rather than one the reader
+# would have to resolve against a working directory it cannot see. Empty
+# when the shell will not say, and the path is then relative
+resolve_cwd! : {} => Str
+resolve_cwd! = |{}| {
+	unix = match Cmd.run_utf8!(Cmd.new("pwd")) {
+		Ok(out) => Str.trim(out.stdout)
+		Err(_) => ""
+	}
+	if unix != "" unix
+	else match Cmd.run_utf8!(Cmd.with_args(Cmd.new("cmd"), ["/C", "cd"])) {
+		Ok(out) => Str.trim(out.stdout)
+		Err(_) => ""
+	}
+}
+
 # boot=True builds the instant skeleton the splash renders over: no home
 # resolution, no database, no engine call - the window opens on frame one
 # and the real load runs in a spawned task that answers with Reloaded.
@@ -144,6 +161,7 @@ load_model! = |font, curve_days, boot| {
 		# printenv - cheap enough for the boot skeleton, which needs it to
 		# find the seeded logo; only the database and engine work are slow.
 		home = resolve_home!({})
+		cwd = if boot "" else resolve_cwd!({})
 		db_path = Str.concat(home, "/.stride/db.sqlite")
 		loaded = if boot or home == "" {
 			{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "cannot resolve HOME" }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric }
@@ -333,6 +351,7 @@ load_model! = |font, curve_days, boot| {
 			data: loaded.s.data,
 			days: loaded.s.days,
 			home,
+			cwd,
 			tick: 0,
 			view_anim: 0,
 			last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1 },
@@ -354,7 +373,7 @@ load_model! = |font, curve_days, boot| {
 			pending_capture: NoCapture,
 			rec_path: "",
 			glow: Unbuilt,
-			last_directive: { id: -1.I64, refused: "" },
+			last_directive: { id: -1.I64, refused: "", result: "" },
 			glow_on: Bool.False,
 			ramp_title: mk!("the ramp - weekly load and how fast fitness is climbing", 15)?,
 			ramp_hint: mk!("hover a week to read it      TAB  form board      R  reload      S  screenshot      V  record      ESC quit", 13)?,
@@ -932,8 +951,22 @@ expect {
 	and sel_following_id([a], 0, []) == { sel: 0, found: Bool.False }
 }
 
-refusals_for :{ has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, capture : Str }, I64, U64, U64, List(TraceId), Bool -> Str
-refusals_for = |dv, cdir, wsel, cur_sel, ids, rec_active| {
+# a capture's refusal, the judgements joined: the vocabulary first, then the
+# recorder's state - a start while one runs and a stop while none does are
+# refused by name, since the host would ignore them and the status would
+# claim a file - then a capture still waiting on the host, whose row a
+# newer capture would otherwise close without its file
+capture_refusal_for : Str, Bool, Bool -> Str
+capture_refusal_for = |kind, rec_active, cap_pending|
+	Str.join_with(List.keep_if([
+		Bus.capture_refusal(kind),
+		(if kind == "webm_start" and rec_active ("capture webm_start: a recording is already running") else ""),
+		(if kind == "webm_stop" and !rec_active ("capture webm_stop: no recording is running") else ""),
+		(if kind != "" and cap_pending and Bus.capture_refusal(kind) == "" ("capture ${kind}: an earlier capture is still pending") else ""),
+	], |s8| s8 != ""), "; ")
+
+refusals_for :{ has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, capture : Str }, I64, U64, U64, List(TraceId), Bool, Bool -> Str
+refusals_for = |dv, cdir, wsel, cur_sel, ids, rec_active, cap_pending| {
 	segs = List.keep_if([
 		(if dv.view > 8 or dv.view < -1 ("view ${I64.to_str(dv.view)} unknown") else ""),
 		(if dv.range != -1 and dv.range != 30 and dv.range != 60 and dv.range != 90 ("range ${I64.to_str(dv.range)} not 30/60/90") else ""),
@@ -972,12 +1005,7 @@ refusals_for = |dv, cdir, wsel, cur_sel, ids, rec_active| {
 			if gh5.sport != live5.sport ("ghost_id ${I64.to_str(dv.ghost_id)} is ${gh5.sport}, the session is ${live5.sport}")
 			else "ghost_id ${I64.to_str(dv.ghost_id)} is ${Db.chan_name(gh5.chan)}, the session is ${Db.chan_name(live5.chan)}"
 		} else ""),
-		# a capture: the vocabulary first, then the recorder's state - a start
-		# while one runs and a stop while none does are refused by name, since
-		# the host would ignore them and the status would claim a file
-		(Bus.capture_refusal(dv.capture)),
-		(if dv.capture == "webm_start" and rec_active ("capture webm_start: a recording is already running") else ""),
-		(if dv.capture == "webm_stop" and !rec_active ("capture webm_stop: no recording is running") else ""),
+		(capture_refusal_for(dv.capture, rec_active, cap_pending)),
 	], |s9| s9 != "")
 	Str.join_with(segs, "; ")
 }
@@ -998,14 +1026,91 @@ shot_error_text = |e|
 		Unavailable => "capture png failed: capture is unavailable here"
 	}
 
-# whether a capture's mark is still waiting on the host for this directive
-capture_pending_for : [NoCapture, AwaitingShot({ id : I64, refused : Str, path : Str }), AwaitingStop({ id : I64, refused : Str, path : Str })], I64 -> Bool
-capture_pending_for = |p, did|
+# whether a capture's mark is still waiting on the host
+capture_is_pending : Ui.PendingCapture -> Bool
+capture_is_pending = |p|
 	match p {
 		NoCapture => Bool.False
-		AwaitingShot(s) => s.id == did
-		AwaitingStop(s) => s.id == did
+		_ => Bool.True
 	}
+
+# the file a capture of this name will be: absolute when the launch
+# directory is known, under ./captures otherwise
+capture_path : Str, Str -> Str
+capture_path = |cwd, name| if cwd == "" (Str.concat("captures/", name)) else Str.concat(cwd, Str.concat("/captures/", name))
+
+# ten seconds at the app's 60 fps pacing: a host that has not answered a
+# capture by then never will, and the row closes rather than stays pending
+capture_timeout_ticks : U64
+capture_timeout_ticks = 600
+
+# what one frame does about a pending capture: the host's screenshot answer
+# for the directive (not the S key's), the recorder's status, whether the
+# view has settled, and the frame's tick decide the next state and the one
+# effect the frame runs. A PNG is armed until the view has settled (a view
+# switch's crossfade and draw-in have finished, no trace fetch is in
+# flight) so the file shows the view and not the transition; a start closes
+# once the recorder reads Active, and a refusal the host latched for the
+# next input closes it with the reason; a stop closes on Finished or Failed.
+# Every wait ends by the timeout, with no result
+CaptureEvent : { shot : [NoShot, ShotDone(I64, Try({}, Capture.ScreenshotError))], rec : Capture.Status, settled : Bool, tick : U64 }
+CaptureAction : [Nothing, TakeShot({ id : I64, name : Str }), Mark({ id : I64, refused : Str, result : Str })]
+capture_step : Ui.PendingCapture, CaptureEvent -> { next : Ui.PendingCapture, act : CaptureAction }
+capture_step = |p, ev| {
+	timed_out = |c| ev.tick - c.since >= capture_timeout_ticks
+	give_up = |c, kind| { next: NoCapture, act: Mark({ id: c.id, refused: join_refusal(c.refused, "capture ${kind} failed: no answer from the host within 10s"), result: "" }) }
+	match p {
+		NoCapture => { next: NoCapture, act: Nothing }
+		ArmedShot(c) =>
+			if timed_out(c) (give_up(c, "png"))
+			else if ev.settled ({ next: AwaitingShot({ ..c, since: ev.tick }), act: TakeShot({ id: c.id, name: c.name }) })
+			else { next: p, act: Nothing }
+		AwaitingShot(c) =>
+			match ev.shot {
+				ShotDone(sid, res) if sid == c.id =>
+					match res {
+						Ok(_) => { next: NoCapture, act: Mark({ id: c.id, refused: c.refused, result: c.path }) }
+						Err(e) => { next: NoCapture, act: Mark({ id: c.id, refused: join_refusal(c.refused, shot_error_text(e)), result: "" }) }
+					}
+				_ => if timed_out(c) (give_up(c, "png")) else { next: p, act: Nothing }
+			}
+		AwaitingStart(c) =>
+			match ev.rec {
+				Active(_) => { next: NoCapture, act: Mark({ id: c.id, refused: c.refused, result: c.path }) }
+				# the status the frame after the start reads is the host's answer
+				# to it: a Failed left by an earlier recording is overwritten by
+				# either outcome, so one read later than the start is not stale
+				Failed(f) if ev.tick > c.since => { next: NoCapture, act: Mark({ id: c.id, refused: join_refusal(c.refused, Str.concat("capture webm_start failed: ", rec_failure_text(f.reason))), result: "" }) }
+				_ => if timed_out(c) (give_up(c, "webm_start")) else { next: p, act: Nothing }
+			}
+		AwaitingStop(c) =>
+			match ev.rec {
+				Finished(_) => { next: NoCapture, act: Mark({ id: c.id, refused: c.refused, result: c.path }) }
+				Failed(f) => { next: NoCapture, act: Mark({ id: c.id, refused: join_refusal(c.refused, Str.concat("capture webm_stop failed: ", rec_failure_text(f.reason))), result: "" }) }
+				_ => if timed_out(c) (give_up(c, "webm_stop")) else { next: p, act: Nothing }
+			}
+	}
+}
+
+# why the recorder refused or died, in the status row's words
+rec_failure_text : Capture.FailureReason -> Str
+rec_failure_text = |r|
+	match r {
+		PathInvalid => "the path is invalid"
+		PathEscapesOutputDir => "the path leaves ./captures"
+		AlreadyRecording => "a recording is already running"
+		BudgetExceeded => "the recording budget is spent"
+		UnsupportedFormat => "the format is unsupported here"
+		OutOfMemory => "the host ran out of memory"
+		WriteFailed => "the file could not be written"
+		EncodeFailed => "the encoder failed"
+		Unknown => "the host gave no reason"
+	}
+
+# the view has settled when a view switch's crossfade and draw-in are over
+# (30 frames; the veil itself fades in 10) and no trace fetch is in flight
+view_settled : { view_anim : U64, tick : U64, trace_loading : Bool, reloading : Bool } -> Bool
+view_settled = |m| (m.view_anim == 0 or m.tick - m.view_anim >= 30) and !m.trace_loading and !m.reloading
 
 expect {
 	m = [
@@ -1016,12 +1121,12 @@ expect {
 	# naming the shown session as its own ghost is refused BY NAME - the kind
 	# test cannot catch it (a session trivially matches itself) and the
 	# dismissal downstream is silent
-	refusals_for(dv, -2, 0, 0, m, Bool.False) == "ghost_day d1 is the session on screen"
+	refusals_for(dv, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_day d1 is the session on screen"
 	# the same day as a ghost for the OTHER session is a kind question, and
 	# these two differ by sport
-	and refusals_for(dv, -2, 1, 1, m, Bool.False) == "ghost_day d1 is Ride, the session is Rowing"
+	and refusals_for(dv, -2, 1, 1, m, Bool.False, Bool.False) == "ghost_day d1 is Ride, the session is Rowing"
 	# a clean directive refuses nothing
-	and refusals_for({ has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }, -2, 0, 0, m, Bool.False) == ""
+	and refusals_for({ has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }, -2, 0, 0, m, Bool.False, Bool.False) == ""
 }
 
 # a session named by id is judged by identity: absent, the one on screen, or
@@ -1034,20 +1139,20 @@ expect {
 	blank = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }
 	# an id no picker entry carries; the selection did not move, so it is
 	# judged against the shown session and refused by name
-	refusals_for({ ..blank, trace_id: 9 }, -2, 0, 0, m, Bool.False) == "trace_id 9 not in the picker"
+	refusals_for({ ..blank, trace_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "trace_id 9 not in the picker"
 	# the same absent id while the selection MOVED (wsel differs from
 	# cur_sel) is not judged against the shown session at all - the move is
 	# the answer - so nothing is refused; this is the guard's own case
-	and refusals_for({ ..blank, trace_id: 9 }, -2, 1, 0, m, Bool.False) == ""
-	and refusals_for({ ..blank, ghost_id: 9 }, -2, 0, 0, m, Bool.False) == "ghost_id 9 not in the picker"
-	and refusals_for({ ..blank, ghost_id: 1 }, -2, 0, 0, m, Bool.False) == "ghost_id 1 is the session on screen"
-	and refusals_for({ ..blank, ghost_id: 1 }, -2, 1, 1, m, Bool.False) == "ghost_id 1 is Ride, the session is Rowing"
+	and refusals_for({ ..blank, trace_id: 9 }, -2, 1, 0, m, Bool.False, Bool.False) == ""
+	and refusals_for({ ..blank, ghost_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 9 not in the picker"
+	and refusals_for({ ..blank, ghost_id: 1 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 1 is the session on screen"
+	and refusals_for({ ..blank, ghost_id: 1 }, -2, 1, 1, m, Bool.False, Bool.False) == "ghost_id 1 is Ride, the session is Rowing"
 	# 'none' dismisses; an id beside it is never judged, so nothing is refused
 	# - not an absent id, not the shown session's own id, not one of the
 	# wrong kind (each would otherwise name its own refusal)
-	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 9 }, -2, 0, 0, m, Bool.False) == ""
-	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 1 }, -2, 0, 0, m, Bool.False) == ""
-	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 1 }, -2, 1, 1, m, Bool.False) == ""
+	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == ""
+	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 1 }, -2, 0, 0, m, Bool.False, Bool.False) == ""
+	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 1 }, -2, 1, 1, m, Bool.False, Bool.False) == ""
 }
 
 # a day beside an id: the id takes precedence in the resolver, so the
@@ -1059,13 +1164,13 @@ expect {
 		{ id: 2, day: "d2", name: "n2", sport: "Rowing", chan: Db.watts_chan },
 	]
 	blank = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }
-	refusals_for({ ..blank, trace_day: "d9", trace_id: 9 }, -2, 0, 0, m, Bool.False) == "trace_id 9 not in the picker"
-	and refusals_for({ ..blank, trace_day: "d9" }, -2, 0, 0, m, Bool.False) == "trace_day d9 not in the picker"
-	and refusals_for({ ..blank, trace_day: "d9", trace_id: 1 }, -2, 0, 0, m, Bool.False) == ""
-	and refusals_for({ ..blank, ghost_day: "d9", ghost_id: 9 }, -2, 0, 0, m, Bool.False) == "ghost_id 9 not in the picker"
-	and refusals_for({ ..blank, ghost_day: "d9" }, -2, 0, 0, m, Bool.False) == "ghost_day d9 not in the picker"
-	and refusals_for({ ..blank, ghost_day: "d1", ghost_id: 2 }, -2, 0, 0, m, Bool.False) == "ghost_id 2 is Rowing, the session is Ride"
-	and refusals_for({ ..blank, ghost_day: "d2", ghost_id: 9 }, -2, 0, 0, m, Bool.False) == "ghost_id 9 not in the picker"
+	refusals_for({ ..blank, trace_day: "d9", trace_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "trace_id 9 not in the picker"
+	and refusals_for({ ..blank, trace_day: "d9" }, -2, 0, 0, m, Bool.False, Bool.False) == "trace_day d9 not in the picker"
+	and refusals_for({ ..blank, trace_day: "d9", trace_id: 1 }, -2, 0, 0, m, Bool.False, Bool.False) == ""
+	and refusals_for({ ..blank, ghost_day: "d9", ghost_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 9 not in the picker"
+	and refusals_for({ ..blank, ghost_day: "d9" }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_day d9 not in the picker"
+	and refusals_for({ ..blank, ghost_day: "d1", ghost_id: 2 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 2 is Rowing, the session is Ride"
+	and refusals_for({ ..blank, ghost_day: "d2", ghost_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 9 not in the picker"
 }
 
 # a capture is judged by its vocabulary and by the recorder's state: a
@@ -1077,18 +1182,69 @@ expect {
 		{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan },
 	]
 	blank = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }
-	refusals_for({ ..blank, capture: "gif" }, -2, 0, 0, m, Bool.False) == "capture gif not png/webm_start/webm_stop"
-	and refusals_for({ ..blank, capture: "png" }, -2, 0, 0, m, Bool.False) == ""
-	and refusals_for({ ..blank, capture: "png" }, -2, 0, 0, m, Bool.True) == ""
-	and refusals_for({ ..blank, capture: "webm_start" }, -2, 0, 0, m, Bool.False) == ""
-	and refusals_for({ ..blank, capture: "webm_start" }, -2, 0, 0, m, Bool.True) == "capture webm_start: a recording is already running"
-	and refusals_for({ ..blank, capture: "webm_stop" }, -2, 0, 0, m, Bool.True) == ""
-	and refusals_for({ ..blank, capture: "webm_stop" }, -2, 0, 0, m, Bool.False) == "capture webm_stop: no recording is running"
-	and refusals_for({ ..blank, range: 45, capture: "webm_stop" }, -2, 0, 0, m, Bool.False) == "range 45 not 30/60/90; capture webm_stop: no recording is running"
+	refusals_for({ ..blank, capture: "gif" }, -2, 0, 0, m, Bool.False, Bool.False) == "capture gif not png/webm_start/webm_stop"
+	and refusals_for({ ..blank, capture: "png" }, -2, 0, 0, m, Bool.False, Bool.False) == ""
+	and refusals_for({ ..blank, capture: "png" }, -2, 0, 0, m, Bool.True, Bool.False) == ""
+	and refusals_for({ ..blank, capture: "png" }, -2, 0, 0, m, Bool.False, Bool.True) == "capture png: an earlier capture is still pending"
+	and refusals_for({ ..blank, capture: "gif" }, -2, 0, 0, m, Bool.False, Bool.True) == "capture gif not png/webm_start/webm_stop"
+	and refusals_for({ ..blank, capture: "webm_start" }, -2, 0, 0, m, Bool.False, Bool.False) == ""
+	and refusals_for({ ..blank, capture: "webm_start" }, -2, 0, 0, m, Bool.True, Bool.False) == "capture webm_start: a recording is already running"
+	and refusals_for({ ..blank, capture: "webm_stop" }, -2, 0, 0, m, Bool.True, Bool.False) == ""
+	and refusals_for({ ..blank, capture: "webm_stop" }, -2, 0, 0, m, Bool.False, Bool.False) == "capture webm_stop: no recording is running"
+	and refusals_for({ ..blank, range: 45, capture: "webm_stop" }, -2, 0, 0, m, Bool.False, Bool.False) == "range 45 not 30/60/90; capture webm_stop: no recording is running"
 }
 
 expect join_refusal("", "b") == "b" and join_refusal("a", "") == "a" and join_refusal("a", "b") == "a; b"
-expect capture_pending_for(NoCapture, 3) == Bool.False and capture_pending_for(AwaitingShot({ id: 3, refused: "", path: "captures/power.png" }), 3) and !capture_pending_for(AwaitingStop({ id: 4, refused: "", path: "" }), 3)
+# the deferred mark, pinned: a PNG arms until the view has settled, then
+# takes the shot; the answer for its id marks with the path, a failure
+# joins the host's reason to what the directive's other fields refused; an
+# answer for another id (the S key's) is not the directive's; every wait
+# gives up at the timeout with no result
+expect {
+	c = { id: 3, refused: "", path: "/h/captures/power.png", name: "power.png", since: 100 }
+	ev = { shot: NoShot, rec: Idle, settled: Bool.False, tick: 101 }
+	armed = capture_step(ArmedShot(c), ev)
+	taken = capture_step(ArmedShot(c), { ..ev, settled: Bool.True })
+	ok = capture_step(AwaitingShot(c), { ..ev, shot: ShotDone(3, Ok({})) })
+	bad = capture_step(AwaitingShot({ ..c, refused: "range 45 not 30/60/90" }), { ..ev, shot: ShotDone(3, Err(Busy)) })
+	other = capture_step(AwaitingShot(c), { ..ev, shot: ShotDone(4, Ok({})) })
+	late = capture_step(AwaitingShot(c), { ..ev, tick: 700 })
+	armed == { next: ArmedShot(c), act: Nothing }
+	and taken == { next: AwaitingShot({ ..c, since: 101 }), act: TakeShot({ id: 3, name: "power.png" }) }
+	and ok == { next: NoCapture, act: Mark({ id: 3, refused: "", result: "/h/captures/power.png" }) }
+	and bad == { next: NoCapture, act: Mark({ id: 3, refused: "range 45 not 30/60/90; capture png failed: the host is busy", result: "" }) }
+	and other == { next: AwaitingShot(c), act: Nothing }
+	and late == { next: NoCapture, act: Mark({ id: 3, refused: "capture png failed: no answer from the host within 10s", result: "" }) }
+}
+# a start marks on Active with the file, a Failed read the frame after the
+# start marks the host's reason, a Failed read the same frame is an earlier
+# recording's and waits; a stop marks on Finished or Failed and waits on
+# Active
+expect {
+	c = { id: 5, refused: "", path: "/h/captures/power.webm", name: "power.webm", since: 100 }
+	ev = { shot: NoShot, rec: Idle, settled: Bool.True, tick: 101 }
+	fr = { frames: 0, dropped: 0 }
+	started = capture_step(AwaitingStart(c), { ..ev, rec: Active(fr) })
+	refused = capture_step(AwaitingStart(c), { ..ev, rec: Failed({ frames: 0, reason: AlreadyRecording }) })
+	stale = capture_step(AwaitingStart(c), { ..ev, tick: 100, rec: Failed({ frames: 0, reason: WriteFailed }) })
+	stopped = capture_step(AwaitingStop(c), { ..ev, rec: Finished({ frames: 9, bytes: 1 }) })
+	died = capture_step(AwaitingStop(c), { ..ev, rec: Failed({ frames: 9, reason: EncodeFailed }) })
+	waiting = capture_step(AwaitingStop(c), { ..ev, rec: Active(fr) })
+	gone = capture_step(AwaitingStart(c), { ..ev, tick: 700 })
+	started == { next: NoCapture, act: Mark({ id: 5, refused: "", result: "/h/captures/power.webm" }) }
+	and refused == { next: NoCapture, act: Mark({ id: 5, refused: "capture webm_start failed: a recording is already running", result: "" }) }
+	and stale == { next: AwaitingStart(c), act: Nothing }
+	and stopped == { next: NoCapture, act: Mark({ id: 5, refused: "", result: "/h/captures/power.webm" }) }
+	and died == { next: NoCapture, act: Mark({ id: 5, refused: "capture webm_stop failed: the encoder failed", result: "" }) }
+	and waiting == { next: AwaitingStop(c), act: Nothing }
+	and gone == { next: NoCapture, act: Mark({ id: 5, refused: "capture webm_start failed: no answer from the host within 10s", result: "" }) }
+	and capture_is_pending(AwaitingStop(c)) and !capture_is_pending(NoCapture)
+	and capture_path("", "power.png") == "captures/power.png" and capture_path("/h", "power.png") == "/h/captures/power.png"
+	and view_settled({ view_anim: 0, tick: 5, trace_loading: Bool.False, reloading: Bool.False })
+	and !view_settled({ view_anim: 100, tick: 129, trace_loading: Bool.False, reloading: Bool.False })
+	and view_settled({ view_anim: 100, tick: 130, trace_loading: Bool.False, reloading: Bool.False })
+	and !view_settled({ view_anim: 100, tick: 130, trace_loading: Bool.True, reloading: Bool.False })
+}
 
 # Reports a directive's terminal outcome from the task lane.
 mark_task! : Str, I64, Str, Str => {}
@@ -1197,6 +1353,8 @@ Msg : [
 	GhostSwitched({ tr : List(F32), du : F32, gen : U64, day : Str }),
 	GhostSwitchFailed,
 	Shot(Try({}, Capture.ScreenshotError)),
+	# a directive's screenshot answer, tagged with its row so the S key's cannot close it
+	DirShot({ id : I64, res : Try({}, Capture.ScreenshotError) }),
 	RecCmd({}),
 	MarkDone({}),
 	Reloaded(Ui.Model),
@@ -1281,7 +1439,7 @@ caps_fields = [
 	{ name: "ghost_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions, or 'none' to dismiss; picks that day's newest session of the shown session's kind" },
 	{ name: "trace_id", kind: "integer", accepts: "an activity id among the trace picker's sessions; when both are given it takes precedence over trace_day" },
 	{ name: "ghost_id", kind: "integer", accepts: "an activity id among the trace picker's sessions, of the same kind as the session shown; takes precedence over ghost_day, and 'none' in ghost_day still dismisses" },
-	{ name: "capture", kind: "text", accepts: "'png' writes the view the directive lands on to ./captures/<view>.png beside the database; 'webm_start' and 'webm_stop' begin and end a WebM recording of it; the status row's result names the file once the host has written it" },
+	{ name: "capture", kind: "text", accepts: "'png' writes the view the directive lands on, once it has settled, to captures/<view>.png under the directory the window was launched from; 'webm_start' and 'webm_stop' begin and end a WebM recording of it; the row stays pending until the host answers, then result names the file by its absolute path" },
 ]
 
 update! : Model, App.Input(Msg) => Try(Model, [Exit(I64), ..])
@@ -1292,6 +1450,7 @@ update! = |model0, program_input| {
 	model = List.fold(program_input.messages, model0, |acc, msg|
 		match msg {
 			Shot(_) => acc
+			DirShot(_) => acc
 			RecCmd(_) => acc
 			MarkDone(_) => acc
 			# also the boot task's failure exit: the splash must never spin
@@ -1364,7 +1523,7 @@ update! = |model0, program_input| {
 						}
 				}
 			Reloaded(fresh) => {
-				merged = { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim }
+				merged = { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive }
 				# R reads the window it was pressed on, and it is the slow path.
 				# A chip clicked while it ran has since moved curve_days and
 				# landed its own curve for the window now on screen; when the
@@ -1398,61 +1557,42 @@ update! = |model0, program_input| {
 	# for as long as a CLI write transaction held the lock
 	is_redelivery = directive0.has_d and directive0.id == model.last_directive.id
 	# ...unless the outcome is a capture's, still waiting on the host: the
-	# row stays pending until the file is known
-	_ = if is_redelivery and model.home != "" and !capture_pending_for(model.pending_capture, directive0.id) {
+	# row stays pending until the file is known. The re-mark carries the
+	# result the capture produced, so a capture whose mark was lost does not
+	# close as a plain applied
+	_ = if is_redelivery and model.home != "" and !capture_is_pending(model.pending_capture) {
 		homer = model.home
 		rid = model.last_directive.id
 		rref = model.last_directive.refused
-		Task.spawn!(program_input, || MarkDone(mark_task!(homer, rid, rref, "")))
+		rres = model.last_directive.result
+		Task.spawn!(program_input, || MarkDone(mark_task!(homer, rid, rref, rres)))
 	}
-	# a capture's mark lands when the host answers: a PNG when the screenshot
-	# task reports, a recording when the stop reads Finished or Failed. The
-	# status then names the file, or the failure beside what was refused
-	shot_done = List.fold(program_input.messages, NoShot, |acc9, msg9| match msg9 { Shot(r9) => ShotDone(r9)
+	# the pending capture's step for this frame: the directive's own
+	# screenshot answer (the S key's is untagged and cannot close it), the
+	# recorder's status, and whether the view has settled
+	shot_done = List.fold(program_input.messages, NoShot, |acc9, msg9| match msg9 { DirShot(r9) => ShotDone(r9.id, r9.res)
 		_ => acc9 })
-	pending1 =
-		match model.pending_capture {
-			NoCapture => NoCapture
-			AwaitingShot(ps) =>
-				match shot_done {
-					NoShot => model.pending_capture
-					ShotDone(res) => {
-						_ = if model.home != "" {
-							homes = model.home
-							sid = ps.id
-							sref = match res { Ok(_) => ps.refused
-								Err(e9) => join_refusal(ps.refused, shot_error_text(e9)) }
-							sres = match res { Ok(_) => ps.path
-								Err(_) => "" }
-							Task.spawn!(program_input, || MarkDone(mark_task!(homes, sid, sref, sres)))
-						}
-						NoCapture
-					}
-				}
-			AwaitingStop(pr) =>
-				match program_input.capture {
-					Finished(_) => {
-						_ = if model.home != "" {
-							homef = model.home
-							fid = pr.id
-							fref = pr.refused
-							fres = pr.path
-							Task.spawn!(program_input, || MarkDone(mark_task!(homef, fid, fref, fres)))
-						}
-						NoCapture
-					}
-					Failed(_) => {
-						_ = if model.home != "" {
-							homex = model.home
-							xid = pr.id
-							xref = join_refusal(pr.refused, "capture webm_stop failed: the recording failed")
-							Task.spawn!(program_input, || MarkDone(mark_task!(homex, xid, xref, "")))
-						}
-						NoCapture
-					}
-					_ => model.pending_capture
-				}
+	cap_step = capture_step(model.pending_capture, { shot: shot_done, rec: program_input.capture, settled: view_settled({ view_anim: model.view_anim, tick: model.tick, trace_loading: model.trace_loading, reloading: model.reloading }), tick: model.tick })
+	pending1 = cap_step.next
+	_ = match cap_step.act {
+		Nothing => {}
+		TakeShot(t1) => {
+			_ = Task.spawn!(program_input, || DirShot({ id: t1.id, res: Capture.screenshot!(t1.name) }))
+			{}
 		}
+		Mark(m1) => {
+			_ = if model.home != "" {
+				homes = model.home
+				Task.spawn!(program_input, || MarkDone(mark_task!(homes, m1.id, m1.refused, m1.result)))
+			}
+			{}
+		}
+	}
+	# the outcome a re-delivery re-reports, once the capture has answered
+	last_directive1 = match cap_step.act {
+		Mark(m2) if m2.id == model.last_directive.id => { id: m2.id, refused: m2.refused, result: m2.result }
+		_ => model.last_directive
+	}
 	directive = if is_redelivery ({ has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }) else directive0
 	if model.quitting {
 		if exits_now(model.focus_cleared, model.tick, model.quit_tick) (Err(Exit(0)))
@@ -1826,7 +1966,9 @@ update! = |model0, program_input| {
 		}
 		# no HOME means no database path means no bus — spawning would only
 		# manufacture failing tasks every tick, forever
-		_ = if tick % 60 == 0 and model.home != "" {
+		# ...and no poll while a capture waits on the host: a newer row would
+		# supersede the one whose file is still being written
+		_ = if tick % 60 == 0 and model.home != "" and !capture_is_pending(pending1) {
 			homep = model.home
 			lastp = model.last_directive.id
 			Task.spawn!(program_input, || poll_task!(homep, lastp))
@@ -1881,39 +2023,37 @@ update! = |model0, program_input| {
 		# cache-miss fetch) may still fail and recover by their own rules.
 		rec_active = match program_input.capture { Active(_) => Bool.True
 			_ => Bool.False }
-		refused9 = if directive.has_d and directive.id >= 0 (refusals_for(directive, cursor_dir, want_sel2, model.trace_sel, model.trace_ids, rec_active)) else ""
-		# a capture the refusals let through: the PNG and the stop wait on the
-		# host for their mark, the start's mark lands now with the file the
-		# recording writes. The file is named for the view the directive lands on
-		cap_ok = directive.has_d and directive.id >= 0 and directive.capture != "" and !Str.contains(refused9, "capture ")
+		cap_pending = capture_is_pending(pending1)
+		refused9 = if directive.has_d and directive.id >= 0 (refusals_for(directive, cursor_dir, want_sel2, model.trace_sel, model.trace_ids, rec_active, cap_pending)) else ""
+		# a capture the refusals let through waits on the host for its mark;
+		# the test is the predicate that produced the refusal, so refusal text
+		# elsewhere in the row cannot suppress it. The file is named for the
+		# view the directive lands on; the recorder is driven from this frame,
+		# so the frame after it reads the host's answer
+		cap_ok = directive.has_d and directive.id >= 0 and directive.capture != "" and capture_refusal_for(directive.capture, rec_active, cap_pending) == ""
 		cap_name = view_basename(view2)
-		_ = if cap_ok and directive.capture == "png" {
-			shot9 = Str.concat(cap_name, ".png")
-			Task.spawn!(program_input, || Shot(Capture.screenshot!(shot9)))
-		}
 		_ = if cap_ok and directive.capture == "webm_start" {
 			rec9 = Capture.default.with_format(WebM).with_path(Str.concat(cap_name, ".webm")).with_fps(30).with_max_frames(0).with_scale(Full).with_timing(FixedStep)
-			Task.spawn!(program_input, || RecCmd(Capture.start!(rec9)))
+			Capture.start!(rec9)
 		}
-		_ = if cap_ok and directive.capture == "webm_stop" {
-			Task.spawn!(program_input, || RecCmd(Capture.stop!()))
-		}
+		_ = if cap_ok and directive.capture == "webm_stop" (Capture.stop!())
 		v_starts = d.key_pressed(KeyV) and !rec_active
 		rec_path2 =
-			if cap_ok and directive.capture == "webm_start" (Str.concat("captures/", Str.concat(cap_name, ".webm")))
-			else if v_starts (Str.concat("captures/", Str.concat(view_basename(view), ".webm")))
+			if cap_ok and directive.capture == "webm_start" (capture_path(model.cwd, Str.concat(cap_name, ".webm")))
+			else if v_starts (capture_path(model.cwd, Str.concat(view_basename(view), ".webm")))
 			else model.rec_path
+		wait9 = |name9, path9| { id: directive.id, refused: refused9, path: path9, name: name9, since: tick }
 		pending2 =
-			if cap_ok and directive.capture == "png" (AwaitingShot({ id: directive.id, refused: refused9, path: Str.concat("captures/", Str.concat(cap_name, ".png")) }))
-			else if cap_ok and directive.capture == "webm_stop" (AwaitingStop({ id: directive.id, refused: refused9, path: model.rec_path }))
+			if cap_ok and directive.capture == "png" (ArmedShot(wait9(Str.concat(cap_name, ".png"), capture_path(model.cwd, Str.concat(cap_name, ".png")))))
+			else if cap_ok and directive.capture == "webm_start" (AwaitingStart(wait9(Str.concat(cap_name, ".webm"), rec_path2)))
+			else if cap_ok and directive.capture == "webm_stop" (AwaitingStop(wait9("", model.rec_path)))
 			else pending1
-		mark_waits = cap_ok and (directive.capture == "png" or directive.capture == "webm_stop")
-		_ = if directive.has_d and directive.id >= 0 and model.home != "" and !mark_waits {
+		# every other directive is marked by this frame, the one that applied it
+		_ = if directive.has_d and directive.id >= 0 and model.home != "" and !cap_ok {
 			homem = model.home
 			did = directive.id
 			refm = refused9
-			resm = if cap_ok and directive.capture == "webm_start" rec_path2 else ""
-			Task.spawn!(program_input, || MarkDone(mark_task!(homem, did, refm, resm)))
+			Task.spawn!(program_input, || MarkDone(mark_task!(homem, did, refm, "")))
 		}
 		glow2 =
 			match model.glow {
@@ -1923,7 +2063,7 @@ update! = |model0, program_input| {
 				Unavailable(u9) => if u9.gw == pixels.w and u9.gh == pixels.h (model.glow) else build_glow!(pixels)
 			}
 		glow_on2 = if d.key_pressed(KeyG) (!model.glow_on) else model.glow_on
-		Ok({ ..model, reloading: (if reload_spawned Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9 }) else model.last_directive), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if trace_fetch Bool.True else if moving Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, reloading: (if reload_spawned Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if trace_fetch Bool.True else if moving Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 

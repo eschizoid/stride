@@ -59,7 +59,7 @@
     },
     "error": {
       "type": "string",
-      "description": "the refusal the tick recorded, empty when none"
+      "description": "the capture refusal this tick would record (and did, when acked): a capture needs a window; empty when none"
     }
   }
 }

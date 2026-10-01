@@ -10,6 +10,12 @@ Ui :: [].{
 	# month was measured at all - an unmeasured one breaks the curve
 	SpinePt : { x : F32, y : F32, ok : Bool }
 	YLabel : { p : Text.Prepared, v : F32 }
+	# one capture a directive asked for, while its mark waits on the host:
+	# the row to mark, what the directive's other fields refused, the absolute
+	# file the status will name, the name the host writes under ./captures,
+	# and the tick the wait began
+	CaptureWait : { id : I64, refused : Str, path : Str, name : Str, since : U64 }
+	PendingCapture : [NoCapture, ArmedShot(CaptureWait), AwaitingShot(CaptureWait), AwaitingStart(CaptureWait), AwaitingStop(CaptureWait)]
 	EndLabel : { p : Text.Prepared, sel : U8 }
 
 	Model : {
@@ -112,6 +118,8 @@ Ui :: [].{
 		days : List(Str),
 		day_notes : List({ day : Str, note : Str }),
 		home : Str,
+		# where the window was launched from, absolute; "" when unknown
+		cwd : Str,
 		tick : U64,
 		view_anim : U64,
 		last_focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64 },
@@ -177,13 +185,17 @@ Ui :: [].{
 		prs : List(Db.PrRung),
 		rec_status : Capture.Status,
 		# a capture a directive asked for whose mark waits on the host: a PNG
-		# until the screenshot task answers, a recording until the stop reports
-		pending_capture : [NoCapture, AwaitingShot({ id : I64, refused : Str, path : Str }), AwaitingStop({ id : I64, refused : Str, path : Str })],
-		# the file the running (or last) recording writes, under ./captures
+		# armed until the view has settled and then until the screenshot task
+		# answers, a start until the recorder reports it running, a stop until
+		# the recording reads Finished or Failed. `since` is the tick the wait
+		# began; `path` is absolute, the file the status row will name
+		pending_capture : PendingCapture,
+		# the file the running (or last) recording writes, absolute
 		rec_path : Str,
-		# the last directive this window applied, and what it refused - a
-		# re-delivered id re-reports this outcome instead of re-applying
-		last_directive : { id : I64, refused : Str },
+		# the last directive this window applied, what it refused and the file
+		# it produced - a re-delivered id re-reports this outcome instead of
+		# re-applying
+		last_directive : { id : I64, refused : Str, result : Str },
 		# the post-process pipeline: Unbuilt until update! allocates it, sized
 		# to the window. Unavailable remembers the size the GPU refused at, so
 		# a resize earns one fresh attempt; between refusals the app renders

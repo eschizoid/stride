@@ -649,9 +649,15 @@ ReportHealth :: [].{
                 })
             history = match hist_rows!("SELECT id, CAST(created_at AS TEXT) AS hca, CAST(status AS TEXT) AS hst, CAST(COALESCE(error, '') AS TEXT) AS her, CAST(COALESCE(applied_at, '') AS TEXT) AS haa, COALESCE(view, -1) AS hv, COALESCE(range, -1) AS hrg, CAST(COALESCE(cursor_day, '') AS TEXT) AS hcd, CAST(COALESCE(trace_day, '') AS TEXT) AS htd, CAST(COALESCE(ghost_day, '') AS TEXT) AS hgd, COALESCE(trace_id, -1) AS hti, COALESCE(ghost_id, -1) AS hgi, CAST(COALESCE(capture, '') AS TEXT) AS hcp, CAST(COALESCE(result, '') AS TEXT) AS hrs FROM viz_directives ORDER BY id DESC LIMIT 10") {
                 Ok(rows) => rows
-                Err(_) => match hist_rows!("SELECT id, CAST(created_at AS TEXT) AS hca, CAST(status AS TEXT) AS hst, CAST(COALESCE(error, '') AS TEXT) AS her, CAST(COALESCE(applied_at, '') AS TEXT) AS haa, COALESCE(view, -1) AS hv, COALESCE(range, -1) AS hrg, CAST(COALESCE(cursor_day, '') AS TEXT) AS hcd, CAST(COALESCE(trace_day, '') AS TEXT) AS htd, CAST(COALESCE(ghost_day, '') AS TEXT) AS hgd, -1 AS hti, -1 AS hgi, CAST('' AS TEXT) AS hcp, CAST('' AS TEXT) AS hrs FROM viz_directives ORDER BY id DESC LIMIT 10") {
+                # a bus from a window before the capture columns keeps its ids: the
+                # headless read never migrates, so a table between two builds is read
+                # with the columns it has, each set on its own
+                Err(_) => match hist_rows!("SELECT id, CAST(created_at AS TEXT) AS hca, CAST(status AS TEXT) AS hst, CAST(COALESCE(error, '') AS TEXT) AS her, CAST(COALESCE(applied_at, '') AS TEXT) AS haa, COALESCE(view, -1) AS hv, COALESCE(range, -1) AS hrg, CAST(COALESCE(cursor_day, '') AS TEXT) AS hcd, CAST(COALESCE(trace_day, '') AS TEXT) AS htd, CAST(COALESCE(ghost_day, '') AS TEXT) AS hgd, COALESCE(trace_id, -1) AS hti, COALESCE(ghost_id, -1) AS hgi, CAST('' AS TEXT) AS hcp, CAST('' AS TEXT) AS hrs FROM viz_directives ORDER BY id DESC LIMIT 10") {
                     Ok(rows) => rows
-                    Err(_) => []
+                    Err(_) => match hist_rows!("SELECT id, CAST(created_at AS TEXT) AS hca, CAST(status AS TEXT) AS hst, CAST(COALESCE(error, '') AS TEXT) AS her, CAST(COALESCE(applied_at, '') AS TEXT) AS haa, COALESCE(view, -1) AS hv, COALESCE(range, -1) AS hrg, CAST(COALESCE(cursor_day, '') AS TEXT) AS hcd, CAST(COALESCE(trace_day, '') AS TEXT) AS htd, CAST(COALESCE(ghost_day, '') AS TEXT) AS hgd, -1 AS hti, -1 AS hgi, CAST('' AS TEXT) AS hcp, CAST('' AS TEXT) AS hrs FROM viz_directives ORDER BY id DESC LIMIT 10") {
+                        Ok(rows) => rows
+                        Err(_) => []
+                    }
                 }
             }
             # the captures among the directives, newest first and capped at ten

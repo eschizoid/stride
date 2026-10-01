@@ -187,7 +187,7 @@
           },
           "result": {
             "type": "string",
-            "description": "the file a capture produced, under ./captures beside the database, or empty"
+            "description": "the file a capture produced, by absolute path under the captures directory of where the window was launched, or empty"
           }
         }
       }
@@ -257,7 +257,7 @@
           },
           "result": {
             "type": "string",
-            "description": "the file a capture produced, under ./captures beside the database, or empty"
+            "description": "the file a capture produced, by absolute path under the captures directory of where the window was launched, or empty"
           }
         }
       }

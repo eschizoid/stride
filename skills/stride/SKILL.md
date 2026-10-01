@@ -318,11 +318,12 @@ polls it about once a second, and every row reaches a status you can read back.
    pick that day's newest session); the id wins when both are given. `ghost_day =
    'none'` dismisses the ghost. Never name a session by day when the athlete has two
    that day. `capture` asks for a file: `'png'` writes the view the directive lands
-   on to `./captures/<view>.png` beside the database, `'webm_start'` and
-   `'webm_stop'` begin and end a recording of it; the row stays pending until the
-   host has written the file, then `result` names it, and `stride viz --json` lists
-   those rows under `captures` (status, error, result) so you never list the
-   directory yourself.
+   on, once it has settled, to `captures/<view>.png` under the directory the window
+   was launched from; `'webm_start'` and `'webm_stop'` begin and end a recording of
+   it. The row stays pending until the host answers (a PNG written, a recording
+   running or finished), then `result` names the file by its absolute path; one
+   capture is in flight at a time. `stride viz --json` lists those rows under
+   `captures` (status, error, result) so you never list the directory yourself.
 3. **Verify by id, not by hope.** Read the row back from `stride viz --json`, whose
    `history` lists the last ten directives newest first (empty while none has been
    written), or with `SELECT status, error FROM

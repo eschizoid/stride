@@ -230,13 +230,18 @@ VALUES (0, 30, '2026-09-02', NULL, NULL);
 -- (the newest). Read the id back from the trace picker's rows, or from
 -- `stride activities --json`; `viz_focus` reports the ids of what is shown.
 INSERT INTO viz_directives (trace_id, ghost_id) VALUES (20355183143, 20342052869);
--- a capture: 'png' writes the view the directive lands on to
--- ./captures/<view>.png beside the database (the window's working
--- directory); 'webm_start' / 'webm_stop' begin and end a WebM recording of
--- it. The row stays pending until the host has written the file, then
--- `result` names it and the status closes; a refused start (one already
--- running), a refused stop (none running) or a failed write lands in
--- `error` with no result. `stride viz --json` lists them under `captures`.
+-- a capture: 'png' writes the view the directive lands on, once it has
+-- settled (a view switch's crossfade over, no trace fetch in flight), to
+-- captures/<view>.png under the directory the window was launched from
+-- (your home folder for the app bundle, the repo for `just viz`);
+-- 'webm_start' / 'webm_stop' begin and end a WebM recording of it. The row
+-- stays pending until the host answers - a PNG written, a recording
+-- running, a recording finished - then `result` names the file by its
+-- absolute path and the status closes; a refused start (one already
+-- running), a refused stop (none running), a start the recorder rejected
+-- or a failed write lands in `error` with no result. Only one capture is
+-- in flight at a time: a second one while the first waits is refused.
+-- `stride viz --json` lists them under `captures`.
 INSERT INTO viz_directives (view, capture) VALUES (1, 'png');
 -- view 0..8 (form/power/trace/table/plan/heat/zones/ramp/career) - but read
 -- the list from `stride viz --json`, which the running binary publishes,

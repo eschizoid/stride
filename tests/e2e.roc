@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1256)?
+    checks_ran_exactly!(1257)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7507,10 +7507,17 @@ b_viz_caps! = |ctx| {
     # write - keeps its id and every readable field and erases nothing
     _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES ('banana');")
     check!("a directive with text in an integer column still lists, that field -1, the nine around it intact", strjq!(ctx, ["viz"], "(.data.history | length | tostring) + \"/\" + (.data.history[0] | (.id | tostring) + \":\" + (.view | tostring) + \":\" + .status)") == "10/16:-1:pending")?
+    # a table with the id columns but not yet the capture columns - a bus
+    # the previous build's window created, read before anything migrates
+    # it - keeps its ids rather than reading them as unknown
+    _ = sql!(ctx.db, "ALTER TABLE viz_directives DROP COLUMN capture;")
+    _ = sql!(ctx.db, "ALTER TABLE viz_directives DROP COLUMN result;")
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view, trace_id) VALUES (2, 4242);")
+    check!("a directive table with ids but no capture column lists its ids, capture empty", strjq!(ctx, ["viz"], ".data.history[0] | (.id | tostring) + \":\" + (.trace_id | tostring) + \":\" + .capture + \":\" + .result") == "17:4242::")?
     # a table from before the id columns: the history still lists, ids -1
     _ = sql!(ctx.db, "ALTER TABLE viz_directives DROP COLUMN trace_id;")
     _ = sql!(ctx.db, "ALTER TABLE viz_directives DROP COLUMN ghost_id;")
-    check!("a directive table without the id columns still lists its rows, ids -1", strjq!(ctx, ["viz"], "(.data.history | length | tostring) + \"/\" + ([.data.history[] | .trace_id] | unique | tostring) + \"/\" + (.data.history[0].id | tostring)") == "10/[-1]/16")?
+    check!("a directive table without the id columns still lists its rows, ids -1", strjq!(ctx, ["viz"], "(.data.history | length | tostring) + \"/\" + ([.data.history[] | .trace_id] | unique | tostring) + \"/\" + (.data.history[0].id | tostring)") == "10/[-1]/17")?
     check!("viz payload conforms to its schema", Str.is_empty(Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' viz | jq '.data' | jq -r --slurpfile schema schemas/v3/viz.json -f tools/validate.jq 2>&1"))))?
     # a HALF-written publish — tables present, scalars gone — must refuse the
     # same way as no publish at all: protocol 0 is not a protocol
