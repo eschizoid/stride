@@ -52,7 +52,7 @@ program = { init!, respond!, shutdown! }
 
 # Run the entire suite in init!, then exit — the server never listens. Exit 0 on
 # all-pass, 1 on the first failed check (which run_all! surfaces as an Err).
-init! : () => Try({ config : Server.Config, context : Context }, [Exit(I64), ..])
+init! : () => Try({ config : Server.Config, context : Context }, [Exit(I64)])
 init! = ||
     match env_or!("E2E_MODE", "e2e") {
         # serve the mock Strava API (the sync test's counterpart); listen + serve
@@ -98,7 +98,7 @@ init! = ||
 # ── mock mode: serve the four Strava endpoints sync/auth/ftp use ─────────────
 # Deterministic fixtures; page 2+ is empty so fetch_pages! terminates. Routing
 # matches the reconstructed path?query, as the old bw-0.13.1 mock matched req.uri.
-respond! : Server.Request, Context => Try(Server.Outcome, [ServerErr(Str), ..])
+respond! : Server.Request, Context => Try(Server.Outcome, [ServerErr(Str)])
 respond! = |req, _ctx| {
     uri =
         match req.target() {
@@ -271,7 +271,7 @@ mock_bad_utf8 =
         .with_body([0xff, 0xfe, 0xff, 0xfe]),
     )
 
-shutdown! : Server.ShutdownReason, Context => Try({}, [Exit(I64), ..])
+shutdown! : Server.ShutdownReason, Context => Try({}, [Exit(I64)])
 shutdown! = |_reason, _ctx| Ok({})
 
 run_all! : () => Try({}, _)
@@ -1487,16 +1487,16 @@ b_init_config! = |ctx| {
     # retired names back, so the one deliberately unadvertised name is pinned as a
     # VALUE below: retiring a command is a stated act, not a silent one.
     #
-    # The character class is [A-Za-z0-9_-], not [a-z-] (an arm named `zone2` or
-    # `power_curve` must be visible). COMMENTS ARE STRIPPED FIRST: a comment
-    # elsewhere quotes `[_, "stats"] => Ok(Stats)` while describing a past
-    # regression, so it fed `stats` into the parser side and deleting the real arm
-    # stayed green — the comment documenting the bug class became a vector for it.
-    # Whitespace inside the pattern is tolerated — a review-built `[_,"hrv"]` probe
-    # with no space was callable and invisible to the tight pattern, and `roc fmt` is
-    # blocked upstream (#27), so nothing normalises spacing. LC_ALL=C for collation.
+    # A match arm OPENS its line with the pattern's `[`, which is what separates it
+    # from the `Command.parse([...])` calls in the expects further down the same
+    # file — anchoring is the whole reason those hundreds of probe invocations do
+    # not read as parser arms. Comments are stripped first, so a commented-out arm
+    # cannot feed a verb in either. The character class is [A-Za-z0-9_-], not
+    # [a-z-], so an arm named `zone2` or `power_curve` is visible. Whitespace inside
+    # the pattern is tolerated: `roc fmt` is blocked upstream (#27), so nothing
+    # normalises the spacing of a hand-written arm. LC_ALL=C for collation.
     verbs_dir = "${ctx.home}/.verbs"
-    parser_verbs = "sed 's/#.*//' src/cli/Command.roc | grep -oE '\\[[[:space:]]*_[[:space:]]*,[[:space:]]*\"[A-Za-z0-9_-]+\"' | sed 's/.*\"\\([A-Za-z0-9_-]*\\)\"/\\1/' | grep -v '^-' | grep -vx help | LC_ALL=C sort -u"
+    parser_verbs = "sed 's/#.*//' src/cli/Command.roc | grep -oE '^[[:space:]]*\\[[[:space:]]*\"[A-Za-z0-9_-]+\"' | sed 's/.*\"\\([A-Za-z0-9_-]*\\)\"/\\1/' | grep -v '^-' | grep -vx help | LC_ALL=C sort -u"
     spec_verbs = "HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[].name | split(\" \")[0]' | LC_ALL=C sort -u"
     _ = sh!("rm -rf '${verbs_dir}' && mkdir -p '${verbs_dir}' && ${parser_verbs} > '${verbs_dir}/parser' && ${spec_verbs} > '${verbs_dir}/spec'")
     # `backfill` and nothing else. It is the one arm that answers a name with a pointer
@@ -1563,15 +1563,15 @@ b_init_config! = |ctx| {
     # as its own form, so no rule guesses). The leftover is pinned as a VALUE: a new
     # entry there means a real sub-form was added without a table entry.
     pair_dir = "${ctx.home}/.pairs"
-    # The arm's FULL leading literal run, not its first two. A two-literal capture set the
-    # depth rather than removing it: `[_, "week", "add", "bulk", p]` contributed `week add`,
-    # which is already accounted for, so a real three-token form was invisible. Measured to
-    # yield the identical nine paths on pristine source, so this is depth-independence at
-    # no cost to the pinned value.
-    parser_pairs = "sed 's/#.*//' src/cli/Command.roc | grep -oE '\\[[[:space:]]*_([[:space:]]*,[[:space:]]*\"[A-Za-z0-9_-]+\")+' | sed 's/\\[[[:space:]]*_[[:space:]]*,[[:space:]]*//; s/\"//g; s/[[:space:]]*,[[:space:]]*/ /g' | grep ' ' | LC_ALL=C sort -u"
+    # The arm's FULL leading literal run, not its first two: a capture fixed at two
+    # literals sets the depth rather than removing it, so an arm like
+    # `["week", "add", "bulk", p]` would contribute only `week add` — already
+    # accounted for — and hide a real three-token form. Anchored at the line's
+    # opening `[` for the same reason the verb extraction above is.
+    parser_pairs = "sed 's/#.*//' src/cli/Command.roc | grep -oE '^[[:space:]]*\\[[[:space:]]*\"[A-Za-z0-9_-]+\"([[:space:]]*,[[:space:]]*\"[A-Za-z0-9_-]+\")+' | sed 's/^[[:space:]]*\\[[[:space:]]*//; s/\"//g; s/[[:space:]]*,[[:space:]]*/ /g' | grep ' ' | LC_ALL=C sort -u"
     # Enum placeholders are EXPANDED, so `<asc|desc>` accounts for `progress asc` and
     # `progress desc`. Without that they landed in the leftover list and the comment called
-    # them "not commands" — but `[_, "progress", "asc"] => Ok(...)` dispatches, so they are
+    # them "not commands" — but `["progress", "asc"] => Ok(...)` dispatches, so they are
     # commands the jq simply could not match. The list was conflating "not a command" with
     # "a command this extraction cannot see", and hard-coding the second as excused.
     table_pairs = "HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '(.data.commands[] | select(.name|test(\" \")) | .name), (.data.commands[] | . as $c | .args[]? | .name | (if test(\"^<\") then (if test(\"[|]\") then (ltrimstr(\"<\")|rtrimstr(\">\")|split(\"|\")[]) else empty end) else . end) | select(test(\"^[A-Za-z0-9_-]+$\")) | \"\\($c.name) \\(.)\")' | LC_ALL=C sort -u"
@@ -7080,7 +7080,7 @@ b_cross_surface! = |ctx| {
     # runs; it must equal the CLI's all-time Ride curve at every rung the CLI
     # reports, and the rung list it stands on must equal the unpivot's - a
     # rung added to one and not the other fails here by name
-    prs_q = Str.trim(sh!("grep -oE 'query: \"WITH best AS[^\"]*power_ladder_rungs[^\"]*\"' src/viz/Db.roc | sed 's/^query: \"//; s/\"$//'"))
+    prs_q = Str.trim(sh!("grep -oE 'db\\.query!\\(\"WITH best AS[^\"]*power_ladder_rungs[^\"]*\"' src/viz/Db.roc | sed 's/^db\\.query!(\"//; s/\"$//'"))
     book = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(secs || ':' || w), '') FROM (${prs_q});"))
     cli_book = strjq!(ctx, ["power-curve", "3650", "Ride"], "[.data.points[] | (.dur_s | tostring) + \":\" + ((.watts | round) | tostring)] | join(\",\")")
     check!("the window's record-book query, read from its source, equals the CLI's all-time Ride curve at every rung (${book})", !Str.is_empty(prs_q) and !Str.is_empty(book) and book == cli_book)?
@@ -7091,12 +7091,12 @@ b_cross_surface! = |ctx| {
     # rather than expressions it copies: each window query is read out of
     # src/viz/Db.roc so the text this checks IS the text the window runs, and
     # the view's answer is compared with the expression it replaced
-    stale_q = Str.trim(sh!("grep -oE 'query: \"SELECT stale_days AS st FROM series_clock\"' src/viz/Db.roc | sed 's/^query: \"//; s/\"$//'"))
+    stale_q = Str.trim(sh!("grep -oE 'db\\.query!\\(\"SELECT stale_days AS st FROM series_clock\"' src/viz/Db.roc | sed 's/^db\\.query!(\"//; s/\"$//'"))
     clock_pair = Str.trim(sql!(ctx.db, "SELECT (SELECT today FROM series_clock) || '|' || COALESCE(MAX(day), date('now', 'localtime')) || '|' || (SELECT mon FROM week_bounds) || '|' || date(COALESCE(MAX(day), date('now', 'localtime')), '-6 days', 'weekday 1') FROM daily_load;"))
     check!("the window's staleness query, read from its source, reads the series clock; the clock's today and week_bounds' Monday equal the expressions they replaced (${clock_pair})", !Str.is_empty(stale_q) and (match Str.split_on(clock_pair, "|") { [a, b, c, d] => a == b and c == d  _ => Bool.False }))?
     anchor_count = Str.trim(sh!("grep -c \"WITH anchor AS (SELECT today FROM series_clock)\" src/viz/Db.roc"))
-    check!("every window anchor on the series' today reads the clock view - three loaders spell the anchor, no query text names MAX(day) (${anchor_count})", anchor_count == "3" and Str.trim(sh!("grep -c 'query: \"[^\"]*MAX(day)' src/viz/Db.roc")) == "0")?
-    fam_q = Str.trim(sh!("grep -oE 'query: \"SELECT CAST\\(fam AS TEXT\\) AS f[^\"]*monthly_family_load[^\"]*\"' src/viz/Db.roc | sed 's/^query: \"//; s/\"$//'"))
+    check!("every window anchor on the series' today reads the clock view - three loaders spell the anchor, no query text names MAX(day) (${anchor_count})", anchor_count == "3" and Str.trim(sh!("grep -c 'db\\.query!(\"[^\"]*MAX(day)' src/viz/Db.roc")) == "0")?
+    fam_q = Str.trim(sh!("grep -oE 'db\\.query!\\(\"SELECT CAST\\(fam AS TEXT\\) AS f[^\"]*monthly_family_load[^\"]*\"' src/viz/Db.roc | sed 's/^db\\.query!(\"//; s/\"$//'"))
     fam_view = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(f || '/' || m || '=' || ld || ':' || n), '') FROM (${fam_q});"))
     fam_raw = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(f || '/' || m || '=' || ld || ':' || n), '') FROM (SELECT CAST(COALESCE(a.sport_family, a.sport_type) AS TEXT) AS f, substr(CAST(a.start_local AS TEXT), 1, 7) AS m, CAST(ROUND(COALESCE(SUM(am.tss), 0)) AS INTEGER) AS ld, COUNT(*) AS n FROM activities a JOIN activity_metrics am ON am.activity_id = a.id GROUP BY f, m ORDER BY f, m);"))
     check!("the window's family-month query, read from its source, reads the shared view and equals the grouping expression it replaced, with rows (${fam_view})", !Str.is_empty(fam_q) and !Str.is_empty(fam_view) and fam_view == fam_raw)?
@@ -7166,7 +7166,7 @@ b_cross_surface! = |ctx| {
     # by name; its dn column is the strip's numerator. It anchors on
     # sqlite's localtime, and sql! runs sqlite3 under the fixture zone, so
     # that localtime and ctx.today name the same day on any machine
-    plan_q = Str.trim(sh!("grep -oE 'query: \"WITH anchor AS \\(SELECT date\\(date\\(.now., .localtime.\\)[^\"]*plan_current[^\"]*\"' src/viz/Db.roc | sed 's/^query: \"//; s/\"$//'"))
+    plan_q = Str.trim(sh!("grep -oE 'db\\.query!\\(\"WITH anchor AS \\(SELECT date\\(date\\(.now., .localtime.\\)[^\"]*plan_current[^\"]*\"' src/viz/Db.roc | sed 's/^db\\.query!(\"//; s/\"$//'"))
     strip_done = Str.trim(sql!(ctx.db, "SELECT COALESCE(dn, 0) FROM (${plan_q});"))
     bounds_done = Str.trim(sql!(ctx.db, "WITH anchor AS (SELECT mon FROM week_bounds) SELECT COALESCE(CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER), 0) FROM plan_current, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days');"))
     week_done = strjq!(ctx, ["week"], "[.data[] | select(.status == \"done\")] | length | tostring")
@@ -7701,7 +7701,7 @@ env_or! = |name, dflt|
 
 # a required setup value: empty (a failed mktemp/date shellout) aborts the run instead
 # of silently building bad paths like "/.stride/db.sqlite" or seeding empty dates
-need : Str, Str -> Try(Str, [SetupFailed(Str), ..])
+need : Str, Str -> Try(Str, [SetupFailed(Str)])
 need = |what, v| if Str.is_empty(v) Err(SetupFailed(what)) else Ok(v)
 
 # stdout of a shell one-liner. The script's own exit status is NOT the assertion

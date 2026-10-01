@@ -33,7 +33,7 @@ through any JSON. The secret-key policy has one tested source of truth in
 ## 2. Written in Roc, and deliberately pinned
 
 The toolchain is Roc's new Zig compiler, taken from a nightly and pinned by exact tag in
-`.github/workflows/build.yml`, together with basic-cli `0.22` and builtin JSON rather than
+`.github/actions/setup-roc/action.yml`, together with basic-cli `0.23` and builtin JSON rather than
 roc-json. The earlier pin of alpha4, basic-cli 0.20 and roc-json 0.13 is retired
 (issue-claims: quoting), and §9 records the migration and why the original "blocked on
 roc-json" conclusion was wrong. CI type-checks with `roc check` and runs the pure tests
@@ -204,7 +204,7 @@ needs the anchor.
 
 The migration to Roc's new Zig compiler is merged to `main`. The whole codebase is in the
 new type-module dialect (`Name :: [].{}`, `List(X)`, `Result`→`Try`, `True`/`False`), it
-runs on basic-cli 0.22 with builtin JSON, and `build.yml` pins the new compiler by exact
+runs on basic-cli 0.23 with builtin JSON, and the `setup-roc` action pins the new compiler by exact
 nightly tag. CI runs `roc check` and `roc test`, meaning the pure expects, green on every
 push.
 

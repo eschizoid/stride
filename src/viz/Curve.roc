@@ -14,7 +14,7 @@ Curve :: [].{
 	# best IS the record still collapses to one teal dot and a fresh record
 	# still rings gold. The CP line dims when its own fit is too weak to
 	# deserve a confident stroke.
-	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
+	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
 		win_w = model.win.w
 		win_h = model.win.h

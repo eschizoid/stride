@@ -153,7 +153,7 @@ Table :: [].{
 	col_x : List(F32)
 	col_x = [36.0, 260.0, 380.0, 490.0, 590.0, session_x]
 
-	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
+	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
 		win_w = model.win.w
 		win_h = model.win.h

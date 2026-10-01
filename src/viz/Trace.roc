@@ -102,7 +102,7 @@ Trace :: [].{
 	# whole point: a table of segments cannot show you that a "work" block
 	# started thirty seconds before the effort did. The plotted channel varies
 	# per session; model.trace_unit names what the samples count.
-	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
+	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
 		win_w = model.win.w
 		win_h = model.win.h

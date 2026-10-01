@@ -17,7 +17,7 @@ Plan :: [].{
 		else if typ == "strength" (Color.from_hex_rgb(0xd8c27a))
 		else Theme.ink_faint
 
-	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
+	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
 		win_w = model.win.w
 		win_h = model.win.h

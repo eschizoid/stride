@@ -1,8 +1,74 @@
 # Roc new-compiler notes (syntax, stdlib, platform)
 
-Working reference for the new (Zig) compiler + basic-cli 0.22, learned empirically
+Working reference for the new (Zig) compiler + basic-cli, learned empirically
 against the compiler and roc-lang/roc source during the migration (completed
 2026-08-02). The migration's progress log is gone — this is the part worth keeping.
+
+## Toolchain pin: `nightly-2026-09-27-a3ce7f1`
+
+**Bumped 2026-09-29**, from `nightly-2026-09-16-a49a16f`, alongside basic-cli
+0.23.0 and roc-ray 0.10.0. That tag is the one roc-ray 0.10.0 declares as its
+supported compiler; basic-cli 0.23.0 sets a floor of `nightly-2026-09-23-c7852fd`.
+With all three naming one tag, the viz build has no version skew to forgive.
+
+Four things in the compiler and the platform force source changes, and a fifth, last below, blocks the harness:
+
+**Tag unions in return position are open automatically.** An explicit `..`
+there is a `redundant open tag union` warning, and both `roc check` and `roc
+build` exit non-zero on any warning — including warnings raised inside a
+dependency's own source, which is what makes a platform that still writes `..`
+unbuildable on this compiler.
+
+**basic-cli 0.23.0 hands `main!` only the arguments the user typed.** There is
+no program name at index 0, so a parser matching `[_, "summary"]` silently
+reads the first real argument as the slot it meant to skip.
+
+**A call to a let-bound closure whose arguments are all literals is treated as
+compile-time-known**, even when the closure captures a runtime value, so an
+`if` or `match` on the result raises `unconditional condition`. Minimal repro:
+
+```roc
+f = |n| List.any(rows, |r| r > n)   # captures rows
+if f(1.0) "hi" else "lo"            # unconditional condition
+```
+
+The same call written against a module-level function does not fire, and
+neither does a closure call whose argument is itself a parameter. Lifting the
+closure and passing what it captured is the fix that does not depend on which
+of those two properties the analysis is actually keying on.
+
+**roc-ray 0.10.0 routes every external service through `App.Io`.** `update!`
+takes it as a third argument, and files, SQLite, subprocesses and captures are
+reached through it rather than by ambient path: `io.sqlite().open!(dir, name)`
+beneath a `Files.Dir`, `dir.read_bytes!(rel)`, `io.commands().run_utf8!(cmd)`,
+`io.capture().screenshot!(path)`. Opening a directory or a database is legal
+in `init!` and in tasks and refused in `update!`, so a loader that needs one
+runs where the window already spawned its work.
+
+What an app may touch is declared in its startup config, and a filesystem
+declaration is matched against the TEXT of the path. A directory under a home
+resolved at run time therefore cannot be declared from a literal: the config
+comes from argv through `App.init_for_args`, and the launcher passes the path.
+An undeclared facility stops the app with a message naming the declaration to
+add, which is why removing one is a usable negative control.
+
+**basic-webserver has no release that builds warning-free on this pin.**
+`tests/e2e.roc` rides basic-webserver, whose released platform source still
+writes `..` in return position: 60 sites reach the build on 0.15.0, and its
+main branch carried the same 60 until roc-lang/basic-webserver#237 removed
+them (60 platform sites, 121 example sites, their pin moved to this nightly;
+their own CI stays red on six examples until roc-gregorian ships without its
+five `..` sites). The harness links and its binary runs, but `roc build`
+exits non-zero on the warnings, so `just e2e`, `just test` and `just
+e2e-sync` cannot pass on the released package, and the e2e job stays red
+until a release carries the removal. Nothing in this repo works around it:
+the two apps share one compiler on purpose, there is no flag that downgrades
+a warning, and a wrapper that swallowed one would swallow the next real
+warning too. Against a patched copy of 0.15.0 supplied with `roc build
+--replace-dep <the 0.15.0 URL> <copy>/main.roc`, the harness builds at zero
+warnings and both suites pass, which is how this branch's engine changes
+were verified; the day the release lands, the harness's platform URL moves
+and the gate goes green.
 
 ## Toolchain pin: `nightly-2026-09-04-c125b82` (the hold below is LIFTED)
 
@@ -223,9 +289,9 @@ MISCOMPILED this codebase (issue #32's intermittent SIGABRT; it also silently dr
   contains/find_first/keep_if/take_first/take_last`, `Str.trim/split_on/with_ascii_lowercased`,
   `${}` interpolation.
 
-## Platform (basic-cli 0.22)
+## Platform (basic-cli 0.23)
 
-- Header: `app [main!] { pf: platform "…/0.22.0/….tar.zst" }`. HTTP data types
+- Header: `app [main!] { pf: platform "…/0.23.0/….tar.zst" }`. HTTP data types
   (Method/Request/Response) come from the `http` package, not `pf`.
 - **argv — decode with `OsStr.display`, never hand-match the tags.**
   `main!` receives `List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))])`,
@@ -248,7 +314,7 @@ MISCOMPILED this codebase (issue #32's intermittent SIGABRT; it also silently dr
   (import pf.Path). There is no `Path.from_str`; reaching for it fails the build with
   DOES NOT EXIST.
 - **Never `Sqlite.query!` a maybe-absent key.** Load optional config with `query_many!`
-  and treat the empty list as absent. (On basic-cli 0.21/0.22 a missing row returns
+  and treat the empty list as absent. (On basic-cli 0.21 through 0.23 a missing row returns
   `Err(NoRowsReturned)`, so an unhandled `?` exits 1. The deterministic SIGABRT this
   note used to claim was the alpha4 / 0.20 behaviour — the rule is unchanged, the
   failure mode is milder than advertised.)

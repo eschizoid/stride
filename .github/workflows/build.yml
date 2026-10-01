@@ -137,11 +137,34 @@ jobs:
       # its only payload-vs-schema check in CI.
       - name: Run mock-backed e2e suite
         run: ROC=roc just e2e-sync
+
+  # The three checks that need neither a window nor the e2e harness: the docs'
+  # command names against the binary's table, the compiler pins, and the
+  # issue-state claims. Their own job, so a red harness build (the e2e job
+  # stops at its first failing step) cannot take them down with it.
+  claims:
+    needs: check-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Roc (new compiler)
+        uses: ./.github/actions/setup-roc
+      - name: Install just
+        run: |
+          # apt-get update fails if ANY configured source serves bad metadata,
+          # and the runner image ships third-party repos (Chrome et al) that
+          # do exactly that intermittently. Ubuntu's own sources live in
+          # ubuntu.sources on current runner images; everything else goes.
+          sudo find /etc/apt/sources.list.d -type f ! -name 'ubuntu.sources' -delete
+          sudo apt-get update -qq || sudo apt-get update -qq
+          sudo apt-get install -y -qq just
+      - name: Build stride (the command table is the oracle below)
+        run: roc build src/cli/main.roc --output=stride --opt=dev
       # Deterministic and network-free, so it runs BEFORE issue-claims: that one needs the
       # tracker, and a GitHub outage there would otherwise mean this check — which can
       # always run — never does.
       #
-      # The oracle is the binary's own command table, which this job built two steps up.
+      # The oracle is the binary's own command table, which this job built one step up.
       # The SCRIPT, not `just command-claims`, and the difference is not cosmetic: the
       # recipe depends on `build` for local use, `just` has no up-to-date check, and
       # `roc build` is 16 of the recipe's 18 seconds — so through the recipe this step
@@ -167,16 +190,15 @@ jobs:
 
   # The app window (src/viz/main.roc) rides a different platform (roc-ray) on
   # the same compiler as the engine. Nothing above imports it, so without this
-  # job it would land unchecked. It goes through tools/roc-viz.sh because
-  # roc-ray declares an older compiler in its own header, and that lone
-  # mismatch warning would otherwise fail the job.
+  # job it would land unchecked. It goes through tools/roc-viz.sh because that
+  # wrapper is where the window's assertion-count pins live.
   viz-check:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Roc (the viz pin, not the engine pin)
+      - name: Set up Roc
         uses: ./.github/actions/setup-roc
 
       - name: Type-check the app window
@@ -199,7 +221,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Roc (the viz pin, not the engine pin)
+      - name: Set up Roc
         uses: ./.github/actions/setup-roc
 
       - name: raylib's link dependencies
@@ -222,10 +244,11 @@ jobs:
           file stride-viz-linux
 
   # The one Windows-shaped viz failure so far was resolution, not linking
-  # (#442: no printenv, so HOME came back empty and every view rendered its
-  # empty state). Linking here proves the roc-ray x64win host stays viable,
-  # and the comment-stripped grep proves the USERPROFILE fallback exists in
-  # the CODE that built, not merely in a comment about it - the window
+  # (#442: the window could not find the home directory, so every view
+  # rendered its empty state). The window no longer resolves it at all - the
+  # launcher passes the directory, and that argument is also the app's one
+  # filesystem grant - so what needs holding is the WINDOWS launcher passing
+  # it. Linking here proves the roc-ray x64win host stays viable; the window
   # itself cannot run headless on a runner.
   viz-link-windows:
     runs-on: windows-2025
@@ -233,14 +256,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Roc (the viz pin, not the engine pin)
+      - name: Set up Roc
         uses: ./.github/actions/setup-roc
 
       - name: Link the window
         shell: bash
         run: |
           set -euo pipefail
-          sed 's/#.*//' src/viz/main.roc | grep -q 'echo %USERPROFILE%'
+          # rem lines stripped first: the claim must live in the launcher the
+          # release writes, not in a comment describing it
+          sed -e 's/^ *rem .*//' -e 's/^ *#.*//' .github/workflows/release-please.yml | grep -q 'stride-viz.exe" "%USERPROFILE%'
           sh tools/roc-viz.sh build src/viz/main.roc --output=stride-viz.exe --opt=dev
           test -s stride-viz.exe
 
