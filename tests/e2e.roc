@@ -7042,9 +7042,9 @@ b_progress_structure! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr,device_watts) VALUES (1041,'Estimated Steady','Ride','2025-07-16T10:00:00Z',3600,20000,150,0);")
     seed_power_stream!(ctx.db, 1041, 3600, 200)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
-    wb977 = strjq!(ctx, ["activity", "1041"], ".data.w_prime_balance | (.known | tostring) + \"/\" + (.cp_used | round | tostring)")
+    wb1041 = strjq!(ctx, ["activity", "1041"], ".data.w_prime_balance | (.known | tostring) + \"/\" + (.cp_used | round | tostring)")
     wb975 = strjq!(ctx, ["activity", "975"], ".data.w_prime_balance | (.known | tostring) + \"/\" + (.cp_used | round | tostring)")
-    check!("no W-prime balance is known for an estimated-watts ride, where the measured ride beside it has one against the same fit (${wb977} vs ${wb975})", Str.starts_with(wb977, "false/") and wb977 != "false/0" and Str.starts_with(wb975, "true/") and wb975 != "true/0")?
+    check!("no W-prime balance is known for an estimated-watts ride, where the measured ride beside it has one against the same fit (${wb1041} vs ${wb975})", Str.starts_with(wb1041, "false/") and wb1041 != "false/0" and Str.starts_with(wb975, "true/") and wb975 != "true/0")?
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (1041, 1042); DELETE FROM activity_metrics WHERE activity_id IN (1041, 1042); DELETE FROM streams WHERE activity_id IN (1041, 1042); DELETE FROM activity_segments WHERE activity_id IN (1041, 1042);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("the anchor day yields exactly one structure group", strjq!(ctx, ["progress", "2025-07-15"], "[.data.groups[] | select(.grouped_by == \"structure\")] | length") == "1")?
@@ -8040,17 +8040,6 @@ seed_steady_pace_stream! = |db, id, n, num, den| {
 # FTP (post-#26, FTP derives from stream power, not config). Inserted via the
 # heredoc sql! — the JSON's double-quotes sit fine inside the single-quoted
 # SQL literal.
-seed_ramp_stream! : Str, I64, U64, U64, U64, U64 => {}
-# a ramp: the first hi_s samples at w_hi, the rest at w_lo, so the bests fall
-# with duration the way a critical-power fit needs
-seed_ramp_stream! = |db, id, n, w_hi, hi_s, w_lo| {
-    times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
-    watts = Str.join_with(List.map(int_seq(n), |i| U64.to_str(if i < hi_s w_hi else w_lo)), ",")
-    raw = "{\"time\":{\"data\":[${times}]},\"watts\":{\"data\":[${watts}]}}"
-    _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
-    {}
-}
-
 seed_power_stream! : Str, I64, U64, U64 => {}
 seed_power_stream! = |db, id, n, w| {
     times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
@@ -8059,6 +8048,18 @@ seed_power_stream! = |db, id, n, w| {
     _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
     {}
 }
+
+# a ramp: the first hi_s samples at w_hi, the rest at w_lo, so the bests fall
+# with duration the way a critical-power fit needs
+seed_ramp_stream! : Str, I64, U64, U64, U64, U64 => {}
+seed_ramp_stream! = |db, id, n, w_hi, hi_s, w_lo| {
+    times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
+    watts = Str.join_with(List.map(int_seq(n), |i| U64.to_str(if i < hi_s w_hi else w_lo)), ",")
+    raw = "{\"time\":{\"data\":[${times}]},\"watts\":{\"data\":[${watts}]}}"
+    _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
+    {}
+}
+
 # power + HR where the HR is in band only inside a WINDOW, the rest of the samples reading 0.
 # The stream's extent and its usable span are then different numbers, which is the only way to
 # exercise the coverage gate's denominator: everywhere else the two coincide and `moving_time`
