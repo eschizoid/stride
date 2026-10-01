@@ -165,7 +165,9 @@ Db :: [].{
 	# rung and a zero-watt rung draw identically.
 	load_curve! : Sqlite.Db, I64 => List(CurvePt)
 	load_curve! = |db, days| {
-		q = "SELECT secs AS d, CAST(ROUND(MAX(watts)) AS INTEGER) AS p FROM activity_power_ladder WHERE sport_family = 'Ride' AND start_local >= date('now', '-' || :d || ' days') GROUP BY rung, secs ORDER BY secs"
+		# the window's days count back from the athlete's today (today_mod!)
+		today_mod = today_mod!(db)
+		q = "SELECT secs AS d, CAST(ROUND(MAX(watts)) AS INTEGER) AS p FROM activity_power_ladder WHERE sport_family = 'Ride' AND start_local >= date('now', '${today_mod}', '-' || :d || ' days') GROUP BY rung, secs ORDER BY secs"
 
 		match Sqlite.query!({ db, query: q, bindings: [{ name: ":d", value: Integer(days) }] }) {
 			Err(_) => []
@@ -185,7 +187,8 @@ Db :: [].{
 	# stays as a faint reference rather than the antagonist.
 	load_curve_prev! : Sqlite.Db, I64 => List(CurvePt)
 	load_curve_prev! = |db, days| {
-		q = "SELECT secs AS d, CAST(ROUND(MAX(watts)) AS INTEGER) AS p FROM activity_power_ladder WHERE sport_family = 'Ride' AND start_local >= date('now', '-' || :d2 || ' days') AND start_local < date('now', '-' || :d || ' days') GROUP BY rung, secs ORDER BY secs"
+		today_mod = today_mod!(db)
+		q = "SELECT secs AS d, CAST(ROUND(MAX(watts)) AS INTEGER) AS p FROM activity_power_ladder WHERE sport_family = 'Ride' AND start_local >= date('now', '${today_mod}', '-' || :d2 || ' days') AND start_local < date('now', '${today_mod}', '-' || :d || ' days') GROUP BY rung, secs ORDER BY secs"
 
 		match Sqlite.query!({ db, query: q, bindings: [{ name: ":d", value: Integer(days) }, { name: ":d2", value: Integer(days * 2) }] }) {
 			Err(_) => []
@@ -397,7 +400,9 @@ Db :: [].{
 
 	local_offset_minutes! : Sqlite.Db => I64
 	local_offset_minutes! = |db| {
-		fixed = match I64.from_str(config_value!(db, "utc_offset_minutes")) { Ok(n) => n
+		# the CLI reads the offset as a plain integer (an optional minus, then
+		# digits) and treats anything else as unreadable, which scores as 0
+		fixed = match plain_int(config_value!(db, "utc_offset_minutes")) { Ok(n) => n
 			Err(_) => 0 }
 		tz = config_value!(db, "timezone")
 		if tz == "" fixed
@@ -406,12 +411,12 @@ Db :: [].{
 			Err(_) => fixed }
 	}
 
-	# a config value, or "" when the key is absent or unreadable; the keys
-	# are compile-time constants
+	# a config value as stored, untrimmed as the CLI reads it, or "" when the
+	# key is absent or unreadable; the keys are compile-time constants
 	config_value! : Sqlite.Db, Str => Str
 	config_value! = |db, key|
 		match Sqlite.query!({ db, query: "SELECT CAST(value AS TEXT) AS v FROM config WHERE key = '${key}';", bindings: [] }) {
-			Ok(rows) => match List.first(rows) { Ok(r) => match r.str("v") { Ok(v) => Str.trim(v)
+			Ok(rows) => match List.first(rows) { Ok(r) => match r.str("v") { Ok(v) => v
 					Err(_) => "" }
 				Err(_) => "" }
 			Err(_) => ""
@@ -428,6 +433,15 @@ Db :: [].{
 			Ok(out) => parse_utc_offset(out.stdout)
 			Err(_) => Err(BadTz)
 		}
+	}
+
+	# a plain integer: an optional minus, then digits only, the rule the CLI
+	# reads config integers by, so "+330" and " 5" are unreadable on both sides
+	plain_int : Str -> Try(I64, [NotAnInt])
+	plain_int = |s| {
+		bytes = Str.to_utf8(s)
+		digits = if Str.starts_with(s, "-") List.drop_first(bytes, 1) else bytes
+		if !(List.is_empty(digits)) and List.all(digits, |b| b >= 48 and b <= 57) (I64.from_str(s).map_err(|_| NotAnInt)) else Err(NotAnInt)
 	}
 
 	# "+HHMM" / "-HHMM", what `date +%z` prints, to minutes east of UTC
@@ -663,8 +677,12 @@ Db :: [].{
 	# total load and whether it is the still-open current month (partial). Read
 	# once; the per-family arcs all stand on it.
 	load_monthly_base! : Sqlite.Db => List({ month : Str, load : I64, partial : Bool })
-	load_monthly_base! = |db|
-		match Sqlite.query!({ db, query: "SELECT CAST(month AS TEXT) AS m, CAST(ROUND(load) AS INTEGER) AS ld, CASE WHEN month = strftime('%Y-%m', 'now') THEN 1 ELSE 0 END AS pt FROM monthly_load ORDER BY month ASC", bindings: [] }) {
+	load_monthly_base! = |db| load_monthly_base_at!(db, today_mod!(db))
+
+	# the open month is the athlete's current month (today_mod!), not UTC's
+	load_monthly_base_at! : Sqlite.Db, Str => List({ month : Str, load : I64, partial : Bool })
+	load_monthly_base_at! = |db, today_mod|
+		match Sqlite.query!({ db, query: "SELECT CAST(month AS TEXT) AS m, CAST(ROUND(load) AS INTEGER) AS ld, CASE WHEN month = strftime('%Y-%m', 'now', '${today_mod}') THEN 1 ELSE 0 END AS pt FROM monthly_load ORDER BY month ASC", bindings: [] }) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(rows, |r| {
@@ -1127,3 +1145,8 @@ expect Db.parse_utc_offset("-0500") == Ok(-300)
 expect Db.parse_utc_offset("+0530") == Ok(330)
 expect Db.parse_utc_offset("+0000") == Ok(0)
 expect Db.parse_utc_offset("INVALID") == Err(BadTz)
+expect Db.plain_int("330") == Ok(330)
+expect Db.plain_int("-360") == Ok(-360)
+expect Db.plain_int("+330") == Err(NotAnInt)
+expect Db.plain_int(" 5") == Err(NotAnInt)
+expect Db.plain_int("") == Err(NotAnInt)
