@@ -381,8 +381,9 @@ Analyze :: [].{
         \\  0)
 
     # The pace twin of period_ftp_sql (ADR 0005, as amended): the sport's best 20-minute
-    # grade-adjusted SPEED over the 60 days ending on THIS activity's date, × 0.95, with the
-    # same cold-start forward-fill. ONE global number anchored to today would score a
+    # grade-adjusted SPEED over the 60 days ending on THIS activity's date, × 0.95, with a
+    # cold-start forward-fill gated to the sport's first 60 days (power's is not: #574).
+    # ONE global number anchored to today would score a
     # 2021 run against 2026 fitness and — because the window moves whenever a recent
     # metrics row is deleted — invalidate every activity of that sport at once (#79).
     # Speeds are metres per second, so the ×1000 comparisons downstream are mm/s.
