@@ -2049,12 +2049,12 @@ update! = |model0, program_input| {
 			trace_id: id_at(model.trace_ids, want_sel2),
 			ghost_id: (match I64.to_u64_try(want_ghost2) { Ok(gu5) => id_at(model.trace_ids, gu5)
 				Err(_) => -1 }),
-			# beyond the session: the table's open panel day, the trace's sport
+			# beyond the session: the table's open panel day (drawn on the table
+			# view only, so named there only), the trace's sport
 			# filter and the career view's family, each '' (NULL) when none
-			detail_day: detail_day2,
+			detail_day: (if view2 == 3 detail_day2 else ""),
 			sport: want_sport2,
-			family: (match List.get(model.career_spines, spine_idx) { Ok(sp9) => sp9.fam
-				Err(_) => "" }),
+			family: Career.spine_at(model.career_spines, spine_idx).fam,
 		}
 		# written when what the human sees changed (throttled), and on a
 		# heartbeat regardless: updated_at is the coach's liveness signal, and a

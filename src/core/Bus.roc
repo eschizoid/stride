@@ -64,7 +64,7 @@ Bus :: [].{
 	]
 
 	# The every-second fast path: one read of the catalog, no schema lock.
-	# Counts the three objects, then the ghost_day and ghost_id COLUMNS of
+	# Counts the three objects, then the appended COLUMNS it names on
 	# each table as the catalog structures them - not as text in their
 	# CREATE statements, which a comment or a renamed column could satisfy
 	# without the column existing. Only a database that ran the whole list
@@ -147,8 +147,9 @@ expect {
 
 # the sentinel reads the catalog's column structure for both tables, not
 # the text of a CREATE statement, and its target is the three objects plus
-# the two columns it names on each table
-expect Str.contains(Bus.sentinel_sql, "pragma_table_info('viz_directives')") and Str.contains(Bus.sentinel_sql, "pragma_table_info('viz_focus')") and Bus.sentinel_present == 3 + 4 + 5
+# the columns it names on each table: four on viz_directives, five on
+# viz_focus, each one a column some migration appended
+expect Str.contains(Bus.sentinel_sql, "pragma_table_info('viz_directives')") and Str.contains(Bus.sentinel_sql, "pragma_table_info('viz_focus')") and Bus.sentinel_present == 3 + 4 + 5 and List.all(["'ghost_day'", "'ghost_id'", "'capture'", "'result'", "'detail_day'", "'sport'", "'family'"], |c| Str.contains(Bus.sentinel_sql, c))
 
 # the sweep and the winner enforce the one published window
 expect Str.contains(Bus.stale_sweep_sql, "-600 seconds") and Str.contains(Bus.winner_sql, "-600 seconds")

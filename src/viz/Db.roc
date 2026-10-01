@@ -370,10 +370,14 @@ Db :: [].{
 	# the window's answer: what the human is looking at, one row, upserted
 	Focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, detail_day : Str, sport : Str, family : Str }
 
+	# every placeholder the upsert names, bound from the row
+	focus_bindings : Focus -> List({ name : Str, value : Sqlite.Value })
+	focus_bindings = |f| [{ name: ":v", value: Integer(f.view) }, { name: ":rg", value: Integer(f.range) }, { name: ":cd", value: String(f.cursor_day) }, { name: ":td", value: String(f.trace_day) }, { name: ":gd", value: String(f.ghost_day) }, { name: ":ti", value: Integer(f.trace_id) }, { name: ":gi", value: Integer(f.ghost_id) }, { name: ":dd", value: String(f.detail_day) }, { name: ":sp", value: String(f.sport) }, { name: ":fm", value: String(f.family) }]
+
 	write_focus! : Sqlite.Db, Focus => Try({}, [WriteFailed])
 	write_focus! = |db, f| {
 		ensure_bus!(db)
-		res = Sqlite.execute!({ db, query: Bus.focus_upsert_sql, bindings: [{ name: ":v", value: Integer(f.view) }, { name: ":rg", value: Integer(f.range) }, { name: ":cd", value: String(f.cursor_day) }, { name: ":td", value: String(f.trace_day) }, { name: ":gd", value: String(f.ghost_day) }, { name: ":ti", value: Integer(f.trace_id) }, { name: ":gi", value: Integer(f.ghost_id) }, { name: ":dd", value: String(f.detail_day) }, { name: ":sp", value: String(f.sport) }, { name: ":fm", value: String(f.family) }] })
+		res = Sqlite.execute!({ db, query: Bus.focus_upsert_sql, bindings: focus_bindings(f) })
 		match res {
 			Ok(_) => Ok({})
 			Err(_) => Err(WriteFailed)
@@ -1153,3 +1157,19 @@ expect Db.plain_int("-360") == Ok(-360)
 expect Db.plain_int("+330") == Err(NotAnInt)
 expect Db.plain_int(" 5") == Err(NotAnInt)
 expect Db.plain_int("") == Err(NotAnInt)
+
+# the upsert and its bindings agree: every placeholder the SQL names is
+# bound (a named parameter left unbound binds NULL without an error), there
+# are no more bindings than placeholders, and every column the INSERT
+# names is carried into the row on conflict
+expect {
+	blank = { view: 0, range: 0, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "" }
+	sql = Bus.focus_upsert_sql
+	names = List.map(Db.focus_bindings(blank), |b| b.name)
+	colons = List.count_if(Str.to_utf8(sql), |c| c == ':')
+	cols = ["view", "range", "cursor_day", "trace_day", "ghost_day", "trace_id", "ghost_id", "detail_day", "sport", "family"]
+	bound = List.all(names, |nm| Str.contains(sql, Str.concat(nm, ",")) or Str.contains(sql, Str.concat(nm, ")")))
+	inserted = List.all(cols, |c| Str.contains(sql, " ${c},") or Str.contains(sql, " ${c})"))
+	carried = List.all(cols, |c| Str.contains(sql, "${c} = excluded.${c}"))
+	bound and colons == List.len(names) and inserted and carried
+}

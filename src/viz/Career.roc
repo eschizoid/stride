@@ -51,6 +51,18 @@ Career :: [].{
 	# tonne it reads as whole kg, above as tonnes to one decimal - integer
 	# arithmetic on the tenths-of-kg value, so no float rounding mode can
 	# disagree between the axis and the peak label.
+	# the spine F has cycled to: the index wraps over the families the
+	# athlete has, so the renderer and the focus row name the same one at
+	# every press; none when the athlete has no family at all
+	spine_at : List(Db.CareerSpine), U64 -> Db.CareerSpine
+	spine_at = |spines, idx| {
+		n = List.len(spines)
+		match List.get(spines, (if n == 0 0 else idx % n)) {
+			Ok(c) => c
+			Err(_) => { fam: "", kind: "", rows: [] }
+		}
+	}
+
 	spine_label : [Metric, Imperial], I64, Str, Str -> Str
 	spine_label = |units, v10, kind, fam|
 		if kind == "power" "${I64.to_str(v10 // 10)}w"
@@ -143,10 +155,7 @@ Career :: [].{
 		# athlete who rides AND rows sees each story rather than only the one
 		# they have trained longest
 		nspines = List.len(model.career_spines)
-		cur = match List.get(model.career_spines, (if nspines == 0 (0) else model.spine_idx % nspines)) {
-			Ok(c) => c
-			Err(_) => { fam: "", kind: "", rows: [] }
-		}
+		cur = spine_at(model.career_spines, model.spine_idx)
 		# a spine needs a series before it is a trajectory: with fewer than
 		# three measured months the tonnage arc withholds its stroke — one
 		# point is a dot the athlete reads as a verdict, two a line segment,
@@ -590,3 +599,10 @@ expect {
 
 # a sport with no family row stands alone rather than joining anything
 expect Career.fold_families([{ sport: "Yoga", sessions: 3, hours10: 0, dist_m: 0.0 }]) == [{ sport: "Yoga", sessions: 3 }]
+
+# F past the last family wraps to the first, and the focus row reads the
+# same family the screen draws at every index
+expect {
+	two = [{ fam: "Ride", kind: "", rows: [] }, { fam: "Rowing", kind: "", rows: [] }]
+	Career.spine_at(two, 0).fam == "Ride" and Career.spine_at(two, 1).fam == "Rowing" and Career.spine_at(two, 2).fam == "Ride" and Career.spine_at(two, 7).fam == "Rowing" and Career.spine_at([], 3).fam == ""
+}

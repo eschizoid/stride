@@ -561,12 +561,13 @@ ReportHealth :: [].{
             # staleness. A window closed by the OS button or crashed leaves its
             # last row behind, and `live` is what separates that history from
             # what the athlete sees; the ESC path deletes the row, so absent is
-            # the cleaner "nobody is looking". Two reads, because the CLI and
+            # the cleaner "nobody is looking". Three reads, because the CLI and
             # the window are separate binaries and rebuild separately: the
             # columns every window ever wrote come first and decide `present`,
             # and the id columns come second and may fail against a table a
             # window from before them created - that reports the row with ids
-            # -1, never as absent. A corrupt timestamp reports present with
+            # -1, never as absent, and the identity columns come third by the
+            # same rule. A corrupt timestamp reports present with
             # live false and age -1: the age is COALESCEd, the row still reads.
             focus_rows = Sqlite.query_many!({
                 path: Path.utf8(path),
@@ -632,7 +633,7 @@ ReportHealth :: [].{
             # the last ten directives, newest first, each with its status and
             # error, so an agent reads an outcome from the command that
             # published the vocabulary rather than by parsing the table. Two
-            # reads for the reason focus has two: the id columns arrived after
+            # reads for the reason focus has three: the id columns arrived after
             # the table, and a table an older window created lacks them, so
             # those rows report ids -1 rather than the history going absent.
             # Fields decode one by one, as the tick's do: a row an agent wrote
