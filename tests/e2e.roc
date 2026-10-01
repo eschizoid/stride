@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1249)?
+    checks_ran_exactly!(1250)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6452,9 +6452,9 @@ b_period_pace! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("the second soft pedal gives the family its FTP and the first is rescored onto power", Str.trim(sql!(ctx.db, "SELECT load_model || '/' || CAST(ROUND(COALESCE(ftp_used, 0)) AS INTEGER) FROM activity_metrics WHERE activity_id=817;")) == "power_stream/57")?
     # the session report's power split reads the FTP the session was scored
-    # with (#582): 60 W is hard against its era's 57 and coasting against
-    # today's 190, so the report's hard seconds equal the split analyze stored
-    # and are not zero
+    # with (#582): 60 W is hard against its era's 57 and easy against today's
+    # 190, so the report's hard seconds equal the split analyze stored and are
+    # not zero
     rep817 = Str.trim(strjq!(ctx, ["activity", "817"], ".data.power_intensity.hard_s | tostring"))
     st817 = Str.trim(sql!(ctx.db, "SELECT CAST(COALESCE(pi_hard_s, -1) AS INTEGER) FROM activity_metrics WHERE activity_id=817;"))
     check!("a session's power split is judged against the FTP it was scored with, not today's (${rep817}/${st817})", rep817 == st817 and rep817 != "0" and rep817 != "-1")?
@@ -7689,6 +7689,18 @@ b_device_watts! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("estimated watts fall through to HR", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=401;")) == "hr_avg")?
     check!("NULL device_watts still scores as measured", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=402;")) == "avg_watts")?
+    # an estimated-watts STREAM is a model's output too: analyze drops it before
+    # any power figure, and the session report drops it the same way, so the
+    # report's split equals the stored one (both empty) rather than a split of
+    # Strava's estimate against the family's FTP (#582). The stream leaves
+    # with the check; 401 stays as it was
+    _ = seed_power_stream!(ctx.db, 401, 1300, 200)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    rep401 = Str.trim(strjq!(ctx, ["activity", "401"], ".data.power_intensity.hard_s | tostring"))
+    st401 = Str.trim(sql!(ctx.db, "SELECT CAST(COALESCE(pi_hard_s, -1) AS INTEGER) FROM activity_metrics WHERE activity_id=401;"))
+    check!("the session report drops an estimated-watts stream as analyze does, so its split is the stored empty one (${rep401}/${st401})", rep401 == "0" and st401 == "0")?
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 401;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     # one pace-scored activity that SURVIVES to b_doctor!, so the confidence
     # cross-check can guard the rtss rung — b_period_pace! seeds one and deletes
     # it, which is why the rung was invisible there. A threshold speed needs two
