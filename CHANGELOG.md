@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.18.0](https://github.com/eschizoid/stride/compare/v0.17.0...v0.18.0) (2026-10-01)
+
+
+### Features
+
+* **viz:** a capture asked for through the bus reports its file ([#584](https://github.com/eschizoid/stride/issues/584)) ([50ddc98](https://github.com/eschizoid/stride/commit/50ddc9829261bcddda917a578634111c0d1bc89e))
+* **viz:** the focus row names the detail day, the sport filter and the career family ([#585](https://github.com/eschizoid/stride/issues/585)) ([4ae9e31](https://github.com/eschizoid/stride/commit/4ae9e31a60045db2999a08a0e4c5e2efb90ed2f4))
+
+
+### Bug Fixes
+
+* **metrics:** a threshold needs two sessions of its sport ([#573](https://github.com/eschizoid/stride/issues/573)) ([cda44b6](https://github.com/eschizoid/stride/commit/cda44b6cc5cea6d9c48c15680608be60fc6bfc73))
+* **metrics:** an FTP needs two sessions of its family ([#581](https://github.com/eschizoid/stride/issues/581)) ([8be0da1](https://github.com/eschizoid/stride/commit/8be0da1f60643ba5d264b5df364e59dc0a269918))
+* **metrics:** the pace rung scores endurance sports only ([#566](https://github.com/eschizoid/stride/issues/566)) ([705729b](https://github.com/eschizoid/stride/commit/705729b5d86cd517c7103ccc8abe96f621d74a4a))
+* **sessions:** the power split reads the FTP the session was scored with ([#583](https://github.com/eschizoid/stride/issues/583)) ([cd3454a](https://github.com/eschizoid/stride/commit/cd3454a6777be25d1ddc2e30db41b04c8cc57959))
+* **viz:** a refusal names only what the resolver consulted ([#576](https://github.com/eschizoid/stride/issues/576)) ([a54df49](https://github.com/eschizoid/stride/commit/a54df4995f533f7774dafdbc8d6d1c941bad7bc0))
+* **viz:** anchor the event tile's text to its card ([#572](https://github.com/eschizoid/stride/issues/572)) ([2a27387](https://github.com/eschizoid/stride/commit/2a27387f509c62929437366b8018a640e9f56fce))
+* **viz:** anchor the window's today on the athlete's zone, not the machine's ([#578](https://github.com/eschizoid/stride/issues/578)) ([14806ee](https://github.com/eschizoid/stride/commit/14806ee35a50cc91feca6c011a6a3fb68da39ac7))
+* **viz:** table rows hold their height when the panel opens ([#571](https://github.com/eschizoid/stride/issues/571)) ([c106965](https://github.com/eschizoid/stride/commit/c106965f7693168a88e80e494eaf41bd6945b536))
+* **viz:** table rows keep their height whatever the panel does ([#577](https://github.com/eschizoid/stride/issues/577)) ([f56ed6d](https://github.com/eschizoid/stride/commit/f56ed6d8582199de1fc9df30208bfd72301890de))
+
 ## [0.17.0](https://github.com/eschizoid/stride/compare/v0.16.0...v0.17.0) (2026-09-30)
 
 
