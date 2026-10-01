@@ -215,9 +215,10 @@ CREATE TABLE IF NOT EXISTS viz_directives (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT,
   ghost_day TEXT, trace_id INTEGER, ghost_id INTEGER,
+  capture TEXT,                            -- png | webm_start | webm_stop
   consumed INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending',  -- applied | applied_partial | superseded | stale
-  error TEXT, applied_at TEXT);
+  error TEXT, result TEXT, applied_at TEXT); -- result: the file a capture wrote
 
 -- steer: the window polls ~1/s, applies the newest unconsumed row, and
 -- consumes everything up to it. NULL fields mean "leave that alone".
@@ -229,6 +230,21 @@ VALUES (0, 30, '2026-09-02', NULL, NULL);
 -- (the newest). Read the id back from the trace picker's rows, or from
 -- `stride activities --json`; `viz_focus` reports the ids of what is shown.
 INSERT INTO viz_directives (trace_id, ghost_id) VALUES (20355183143, 20342052869);
+-- a capture: 'png' writes the view the directive lands on, once it has
+-- settled (a view switch's crossfade over, no trace fetch in flight), to
+-- captures/<view>.png under the directory the window was launched from
+-- (your home folder for the app bundle, the repo for `just viz`);
+-- 'webm_start' / 'webm_stop' begin and end a WebM recording of it. The row
+-- stays pending until the host answers - a PNG written, a recording
+-- running, a recording finished - then `result` names the file by its
+-- absolute path and the status closes; a refused start (one already
+-- running), a refused stop (none running), a start the recorder rejected
+-- or a failed write lands in `error` with no result. Captures run one at a
+-- time: the bus is not polled while one waits, so a row written meanwhile
+-- is applied once the first has closed (of several, the newest wins and
+-- the older close superseded).
+-- `stride viz --json` lists them under `captures`.
+INSERT INTO viz_directives (view, capture) VALUES (1, 'png');
 -- view 0..8 (form/power/trace/table/plan/heat/zones/ramp/career) - but read
 -- the list from `stride viz --json`, which the running binary publishes,
 -- rather than from this comment. A directive naming a view outside the

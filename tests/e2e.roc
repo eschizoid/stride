@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1251)?
+    checks_ran_exactly!(1257)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7455,7 +7455,7 @@ b_viz_caps! = |ctx| {
     # update!'s resolver acts on a field - refusals_for's expects judge a
     # resolved selection, not the fold that resolves it. An empty extraction
     # fails rather than matching empty against empty.
-    field_parity = Str.trim(sh!("pub=$(awk '/^caps_fields = \\[/{p=1} p{print} p&&/\\]/{exit}' src/viz/main.roc | grep -oE 'name: \"[a-z_]+\"' | sed 's/name: \"//; s/\"//' | LC_ALL=C sort -u | tr '\\n' ' '); q=$(grep -oE 'COALESCE\\((view|range|cursor_day|trace_day|ghost_day|trace_id|ghost_id)' src/core/Bus.roc | grep -oE '[a-z_]+$' | LC_ALL=C sort -u | tr '\\n' ' '); if [ -n \"$pub\" ] && [ \"$pub\" = \"$q\" ]; then echo same; else echo \"pub=$pub q=$q\"; fi"))
+    field_parity = Str.trim(sh!("pub=$(awk '/^caps_fields = \\[/{p=1} p{print} p&&/\\]/{exit}' src/viz/main.roc | grep -oE 'name: \"[a-z_]+\"' | sed 's/name: \"//; s/\"//' | LC_ALL=C sort -u | tr '\\n' ' '); q=$(grep -oE 'COALESCE\\((view|range|cursor_day|trace_day|ghost_day|trace_id|ghost_id|capture)' src/core/Bus.roc | grep -oE '[a-z_]+$' | LC_ALL=C sort -u | tr '\\n' ' '); if [ -n \"$pub\" ] && [ \"$pub\" = \"$q\" ]; then echo same; else echo \"pub=$pub q=$q\"; fi"))
     check!("the published field names equal the columns the poll reads (${field_parity})", field_parity == "same")?
     # the accepts text of every field is prose the binary never reads, so each
     # claim it makes that the code also makes is compared across the two
@@ -7482,21 +7482,42 @@ b_viz_caps! = |ctx| {
     # outcome from the payload rather than from the table. No table, or a
     # table with no rows, is an empty list, not a refusal.
     check!("viz history is empty before the window ever created the table", strjq!(ctx, ["viz"], ".data.history | length") == "0")?
-    _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_directives (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL DEFAULT (datetime('now')), view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT, ghost_day TEXT, consumed INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', error TEXT, applied_at TEXT, trace_id INTEGER, ghost_id INTEGER);")
+    _ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_directives (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL DEFAULT (datetime('now')), view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT, ghost_day TEXT, capture TEXT, result TEXT, consumed INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', error TEXT, applied_at TEXT, trace_id INTEGER, ghost_id INTEGER);")
     _ = sql!(ctx.db, "INSERT INTO viz_directives (view, trace_id, consumed, status, error, applied_at) VALUES (2, 1, 1, 'applied_partial', 'trace_id 1 not in the picker', datetime('now'));")
     _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (0);")
     check!("history lists newest first with status, error and ids", strjq!(ctx, ["viz"], "[.data.history[] | (.id | tostring) + \":\" + .status + \":\" + .error + \":\" + (.trace_id | tostring)] | join(\",\")") == "2:pending::-1,1:applied_partial:trace_id 1 not in the picker:1")?
     check!("...and applied_at is a string, empty until the frame reports", strjq!(ctx, ["viz"], "[.data.history[] | (.applied_at | length > 0 | tostring)] | join(\",\")") == "false,true")?
+    # a capture travels with its directive: history carries what was asked and
+    # the file the window wrote, and `captures` lists only the directives that
+    # asked for one, newest first, so an agent reads a file path without
+    # scanning the table (#579)
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view, capture, consumed, status, result, applied_at) VALUES (1, 'png', 1, 'applied', 'captures/power.png', datetime('now'));")
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (capture, consumed, status, error, applied_at) VALUES ('webm_stop', 1, 'applied_partial', 'capture webm_stop: no recording is running', datetime('now'));")
+    check!("history carries each directive's capture and result, empty for the rest", strjq!(ctx, ["viz"], "[.data.history[] | .capture + \"=\" + .result] | join(\",\")") == "webm_stop=,png=captures/power.png,=,=")?
+    check!("captures lists only the directives that asked for one, newest first, with status, error and result", strjq!(ctx, ["viz"], "[.data.captures[] | (.id | tostring) + \":\" + .capture + \":\" + .status + \":\" + .result + \":\" + .error] | join(\",\")") == "4:webm_stop:applied_partial::capture webm_stop: no recording is running,3:png:applied:captures/power.png:")?
+    # the field the window publishes for it names the three kinds the bus
+    # vocabulary holds; the parity pin below keeps the field itself beside the
+    # column the poll reads, this keeps its accepts beside Bus.capture_kinds
+    cap_accepts = Str.trim(sh!("grep 'name: \"capture\"' src/viz/main.roc | grep -oE \"'(png|webm_start|webm_stop)'\" | LC_ALL=C sort -u | tr -d \"'\" | tr '\\n' ' '"))
+    cap_kinds = Str.trim(sh!("grep -oE 'capture_kinds = \\[[^]]*\\]' src/core/Bus.roc | grep -oE '\"[a-z_]+\"' | tr -d '\"' | LC_ALL=C sort -u | tr '\\n' ' '"))
+    check!("the capture field's accepts names every kind the bus vocabulary holds (${cap_accepts}| ${cap_kinds})", !Str.is_empty(cap_kinds) and cap_accepts == cap_kinds)?
     _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (0),(0),(0),(0),(0),(0),(0),(0),(0),(0),(0);")
-    check!("history is capped at ten and keeps the newest", strjq!(ctx, ["viz"], "(.data.history | length | tostring) + \"/\" + (.data.history[0].id | tostring)") == "10/13")?
+    check!("history is capped at ten and keeps the newest", strjq!(ctx, ["viz"], "(.data.history | length | tostring) + \"/\" + (.data.history[0].id | tostring)") == "10/15")?
     # a hostile row - text where an integer belongs, which a raw INSERT can
     # write - keeps its id and every readable field and erases nothing
     _ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES ('banana');")
-    check!("a directive with text in an integer column still lists, that field -1, the nine around it intact", strjq!(ctx, ["viz"], "(.data.history | length | tostring) + \"/\" + (.data.history[0] | (.id | tostring) + \":\" + (.view | tostring) + \":\" + .status)") == "10/14:-1:pending")?
+    check!("a directive with text in an integer column still lists, that field -1, the nine around it intact", strjq!(ctx, ["viz"], "(.data.history | length | tostring) + \"/\" + (.data.history[0] | (.id | tostring) + \":\" + (.view | tostring) + \":\" + .status)") == "10/16:-1:pending")?
+    # a table with the id columns but not yet the capture columns - a bus
+    # the previous build's window created, read before anything migrates
+    # it - keeps its ids rather than reading them as unknown
+    _ = sql!(ctx.db, "ALTER TABLE viz_directives DROP COLUMN capture;")
+    _ = sql!(ctx.db, "ALTER TABLE viz_directives DROP COLUMN result;")
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view, trace_id) VALUES (2, 4242);")
+    check!("a directive table with ids but no capture column lists its ids, capture empty", strjq!(ctx, ["viz"], ".data.history[0] | (.id | tostring) + \":\" + (.trace_id | tostring) + \":\" + .capture + \":\" + .result") == "17:4242::")?
     # a table from before the id columns: the history still lists, ids -1
     _ = sql!(ctx.db, "ALTER TABLE viz_directives DROP COLUMN trace_id;")
     _ = sql!(ctx.db, "ALTER TABLE viz_directives DROP COLUMN ghost_id;")
-    check!("a directive table without the id columns still lists its rows, ids -1", strjq!(ctx, ["viz"], "(.data.history | length | tostring) + \"/\" + ([.data.history[] | .trace_id] | unique | tostring) + \"/\" + (.data.history[0].id | tostring)") == "10/[-1]/14")?
+    check!("a directive table without the id columns still lists its rows, ids -1", strjq!(ctx, ["viz"], "(.data.history | length | tostring) + \"/\" + ([.data.history[] | .trace_id] | unique | tostring) + \"/\" + (.data.history[0].id | tostring)") == "10/[-1]/17")?
     check!("viz payload conforms to its schema", Str.is_empty(Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' viz | jq '.data' | jq -r --slurpfile schema schemas/v3/viz.json -f tools/validate.jq 2>&1"))))?
     # a HALF-written publish — tables present, scalars gone — must refuse the
     # same way as no publish at all: protocol 0 is not a protocol
@@ -7520,7 +7541,7 @@ b_viz_tick! = |ctx| {
     _ = sql!(ctx.db, "DROP TABLE IF EXISTS viz_directives; DROP TABLE IF EXISTS viz_focus;")
     check!("tick on a database with no bus creates it and finds nothing", strjq!(ctx, ["viz", "tick"], ".data | (.found | tostring) + \"/\" + (.acked | tostring) + \"/\" + .status") == "false/false/none")?
     cols = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_directives');")
-    check!("...and the tables it created carry every column the migration adds (${Str.trim(cols)})", Str.contains(cols, "trace_id") and Str.contains(cols, "ghost_id") and Str.contains(cols, "applied_at"))?
+    check!("...and the tables it created carry every column the migration adds (${Str.trim(cols)})", Str.contains(cols, "capture") and Str.contains(cols, "result") and Str.contains(cols, "trace_id") and Str.contains(cols, "ghost_id") and Str.contains(cols, "applied_at"))?
     # the sentinel: a bus from a window that predates the id columns is
     # migrated by the next tick, not skipped as already migrated
     _ = sql!(ctx.db, "DROP TABLE viz_directives; DROP TABLE viz_focus;")
@@ -7530,7 +7551,7 @@ b_viz_tick! = |ctx| {
     _ = strjq!(ctx, ["viz", "tick"], ".data.found")
     cols2 = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_directives');")
     fcols = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")
-    check!("a bus from before the id columns gains them on the next tick, both tables", Str.contains(cols2, "trace_id") and Str.contains(cols2, "ghost_id") and Str.contains(fcols, "trace_id") and Str.contains(fcols, "ghost_id"))?
+    check!("a bus from before the id columns gains them on the next tick, both tables", Str.contains(cols2, "capture") and Str.contains(cols2, "result") and Str.contains(cols2, "trace_id") and Str.contains(cols2, "ghost_id") and Str.contains(fcols, "trace_id") and Str.contains(fcols, "ghost_id"))?
     # stale: a row older than the window closes as stale, applied by nobody,
     # and a fresh row beside it is the winner
     _ = sql!(ctx.db, "INSERT INTO viz_directives (view, created_at) VALUES (3, datetime('now', '-1 hour'));")
@@ -7555,6 +7576,13 @@ b_viz_tick! = |ctx| {
     check!("...until a cycle acks it", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + (.acked | tostring)") == "applied/true")?
     # the nothing-pending fast path after everything is closed
     check!("with every row closed a tick finds nothing", strjq!(ctx, ["viz", "tick"], ".data.found") == "false")?
+    # a capture needs a frame, which the tick has not: a valid kind is refused
+    # by name, a misspelt one with the vocabulary, and the mark records the
+    # refusal with no file (#579)
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (view, capture) VALUES (1, 'png');")
+    check!("the headless tick refuses a capture by name and marks the row partial with no file", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .capture + \"/\" + .error") == "applied_partial/png/capture png refused: the headless tick has no window to capture" and Str.trim(sql!(ctx.db, "SELECT status || '|' || COALESCE(error, '') || '|' || COALESCE(result, 'NULL') FROM viz_directives WHERE capture = 'png';")) == "applied_partial|capture png refused: the headless tick has no window to capture|NULL")?
+    _ = sql!(ctx.db, "INSERT INTO viz_directives (capture) VALUES ('gif');")
+    check!("...and a kind outside the vocabulary is refused with the vocabulary", strjq!(ctx, ["viz", "tick"], ".data.error") == "capture gif not png/webm_start/webm_stop")?
     # a winner left pending that ages past the window before any cycle acks
     # it is retired by the next cycle's sweep, which runs before the winner
     # select, so no mark ever reaches it. (The mark's own consumed = 0 guard

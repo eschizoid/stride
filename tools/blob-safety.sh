@@ -48,10 +48,19 @@ for f in src/cli/*.roc; do
         grep -qE "CAST\(([a-z_][a-z_0-9]*\.)?$alias AS TEXT\)" "$tmp/bareline" ||
           printf '%-24s %-22s selected bare on its own line, no CAST(... AS TEXT)\n' \
             "$(basename "$f")" "$alias" >> "$tmp/problems"
-      else
-        printf '%-24s %-22s no projection found for this decode\n' "$(basename "$f")" "$alias" >> "$tmp/problems"
+        continue
       fi
-      continue
+      # The bus SQL the window and the headless tick both read lives in core.Bus: a
+      # decode that this file neither projects nor selects bare, in a file that reads
+      # bus SQL, may be named by a projection there. The bare-line test above runs
+      # first, so a bus alias cannot vouch for a bare column selected elsewhere.
+      if grep -q 'Bus\.' "$f" 2>/dev/null; then
+        grep -o ".* AS $alias\\b" src/core/Bus.roc 2>/dev/null | sed "s/ AS $alias\$//" | sort -u > "$tmp/exprs" || true
+      fi
+      if [ ! -s "$tmp/exprs" ]; then
+        printf '%-24s %-22s no projection found for this decode\n' "$(basename "$f")" "$alias" >> "$tmp/problems"
+        continue
+      fi
     fi
     while IFS= read -r expr; do
       [ -n "$expr" ] || continue
@@ -112,12 +121,12 @@ done
 
 # Asserted exactly, not as a floor — an enumeration that silently matches nothing
 # prints the same clean line a healthy tree prints.
-EXPECT_DECODES=78
+EXPECT_DECODES=81
 # Asserted, not printed-and-forgotten. The success line once carried a hardcoded site
 # count that nothing computed and nothing checked, so it drifted from the truth without
 # anything failing. A number a gate prints on every green run has to be a number the gate
 # enforces — which is why no historical value is quoted here either.
-EXPECT_SITES=129  # matched `... AS <alias>` projection expressions, not decoder call sites
+EXPECT_SITES=152  # matched `... AS <alias>` projection expressions, not decoder call sites
 if [ "$decodes" != "$EXPECT_DECODES" ]; then
   echo "blob-safety: inspected $decodes (file, alias) decode pairs, expected $EXPECT_DECODES."
   echo "blob-safety: if that change is intended, update the number in the same commit;"

@@ -642,19 +642,34 @@ ReportHealth :: [].{
                         ghost_day = h_str(Sqlite.str("hgd")(cols)(stmt))
                         trace_id = h_int(Sqlite.i64("hti")(cols)(stmt), -1)
                         ghost_id = h_int(Sqlite.i64("hgi")(cols)(stmt), -1)
-                        Ok({ id, created_at, status, error, applied_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id })
+                        capture = h_str(Sqlite.str("hcp")(cols)(stmt))
+                        result = h_str(Sqlite.str("hrs")(cols)(stmt))
+                        Ok({ id, created_at, status, error, applied_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id, capture, result })
                     },
                 })
-            history = match hist_rows!("SELECT id, CAST(created_at AS TEXT) AS hca, CAST(status AS TEXT) AS hst, CAST(COALESCE(error, '') AS TEXT) AS her, CAST(COALESCE(applied_at, '') AS TEXT) AS haa, COALESCE(view, -1) AS hv, COALESCE(range, -1) AS hrg, CAST(COALESCE(cursor_day, '') AS TEXT) AS hcd, CAST(COALESCE(trace_day, '') AS TEXT) AS htd, CAST(COALESCE(ghost_day, '') AS TEXT) AS hgd, COALESCE(trace_id, -1) AS hti, COALESCE(ghost_id, -1) AS hgi FROM viz_directives ORDER BY id DESC LIMIT 10") {
+            history = match hist_rows!("SELECT id, CAST(created_at AS TEXT) AS hca, CAST(status AS TEXT) AS hst, CAST(COALESCE(error, '') AS TEXT) AS her, CAST(COALESCE(applied_at, '') AS TEXT) AS haa, COALESCE(view, -1) AS hv, COALESCE(range, -1) AS hrg, CAST(COALESCE(cursor_day, '') AS TEXT) AS hcd, CAST(COALESCE(trace_day, '') AS TEXT) AS htd, CAST(COALESCE(ghost_day, '') AS TEXT) AS hgd, COALESCE(trace_id, -1) AS hti, COALESCE(ghost_id, -1) AS hgi, CAST(COALESCE(capture, '') AS TEXT) AS hcp, CAST(COALESCE(result, '') AS TEXT) AS hrs FROM viz_directives ORDER BY id DESC LIMIT 10") {
                 Ok(rows) => rows
-                Err(_) => match hist_rows!("SELECT id, CAST(created_at AS TEXT) AS hca, CAST(status AS TEXT) AS hst, CAST(COALESCE(error, '') AS TEXT) AS her, CAST(COALESCE(applied_at, '') AS TEXT) AS haa, COALESCE(view, -1) AS hv, COALESCE(range, -1) AS hrg, CAST(COALESCE(cursor_day, '') AS TEXT) AS hcd, CAST(COALESCE(trace_day, '') AS TEXT) AS htd, CAST(COALESCE(ghost_day, '') AS TEXT) AS hgd, -1 AS hti, -1 AS hgi FROM viz_directives ORDER BY id DESC LIMIT 10") {
+                # a bus from a window before the capture columns keeps its ids: the
+                # headless read never migrates, so a table between two builds is read
+                # with the columns it has, each set on its own
+                Err(_) => match hist_rows!("SELECT id, CAST(created_at AS TEXT) AS hca, CAST(status AS TEXT) AS hst, CAST(COALESCE(error, '') AS TEXT) AS her, CAST(COALESCE(applied_at, '') AS TEXT) AS haa, COALESCE(view, -1) AS hv, COALESCE(range, -1) AS hrg, CAST(COALESCE(cursor_day, '') AS TEXT) AS hcd, CAST(COALESCE(trace_day, '') AS TEXT) AS htd, CAST(COALESCE(ghost_day, '') AS TEXT) AS hgd, COALESCE(trace_id, -1) AS hti, COALESCE(ghost_id, -1) AS hgi, CAST('' AS TEXT) AS hcp, CAST('' AS TEXT) AS hrs FROM viz_directives ORDER BY id DESC LIMIT 10") {
                     Ok(rows) => rows
-                    Err(_) => []
+                    Err(_) => match hist_rows!("SELECT id, CAST(created_at AS TEXT) AS hca, CAST(status AS TEXT) AS hst, CAST(COALESCE(error, '') AS TEXT) AS her, CAST(COALESCE(applied_at, '') AS TEXT) AS haa, COALESCE(view, -1) AS hv, COALESCE(range, -1) AS hrg, CAST(COALESCE(cursor_day, '') AS TEXT) AS hcd, CAST(COALESCE(trace_day, '') AS TEXT) AS htd, CAST(COALESCE(ghost_day, '') AS TEXT) AS hgd, -1 AS hti, -1 AS hgi, CAST('' AS TEXT) AS hcp, CAST('' AS TEXT) AS hrs FROM viz_directives ORDER BY id DESC LIMIT 10") {
+                        Ok(rows) => rows
+                        Err(_) => []
+                    }
                 }
+            }
+            # the captures among the directives, newest first and capped at ten
+            # on their own, so a busy bus does not push them out of history;
+            # a table that predates the column has none
+            captures = match hist_rows!("SELECT id, CAST(created_at AS TEXT) AS hca, CAST(status AS TEXT) AS hst, CAST(COALESCE(error, '') AS TEXT) AS her, CAST(COALESCE(applied_at, '') AS TEXT) AS haa, COALESCE(view, -1) AS hv, COALESCE(range, -1) AS hrg, CAST(COALESCE(cursor_day, '') AS TEXT) AS hcd, CAST(COALESCE(trace_day, '') AS TEXT) AS htd, CAST(COALESCE(ghost_day, '') AS TEXT) AS hgd, COALESCE(trace_id, -1) AS hti, COALESCE(ghost_id, -1) AS hgi, CAST(COALESCE(capture, '') AS TEXT) AS hcp, CAST(COALESCE(result, '') AS TEXT) AS hrs FROM viz_directives WHERE capture IS NOT NULL AND capture <> '' ORDER BY id DESC LIMIT 10") {
+                Ok(rows) => rows
+                Err(_) => []
             }
             focus_word = if !focus.present "none" else if focus.live "live" else "stale"
             if Output.json_mode!({})
-                Output.emit_ok!({ protocol: s.protocol, published_at: s.published, staleness_seconds: s.staleness, focus_staleness_seconds: s.fstale, focus, views, fields, history })
+                Output.emit_ok!({ protocol: s.protocol, published_at: s.published, staleness_seconds: s.staleness, focus_staleness_seconds: s.fstale, focus, views, fields, history, captures })
             else {
                 Stdout.line!("bus protocol ${(s.protocol).to_str()}, published ${s.published}, directives stale after ${(s.staleness).to_str()}s, focus stale after ${(s.fstale).to_str()}s")?
                 Stdout.line!("focus: ${focus_word}${(if focus.present " - view ${(focus.view).to_str()}, trace ${focus.trace_day} (id ${(focus.trace_id).to_str()}), ${(focus.age_seconds).to_str()}s ago" else "")}")?
@@ -712,7 +727,7 @@ ReportHealth :: [].{
         pending_rows = Sqlite.query_many!({ path: Path.utf8(path), query: Bus.has_pending_sql, bindings: [], rows: Sqlite.i64("e") })?
         pending = match List.first(pending_rows) { Ok(e) => e == 1
             Err(_) => Bool.False }
-        none = { found: Bool.False, acked: Bool.False, id: -1, status: "none", view: -1, range: -1, cursor_day: "", trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1 }
+        none = { found: Bool.False, acked: Bool.False, id: -1, status: "none", view: -1, range: -1, cursor_day: "", trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1, capture: "", error: "" }
         or_int = |r, fallback| match r { Ok(x) => x
             Err(_) => fallback }
         or_str = |r| match r { Ok(x) => x
@@ -734,13 +749,24 @@ ReportHealth :: [].{
                         gd = or_str(Sqlite.str("gd")(cols)(stmt))
                         ti = or_int(Sqlite.i64("ti")(cols)(stmt), -1)
                         gi = or_int(Sqlite.i64("gi")(cols)(stmt), -1)
-                        Ok({ id, v, rg, cd, td, gd, ti, gi })
+                        cp = or_str(Sqlite.str("cp")(cols)(stmt))
+                        Ok({ id, v, rg, cd, td, gd, ti, gi, cp })
                     },
                 })?
                 match List.first(winners) {
                     Err(_) => none
                     Ok(w) => {
                         exec!(Bus.supersede_sql, [{ name: ":id", value: Integer(w.id) }])?
+                        # a capture needs a frame to capture, which the headless
+                        # tick has not: a misspelt value is refused with the
+                        # vocabulary, a valid one by name, and the mark records
+                        # it as the window would a refused field
+                        cap_ref =
+                            if w.cp == "" ""
+                            else {
+                                vocab = Bus.capture_refusal(w.cp)
+                                if vocab != "" vocab else "capture ${w.cp} refused: the headless tick has no window to capture"
+                            }
                         # the mark returns the id it closed; no row back means
                         # another executor closed the winner between this
                         # cycle's select and its mark, and the cycle reports
@@ -749,13 +775,13 @@ ReportHealth :: [].{
                         # older row - and reports nothing.
                         marked =
                             if t.ack
-                                Sqlite.query_many!({ path: Path.utf8(path), query: Bus.mark_returning_sql, bindings: [{ name: ":st", value: String(Bus.mark_status("")) }, { name: ":e", value: String("") }, { name: ":id", value: Integer(w.id) }], rows: Sqlite.i64("id") })?
+                                Sqlite.query_many!({ path: Path.utf8(path), query: Bus.mark_returning_sql, bindings: [{ name: ":st", value: String(Bus.mark_status(cap_ref)) }, { name: ":e", value: String(cap_ref) }, { name: ":r", value: String("") }, { name: ":id", value: Integer(w.id) }], rows: Sqlite.i64("id") })?
                             else []
                         status =
                             if !t.ack "pending"
                             else if List.is_empty(marked) "raced"
-                            else Bus.mark_status("")
-                        { found: Bool.True, acked: status == Bus.mark_status(""), id: w.id, status, view: w.v, range: w.rg, cursor_day: w.cd, trace_day: w.td, trace_id: w.ti, ghost_day: w.gd, ghost_id: w.gi }
+                            else Bus.mark_status(cap_ref)
+                        { found: Bool.True, acked: status == Bus.mark_status(cap_ref), id: w.id, status, view: w.v, range: w.rg, cursor_day: w.cd, trace_day: w.td, trace_id: w.ti, ghost_day: w.gd, ghost_id: w.gi, capture: w.cp, error: cap_ref }
                     }
                 }
             }

@@ -10,7 +10,8 @@
     "protocol",
     "published_at",
     "staleness_seconds",
-    "views"
+    "views",
+    "captures"
   ],
   "additionalKeys": false,
   "properties": {
@@ -138,7 +139,9 @@
           "status",
           "trace_day",
           "trace_id",
-          "view"
+          "view",
+          "capture",
+          "result"
         ],
         "additionalKeys": false,
         "properties": {
@@ -177,6 +180,84 @@
           },
           "ghost_id": {
             "type": "integer"
+          },
+          "capture": {
+            "type": "string",
+            "description": "what the directive asked the window to capture: png, webm_start, webm_stop, or empty"
+          },
+          "result": {
+            "type": "string",
+            "description": "the file a capture produced, by absolute path under the captures directory of where the window was launched, or empty"
+          }
+        }
+      }
+    },
+    "captures": {
+      "type": "array",
+      "description": "the last ten directives that asked for a capture, newest first, each with its status, error and result; empty while none has",
+      "items": {
+        "type": "object",
+        "required": [
+          "applied_at",
+          "created_at",
+          "cursor_day",
+          "error",
+          "ghost_day",
+          "ghost_id",
+          "id",
+          "range",
+          "status",
+          "trace_day",
+          "trace_id",
+          "view",
+          "capture",
+          "result"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "applied_at": {
+            "type": "string"
+          },
+          "view": {
+            "type": "integer"
+          },
+          "range": {
+            "type": "integer"
+          },
+          "cursor_day": {
+            "type": "string"
+          },
+          "trace_day": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": "integer"
+          },
+          "ghost_day": {
+            "type": "string"
+          },
+          "ghost_id": {
+            "type": "integer"
+          },
+          "capture": {
+            "type": "string",
+            "description": "what the directive asked the window to capture: png, webm_start, webm_stop, or empty"
+          },
+          "result": {
+            "type": "string",
+            "description": "the file a capture produced, by absolute path under the captures directory of where the window was launched, or empty"
           }
         }
       }
