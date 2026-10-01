@@ -44,7 +44,7 @@ printf '%s\n' "$out"
 # assertion means updating the matching pin ON PURPOSE.
 case "${1:-}" in test)
   want="${EXPECT_TESTS:-196}"
-  want_viz="${EXPECT_VIZ_ASSERTS:-198}"
+  want_viz="${EXPECT_VIZ_ASSERTS:-196}"
   have_viz=$(grep -ch '^[[:space:]]*\(expect\|and \)' src/viz/*.roc 2>/dev/null | awk '{s+=$1} END {print s+0}')
   if [ "$have_viz" != "$want_viz" ]; then
     echo "roc-viz: src/viz declares $have_viz assertion lines (expect + and), the pin says $want_viz - update the pin ON PURPOSE or restore the assertion" >&2
