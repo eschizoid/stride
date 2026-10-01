@@ -6300,8 +6300,10 @@ b_period_pace! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
 
     # The #505 shape, end to end: a stroll logged as a run must not turn a short
-    # hard session into four-figure TSS. The stroll (40 min at 0.6 m/s) is the
-    # only best in the 15-minute session's trailing window (900 moving seconds
+    # hard session into four-figure TSS. The stroll (40 min of stop-and-go,
+    # 0.6 m/s on average but 1 m/s while moving, which is what its 20-minute
+    # best measures) is the only best in the 15-minute session's trailing
+    # window (900 moving seconds
     # is under the 1200-second best window, so the session has none of its own),
     # and one session cannot anchor a threshold (#567): that arm yields nothing,
     # and the forward-fill arm scores the first sixty days of the sport against
@@ -7869,10 +7871,12 @@ seed_stalled_pace_stream! = |db, id, n, mps| {
     {}
 }
 
-# seed a steady-pace stream (n 1 Hz samples advancing num/den metres per second,
-# integer-truncated per sample) as Strava-style raw_json - the clean-motion
-# counterpart of the stalled seed above, with a fractional speed expressible
-# (3/5 is the stroll the #505 scenario seeds)
+# seed a pace stream (n 1 Hz samples whose cumulative distance is (i * num) // den
+# metres) as Strava-style raw_json - the clean-motion counterpart of the
+# stalled seed above. With num below den the stream is stop-and-go: each second
+# moves 0 or 1 m, the pace stream drops the stopped seconds, and the measured
+# speed is 1 m/s while the average is num/den (3/5 is the stroll the #505
+# scenario seeds). With num at or above den every second moves and the two agree.
 seed_steady_pace_stream! = |db, id, n, num, den| {
     times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
     dist = Str.join_with(List.map(int_seq(n), |i| U64.to_str((i * num) // den)), ",")
