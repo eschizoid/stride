@@ -123,10 +123,11 @@ ReportSessions :: [].{
                     }
                 hard_s = a.z4_s + a.z5_s
                 # intensity from POWER (truer than HR for power sports — HR threshold can
-                # sit on a zone boundary). Cycling uses the FTP the ride was scored with;
-                # non-cycling power sports need their own threshold (not yet configured),
-                # so they get 0 here and fall back to the HR "hard" signal.
-                pi_ftp = Db.sport_ftp!(path, a.sport)?
+                # sit on a zone boundary), against the FTP the session was scored with:
+                # the stored ftp_used is the sport's threshold in force on the session's
+                # own date (ADR 0005), 0 when none derived, so this split is the one
+                # analyze stored rather than today's threshold applied to an old ride.
+                pi_ftp = a.ftp_used
                 # detected interval structure (ADR 0008) — computed tier, may be empty
                 seg_rows = Sqlite.query_many!({
                     path: Path.utf8(path),
