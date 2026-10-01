@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1237)?
+    checks_ran_exactly!(1238)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6290,7 +6290,7 @@ b_period_pace! = |ctx| {
     # rather than falling silently to a lesser rung.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (813,'Stalled Run','Run','2026-03-01T09:00:00Z',1560,2496);")
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (818,'Companion Run','Run','2026-02-20T09:00:00Z',1500,4500);")
-    _ = seed_steady_pace_stream!(ctx.db, 818, 1500, 3, 1)
+    _ = seed_steady_pace_stream!(ctx.db, 818, 1500, 1, 1)
     _ = seed_stalled_pace_stream!(ctx.db, 813, 1560, 2)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("a stalled stream still yields a 20-min pace best", sfloat(Str.trim(sql!(ctx.db, "SELECT COALESCE(best_20min_speed, 0) FROM activity_metrics WHERE activity_id=813;"))) > 0.0)?
@@ -6337,7 +6337,14 @@ b_period_pace! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     pair = Str.trim(sql!(ctx.db, "SELECT group_concat(load_model || '/' || CAST(ROUND(COALESCE(threshold_pace_used, 0) * 100) AS INTEGER), ',') FROM (SELECT * FROM activity_metrics WHERE activity_id IN (819,820) ORDER BY activity_id);"))
     check!("the second hike gives both a threshold, and the first is rescored onto pace (${pair})", pair == "rtss/95,rtss/95")?
-    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (819,820); DELETE FROM activity_metrics WHERE activity_id IN (819,820); DELETE FROM streams WHERE activity_id IN (819,820);")
+    # a lone hike years later is outside the sport's first 60 days, so the
+    # cold-start arm does not hand it the 2020 pair's threshold either
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (822,'Lone Hike Years Later','Hike','2026-06-01T09:00:00Z',2400,3360,120);")
+    _ = seed_steady_pace_stream!(ctx.db, 822, 2400, 7, 5)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    later = Str.trim(sql!(ctx.db, "SELECT load_model || '/' || CAST(ROUND(COALESCE(threshold_pace_used, 0) * 100) AS INTEGER) FROM activity_metrics WHERE activity_id=822;"))
+    check!("a lone hike years after the sport's first pair takes no threshold from that first period (${later})", later == "hr_avg/0")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (819,820,822); DELETE FROM activity_metrics WHERE activity_id IN (819,820,822); DELETE FROM streams WHERE activity_id IN (819,820,822);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
 
     # The #565 shape, end to end: a strength-like session with a distance
@@ -7865,7 +7872,7 @@ seed_stalled_pace_stream! = |db, id, n, mps| {
 # seed a steady-pace stream (n 1 Hz samples advancing num/den metres per second,
 # integer-truncated per sample) as Strava-style raw_json - the clean-motion
 # counterpart of the stalled seed above, with a fractional speed expressible
-# (3/5 is the stroll the #505 scenario anchors its broken threshold with)
+# (3/5 is the stroll the #505 scenario seeds)
 seed_steady_pace_stream! = |db, id, n, num, den| {
     times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
     dist = Str.join_with(List.map(int_seq(n), |i| U64.to_str((i * num) // den)), ",")

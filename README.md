@@ -493,8 +493,8 @@ mirror table, because a re-sync would silently wipe it.
      has no derived FTP yet, since scoring against an FTP of 0 would compute a TSS of 0
      _and_ block every rung below it.
   2. **Pace** (rTSS), for any endurance-class sport with a usable distance stream, once two sessions of that sport carry a
-     20-minute best in the trailing 60 days (a lone session would be its own
-     threshold). Altitude is optional: with it the pace is
+     20-minute best in the trailing 60 days, or in the sport's first 60 days for a
+     session inside them (a lone session would be its own threshold). Altitude is optional: with it the pace is
      grade-adjusted, without it raw speed scores. This is why a meterless outdoor ride
      scores by pace rather than falling to HR — the common case for meterless outdoor rides.
   3. **A fallback whose order depends on the sport's class**: endurance sports take

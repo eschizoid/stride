@@ -389,7 +389,10 @@ Analyze :: [].{
     # A threshold needs TWO sessions with a best in its window (#567): with one,
     # the best is that session's own, the ratio is 1.05 by construction, and a
     # lone four-hour walk scores hours at threshold. With fewer the arm yields
-    # NULL, the COALESCE lands on 0, and the pace rung declines.
+    # NULL. The cold-start arm fills only sessions inside the sport's first 60
+    # days, so a lone session later in the sport's history is not scored
+    # against that first period: both arms NULL, the COALESCE lands on 0, and
+    # the pace rung declines.
     period_threshold_sql : Str
     period_threshold_sql =
         \\COALESCE(
@@ -402,7 +405,9 @@ Analyze :: [].{
         \\          FROM activity_metrics t3 JOIN activities b3 ON b3.id = t3.activity_id
         \\          WHERE b3.sport_type = a.sport_type
         \\            AND date(b3.start_local) <= date((SELECT MIN(b4.start_local) FROM activities b4
-        \\                                              WHERE b4.sport_type = a.sport_type), '+60 days')), 0),
+        \\                                              WHERE b4.sport_type = a.sport_type), '+60 days')
+        \\            AND date(a.start_local) <= date((SELECT MIN(b5.start_local) FROM activities b5
+        \\                                              WHERE b5.sport_type = a.sport_type), '+60 days')), 0),
         \\  0)
     # Each activity input that feeds scoring, expressed ONCE as a SQL expression. The
     # SELECT that stores the value (inputs_select_sql) and the predicate that compares it
