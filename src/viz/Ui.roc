@@ -132,8 +132,8 @@ Ui :: [].{
 		quitting : Bool,
 		quit_tick : U64,
 		focus_cleared : Bool,
-		# ESC closed a pending capture and its mark has not landed yet
-		quit_mark_pending : Bool,
+		# the row of a capture ESC closed whose mark has not landed yet; -1 when none
+		quit_mark_pending : I64,
 		status : Text.Prepared,
 		has_error : Bool,
 		# True from launch until the first background load lands: the window

@@ -340,7 +340,7 @@ load_model! = |font, curve_days, boot| {
 			quitting: Bool.False,
 			quit_tick: 0.U64,
 			focus_cleared: Bool.False,
-			quit_mark_pending: Bool.False,
+			quit_mark_pending: -1.I64,
 			ghost_day: "",
 			trace_zoom: 1.0,
 			trace_pan: 0.0,
@@ -1255,15 +1255,16 @@ expect {
 	and other == { next: AwaitingShot(c), act: Nothing }
 	and late == { next: NoCapture, act: Mark({ id: 3, refused: "capture png failed: no answer from the host within 600 frames", result: "" }) }
 }
-# a start marks on Active with the file, a Failed read the frame after the
-# start marks the host's reason; a stop marks on Finished or Failed and waits on
+# a start marks on Active with the file, a Failed read at the tick the wait
+# began (the frame after the start, which is when the step first runs)
+# marks the host's reason; a stop marks on Finished or Failed and waits on
 # Active
 expect {
 	c = { id: 5, refused: "", path: "/h/captures/power.webm", name: "power.webm", since: 100 }
 	ev = { shot: NoShot, rec: Idle, settled: Bool.True, tick: 101 }
 	fr = { frames: 0, dropped: 0 }
 	started = capture_step(AwaitingStart(c), { ..ev, rec: Active(fr) })
-	refused = capture_step(AwaitingStart(c), { ..ev, rec: Failed({ frames: 0, reason: AlreadyRecording }) })
+	refused = capture_step(AwaitingStart(c), { ..ev, tick: 100, rec: Failed({ frames: 0, reason: AlreadyRecording }) })
 	stopped = capture_step(AwaitingStop(c), { ..ev, rec: Finished({ frames: 9, bytes: 1 }) })
 	died = capture_step(AwaitingStop(c), { ..ev, rec: Failed({ frames: 9, reason: EncodeFailed }) })
 	waiting = capture_step(AwaitingStop(c), { ..ev, rec: Active(fr) })
@@ -1285,12 +1286,14 @@ expect {
 }
 
 # Reports a directive's terminal outcome from the task lane.
-mark_task! : Str, I64, Str, Str => {}
-mark_task! = |home, did, refused, result|
-	match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
+mark_task! : Str, I64, Str, Str => I64
+mark_task! = |home, did, refused, result| {
+	_ = match Sqlite.Db.open!(Str.concat(home, "/.stride/db.sqlite")) {
 		Err(_) => {}
 		Ok(db) => Db.mark_directive!(db, did, refused, result)
 	}
+	did
+}
 
 # The frame after ESC leaves once the focus clear (and the mark of a capture
 # ESC closed) has landed, or once half
@@ -1395,7 +1398,7 @@ Msg : [
 	# a directive's screenshot answer, tagged with its row so the S key's cannot close it
 	DirShot({ id : I64, res : Try({}, Capture.ScreenshotError) }),
 	RecCmd({}),
-	MarkDone({}),
+	MarkDone(I64),
 	Reloaded(Ui.Model),
 	ReloadFailed,
 	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, gen : U64, day : Str, un : Str, sp : List(Series.Split) }),
@@ -1491,7 +1494,7 @@ update! = |model0, program_input| {
 			Shot(_) => acc
 			DirShot(_) => acc
 			RecCmd(_) => acc
-			MarkDone(_) => { ..acc, quit_mark_pending: Bool.False }
+			MarkDone(mid) => if mid == acc.quit_mark_pending ({ ..acc, quit_mark_pending: -1 }) else acc
 			# also the boot task's failure exit: the splash must never spin
 			# forever, so a dead load hands over to the skeleton's own screens
 			# clear reloading too: a failed reload must not leave the power
@@ -1558,11 +1561,11 @@ update! = |model0, program_input| {
 							# flight for the vanished session lands nowhere instead
 							# of resurrecting its samples beside a cleared selection.
 							g = ghost_after_reread(acc.ghost_sel, acc.trace_ids, fresh)
-							{ ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: r.sel, trace_refetch: !r.found and !(List.is_empty(fresh)), ghost_sel: g.sel, ghost: (if g.keep acc.ghost else []), ghost_day: (if g.keep acc.ghost_day else ""), ghost_dur: (if g.keep acc.ghost_dur else 0.0), ghost_gen: (if g.keep acc.ghost_gen else acc.ghost_gen + 1) }
+							{ ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: r.sel, trace_refetch: !r.found and !(List.is_empty(fresh)), ghost_sel: g.sel, ghost_loading: (if g.keep acc.ghost_loading else Bool.False), ghost: (if g.keep acc.ghost else []), ghost_day: (if g.keep acc.ghost_day else ""), ghost_dur: (if g.keep acc.ghost_dur else 0.0), ghost_gen: (if g.keep acc.ghost_gen else acc.ghost_gen + 1) }
 						}
 				}
 			Reloaded(fresh) => {
-				merged = { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, ghost_loading: acc.ghost_loading, quit_mark_pending: acc.quit_mark_pending }
+				merged = { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending }
 				# R reads the window it was pressed on, and it is the slow path.
 				# A chip clicked while it ran has since moved curve_days and
 				# landed its own curve for the window now on screen; when the
@@ -1631,7 +1634,7 @@ update! = |model0, program_input| {
 	last_directive1 = last_directive_after(model.last_directive, cap_step.act)
 	directive = if is_redelivery ({ has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }) else directive0
 	if model.quitting {
-		if exits_now(model.focus_cleared and !model.quit_mark_pending, model.tick, model.quit_tick) (Err(Exit(0)))
+		if exits_now(model.focus_cleared and model.quit_mark_pending < 0, model.tick, model.quit_tick) (Err(Exit(0)))
 		else Ok({ ..model, tick: model.tick + 1, pending_capture: pending1, last_directive: last_directive1 })
 	} else if d.key_pressed(KeyEscape) {
 		if model.home == "" (Err(Exit(0)))
@@ -1643,9 +1646,9 @@ update! = |model0, program_input| {
 			quit_mark = match capture_abandon(pending1) {
 				Mark(mq) => {
 					_ = Task.spawn!(program_input, || MarkDone(mark_task!(homeq, mq.id, mq.refused, mq.result)))
-					Bool.True
+					mq.id
 				}
-				_ => Bool.False
+				_ => -1.I64
 			}
 			Ok({ ..model, quitting: Bool.True, quit_tick: model.tick, tick: model.tick + 1, pending_capture: NoCapture, last_directive: last_directive1, quit_mark_pending: quit_mark })
 		}
