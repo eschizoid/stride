@@ -277,7 +277,7 @@ if [ "$n" -gt 0 ]; then
 fi
 # Both counts asserted EXACTLY, not as floors: under a floor, rows can stop matching
 # while the gate prints the same clean line a healthy tree prints.
-EXPECT_PINNED=53
+EXPECT_PINNED=54
 EXPECT_LITERALS=42
 if [ "$pinned" != "$EXPECT_PINNED" ] || [ "$literals" != "$EXPECT_LITERALS" ]; then
   echo "skill-shapes: enforced $pinned doc-pinned objects and matched $literals brace literals;"

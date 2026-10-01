@@ -13,7 +13,9 @@
     "status",
     "trace_day",
     "trace_id",
-    "view"
+    "view",
+    "capture",
+    "error"
   ],
   "additionalKeys": false,
   "properties": {
@@ -50,6 +52,14 @@
     },
     "ghost_id": {
       "type": "integer"
+    },
+    "capture": {
+      "type": "string",
+      "description": "what the directive asked to capture; the headless tick refuses every capture by name, since it has no window to capture"
+    },
+    "error": {
+      "type": "string",
+      "description": "the refusal the tick recorded, empty when none"
     }
   }
 }

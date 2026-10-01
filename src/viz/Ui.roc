@@ -176,6 +176,11 @@ Ui :: [].{
 		ramp_hint : Text.Prepared,
 		prs : List(Db.PrRung),
 		rec_status : Capture.Status,
+		# a capture a directive asked for whose mark waits on the host: a PNG
+		# until the screenshot task answers, a recording until the stop reports
+		pending_capture : [NoCapture, AwaitingShot({ id : I64, refused : Str, path : Str }), AwaitingStop({ id : I64, refused : Str, path : Str })],
+		# the file the running (or last) recording writes, under ./captures
+		rec_path : Str,
 		# the last directive this window applied, and what it refused - a
 		# re-delivered id re-reports this outcome instead of re-applying
 		last_directive : { id : I64, refused : Str },

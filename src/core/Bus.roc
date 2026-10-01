@@ -28,7 +28,7 @@ Bus :: [].{
 	# The migration, in order. Every statement is safe to repeat: CREATE and
 	# INDEX carry IF NOT EXISTS, and an ALTER on a column that already exists
 	# fails and is discarded by the executor, by design. The LAST statement
-	# adds ghost_id to viz_focus, and the sentinel below counts that column
+	# adds result to viz_directives, and the sentinel below counts that column
 	# as proof the whole list ran - so a new column joins at the END and the
 	# sentinel moves to it, or an existing database never gains it.
 	ddl : List(Str)
@@ -52,6 +52,10 @@ Bus :: [].{
 		"ALTER TABLE viz_focus ADD COLUMN ghost_day TEXT",
 		"ALTER TABLE viz_focus ADD COLUMN trace_id INTEGER",
 		"ALTER TABLE viz_focus ADD COLUMN ghost_id INTEGER",
+		# a capture asked for through the bus (png, webm_start, webm_stop) and
+		# the file the window wrote for it, reported with the terminal status
+		"ALTER TABLE viz_directives ADD COLUMN capture TEXT",
+		"ALTER TABLE viz_directives ADD COLUMN result TEXT",
 	]
 
 	# The every-second fast path: one read of the catalog, no schema lock.
@@ -62,12 +66,12 @@ Bus :: [].{
 	# to its last statement reaches sentinel_present; any older column set
 	# re-enters the DDL. A table that does not exist contributes nothing.
 	sentinel_sql : Str
-	sentinel_sql = "SELECT (SELECT count(*) FROM sqlite_master WHERE name IN ('viz_directives', 'viz_focus', 'viz_directives_pending')) + (SELECT count(*) FROM pragma_table_info('viz_directives') WHERE name IN ('ghost_day', 'ghost_id')) + (SELECT count(*) FROM pragma_table_info('viz_focus') WHERE name IN ('ghost_day', 'ghost_id')) AS c"
+	sentinel_sql = "SELECT (SELECT count(*) FROM sqlite_master WHERE name IN ('viz_directives', 'viz_focus', 'viz_directives_pending')) + (SELECT count(*) FROM pragma_table_info('viz_directives') WHERE name IN ('ghost_day', 'ghost_id', 'capture', 'result')) + (SELECT count(*) FROM pragma_table_info('viz_focus') WHERE name IN ('ghost_day', 'ghost_id')) AS c"
 
-	# 3 objects + ghost_day and ghost_id on viz_directives (2) + the same on
-	# viz_focus (2)
+	# 3 objects + ghost_day, ghost_id, capture and result on viz_directives (4)
+	# + ghost_day and ghost_id on viz_focus (2)
 	sentinel_present : I64
-	sentinel_present = 7
+	sentinel_present = 9
 
 	# a read gates the writes: a zero-row UPDATE still takes the write lock
 	has_pending_sql : Str
@@ -82,7 +86,7 @@ Bus :: [].{
 
 	# the newest fresh unconsumed row; -1 and '' stand for NULL (field not set)
 	winner_sql : Str
-	winner_sql = "SELECT id, COALESCE(view, -1) AS v, COALESCE(range, -1) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd, CAST(COALESCE(trace_day, '') AS TEXT) AS td, CAST(COALESCE(ghost_day, '') AS TEXT) AS gd, COALESCE(trace_id, -1) AS ti, COALESCE(ghost_id, -1) AS gi FROM viz_directives WHERE consumed = 0 AND created_at >= datetime('now', '-${stale_secs.to_str()} seconds') ORDER BY id DESC LIMIT 1"
+	winner_sql = "SELECT id, COALESCE(view, -1) AS v, COALESCE(range, -1) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd, CAST(COALESCE(trace_day, '') AS TEXT) AS td, CAST(COALESCE(ghost_day, '') AS TEXT) AS gd, COALESCE(trace_id, -1) AS ti, COALESCE(ghost_id, -1) AS gi, CAST(COALESCE(capture, '') AS TEXT) AS cp FROM viz_directives WHERE consumed = 0 AND created_at >= datetime('now', '-${stale_secs.to_str()} seconds') ORDER BY id DESC LIMIT 1"
 
 	# older unconsumed rows close as superseded; the winner stays PENDING
 	# until the frame that applies it reports back through mark_sql, so a
@@ -91,10 +95,11 @@ Bus :: [].{
 	supersede_sql = "UPDATE viz_directives SET consumed = 1, status = 'superseded' WHERE id < :id AND consumed = 0"
 
 	# the terminal outcome, written by whoever applied the directive; :e
-	# carries the refused fields, '' when every field was honoured, and the
-	# WHERE keeps a row already closed by a later sweep from being reopened
+	# carries the refused fields, '' when every field was honoured, :r the
+	# file a capture produced ('' when none), and the WHERE keeps a row
+	# already closed by a later sweep from being reopened
 	mark_sql : Str
-	mark_sql = "UPDATE viz_directives SET consumed = 1, status = :st, error = NULLIF(:e, ''), applied_at = datetime('now') WHERE id = :id AND consumed = 0"
+	mark_sql = "UPDATE viz_directives SET consumed = 1, status = :st, error = NULLIF(:e, ''), result = NULLIF(:r, ''), applied_at = datetime('now') WHERE id = :id AND consumed = 0"
 
 	# the same mark, returning the id it closed: a statement that returns no
 	# row matched nothing, which means another executor closed the winner
@@ -108,6 +113,17 @@ Bus :: [].{
 	mark_status : Str -> Str
 	mark_status = |refused| if refused == "" "applied" else "applied_partial"
 
+	# what a directive may ask the window to capture: a PNG of the current
+	# view, or the start and the stop of a WebM recording of it; '' asks for
+	# nothing
+	capture_kinds : List(Str)
+	capture_kinds = ["png", "webm_start", "webm_stop"]
+
+	# the refusal a capture value earns before any window judges it: '' and
+	# the three kinds pass, anything else is named with the vocabulary
+	capture_refusal : Str -> Str
+	capture_refusal = |c| if c == "" or List.contains(capture_kinds, c) "" else "capture ${c} not png/webm_start/webm_stop"
+
 	focus_upsert_sql : Str
 	focus_upsert_sql = "INSERT INTO viz_focus (id, updated_at, view, range, cursor_day, trace_day, ghost_day, trace_id, ghost_id) VALUES (1, datetime('now'), :v, :rg, NULLIF(:cd, ''), NULLIF(:td, ''), NULLIF(:gd, ''), NULLIF(:ti, -1), NULLIF(:gi, -1)) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, view = excluded.view, range = excluded.range, cursor_day = excluded.cursor_day, trace_day = excluded.trace_day, ghost_day = excluded.ghost_day, trace_id = excluded.trace_id, ghost_id = excluded.ghost_id"
 
@@ -115,19 +131,19 @@ Bus :: [].{
 	focus_clear_sql = "DELETE FROM viz_focus WHERE id = 1"
 }
 
-# the sentinel's proof is the migration's last statement: it ADDS ghost_id
-# to viz_focus. A column appended after it would never be counted, so this
-# holds the two together.
+# the sentinel's proof is the migration's last statement: it ADDS result
+# to viz_directives. A column appended after it would never be counted, so
+# this holds the two together.
 expect {
 	last = match List.last(Bus.ddl) { Ok(s) => s
 		Err(_) => "" }
-	Str.starts_with(last, "ALTER TABLE viz_focus ADD COLUMN ghost_id")
+	Str.starts_with(last, "ALTER TABLE viz_directives ADD COLUMN result")
 }
 
 # the sentinel reads the catalog's column structure for both tables, not
 # the text of a CREATE statement, and its target is the three objects plus
 # the two columns it names on each table
-expect Str.contains(Bus.sentinel_sql, "pragma_table_info('viz_directives')") and Str.contains(Bus.sentinel_sql, "pragma_table_info('viz_focus')") and Bus.sentinel_present == 3 + 2 + 2
+expect Str.contains(Bus.sentinel_sql, "pragma_table_info('viz_directives')") and Str.contains(Bus.sentinel_sql, "pragma_table_info('viz_focus')") and Bus.sentinel_present == 3 + 4 + 2
 
 # the sweep and the winner enforce the one published window
 expect Str.contains(Bus.stale_sweep_sql, "-600 seconds") and Str.contains(Bus.winner_sql, "-600 seconds")
@@ -138,3 +154,11 @@ expect Bus.mark_returning_sql == Str.concat(Bus.mark_sql, " RETURNING id")
 
 expect Bus.mark_status("") == "applied"
 expect Bus.mark_status("trace_day 2026-01-01 not in the picker") == "applied_partial"
+
+# the mark carries the capture's file beside the refusal, and the winner
+# reads what was asked for
+expect Str.contains(Bus.mark_sql, "result = NULLIF(:r, '')") and Str.contains(Bus.winner_sql, "AS cp FROM")
+
+# the capture vocabulary: nothing asked, the three kinds, and a misspelling
+expect Bus.capture_refusal("") == "" and Bus.capture_refusal("png") == "" and Bus.capture_refusal("webm_start") == "" and Bus.capture_refusal("webm_stop") == ""
+expect Bus.capture_refusal("gif") == "capture gif not png/webm_start/webm_stop"

@@ -37,6 +37,12 @@ for f in src/cli/*.roc; do
     # The projection that names it: everything on the line BEFORE ` AS <alias>` — the
     # last whitespace token reads `substr(CAST(day AS TEXT), 1, 7) AS month` as `7)`.
     grep -o ".* AS $alias\\b" "$f" 2>/dev/null | sed "s/ AS $alias\$//" | sort -u > "$tmp/exprs" || true
+    # The bus SQL the window and the headless tick both read lives in core.Bus: a
+    # decode no projection in its own file names may be named by one there, and
+    # only then, so a bus alias cannot vouch for an unrelated decode elsewhere.
+    if [ ! -s "$tmp/exprs" ]; then
+      grep -o ".* AS $alias\\b" src/core/Bus.roc 2>/dev/null | sed "s/ AS $alias\$//" | sort -u > "$tmp/exprs" || true
+    fi
     if [ ! -s "$tmp/exprs" ]; then
       # PRAGMA results are SQLite-generated — no blob can reach them.
       if grep -q "PRAGMA $alias" "$f" 2>/dev/null; then continue; fi
@@ -112,12 +118,12 @@ done
 
 # Asserted exactly, not as a floor — an enumeration that silently matches nothing
 # prints the same clean line a healthy tree prints.
-EXPECT_DECODES=78
+EXPECT_DECODES=81
 # Asserted, not printed-and-forgotten. The success line once carried a hardcoded site
 # count that nothing computed and nothing checked, so it drifted from the truth without
 # anything failing. A number a gate prints on every green run has to be a number the gate
 # enforces — which is why no historical value is quoted here either.
-EXPECT_SITES=129  # matched `... AS <alias>` projection expressions, not decoder call sites
+EXPECT_SITES=143  # matched `... AS <alias>` projection expressions, not decoder call sites
 if [ "$decodes" != "$EXPECT_DECODES" ]; then
   echo "blob-safety: inspected $decodes (file, alias) decode pairs, expected $EXPECT_DECODES."
   echo "blob-safety: if that change is intended, update the number in the same commit;"

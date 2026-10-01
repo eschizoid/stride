@@ -215,9 +215,10 @@ CREATE TABLE IF NOT EXISTS viz_directives (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   view INTEGER, range INTEGER, cursor_day TEXT, trace_day TEXT,
   ghost_day TEXT, trace_id INTEGER, ghost_id INTEGER,
+  capture TEXT,                            -- png | webm_start | webm_stop
   consumed INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending',  -- applied | applied_partial | superseded | stale
-  error TEXT, applied_at TEXT);
+  error TEXT, result TEXT, applied_at TEXT); -- result: the file a capture wrote
 
 -- steer: the window polls ~1/s, applies the newest unconsumed row, and
 -- consumes everything up to it. NULL fields mean "leave that alone".
@@ -229,6 +230,14 @@ VALUES (0, 30, '2026-09-02', NULL, NULL);
 -- (the newest). Read the id back from the trace picker's rows, or from
 -- `stride activities --json`; `viz_focus` reports the ids of what is shown.
 INSERT INTO viz_directives (trace_id, ghost_id) VALUES (20355183143, 20342052869);
+-- a capture: 'png' writes the view the directive lands on to
+-- ./captures/<view>.png beside the database (the window's working
+-- directory); 'webm_start' / 'webm_stop' begin and end a WebM recording of
+-- it. The row stays pending until the host has written the file, then
+-- `result` names it and the status closes; a refused start (one already
+-- running), a refused stop (none running) or a failed write lands in
+-- `error` with no result. `stride viz --json` lists them under `captures`.
+INSERT INTO viz_directives (view, capture) VALUES (1, 'png');
 -- view 0..8 (form/power/trace/table/plan/heat/zones/ramp/career) - but read
 -- the list from `stride viz --json`, which the running binary publishes,
 -- rather than from this comment. A directive naming a view outside the

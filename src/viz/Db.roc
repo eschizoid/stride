@@ -289,7 +289,7 @@ Db :: [].{
 	# -1 in an id field and "" in a day field mean "not set" (SQL NULL). An id
 	# names one session exactly; a day names whichever session on that day
 	# sorts first, and when both are given the id is the one that counts.
-	Directive : { id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64 }
+	Directive : { id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, capture : Str }
 
 	# the newest fresh unconsumed directive. Rows past the freshness window are
 	# consumed as read (marked stale), and rows older than the winner are
@@ -341,6 +341,8 @@ Db :: [].{
 						Err(_) => -1 }
 					gi = match r.i64("gi") { Ok(x) => x
 						Err(_) => -1 }
+					cp = match r.str("cp") { Ok(x) => x
+						Err(_) => "" }
 					if id < 0 None
 					else {
 						# older unconsumed rows are closed as superseded; the
@@ -348,7 +350,7 @@ Db :: [].{
 						# it reports back - a crash between read and apply
 						# leaves it retryable instead of silently lost
 						_ = Sqlite.execute!({ db, query: Bus.supersede_sql, bindings: [{ name: ":id", value: Integer(id) }] })
-						Some({ id, view: v, range: rg, cursor_day: cd, trace_day: td, ghost_day: gd, trace_id: ti, ghost_id: gi })
+						Some({ id, view: v, range: rg, cursor_day: cd, trace_day: td, ghost_day: gd, trace_id: ti, ghost_id: gi, capture: cp })
 					}
 				}
 			}
@@ -357,11 +359,12 @@ Db :: [].{
 	}
 
 	# the directive's terminal outcome, written by the frame that applied it.
-	# error carries which fields were refused ('' = all honoured).
-	mark_directive! : Sqlite.Db, I64, Str => {}
-	mark_directive! = |db, id, refused| {
+	# error carries which fields were refused ('' = all honoured); result the
+	# file a capture produced ('' when it asked for none, or failed).
+	mark_directive! : Sqlite.Db, I64, Str, Str => {}
+	mark_directive! = |db, id, refused, result| {
 		st = Bus.mark_status(refused)
-		_ = Sqlite.execute!({ db, query: Bus.mark_sql, bindings: [{ name: ":st", value: String(st) }, { name: ":e", value: String(refused) }, { name: ":id", value: Integer(id) }] })
+		_ = Sqlite.execute!({ db, query: Bus.mark_sql, bindings: [{ name: ":st", value: String(st) }, { name: ":e", value: String(refused) }, { name: ":r", value: String(result) }, { name: ":id", value: Integer(id) }] })
 	}
 
 	# the window's answer: what the human is looking at, one row, upserted
