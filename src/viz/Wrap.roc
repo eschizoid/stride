@@ -3,8 +3,9 @@ Wrap :: [].{
 	# monospace columns; a string longer than that wraps into more lines and,
 	# past the lines its view budgeted, ends in an ellipsis. The surfaces that
 	# wrap or cut the athlete's own words (activity names in the form board's
-	# card and the table's session column, the coach's prescription in the
-	# plan card) go through here, so one rule decides what gets cut.
+	# card, its event tile and the table's session column, the coach's
+	# prescription in the plan card) go through here, so one rule decides
+	# what gets cut.
 
 	# greedy word wrap: every line at most n bytes, except a single code
 	# point wider than n, which is taken whole so the split makes progress.

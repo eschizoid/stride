@@ -13,6 +13,47 @@ Board :: [].{
 	hi_of : List(Db.Point) -> F32
 	hi_of = |pts| List.fold(pts, 1.0, |acc, p| F32.max(acc, F32.max(p.ctl, p.atl))) + 8.0
 
+	# the KPI tile row: four cards on a fixed grid from the left edge, each
+	# card tile_w wide and its text drawn 12px inside it. The event tile's
+	# text sits in the fourth card by the same rule as the three numbers.
+	tile_x : U64 -> F32
+	tile_x = |i| 30.0 + U64.to_f32(i) * 234.0
+	tile_text_x : U64 -> F32
+	tile_text_x = |i| tile_x(i) + 12.0
+	tile_w : F32
+	tile_w = 222.0
+
+	# the width a line of the event tile may take: the card less 12px each side
+	ev_room : F32
+	ev_room = tile_w - 24.0
+
+	# the event name cut to one line of `cols` columns through the shared
+	# rule, so a long name ends in "..."
+	ev_title : Str, U64 -> Str
+	ev_title = |name, cols| match List.first(Wrap.fit(name, cols, 1)) { Ok(l) => l
+		Err(_) => "" }
+
+	# the event tile's line for a name and a suffix, cut to ev_room by the
+	# font's pure measure, which reads the same glyph metrics the host draws
+	# from. The heading face is proportional, so no
+	# fixed advance holds for every name: the cut shortens two columns at a
+	# time from the name's length, capped at 64, until the line fits, and
+	# yields the narrowest try when none does, so an overflow is visible
+	# rather than silent
+	ev_line : Text.Font, Str, Str, F32 -> Str
+	ev_line = |font, name, suffix, size| {
+		n = U64.min(Str.count_utf8_bytes(name), 64)
+		fits = |line| font.measure({ text: line, size, spacing: Text.default_spacing }).width <= ev_room
+		steps = List.map_with_index(List.repeat({}, n / 2 + 1), |_, i| n - 2 * i)
+		res = List.fold(steps, { line: "", done: Bool.False }, |st, cols|
+			if st.done st
+			else {
+				line = "${ev_title(name, cols)}${suffix}"
+				{ line, done: fits(line) }
+			})
+		res.line
+	}
+
 	clamp_idx : F32, U64 -> U64
 	clamp_idx = |raw, hi_idx|
 		if raw <= 0.0 (0.U64)
@@ -49,19 +90,19 @@ Board :: [].{
 		}
 	# the artifact's tile cards: a lifted rounded panel behind each number
 	List.for_each!([0.U64, 1, 2, 3], |i| {
-		cx0 = 30.0 + U64.to_f32(i) * 234.0
-		frame.rounded_rectangle!({ x: cx0, y: 88.0, width: 222.0, height: 62.0, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
+		cx0 = tile_x(i)
+		frame.rounded_rectangle!({ x: cx0, y: 88.0, width: tile_w, height: 62.0, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
 	})
 	List.for_each!(List.map_with_index(model.kpis, |k, i| { k, i }), |x| {
-		tx0 = 42.0 + U64.to_f32(x.i) * 234.0
+		tx0 = tile_text_x(x.i)
 		col = if x.k.sel == 0 ctl_c else if x.k.sel == 1 atl_c else tsb_c
 		x.k.v.draw!(frame, { pos: { x: tx0, y: 94.0 }, color: col, align: (Top, Left) })
 		x.k.cap.draw!(frame, { pos: { x: tx0, y: 127.0 }, color: ink_faint, align: (Top, Left) })
 	})
-	model.ev_tile_top.draw!(frame, { pos: { x: win_w - 236.0, y: 96.0 }, color: ink_muted, align: (Top, Left) })
-	model.ev_tile_sub.draw!(frame, { pos: { x: win_w - 236.0, y: 122.0 }, color: ink_faint, align: (Top, Left) })
+	model.ev_tile_top.draw!(frame, { pos: { x: tile_text_x(3), y: 96.0 }, color: ink_muted, align: (Top, Left) })
+	model.ev_tile_sub.draw!(frame, { pos: { x: tile_text_x(3), y: 122.0 }, color: ink_faint, align: (Top, Left) })
 	if model.ridden_found {
-		model.ridden_note.draw!(frame, { pos: { x: win_w - 236.0, y: 136.0 }, color: ink_faint, align: (Top, Left) })
+		model.ridden_note.draw!(frame, { pos: { x: tile_text_x(3), y: 136.0 }, color: ink_faint, align: (Top, Left) })
 	}
 	# which range is live: three chips, the active one filled
 	List.for_each!(List.map_with_index(model.subs, |s, i| { s, i }), |x| {
@@ -267,4 +308,23 @@ Board :: [].{
 			Ok({})
 		}
 	}
+}
+
+# every tile's text sits 12px inside its own card, and the event tile's room
+# ends 12px before the card does
+expect List.all([0.U64, 1, 2, 3], |i| Board.tile_text_x(i) - Board.tile_x(i) == 12.0)
+expect Board.ev_room + 24.0 == Board.tile_w
+expect Board.ev_title("Tour de Chi (62/100/150mi options)", 28) == "Tour de Chi (62/100/150mi..."
+expect Board.ev_title("no event planned", 28) == "no event planned"
+
+# the line is cut by the font's own measure: on the stub font (one unit per
+# glyph per unit of size, one unit between) a size-10 line holds eighteen
+# glyphs in ev_room, so a long name ends in "...", a short name passes whole,
+# a suffix survives the cut, and one long word is cut inside the room
+expect Board.ev_line(Text.font_stub, "Tour de Chi (62/100/150mi options)", "", 10.0) == "Tour de Chi..."
+expect Board.ev_line(Text.font_stub, "no event planned", "", 10.0) == "no event planned"
+expect Board.ev_line(Text.font_stub, "Tour de Chi (62/100/150mi options)", " ridden, 3d ago", 10.0) == "... ridden, 3d ago"
+expect {
+	word = Board.ev_line(Text.font_stub, "Supercalifragilisticexpialidocious", "", 10.0)
+	Str.ends_with(word, "...") and Text.font_stub.measure({ text: word, size: 10.0, spacing: Text.default_spacing }).width <= Board.ev_room
 }
