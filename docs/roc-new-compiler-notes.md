@@ -52,21 +52,6 @@ comes from argv through `App.init_for_args`, and the launcher passes the path.
 An undeclared facility stops the app with a message naming the declaration to
 add, which is why removing one is a usable negative control.
 
-**basic-webserver has no release that builds warning-free here.** `tests/e2e.roc`
-rides basic-webserver, whose platform source still writes `..` in return
-position: 60 sites reach the build on 0.15.0, and its main branch produces the
-same 60, in the same nine files, with the same per-file counts. The harness
-links and its binary runs, but `roc build` exits 2 on the warnings, so `just
-e2e`, `just test` and `just e2e-sync` cannot pass on the released package.
-
-The fix belongs in that package, and it is 60 removals of `, ..` and nothing
-else — no signature widens, no behaviour changes, because the compiler now
-opens those unions itself. Against a patched copy of 0.15.0, supplied with
-`roc build --replace-dep <the 0.15.0 URL> <copy>/main.roc`, the harness builds
-at zero warnings and both suites pass. Nothing in this repo works around it:
-there is no flag that downgrades a warning, and a wrapper that swallowed one
-would swallow the next real warning too. The gate stays red until an upstream
-release carries the removal.
 
 
 ## Toolchain pin: `nightly-2026-09-04-c125b82` (the hold below is LIFTED)
