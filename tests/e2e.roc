@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1238)?
+    checks_ran_exactly!(1240)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7199,10 +7199,13 @@ b_cross_surface! = |ctx| {
     anchors = Str.trim(sql!(ctx.db, "SELECT (SELECT mon FROM week_bounds) || '|' || ${mon_of_today};"))
     # the window's own query, read out of its source so the text this runs is
     # the text the window runs - a loader moved onto week_bounds fails here
-    # by name; its dn column is the strip's numerator. It anchors on
-    # sqlite's localtime, and sql! runs sqlite3 under the fixture zone, so
-    # that localtime and ctx.today name the same day on any machine
-    plan_q = Str.trim(sh!("grep -oE 'query: \"WITH anchor AS \\(SELECT date\\(date\\(.now., .localtime.\\)[^\"]*plan_current[^\"]*\"' src/viz/Db.roc | sed 's/^query: \"//; s/\"$//'"))
+    # by name; its dn column is the strip's numerator. It anchors 'now' on the
+    # modifier the window resolves from config (Db.today_mod!), spelled as an
+    # interpolation in the source; the harness fills in the fixture zone's
+    # offset the way the window does, so the anchor and ctx.today name the
+    # same day on any machine
+    fx_mod = Str.trim(sh!("off=$(TZ=${fixture_tz} date +%z); s=$(printf %s \"$off\" | cut -c1); h=$(printf %s \"$off\" | cut -c2-3); m=$(printf %s \"$off\" | cut -c4-5); n=$((10#$h * 60 + 10#$m)); if [ \"$s\" = - ]; then n=$((-n)); fi; echo \"$n minutes\""))
+    plan_q = Str.trim(sh!("grep -oE 'query: \"WITH anchor AS \\(SELECT date\\(date\\(.now., ...today_mod..\\)[^\"]*plan_current[^\"]*\"' src/viz/Db.roc | sed 's/^query: \"//; s/\"$//; s/..today_mod./${fx_mod}/'"))
     strip_done = Str.trim(sql!(ctx.db, "SELECT COALESCE(dn, 0) FROM (${plan_q});"))
     bounds_done = Str.trim(sql!(ctx.db, "WITH anchor AS (SELECT mon FROM week_bounds) SELECT COALESCE(CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER), 0) FROM plan_current, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days');"))
     week_done = strjq!(ctx, ["week"], "[.data[] | select(.status == \"done\")] | length | tostring")
@@ -7211,6 +7214,23 @@ b_cross_surface! = |ctx| {
     check!("the window's plan-strip query, read from its source, counts what the week command counts, with a done session seeded (${strip_done})", !Str.is_empty(plan_q) and strip_done != "0" and strip_done == week_done)?
     check!("...and week_bounds' anchor would NOT count it, which is why the strip stays on the calendar (${bounds_done})", bounds_done == "0")?
     _ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${cs_done}; DELETE FROM activities WHERE id = 9502;")
+    # the window's anchor is the ATHLETE's day, not the machine's (#557). What
+    # this pins is the anchor's shape and sqlite's arithmetic on it: the
+    # expression read from the window's source, with the modifier a zone at
+    # UTC+14 resolves to (840 minutes), evaluated by a sqlite3 whose own zone is
+    # 26 hours west (Etc/GMT+12 is UTC-12), names Kiritimati's civil day and
+    # never the machine's; the two dates never agree at any hour. The offset
+    # parse and the integer rule are pinned by the viz expects; the config
+    # read, the zone lookup and the fallbacks run only in the window, and no
+    # gate exercises them
+    anchor_expr = Str.trim(sh!("grep -oE \"date\\('now', '..today_mod.'\\)\" src/viz/Db.roc | head -1 | sed 's/..today_mod./840 minutes/'"))
+    window_today = Str.trim(sh!("TZ=Etc/GMT+12 sqlite3 '${ctx.db}' \"SELECT ${anchor_expr};\""))
+    athlete_today = Str.trim(sh!("TZ=Pacific/Kiritimati date +%F"))
+    machine_today = Str.trim(sh!("TZ=Etc/GMT+12 date +%F"))
+    anchor_sites = Str.trim(sh!("grep -c \"'now', '..today_mod.'\" src/viz/Db.roc"))
+    local_sites = Str.trim(sh!("grep -c \"'now', 'localtime')\\|date('now', '-'\\|strftime('%Y-%m', 'now')\" src/viz/Db.roc"))
+    check!("the window's calendar anchor, read from its source, names the athlete's day under a far zone and never the machine's (${window_today} vs ${athlete_today}/${machine_today})", !Str.is_empty(anchor_expr) and window_today == athlete_today and window_today != machine_today)?
+    check!("...and every window loader that reads the calendar spells that anchor (the plan strip, the plan rows, both curve windows, the open month); none anchors on localtime or on UTC's now (${anchor_sites}/${local_sites})", anchor_sites == "5" and local_sites == "0")?
     # end-of-week CTL: weekly_ramp's newest week vs the load series on that
     # week's last loaded day, both in thousandths
     wk_ctl = Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(ctl_end * 1000) AS INTEGER) FROM weekly_ramp ORDER BY wk DESC LIMIT 1;"))
