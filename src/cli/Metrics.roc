@@ -666,8 +666,8 @@ Metrics :: [].{
             # pace rung (m/s SPEEDS, not s/km): the normalized graded pace speed (Missing
             # when there is no distance stream, or when the series is shorter than the
             # np_window — analyze falls back to a flat
-            # time+dist triple when altitude is absent, and pace scores any distance
-            # sport, not only pace-routed ones) and the sport's
+            # time+dist triple when altitude is absent; only an endurance-class sport
+            # scores by it, a meterless ride included) and the sport's
             # threshold speed (0 when none). See pace_tss / normalized_graded_pace.
             ngp : Try(F64, [Missing]),
             threshold_speed : F64,
@@ -750,20 +750,25 @@ Metrics :: [].{
                     Ok(pair) => Break(pair)
                     Err(_) => Continue(acc)
                 })
-        # pace rung, slotting in as power -> PACE -> HR -> RPE -> RE. Scores when a normalized
-        # graded pace SPEED was computed (any distance sport; graded when altitude exists,
-        # flat otherwise), a threshold speed exists, AND the implied intensity is one a
+        # pace rung, slotting in as power -> PACE -> HR -> RPE -> RE. Scores when the
+        # sport is endurance class (a distance the athlete covered on purpose), a
+        # normalized graded pace SPEED was computed (graded when altitude exists, flat
+        # otherwise), a threshold speed exists, AND the implied intensity is one a
         # human can produce (max_plausible_if); otherwise falls through to HR/RPE/RE.
+        # The class gate is what keeps a strength-like session with a distance from
+        # scoring as a run: a generic Workout whose watch kept recording covers
+        # kilometres at a walk, its per-sport threshold pace derives from that same
+        # session, and the ratio scores hours of walking at threshold intensity.
         # rTSS/sTSS is IF^exp * hours * 100 with IF = ngp_speed / threshold_speed; the
         # exponent is per-sport (running 2, swimming 3 — see Sports.pace_tss_exponent).
         pace_or_fallback =
-            match input.ngp {
-                Ok(ngp_speed) =>
+            match (Sports.class(input.sport_type), input.ngp) {
+                (Endurance, Ok(ngp_speed)) =>
                     if input.threshold_speed > 0.0 and ngp_speed / input.threshold_speed <= max_plausible_if
                         { t: pace_tss({ ngp_speed, threshold_speed: input.threshold_speed, dur_s: input.dur_s, exponent: Sports.pace_tss_exponent(input.sport_type) }), m: "rtss" }
                     else
                         fallback
-                Err(_) => fallback
+                _ => fallback
             }
         scored =
             match np_like {
@@ -4761,3 +4766,17 @@ expect {
 expect Metrics.parse_plan_literal("not-a-date=3x12:00@230W") == Err(PairDate("not-a-date"))
 expect Metrics.parse_plan_literal("2099-01-05=junk") == Err(PairTarget("junk"))
 expect Metrics.parse_plan_literal("nodelimiter") == Err(PairDate("nodelimiter"))
+
+# the pace rung is for endurance-class sports only: a strength-like session with
+# a distance (a Workout whose watch kept recording a walk) has an NGP speed and a
+# per-sport threshold derived from itself, and without the gate that pair scores
+# hours at threshold intensity. It falls through to the HR/RPE/RE ladder; below
+# is the reported row at its real moving time and heart rate.
+expect {
+    r = Metrics.tss_ladder({ ..Metrics.ladder_base, sport_type: "Workout", ngp: Ok(1.36), threshold_speed: 1.33, dur_s: 16998.0, moving_time: 16998, avg_hr: Ok(101.6) })
+    r.model == "hr_avg" and (r.tss - 141.65).abs() < 0.05
+}
+expect {
+    r = Metrics.tss_ladder({ ..Metrics.ladder_base, sport_type: "Run", ngp: Ok(3.0), threshold_speed: 3.0 })
+    r.model == "rtss"
+}

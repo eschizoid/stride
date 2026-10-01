@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1233)?
+    checks_ran_exactly!(1235)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6314,6 +6314,22 @@ b_period_pace! = |ctx| {
     tss816 = sfloat(Str.trim(sql!(ctx.db, "SELECT COALESCE(tss,0) FROM activity_metrics WHERE activity_id=816;")))
     check!("...at a sane magnitude", tss816 > 60.0 and tss816 < 90.0)?
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (814,815,816); DELETE FROM activity_metrics WHERE activity_id IN (814,815,816); DELETE FROM streams WHERE activity_id IN (814,815,816);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+
+    # The #565 shape, end to end: a strength-like session with a distance
+    # stream (a Workout whose watch kept recording a walk) derives a threshold
+    # pace from itself like any other sport, and must score neither the pace
+    # rung nor the pace intensity split from it. The threshold IS derived - the
+    # check pins the gate, not the absence of a threshold - and the session
+    # falls to the humble HR rung with no hard seconds from pace. Same 2020 era
+    # so no other fixture's Workout sits inside the trailing window.
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (817,'Watch Left Running','Workout','2020-03-01T09:00:00Z',2400,2400,101.6);")
+    _ = seed_steady_pace_stream!(ctx.db, 817, 2400, 1, 1)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    walk817 = Str.trim(sql!(ctx.db, "SELECT load_model || '/' || CAST(ROUND(COALESCE(threshold_pace_used, 0) * 100) AS INTEGER) || '/' || COALESCE(pi_hard_s, 0) || '/' || COALESCE(pi_easy_s, 0) FROM activity_metrics WHERE activity_id=817;"))
+    check!("a Workout with a distance stream derives a threshold but never scores by pace: HR rung, no pace split (${walk817})", (match Str.split_on(walk817, "/") { [m, thr, hard, easy] => m != "rtss" and thr != "0" and hard == "0" and easy == "0"  _ => Bool.False }))?
+    check!("...and its intensity comes from HR, not from hours at its own threshold", Str.trim(sql!(ctx.db, "SELECT COALESCE(hard_s, 0) FROM activity_intensity WHERE activity_id=817;")) == "0")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 817; DELETE FROM activity_metrics WHERE activity_id = 817; DELETE FROM streams WHERE activity_id = 817;")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
 
     # The power mirror of the same failure: an FTP anchored by one soft-pedalled
