@@ -77,6 +77,8 @@ Ui :: [].{
 		# when that fetch spawns; lowered by its reply, or by a later switch
 		# that answers from the cache and so has nothing outstanding.
 		trace_loading : Bool,
+		# a ghost fetch spawned for the current generation has not answered yet
+		ghost_loading : Bool,
 		trace_day : Str,
 		# what the y axis is counting for the SELECTED session, which follows
 		# the stream it actually carries rather than its sport: watts where a
@@ -130,6 +132,8 @@ Ui :: [].{
 		quitting : Bool,
 		quit_tick : U64,
 		focus_cleared : Bool,
+		# ESC closed a pending capture and its mark has not landed yet
+		quit_mark_pending : Bool,
 		status : Text.Prepared,
 		has_error : Bool,
 		# True from launch until the first background load lands: the window

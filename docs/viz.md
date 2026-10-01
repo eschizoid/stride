@@ -239,8 +239,10 @@ INSERT INTO viz_directives (trace_id, ghost_id) VALUES (20355183143, 20342052869
 -- running, a recording finished - then `result` names the file by its
 -- absolute path and the status closes; a refused start (one already
 -- running), a refused stop (none running), a start the recorder rejected
--- or a failed write lands in `error` with no result. Only one capture is
--- in flight at a time: a second one while the first waits is refused.
+-- or a failed write lands in `error` with no result. Captures run one at a
+-- time: the bus is not polled while one waits, so a row written meanwhile
+-- is applied once the first has closed (of several, the newest wins and
+-- the older close superseded).
 -- `stride viz --json` lists them under `captures`.
 INSERT INTO viz_directives (view, capture) VALUES (1, 'png');
 -- view 0..8 (form/power/trace/table/plan/heat/zones/ramp/career) - but read
