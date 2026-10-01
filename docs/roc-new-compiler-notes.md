@@ -11,7 +11,7 @@ against the compiler and roc-lang/roc source during the migration (completed
 supported compiler; basic-cli 0.23.0 sets a floor of `nightly-2026-09-23-c7852fd`.
 With all three naming one tag, the viz build has no version skew to forgive.
 
-Four things in the compiler and the platform force source changes:
+Four things in the compiler and the platform force source changes, and a fifth, last below, blocks the harness:
 
 **Tag unions in return position are open automatically.** An explicit `..`
 there is a `redundant open tag union` warning, and both `roc check` and `roc
@@ -291,7 +291,7 @@ MISCOMPILED this codebase (issue #32's intermittent SIGABRT; it also silently dr
 
 ## Platform (basic-cli 0.23)
 
-- Header: `app [main!] { pf: platform "…/0.22.0/….tar.zst" }`. HTTP data types
+- Header: `app [main!] { pf: platform "…/0.23.0/….tar.zst" }`. HTTP data types
   (Method/Request/Response) come from the `http` package, not `pf`.
 - **argv — decode with `OsStr.display`, never hand-match the tags.**
   `main!` receives `List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))])`,

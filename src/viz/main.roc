@@ -48,8 +48,8 @@ program = { init!, update!, render! }
 # run time, and a declaration is decided from the text of the path. So the
 # launcher resolves it and passes it as the first argument, and the config is
 # built from argv. Launched without one, the window still opens — it declares
-# nothing beyond the launch directory and says on its face that it has no
-# database.
+# nothing beyond the launch directory and the engine, and says on its face
+# that it has no database.
 #
 # The launch-directory grant is read-only: for `just viz` that is the checkout
 # (the dev-run assets/fonts and img), and for the packaged launchers, which
