@@ -600,12 +600,33 @@ ReportHealth :: [].{
                     Ok(r) => r
                 }
             }
-            absent = { present: Bool.False, live: Bool.False, age_seconds: -1, updated_at: "", view: -1, range: -1, cursor_day: "", trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1 }
+            # a third read for what the athlete looks at beyond the session: the
+            # table's open panel day, the trace's sport filter, the career
+            # family; a table from before these columns reports them empty
+            ext_rows = Sqlite.query_many!({
+                path: Path.utf8(path),
+                query: "SELECT CAST(COALESCE(detail_day, '') AS TEXT) AS fdd, CAST(COALESCE(sport, '') AS TEXT) AS fsp, CAST(COALESCE(family, '') AS TEXT) AS ffm FROM viz_focus WHERE id = 1",
+                bindings: [],
+                rows: |cols| |stmt| {
+                    fdd = Sqlite.str("fdd")(cols)(stmt)?
+                    fsp = Sqlite.str("fsp")(cols)(stmt)?
+                    ffm = Sqlite.str("ffm")(cols)(stmt)?
+                    Ok({ fdd, fsp, ffm })
+                },
+            })
+            ext = match ext_rows {
+                Err(_) => { fdd: "", fsp: "", ffm: "" }
+                Ok(rows) => match List.first(rows) {
+                    Err(_) => { fdd: "", fsp: "", ffm: "" }
+                    Ok(r) => r
+                }
+            }
+            absent = { present: Bool.False, live: Bool.False, age_seconds: -1, updated_at: "", view: -1, range: -1, cursor_day: "", trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1, detail_day: "", sport: "", family: "" }
             focus = match focus_rows {
                 Err(_) => absent
                 Ok(rows) => match List.first(rows) {
                     Err(_) => absent
-                    Ok(r) => { present: Bool.True, live: r.age >= 0 and r.age <= s.fstale, age_seconds: r.age, updated_at: r.ua, view: r.view, range: r.range, cursor_day: r.cd, trace_day: r.td, trace_id: ids.ti, ghost_day: r.gd, ghost_id: ids.gi }
+                    Ok(r) => { present: Bool.True, live: r.age >= 0 and r.age <= s.fstale, age_seconds: r.age, updated_at: r.ua, view: r.view, range: r.range, cursor_day: r.cd, trace_day: r.td, trace_id: ids.ti, ghost_day: r.gd, ghost_id: ids.gi, detail_day: ext.fdd, sport: ext.fsp, family: ext.ffm }
                 }
             }
             # the last ten directives, newest first, each with its status and
