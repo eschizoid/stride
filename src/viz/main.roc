@@ -1031,6 +1031,7 @@ expect {
 	and refusals_for({ ..blank, ghost_day: "d9", ghost_id: 9 }, -2, 0, 0, m) == "ghost_id 9 not in the picker"
 	and refusals_for({ ..blank, ghost_day: "d9" }, -2, 0, 0, m) == "ghost_day d9 not in the picker"
 	and refusals_for({ ..blank, ghost_day: "d1", ghost_id: 2 }, -2, 0, 0, m) == "ghost_id 2 is Rowing, the session is Ride"
+	and refusals_for({ ..blank, ghost_day: "d2", ghost_id: 9 }, -2, 0, 0, m) == "ghost_id 9 not in the picker"
 }
 
 # Reports a directive's terminal outcome from the task lane.
