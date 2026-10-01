@@ -148,8 +148,21 @@ expect {
 # the sentinel reads the catalog's column structure for both tables, not
 # the text of a CREATE statement, and its target is the three objects plus
 # the columns it names on each table: four on viz_directives, five on
-# viz_focus, each one a column some migration appended
-expect Str.contains(Bus.sentinel_sql, "pragma_table_info('viz_directives')") and Str.contains(Bus.sentinel_sql, "pragma_table_info('viz_focus')") and Bus.sentinel_present == 3 + 4 + 5 and List.all(["'ghost_day'", "'ghost_id'", "'capture'", "'result'", "'detail_day'", "'sport'", "'family'"], |c| Str.contains(Bus.sentinel_sql, c))
+# viz_focus, each one a column some migration appended, named in the list
+# of the table it belongs to
+expect {
+	parts = Str.split_on(Bus.sentinel_sql, "pragma_table_info('viz_focus')")
+	directives_part = match List.first(parts) { Ok(p) => p
+		Err(_) => "" }
+	focus_part = match List.last(parts) { Ok(p) => p
+		Err(_) => "" }
+	Str.contains(directives_part, "pragma_table_info('viz_directives')")
+	and List.len(parts) == 2
+	and Bus.sentinel_present == 3 + 4 + 5
+	and List.all(["'ghost_day'", "'ghost_id'", "'capture'", "'result'"], |c| Str.contains(directives_part, c))
+	and List.all(["'ghost_day'", "'ghost_id'", "'detail_day'", "'sport'", "'family'"], |c| Str.contains(focus_part, c))
+	and !Str.contains(focus_part, "'capture'") and !Str.contains(directives_part, "'sport'")
+}
 
 # the sweep and the winner enforce the one published window
 expect Str.contains(Bus.stale_sweep_sql, "-600 seconds") and Str.contains(Bus.winner_sql, "-600 seconds")

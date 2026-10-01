@@ -91,7 +91,7 @@
         },
         "family": {
           "type": "string",
-          "description": "the family the career view is on, or empty"
+          "description": "the career family F has cycled to, named on every view; empty when the athlete has none"
         }
       }
     },

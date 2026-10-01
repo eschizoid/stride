@@ -1159,7 +1159,8 @@ expect Db.plain_int(" 5") == Err(NotAnInt)
 expect Db.plain_int("") == Err(NotAnInt)
 
 # the upsert and its bindings agree: every placeholder the SQL names is
-# bound (a named parameter left unbound binds NULL without an error), there
+# bound under its own name (a named parameter left unbound binds NULL without
+# an error, and two bindings of one name leave the other NULL), there
 # are no more bindings than placeholders, and every column the INSERT
 # names is carried into the row on conflict
 expect {
@@ -1171,5 +1172,6 @@ expect {
 	bound = List.all(names, |nm| Str.contains(sql, Str.concat(nm, ",")) or Str.contains(sql, Str.concat(nm, ")")))
 	inserted = List.all(cols, |c| Str.contains(sql, " ${c},") or Str.contains(sql, " ${c})"))
 	carried = List.all(cols, |c| Str.contains(sql, "${c} = excluded.${c}"))
-	bound and colons == List.len(names) and inserted and carried
+	distinct = List.len(List.fold(names, [], |acc, nm| if List.contains(acc, nm) acc else List.append(acc, nm))) == List.len(names)
+	bound and distinct and colons == List.len(names) and inserted and carried
 }

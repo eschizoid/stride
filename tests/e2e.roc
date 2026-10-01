@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1260)?
+    checks_ran_exactly!(1261)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7562,6 +7562,8 @@ b_viz_tick! = |ctx| {
     # a focus table the previous build created - every column through the
     # ids, none of the identity columns - gains the three on the next tick
     _ = sql!(ctx.db, "ALTER TABLE viz_focus DROP COLUMN family; ALTER TABLE viz_focus DROP COLUMN sport; ALTER TABLE viz_focus DROP COLUMN detail_day;")
+    fcols1 = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")
+    check!("...the three are gone before the tick runs, so the gain below is the migration's", Str.contains(fcols1, "trace_id") and !Str.contains(fcols1, "detail_day") and !Str.contains(fcols1, "sport") and !Str.contains(fcols1, "family"))?
     _ = strjq!(ctx, ["viz", "tick"], ".data.found")
     fcols2 = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")
     check!("a focus table with the ids but none of the identity columns gains all three on the next tick", Str.contains(fcols2, "trace_id") and Str.contains(fcols2, "detail_day") and Str.contains(fcols2, "sport") and Str.contains(fcols2, "family"))?
