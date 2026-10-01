@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1257)?
+    checks_ran_exactly!(1261)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7428,6 +7428,13 @@ b_viz_caps! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO viz_focus (id, updated_at, view, range, cursor_day, trace_day, ghost_day, trace_id, ghost_id) VALUES (1, datetime('now'), 2, 90, NULL, '2099-01-02', NULL, 4242, NULL);")
     check!("a row written just now is present and live, with its ids", strjq!(ctx, ["viz"], ".data.focus | (.present | tostring) + \"/\" + (.live | tostring) + \"/\" + (.trace_id | tostring) + \"/\" + (.ghost_id | tostring) + \"/\" + .trace_day") == "true/true/4242/-1/2099-01-02")?
     check!("...and its age is seconds, not minutes", sfloat(strjq!(ctx, ["viz"], ".data.focus.age_seconds")) < 30.0)?
+    # the row names more than the session: the table's open panel day,
+    # the trace's sport filter and the career family travel with it, read
+    # empty from a table a window from before the columns created, and served
+    # beside the ids once written
+    check!("a focus table from before the identity columns reads them empty, the row still present", strjq!(ctx, ["viz"], ".data.focus | (.present | tostring) + \"/\" + (.detail_day | tojson) + \"/\" + (.sport | tojson) + \"/\" + (.family | tojson)") == "true/\"\"/\"\"/\"\"")?
+    _ = sql!(ctx.db, "ALTER TABLE viz_focus ADD COLUMN detail_day TEXT; ALTER TABLE viz_focus ADD COLUMN sport TEXT; ALTER TABLE viz_focus ADD COLUMN family TEXT; UPDATE viz_focus SET detail_day = '2099-01-02', sport = 'Ride', family = 'Rowing';")
+    check!("...and once the window writes them they are served beside the ids", strjq!(ctx, ["viz"], ".data.focus | .detail_day + \"/\" + .sport + \"/\" + .family + \"/\" + (.trace_id | tostring)") == "2099-01-02/Ride/Rowing/4242")?
     _ = sql!(ctx.db, "UPDATE viz_focus SET updated_at = datetime('now', '-1000 seconds');")
     check!("a row older than the focus staleness is present but not live", strjq!(ctx, ["viz"], ".data.focus | (.present | tostring) + \"/\" + (.live | tostring)") == "true/false")?
     # the boundary is inclusive. The write stamps one clock and the read
@@ -7551,7 +7558,15 @@ b_viz_tick! = |ctx| {
     _ = strjq!(ctx, ["viz", "tick"], ".data.found")
     cols2 = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_directives');")
     fcols = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")
-    check!("a bus from before the id columns gains them on the next tick, both tables", Str.contains(cols2, "capture") and Str.contains(cols2, "result") and Str.contains(cols2, "trace_id") and Str.contains(cols2, "ghost_id") and Str.contains(fcols, "trace_id") and Str.contains(fcols, "ghost_id"))?
+    check!("a bus from before the id columns gains them on the next tick, both tables", Str.contains(cols2, "capture") and Str.contains(cols2, "result") and Str.contains(cols2, "trace_id") and Str.contains(cols2, "ghost_id") and Str.contains(fcols, "trace_id") and Str.contains(fcols, "ghost_id") and Str.contains(fcols, "detail_day") and Str.contains(fcols, "sport") and Str.contains(fcols, "family"))?
+    # a focus table the previous build created - every column through the
+    # ids, none of the identity columns - gains the three on the next tick
+    _ = sql!(ctx.db, "ALTER TABLE viz_focus DROP COLUMN family; ALTER TABLE viz_focus DROP COLUMN sport; ALTER TABLE viz_focus DROP COLUMN detail_day;")
+    fcols1 = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")
+    check!("...the three are gone before the tick runs, so the gain below is the migration's", Str.contains(fcols1, "trace_id") and !Str.contains(fcols1, "detail_day") and !Str.contains(fcols1, "sport") and !Str.contains(fcols1, "family"))?
+    _ = strjq!(ctx, ["viz", "tick"], ".data.found")
+    fcols2 = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")
+    check!("a focus table with the ids but none of the identity columns gains all three on the next tick", Str.contains(fcols2, "trace_id") and Str.contains(fcols2, "detail_day") and Str.contains(fcols2, "sport") and Str.contains(fcols2, "family"))?
     # stale: a row older than the window closes as stale, applied by nobody,
     # and a fresh row beside it is the winner
     _ = sql!(ctx.db, "INSERT INTO viz_directives (view, created_at) VALUES (3, datetime('now', '-1 hour'));")

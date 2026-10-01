@@ -561,12 +561,13 @@ ReportHealth :: [].{
             # staleness. A window closed by the OS button or crashed leaves its
             # last row behind, and `live` is what separates that history from
             # what the athlete sees; the ESC path deletes the row, so absent is
-            # the cleaner "nobody is looking". Two reads, because the CLI and
+            # the cleaner "nobody is looking". Three reads, because the CLI and
             # the window are separate binaries and rebuild separately: the
             # columns every window ever wrote come first and decide `present`,
             # and the id columns come second and may fail against a table a
             # window from before them created - that reports the row with ids
-            # -1, never as absent. A corrupt timestamp reports present with
+            # -1, never as absent, and the identity columns come third by the
+            # same rule. A corrupt timestamp reports present with
             # live false and age -1: the age is COALESCEd, the row still reads.
             focus_rows = Sqlite.query_many!({
                 path: Path.utf8(path),
@@ -600,18 +601,39 @@ ReportHealth :: [].{
                     Ok(r) => r
                 }
             }
-            absent = { present: Bool.False, live: Bool.False, age_seconds: -1, updated_at: "", view: -1, range: -1, cursor_day: "", trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1 }
+            # a third read for what the athlete looks at beyond the session: the
+            # table's open panel day, the trace's sport filter, the career
+            # family; a table from before these columns reports them empty
+            ext_rows = Sqlite.query_many!({
+                path: Path.utf8(path),
+                query: "SELECT CAST(COALESCE(detail_day, '') AS TEXT) AS fdd, CAST(COALESCE(sport, '') AS TEXT) AS fsp, CAST(COALESCE(family, '') AS TEXT) AS ffm FROM viz_focus WHERE id = 1",
+                bindings: [],
+                rows: |cols| |stmt| {
+                    fdd = Sqlite.str("fdd")(cols)(stmt)?
+                    fsp = Sqlite.str("fsp")(cols)(stmt)?
+                    ffm = Sqlite.str("ffm")(cols)(stmt)?
+                    Ok({ fdd, fsp, ffm })
+                },
+            })
+            ext = match ext_rows {
+                Err(_) => { fdd: "", fsp: "", ffm: "" }
+                Ok(rows) => match List.first(rows) {
+                    Err(_) => { fdd: "", fsp: "", ffm: "" }
+                    Ok(r) => r
+                }
+            }
+            absent = { present: Bool.False, live: Bool.False, age_seconds: -1, updated_at: "", view: -1, range: -1, cursor_day: "", trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1, detail_day: "", sport: "", family: "" }
             focus = match focus_rows {
                 Err(_) => absent
                 Ok(rows) => match List.first(rows) {
                     Err(_) => absent
-                    Ok(r) => { present: Bool.True, live: r.age >= 0 and r.age <= s.fstale, age_seconds: r.age, updated_at: r.ua, view: r.view, range: r.range, cursor_day: r.cd, trace_day: r.td, trace_id: ids.ti, ghost_day: r.gd, ghost_id: ids.gi }
+                    Ok(r) => { present: Bool.True, live: r.age >= 0 and r.age <= s.fstale, age_seconds: r.age, updated_at: r.ua, view: r.view, range: r.range, cursor_day: r.cd, trace_day: r.td, trace_id: ids.ti, ghost_day: r.gd, ghost_id: ids.gi, detail_day: ext.fdd, sport: ext.fsp, family: ext.ffm }
                 }
             }
             # the last ten directives, newest first, each with its status and
             # error, so an agent reads an outcome from the command that
             # published the vocabulary rather than by parsing the table. Two
-            # reads for the reason focus has two: the id columns arrived after
+            # reads for the reason focus has three: the id columns arrived after
             # the table, and a table an older window created lacks them, so
             # those rows report ids -1 rather than the history going absent.
             # Fields decode one by one, as the tick's do: a row an agent wrote

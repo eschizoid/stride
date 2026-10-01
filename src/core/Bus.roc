@@ -28,7 +28,7 @@ Bus :: [].{
 	# The migration, in order. Every statement is safe to repeat: CREATE and
 	# INDEX carry IF NOT EXISTS, and an ALTER on a column that already exists
 	# fails and is discarded by the executor, by design. The LAST statement
-	# adds result to viz_directives, and the sentinel below counts that column
+	# adds family to viz_focus, and the sentinel below counts that column
 	# as proof the whole list ran - so a new column joins at the END and the
 	# sentinel moves to it, or an existing database never gains it.
 	ddl : List(Str)
@@ -56,22 +56,27 @@ Bus :: [].{
 		# the file the window wrote for it, reported with the terminal status
 		"ALTER TABLE viz_directives ADD COLUMN capture TEXT",
 		"ALTER TABLE viz_directives ADD COLUMN result TEXT",
+		# what the athlete is looking at beyond the session: the table's open
+		# panel day, the trace's sport filter, the career view's family
+		"ALTER TABLE viz_focus ADD COLUMN detail_day TEXT",
+		"ALTER TABLE viz_focus ADD COLUMN sport TEXT",
+		"ALTER TABLE viz_focus ADD COLUMN family TEXT",
 	]
 
 	# The every-second fast path: one read of the catalog, no schema lock.
-	# Counts the three objects, then the ghost_day and ghost_id COLUMNS of
+	# Counts the three objects, then the appended COLUMNS it names on
 	# each table as the catalog structures them - not as text in their
 	# CREATE statements, which a comment or a renamed column could satisfy
 	# without the column existing. Only a database that ran the whole list
 	# to its last statement reaches sentinel_present; any older column set
 	# re-enters the DDL. A table that does not exist contributes nothing.
 	sentinel_sql : Str
-	sentinel_sql = "SELECT (SELECT count(*) FROM sqlite_master WHERE name IN ('viz_directives', 'viz_focus', 'viz_directives_pending')) + (SELECT count(*) FROM pragma_table_info('viz_directives') WHERE name IN ('ghost_day', 'ghost_id', 'capture', 'result')) + (SELECT count(*) FROM pragma_table_info('viz_focus') WHERE name IN ('ghost_day', 'ghost_id')) AS c"
+	sentinel_sql = "SELECT (SELECT count(*) FROM sqlite_master WHERE name IN ('viz_directives', 'viz_focus', 'viz_directives_pending')) + (SELECT count(*) FROM pragma_table_info('viz_directives') WHERE name IN ('ghost_day', 'ghost_id', 'capture', 'result')) + (SELECT count(*) FROM pragma_table_info('viz_focus') WHERE name IN ('ghost_day', 'ghost_id', 'detail_day', 'sport', 'family')) AS c"
 
 	# 3 objects + ghost_day, ghost_id, capture and result on viz_directives (4)
-	# + ghost_day and ghost_id on viz_focus (2)
+	# + ghost_day, ghost_id, detail_day, sport and family on viz_focus (5)
 	sentinel_present : I64
-	sentinel_present = 9
+	sentinel_present = 12
 
 	# a read gates the writes: a zero-row UPDATE still takes the write lock
 	has_pending_sql : Str
@@ -125,25 +130,39 @@ Bus :: [].{
 	capture_refusal = |c| if c == "" or List.contains(capture_kinds, c) "" else "capture ${c} not png/webm_start/webm_stop"
 
 	focus_upsert_sql : Str
-	focus_upsert_sql = "INSERT INTO viz_focus (id, updated_at, view, range, cursor_day, trace_day, ghost_day, trace_id, ghost_id) VALUES (1, datetime('now'), :v, :rg, NULLIF(:cd, ''), NULLIF(:td, ''), NULLIF(:gd, ''), NULLIF(:ti, -1), NULLIF(:gi, -1)) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, view = excluded.view, range = excluded.range, cursor_day = excluded.cursor_day, trace_day = excluded.trace_day, ghost_day = excluded.ghost_day, trace_id = excluded.trace_id, ghost_id = excluded.ghost_id"
+	focus_upsert_sql = "INSERT INTO viz_focus (id, updated_at, view, range, cursor_day, trace_day, ghost_day, trace_id, ghost_id, detail_day, sport, family) VALUES (1, datetime('now'), :v, :rg, NULLIF(:cd, ''), NULLIF(:td, ''), NULLIF(:gd, ''), NULLIF(:ti, -1), NULLIF(:gi, -1), NULLIF(:dd, ''), NULLIF(:sp, ''), NULLIF(:fm, '')) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, view = excluded.view, range = excluded.range, cursor_day = excluded.cursor_day, trace_day = excluded.trace_day, ghost_day = excluded.ghost_day, trace_id = excluded.trace_id, ghost_id = excluded.ghost_id, detail_day = excluded.detail_day, sport = excluded.sport, family = excluded.family"
 
 	focus_clear_sql : Str
 	focus_clear_sql = "DELETE FROM viz_focus WHERE id = 1"
 }
 
-# the sentinel's proof is the migration's last statement: it ADDS result
-# to viz_directives. A column appended after it would never be counted, so
-# this holds the two together.
+# the sentinel's proof is the migration's last statement: it ADDS family
+# to viz_focus. A column appended after it would never be counted, so this
+# holds the two together.
 expect {
 	last = match List.last(Bus.ddl) { Ok(s) => s
 		Err(_) => "" }
-	Str.starts_with(last, "ALTER TABLE viz_directives ADD COLUMN result")
+	Str.starts_with(last, "ALTER TABLE viz_focus ADD COLUMN family")
 }
 
 # the sentinel reads the catalog's column structure for both tables, not
 # the text of a CREATE statement, and its target is the three objects plus
-# the two columns it names on each table
-expect Str.contains(Bus.sentinel_sql, "pragma_table_info('viz_directives')") and Str.contains(Bus.sentinel_sql, "pragma_table_info('viz_focus')") and Bus.sentinel_present == 3 + 4 + 2
+# the columns it names on each table: four on viz_directives, five on
+# viz_focus, each one a column some migration appended, named in the list
+# of the table it belongs to
+expect {
+	parts = Str.split_on(Bus.sentinel_sql, "pragma_table_info('viz_focus')")
+	directives_part = match List.first(parts) { Ok(p) => p
+		Err(_) => "" }
+	focus_part = match List.last(parts) { Ok(p) => p
+		Err(_) => "" }
+	Str.contains(directives_part, "pragma_table_info('viz_directives')")
+	and List.len(parts) == 2
+	and Bus.sentinel_present == 3 + 4 + 5
+	and List.all(["'ghost_day'", "'ghost_id'", "'capture'", "'result'"], |c| Str.contains(directives_part, c))
+	and List.all(["'ghost_day'", "'ghost_id'", "'detail_day'", "'sport'", "'family'"], |c| Str.contains(focus_part, c))
+	and !Str.contains(focus_part, "'capture'") and !Str.contains(directives_part, "'sport'")
+}
 
 # the sweep and the winner enforce the one published window
 expect Str.contains(Bus.stale_sweep_sql, "-600 seconds") and Str.contains(Bus.winner_sql, "-600 seconds")

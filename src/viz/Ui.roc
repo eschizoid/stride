@@ -124,7 +124,7 @@ Ui :: [].{
 		cwd : Str,
 		tick : U64,
 		view_anim : U64,
-		last_focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64 },
+		last_focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, detail_day : Str, sport : Str, family : Str },
 		# quitting is raised by the ESC frame, which spawns the focus-row clear;
 		# the frame that sees the clear land - or sees quit_tick fall half a
 		# second behind, so a stuck database can never trap the athlete in a

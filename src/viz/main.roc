@@ -356,7 +356,7 @@ load_model! = |font, curve_days, boot| {
 			cwd,
 			tick: 0,
 			view_anim: 0,
-			last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1 },
+			last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "" },
 			day_notes: loaded.nts,
 			plan: loaded.pl,
 			week_tss: loaded.wk,
@@ -1526,7 +1526,7 @@ update! = |model0, program_input| {
 			# only the answer for the day still open lands; a result for a day
 			# the user closed or switched away from is dropped
 			DayDetail(dd) => if dd.day == acc.detail_day ({ ..acc, detail: dd.lines }) else acc
-			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1 } }
+			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "" } }
 			# a session-naming directive replaces the picker with the one it
 			# was read against, so the refusal below and the selection it
 			# resolves both see the database as it is. The trace cache is
@@ -2049,6 +2049,12 @@ update! = |model0, program_input| {
 			trace_id: id_at(model.trace_ids, want_sel2),
 			ghost_id: (match I64.to_u64_try(want_ghost2) { Ok(gu5) => id_at(model.trace_ids, gu5)
 				Err(_) => -1 }),
+			# beyond the session: the table's open panel day (drawn on the table
+			# view only, so named there only), the trace's sport
+			# filter and the career view's family, each '' (NULL) when none
+			detail_day: (if view2 == 3 detail_day2 else ""),
+			sport: want_sport2,
+			family: Career.spine_at(model.career_spines, spine_idx).fam,
 		}
 		# written when what the human sees changed (throttled), and on a
 		# heartbeat regardless: updated_at is the coach's liveness signal, and a

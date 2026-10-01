@@ -41,7 +41,10 @@
         "trace_day",
         "trace_id",
         "updated_at",
-        "view"
+        "view",
+        "detail_day",
+        "sport",
+        "family"
       ],
       "additionalKeys": false,
       "properties": {
@@ -77,6 +80,18 @@
         },
         "ghost_id": {
           "type": "integer"
+        },
+        "detail_day": {
+          "type": "string",
+          "description": "the day whose detail panel is open on the table view, or empty"
+        },
+        "sport": {
+          "type": "string",
+          "description": "the trace picker sport filter in force, or empty for every sport"
+        },
+        "family": {
+          "type": "string",
+          "description": "the career family F has cycled to, named on every view; empty when the athlete has none"
         }
       }
     },

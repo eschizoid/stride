@@ -83,7 +83,7 @@ tte.json	contradicts_model,cp,demonstrated_known,demonstrated_s,demonstrated_w,f
 version.json	version	version	-	$
 viz-tick.json	acked,capture,cursor_day,error,found,ghost_day,ghost_id,id,range,status,trace_day,trace_id,view	acked,capture,cursor_day,error,found,ghost_day,ghost_id,id,range,status,trace_day,trace_id,view	-	$
 viz.json	accepts,kind,name	accepts,kind,name	doc	properties.fields.items
-viz.json	age_seconds,cursor_day,ghost_day,ghost_id,live,present,range,trace_day,trace_id,updated_at,view	age_seconds,cursor_day,ghost_day,ghost_id,live,present,range,trace_day,trace_id,updated_at,view	doc	properties.focus
+viz.json	age_seconds,cursor_day,detail_day,family,ghost_day,ghost_id,live,present,range,sport,trace_day,trace_id,updated_at,view	age_seconds,cursor_day,detail_day,family,ghost_day,ghost_id,live,present,range,sport,trace_day,trace_id,updated_at,view	doc	properties.focus
 viz.json	applied_at,capture,created_at,cursor_day,error,ghost_day,ghost_id,id,range,result,status,trace_day,trace_id,view	applied_at,capture,created_at,cursor_day,error,ghost_day,ghost_id,id,range,result,status,trace_day,trace_id,view	doc	properties.captures.items
 viz.json	applied_at,capture,created_at,cursor_day,error,ghost_day,ghost_id,id,range,result,status,trace_day,trace_id,view	applied_at,capture,created_at,cursor_day,error,ghost_day,ghost_id,id,range,result,status,trace_day,trace_id,view	doc	properties.history.items
 viz.json	captures,fields,focus,focus_staleness_seconds,history,protocol,published_at,staleness_seconds,views	captures,fields,focus,focus_staleness_seconds,history,protocol,published_at,staleness_seconds,views	doc	$
