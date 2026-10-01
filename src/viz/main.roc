@@ -935,22 +935,24 @@ refusals_for = |dv, cdir, wsel, cur_sel, ids| {
 		(if dv.view > 8 or dv.view < -1 ("view ${I64.to_str(dv.view)} unknown") else ""),
 		(if dv.range != -1 and dv.range != 30 and dv.range != 60 and dv.range != 90 ("range ${I64.to_str(dv.range)} not 30/60/90") else ""),
 		(if dv.cursor_day != "" and cdir == -2 ("cursor_day ${dv.cursor_day} not in the series") else ""),
-		(if dv.trace_day != "" and wsel == cur_sel and (match List.get(ids, wsel) { Ok(te9) => te9.day != dv.trace_day
+		# a day beside an id is not judged: the resolver reads the id and never
+		# the day, so the refusal names only what was consulted
+		(if dv.trace_day != "" and dv.trace_id < 0 and wsel == cur_sel and (match List.get(ids, wsel) { Ok(te9) => te9.day != dv.trace_day
 			Err(_) => Bool.True }) ("trace_day ${dv.trace_day} not in the picker") else ""),
 		# an id resolves by identity, so "not in the picker" is exact: no
 		# session with that id, rather than no session on that day
 		(if dv.trace_id >= 0 and wsel == cur_sel and (match List.get(ids, wsel) { Ok(te8) => te8.id != dv.trace_id
 			Err(_) => Bool.True }) ("trace_id ${I64.to_str(dv.trace_id)} not in the picker") else ""),
-		(if dv.ghost_day != "" and dv.ghost_day != "none" and !(List.any(ids, |ge9| ge9.day == dv.ghost_day)) ("ghost_day ${dv.ghost_day} not in the picker") else ""),
+		(if dv.ghost_day != "" and dv.ghost_day != "none" and dv.ghost_id < 0 and !(List.any(ids, |ge9| ge9.day == dv.ghost_day)) ("ghost_day ${dv.ghost_day} not in the picker") else ""),
 		# the session on screen cannot be its own ghost: the kind test below
 		# stays quiet on it (a session trivially matches itself), and the
 		# dismissal in ghost_for_sel is silent, so without this segment the
 		# directive would report applied while drawing nothing
-		(if dv.ghost_day != "" and dv.ghost_day != "none" and dv.ghost_day == entry_at(ids, wsel).day ("ghost_day ${dv.ghost_day} is the session on screen") else ""),
+		(if dv.ghost_day != "" and dv.ghost_day != "none" and dv.ghost_id < 0 and dv.ghost_day == entry_at(ids, wsel).day ("ghost_day ${dv.ghost_day} is the session on screen") else ""),
 		# in the picker but the wrong KIND of session: naming what differs -
 		# the sport, or failing that the unit - is what makes this actionable,
 		# since "refused" alone reads as a missing day
-		(if dv.ghost_day != "" and dv.ghost_day != "none" and List.any(ids, |ge8| ge8.day == dv.ghost_day) and !(List.any(ids, |ge7| ge7.day == dv.ghost_day and ghost_matches(entry_at(ids, wsel), ge7))) {
+		(if dv.ghost_day != "" and dv.ghost_day != "none" and dv.ghost_id < 0 and List.any(ids, |ge8| ge8.day == dv.ghost_day) and !(List.any(ids, |ge7| ge7.day == dv.ghost_day and ghost_matches(entry_at(ids, wsel), ge7))) {
 			live6 = entry_at(ids, wsel)
 			gh6 = List.fold(ids, live6, |acc, g6| if g6.day == dv.ghost_day g6 else acc)
 			if gh6.sport != live6.sport ("ghost_day ${dv.ghost_day} is ${gh6.sport}, the session is ${live6.sport}")
@@ -1012,6 +1014,24 @@ expect {
 	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 9 }, -2, 0, 0, m) == ""
 	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 1 }, -2, 0, 0, m) == ""
 	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 1 }, -2, 1, 1, m) == ""
+}
+
+# a day beside an id: the id takes precedence in the resolver, so the
+# refusal names the id alone (the day was never consulted); the same day
+# alone is still judged, and a day beside a RESOLVED id refuses nothing
+expect {
+	m = [
+		{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan },
+		{ id: 2, day: "d2", name: "n2", sport: "Rowing", chan: Db.watts_chan },
+	]
+	blank = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1 }
+	refusals_for({ ..blank, trace_day: "d9", trace_id: 9 }, -2, 0, 0, m) == "trace_id 9 not in the picker"
+	and refusals_for({ ..blank, trace_day: "d9" }, -2, 0, 0, m) == "trace_day d9 not in the picker"
+	and refusals_for({ ..blank, trace_day: "d9", trace_id: 1 }, -2, 0, 0, m) == ""
+	and refusals_for({ ..blank, ghost_day: "d9", ghost_id: 9 }, -2, 0, 0, m) == "ghost_id 9 not in the picker"
+	and refusals_for({ ..blank, ghost_day: "d9" }, -2, 0, 0, m) == "ghost_day d9 not in the picker"
+	and refusals_for({ ..blank, ghost_day: "d1", ghost_id: 2 }, -2, 0, 0, m) == "ghost_id 2 is Rowing, the session is Ride"
+	and refusals_for({ ..blank, ghost_day: "d2", ghost_id: 9 }, -2, 0, 0, m) == "ghost_id 9 not in the picker"
 }
 
 # Reports a directive's terminal outcome from the task lane.
