@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1250)?
+    checks_ran_exactly!(1251)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7029,6 +7029,23 @@ b_progress_structure! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (975,'Steady Solo','Ride','2025-07-15T17:00:00Z',3600,20000,148),(976,'Steady Solo','Ride','2025-07-05T10:00:00Z',3600,20000,151);")
     seed_power_stream!(ctx.db, 975, 3600, 190)
     seed_power_stream!(ctx.db, 976, 3600, 185)
+    # a CP fit needs bests that fall with duration, which steady streams never
+    # give: a ramp ride (five minutes at 320 W, then 200 W) on the 10th gives the
+    # family best_300 320, best_600 260 and best_20min 230, so every ride dated
+    # after it in the 90-day window fits a critical power. Against that fit the
+    # tank model does not run on an estimated-watts stream (#582): 1041 reads
+    # not known while the measured 975 beside it is, so a missing fit cannot
+    # pass the first half. Both the ramp and 1041 leave before the progress
+    # checks below, and the rescore puts 975 and 976 back on their own FTP
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (1042,'Ramp','Ride','2025-07-10T06:00:00Z',3600,20000,150);")
+    seed_ramp_stream!(ctx.db, 1042, 3600, 320, 300, 200)
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr,device_watts) VALUES (1041,'Estimated Steady','Ride','2025-07-16T10:00:00Z',3600,20000,150,0);")
+    seed_power_stream!(ctx.db, 1041, 3600, 200)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    wb977 = strjq!(ctx, ["activity", "1041"], ".data.w_prime_balance | (.known | tostring) + \"/\" + (.cp_used | round | tostring)")
+    wb975 = strjq!(ctx, ["activity", "975"], ".data.w_prime_balance | (.known | tostring) + \"/\" + (.cp_used | round | tostring)")
+    check!("no W-prime balance is known for an estimated-watts ride, where the measured ride beside it has one against the same fit (${wb977} vs ${wb975})", Str.starts_with(wb977, "false/") and wb977 != "false/0" and Str.starts_with(wb975, "true/") and wb975 != "true/0")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (1041, 1042); DELETE FROM activity_metrics WHERE activity_id IN (1041, 1042); DELETE FROM streams WHERE activity_id IN (1041, 1042); DELETE FROM activity_segments WHERE activity_id IN (1041, 1042);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("the anchor day yields exactly one structure group", strjq!(ctx, ["progress", "2025-07-15"], "[.data.groups[] | select(.grouped_by == \"structure\")] | length") == "1")?
     check!("...holding all three same-shape sessions across three names", strjq!(ctx, ["progress", "2025-07-15"], "[.data.groups[] | select(.grouped_by == \"structure\")][0].sessions | length") == "3")?
@@ -8023,6 +8040,17 @@ seed_steady_pace_stream! = |db, id, n, num, den| {
 # FTP (post-#26, FTP derives from stream power, not config). Inserted via the
 # heredoc sql! — the JSON's double-quotes sit fine inside the single-quoted
 # SQL literal.
+seed_ramp_stream! : Str, I64, U64, U64, U64, U64 => {}
+# a ramp: the first hi_s samples at w_hi, the rest at w_lo, so the bests fall
+# with duration the way a critical-power fit needs
+seed_ramp_stream! = |db, id, n, w_hi, hi_s, w_lo| {
+    times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
+    watts = Str.join_with(List.map(int_seq(n), |i| U64.to_str(if i < hi_s w_hi else w_lo)), ",")
+    raw = "{\"time\":{\"data\":[${times}]},\"watts\":{\"data\":[${watts}]}}"
+    _ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
+    {}
+}
+
 seed_power_stream! : Str, I64, U64, U64 => {}
 seed_power_stream! = |db, id, n, w| {
     times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
