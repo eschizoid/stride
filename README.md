@@ -491,7 +491,9 @@ mirror table, because a re-sync would silently wipe it.
      average watts. The whole group is skipped when Strava marks the watts estimated
      (`device_watts: false`) — an estimate is not a measurement — and also when the sport
      has no derived FTP yet, since scoring against an FTP of 0 would compute a TSS of 0
-     _and_ block every rung below it.
+     _and_ block every rung below it. An FTP derives once two sessions of the sport's family
+     carry a 20-minute best in the trailing 60 days, or in the family's first 60 days for a
+     session inside them (a lone session would be its own threshold).
   2. **Pace** (rTSS), for any endurance-class sport with a usable distance stream, once two sessions of that sport carry a
      20-minute best in the trailing 60 days, or in the sport's first 60 days for a
      session inside them (a lone session would be its own threshold). Altitude is optional: with it the pace is

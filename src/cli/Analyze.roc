@@ -365,24 +365,35 @@ Analyze :: [].{
     # matches. Population is the sport FAMILY (#151) via the stored sport_family
     # column, indexed by idx_activities_family_start (schema v23) — the column, not
     # a CASE over sport_type, so the range seek survives.
+    # An FTP needs TWO sessions with a best in its window (#574, the power twin of
+    # #567): with one, the best is that session's own, the ratio is 1.05 by
+    # construction, and a lone soft-pedalled hour scores hours at threshold. The
+    # cold-start arm fills only sessions inside the family's first 60 days, so a
+    # lone session later in the family's history is not scored against that first
+    # period: both arms NULL, the COALESCE lands on 0, and the power rungs decline.
+    # A stored best of 0 (a meter that reported nothing for the whole ride) is not a
+    # session with a best, so NULLIF keeps it out of the count as it is out of the
+    # MAX's meaning; the pace twin reads its speeds the same way.
     period_ftp_sql : Str
     period_ftp_sql =
         \\COALESCE(
-        \\  NULLIF((SELECT MAX(m2.best_20min_w) * 0.95
+        \\  NULLIF((SELECT CASE WHEN COUNT(NULLIF(m2.best_20min_w, 0)) >= 2 THEN MAX(m2.best_20min_w) * 0.95 END
         \\          FROM activity_metrics m2 JOIN activities a2 ON a2.id = m2.activity_id
         \\          WHERE a2.sport_family = a.sport_family
         \\            AND a2.start_local <= a.start_local
         \\            AND a2.start_local >= date(a.start_local, '-60 days')), 0),
-        \\  NULLIF((SELECT MAX(m3.best_20min_w) * 0.95
+        \\  NULLIF((SELECT CASE WHEN COUNT(NULLIF(m3.best_20min_w, 0)) >= 2 THEN MAX(m3.best_20min_w) * 0.95 END
         \\          FROM activity_metrics m3 JOIN activities a3 ON a3.id = m3.activity_id
         \\          WHERE a3.sport_family = a.sport_family
         \\            AND date(a3.start_local) <= date((SELECT MIN(a4.start_local) FROM activities a4
-        \\                                              WHERE a4.sport_family = a.sport_family), '+60 days')), 0),
+        \\                                              WHERE a4.sport_family = a.sport_family), '+60 days')
+        \\            AND date(a.start_local) <= date((SELECT MIN(a5.start_local) FROM activities a5
+        \\                                              WHERE a5.sport_family = a.sport_family), '+60 days')), 0),
         \\  0)
 
     # The pace twin of period_ftp_sql (ADR 0005, as amended): the sport's best 20-minute
     # grade-adjusted SPEED over the 60 days ending on THIS activity's date, × 0.95, with a
-    # cold-start forward-fill gated to the sport's first 60 days (power's is not: #574).
+    # cold-start forward-fill gated to the sport's first 60 days, as power's is.
     # ONE global number anchored to today would score a
     # 2021 run against 2026 fitness and — because the window moves whenever a recent
     # metrics row is deleted — invalidate every activity of that sport at once (#79).
@@ -397,12 +408,12 @@ Analyze :: [].{
     period_threshold_sql : Str
     period_threshold_sql =
         \\COALESCE(
-        \\  NULLIF((SELECT CASE WHEN COUNT(t2.best_20min_speed) >= 2 THEN MAX(t2.best_20min_speed) * 0.95 END
+        \\  NULLIF((SELECT CASE WHEN COUNT(NULLIF(t2.best_20min_speed, 0)) >= 2 THEN MAX(t2.best_20min_speed) * 0.95 END
         \\          FROM activity_metrics t2 JOIN activities b2 ON b2.id = t2.activity_id
         \\          WHERE b2.sport_type = a.sport_type
         \\            AND b2.start_local <= a.start_local
         \\            AND b2.start_local >= date(a.start_local, '-60 days')), 0),
-        \\  NULLIF((SELECT CASE WHEN COUNT(t3.best_20min_speed) >= 2 THEN MAX(t3.best_20min_speed) * 0.95 END
+        \\  NULLIF((SELECT CASE WHEN COUNT(NULLIF(t3.best_20min_speed, 0)) >= 2 THEN MAX(t3.best_20min_speed) * 0.95 END
         \\          FROM activity_metrics t3 JOIN activities b3 ON b3.id = t3.activity_id
         \\          WHERE b3.sport_type = a.sport_type
         \\            AND date(b3.start_local) <= date((SELECT MIN(b4.start_local) FROM activities b4

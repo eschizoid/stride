@@ -773,7 +773,7 @@ ReportHealth :: [].{
         # power zones derive from the cycling FTP (recent best 20-min ride power); no config
         ftp = Db.sport_ftp!(path, "Ride")?
         if ftp <= 0.0
-            Output.err_out!("no_power_data", "no cycling FTP yet — power zones derive from your best 20-min ride power in the last 60 days. Either those rides have no power, or they haven't been analyzed: run `stride analyze` (and sync rides with a power meter).")
+            Output.err_out!("no_power_data", "no cycling FTP yet — power zones derive from your best 20-min ride power in the last 60 days, once two rides carry one. Either those rides have no power, only one of them has a 20-min best, or they haven't been analyzed: run `stride analyze` (and sync rides with a power meter).")
         else {
             zones = Metrics.power_zones(ftp)
             if Output.json_mode!({})

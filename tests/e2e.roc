@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1240)?
+    checks_ran_exactly!(1248)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -512,6 +512,15 @@ run_sync! = || {
 
     _ = sync_stride!(bin, home, base, ["analyze"])
     check!("2 mock activities synced", sync_strjq!(bin, home, base, ["activities"], ".data | length") == "2")?
+    # an FTP needs two sessions of the family with a best (#574), so 501 gets a
+    # mate the mock never lists: `synced_at NULL` exempts it from prune_deleted!
+    # on every later sync (incremental and --all), its stream is seeded here and
+    # again after the drain block's unscoped wipe so no drain ever fetches it and
+    # the fetch counts stay the mock's, and it leaves once 501's last TSS check
+    # has run, before the drain scenarios that count fetches by id
+    _ = sql!(db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) VALUES (599,'Mock Power Ride Mate','Ride','2026-07-20T10:00:00Z',1300,8000.0,0.0,NULL);")
+    _ = seed_power_stream!(db, 599, 1300, 200)
+    _ = sync_stride!(bin, home, base, ["analyze"])
     # 501's mock streams are a constant 200W. FTP is DERIVED, not configured (#26): best 20-min
     # power 200 x 0.95 = 190, so NP 200 @ derived FTP 190 => IF 1.053, TSS ~110.8 for the hour.
     # Pin the exact value (not just >0) so the whole stream->best20->deriveFTP->NP->TSS path is checked.
@@ -579,6 +588,9 @@ run_sync! = || {
     # which runs BEFORE the drain — and it is what makes the seed date a free
     # choice, since the queue query carries no date predicate.
     _ = sql!(db, "DELETE FROM streams;")
+    # the mate's stream comes back at once, so the drain below has nothing of
+    # its own to fetch and 72 stays the mock's count
+    _ = seed_power_stream!(db, 599, 1300, 200)
     _ = sql!(db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) WITH RECURSIVE seq(x) AS (SELECT 901 UNION ALL SELECT x+1 FROM seq WHERE x<970) SELECT x,'seed','Ride','2026-08-01T10:00:00Z',3600,1000.0,0.0,NULL FROM seq;")
     # The seed asserted BEFORE the run: `pending_streams == 0` below is a pure
     # absence, and a seed that silently did nothing satisfies it perfectly.
@@ -642,6 +654,8 @@ run_sync! = || {
     check!("...and --all does not claim it checked only the 30-day window", !(Str.contains(all_human, "30-day window")))?
 
     check_near!("501's metrics are restored after the drain block", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 110.8, 1.0)?
+    # the mate leaves here: the drain scenarios below count fetches by id
+    _ = sql!(db, "DELETE FROM activities WHERE id = 599; DELETE FROM activity_metrics WHERE activity_id = 599; DELETE FROM streams WHERE activity_id = 599;")
 
     # #208: the two config reads on the SYNC path. Both swallowed an unreadable
     # value — last_sync_epoch folded into "never synced" (a silent full re-pull,
@@ -2181,9 +2195,40 @@ b_seed_analyze! = |ctx| {
     # function ("an out-of-family sport keeps its own empty window") is the genuinely
     # unscored case — a family with no stream anywhere.
     _ = seed_power_stream!(ctx.db, 101, 3600, 200)
-    # first analyze converges the derived FTP: pass 1 scores both rows (best_20min_w still 0
-    # -> FTP 0), pass 2 recomputes the ride once its best_20min_w resolves FTP to 190: 2+1=3
-    check!("analyze computes 3 (derived-FTP convergence)", strjq!(ctx, ["analyze"], ".data.computed") == "3")?
+    # the ride alone first: pass 1 scores both rows with no FTP, and pass 2 has
+    # nothing to rescore because a lone session derives none (#574): 2. The
+    # summary measures its best and estimates no FTP from it
+    check!("analyze computes 2 while the ride is alone (nothing to rescore without an FTP)", strjq!(ctx, ["analyze"], ".data.computed") == "2")?
+    lone_ftp = strjq!(ctx, ["summary"], ".data.ftp | (.best_20min_w_60d | round | tostring) + \"/\" + (.estimated_ftp_w | round | tostring)")
+    check!("a lone ride's best is measured but no FTP is estimated from it (${lone_ftp})", lone_ftp == "200/0")?
+    lone_human = stride_human!(ctx.bin, ctx.home, ["summary"])
+    check!("...and the human summary says an FTP needs two sessions rather than printing 0 W derived from 200 W", Str.contains(lone_human, "an FTP needs two") and !Str.contains(lone_human, "~0W"))?
+    # an FTP needs two sessions of the family with a 20-minute best in the
+    # trailing window (#574), so a second, short power ride two hours BEFORE 101
+    # on d1 sits inside 101's own window whatever older history later fixtures
+    # seed. It carries about 40 TSS of its own, which the load checks below
+    # count. The companion itself, the earlier of the pair, derives through the
+    # family's first-60-days arm only while this pair is the family's oldest;
+    # once b_progress_a! seeds 2024 rides it scores at FTP 0 for the rest of the
+    # run, and no later check reads its load
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,weighted_avg_watts,avg_watts) VALUES (1031,'power ride two','Ride','${ctx.d1}T08:00:00Z',1300,10000,20,200,200);")
+    _ = seed_power_stream!(ctx.db, 1031, 1300, 200)
+    # the companion converges the derived FTP: pass 1 scores it (no best yet, so
+    # no FTP), pass 2 rescores both rides once its best makes the pair: 1+2=3
+    check!("analyze computes 3 with the companion (it, then both rides rescored onto FTP 190)", strjq!(ctx, ["analyze"], ".data.computed") == "3")?
+    # the estimate reaches back 60 days like scoring and the plan, one day past
+    # the inclusive 59-day window the raw best reads: a stronger ride exactly 60
+    # days back lifts the estimate (300 x 0.95) while the displayed best stays
+    # the window's 200, and the human line names the best the estimate stands
+    # on. Removed and the load rebuilt before anything counts a 90-day window
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,weighted_avg_watts,avg_watts) VALUES (1034,'edge of the window','Ride',date('${ctx.today}', '-60 days') || 'T10:00:00Z',1300,10000,20,300,300);")
+    _ = seed_power_stream!(ctx.db, 1034, 1300, 300)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    edge_ftp = strjq!(ctx, ["summary"], ".data.ftp | (.best_20min_w_60d | round | tostring) + \"/\" + (.estimated_ftp_w | round | tostring)")
+    edge_human = stride_human!(ctx.bin, ctx.home, ["summary"])
+    check!("a ride exactly 60 days back is inside the estimate's window and outside the displayed best's (${edge_ftp})", edge_ftp == "200/285" and Str.contains(edge_human, "~285W — derived from your best 20-min power 300W"))?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 1034; DELETE FROM activity_metrics WHERE activity_id = 1034; DELETE FROM streams WHERE activity_id = 1034;")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
     # form_delta_known must be a JSON BOOLEAN, not the string "True". An unconstrained Roc
     # tag serializes as a quoted string, and analyze's payload is encode-only so nothing
     # constrains it — that is how "True" shipped. Asserting the TYPE rather than the value:
@@ -3532,7 +3577,7 @@ b_seed_analyze! = |ctx| {
     # passed the whole suite. The block already sits on non-zero state, so this costs one
     # line and pins the separator, the arm order and the call itself end to end.
     _ = sql!(ctx.db, "UPDATE activity_metrics SET metrics_rev = 0;")
-    check!("the human line carries both arms, in order, with the separator", Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' plan 2>/dev/null"), "DATA: 3 awaiting metrics (stride analyze) · 1 awaiting streams (stride sync)"))?
+    check!("the human line carries both arms, in order, with the separator", Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' plan 2>/dev/null"), "DATA: 4 awaiting metrics (stride analyze) · 1 awaiting streams (stride sync)"))?
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     # ...and it goes SILENT once there is nothing to say — the arm that runs on almost
     # every real invocation, and the one no "contains" check can see. Reaching it means
@@ -4543,10 +4588,10 @@ b_seed_analyze! = |ctx| {
     # reuses summary_verdict above rather than running `summary` a second time — one
     # invocation, several assertions about the same output
     check!("...and omits the week-ago clause when the trend is unknown", !(Str.contains(summary_verdict, "week ago")))?
-    # power ride NP 200 @ derived FTP 190 => TSS ~110.8; HR row ~55 => ~166
-    check_near!("28d tss ~166 (111 power + 55 hr)", sfloat(strjq!(ctx, ["summary"], ".data.last_28d.tss")), 165.8, 1.0)?
+    # power ride NP 200 @ derived FTP 190 => TSS ~110.8; its 21-min companion ~40; HR row ~55 => ~206
+    check_near!("28d tss ~206 (111 + 40 power, 55 hr)", sfloat(strjq!(ctx, ["summary"], ".data.last_28d.tss")), 205.8, 1.0)?
     mp = sfloat(strjq!(ctx, ["summary"], ".data.last_28d.measured_pct"))
-    check!("measured_pct ~67 (60..70)", mp >= 60.0 and mp <= 70.0)?
+    check!("measured_pct ~73 (68..78)", mp >= 68.0 and mp <= 78.0)?
     # FTP is derived now (the config-FTP `stale` flag was removed in #26)
     check_near!("derived FTP ~190 (best-20min 200 x 0.95)", sfloat(strjq!(ctx, ["summary"], ".data.ftp.estimated_ftp_w")), 190.0, 1.0)?
     check!("fitness_ctl > 0", sfloat(strjq!(ctx, ["summary"], ".data.fitness_ctl")) > 0.0)?
@@ -4601,15 +4646,15 @@ b_narration! = |ctx| {
 
 # ── zone + metrics_rev auto-invalidation. Config-FTP invalidation was removed in #26
 # (FTP is derived, not set); the derived-FTP recompute path is covered by
-# b_seed_analyze!'s "computes 3" convergence. ─────────────────────────────────────────
+# b_seed_analyze!'s "computes 3 with the companion" convergence. ─────────────────────────────────────────
 b_invalidation! : Ctx => Try({}, _)
 b_invalidation! = |ctx| {
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max", "140"])
-    check!("zone change recomputes all", strjq!(ctx, ["analyze"], ".data.computed") == "2")?
+    check!("zone change recomputes all", strjq!(ctx, ["analyze"], ".data.computed") == "3")?
     _ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max", "153"])
-    check!("restoring zone recomputes again", strjq!(ctx, ["analyze"], ".data.computed") == "2")?
+    check!("restoring zone recomputes again", strjq!(ctx, ["analyze"], ".data.computed") == "3")?
     _ = sql!(ctx.db, "UPDATE activity_metrics SET metrics_rev = 0;")
-    check!("metrics_rev change recomputes all", strjq!(ctx, ["analyze"], ".data.computed") == "2")?
+    check!("metrics_rev change recomputes all", strjq!(ctx, ["analyze"], ".data.computed") == "3")?
     rev = Str.trim(sql!(ctx.db, "SELECT DISTINCT metrics_rev FROM activity_metrics;"))
     check!("recomputed rows carry one nonzero rev", rev != "" and rev != "0" and !(Str.contains(rev, "\n")))?
     Ok({})
@@ -6047,7 +6092,7 @@ five_days_out! = |ctx| Str.trim(sh!("TZ='${ctx.tz}' date -v+5d +%F 2>/dev/null |
 # ── activities (+ sport filter) ──────────────────────────────────────
 b_activities! : Ctx => Try({}, _)
 b_activities! = |ctx| {
-    check!("2 activities", strjq!(ctx, ["activities"], ".data | length") == "2")?
+    check!("3 activities (the power ride, its companion, the HR row)", strjq!(ctx, ["activities"], ".data | length") == "3")?
     # NP 200 @ derived FTP 190 (config-FTP removed in #26): TSS ~110.8, IF ~1.05
     check_near!("101 tss ~111 (NP200 @ derived FTP 190)", sfloat(strjq!(ctx, ["activities"], ".data[] | select(.id==101) | .tss")), 110.8, 1.0)?
     check_near!("101 intensity ~1.05 (200/190)", sfloat(strjq!(ctx, ["activities"], ".data[] | select(.id==101) | .intensity")), 1.053, 0.02)?
@@ -6116,9 +6161,9 @@ b_load_stats! = |ctx| {
         rebuild_rc == 0 and (load_last_day == after_day or (crossed and load_last_day == before_day)),
     )?
     check!("load nonzero fitness", sfloat(strjq!(ctx, ["load"], ".data[-1].ctl")) > 0.0)?
-    check!("Ride 1 session", strjq!(ctx, ["stats"], ".data.all_time[] | select(.sport==\"Ride\") | .sessions") == "1")?
-    check_near!("Ride ~1.0h", sfloat(strjq!(ctx, ["stats"], ".data.all_time[] | select(.sport==\"Ride\") | .hours")), 1.0, 0.01)?
-    check_near!("Ride ~30km", sfloat(strjq!(ctx, ["stats"], ".data.all_time[] | select(.sport==\"Ride\") | .km")), 30.0, 0.1)?
+    check!("Ride 2 sessions (the power ride and its companion)", strjq!(ctx, ["stats"], ".data.all_time[] | select(.sport==\"Ride\") | .sessions") == "2")?
+    check_near!("Ride ~1.36h (an hour plus the 21-min companion)", sfloat(strjq!(ctx, ["stats"], ".data.all_time[] | select(.sport==\"Ride\") | .hours")), 1.361, 0.01)?
+    check_near!("Ride ~40km (30 plus the companion's 10)", sfloat(strjq!(ctx, ["stats"], ".data.all_time[] | select(.sport==\"Ride\") | .km")), 40.0, 0.1)?
     check!("Rowing 1 session", strjq!(ctx, ["stats"], ".data.all_time[] | select(.sport==\"Rowing\") | .sessions") == "1")?
     check_near!("Rowing ~9km", sfloat(strjq!(ctx, ["stats"], ".data.all_time[] | select(.sport==\"Rowing\") | .km")), 9.0, 0.1)?
     Ok({})
@@ -6209,25 +6254,32 @@ b_junk_filter! = |ctx| {
 # today's-FTP model the 2024 ride was rescored every time the 60-day window slid.
 b_period_ftp! : Ctx => Try({}, _)
 b_period_ftp! = |ctx| {
+    # an FTP needs two sessions of the family in its window (#574), so each era
+    # has a mate five days earlier, and the checks pin the POWER rung with the
+    # era's own FTP rather than a load any rung could produce
     _ = seed_ride!(ctx.db, "801", "Old Ride", "2024-01-10T09:00:00Z", "3600", "30000", "200", "150")
     _ = seed_power_stream!(ctx.db, 801, 1300, 200)
+    _ = seed_ride!(ctx.db, "8011", "Old Ride Mate", "2024-01-05T09:00:00Z", "1300", "8000", "200", "150")
+    _ = seed_power_stream!(ctx.db, 8011, 1300, 200)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     old_tss = strjq!(ctx, ["activities", "50"], "[.data[] | select(.name==\"Old Ride\")][0].tss")
-    check!("old ride scored", sfloat(old_tss) > 0.0)?
+    check!("old ride scored on its era's power (${old_tss})", sfloat(old_tss) > 0.0 and Str.trim(sql!(ctx.db, "SELECT load_model || '/' || CAST(ROUND(ftp_used) AS INTEGER) FROM activity_metrics WHERE activity_id=801;")) == "power_stream/190")?
 
     # a much stronger ride, two years later — a genuine PR well outside the old ride's window
     _ = seed_ride!(ctx.db, "802", "New PR", "2026-01-10T09:00:00Z", "3600", "35000", "320", "150")
     _ = seed_power_stream!(ctx.db, 802, 1300, 320)
+    _ = seed_ride!(ctx.db, "8021", "New PR Mate", "2026-01-05T09:00:00Z", "1300", "8000", "300", "150")
+    _ = seed_power_stream!(ctx.db, 8021, 1300, 300)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     after_tss = strjq!(ctx, ["activities", "50"], "[.data[] | select(.name==\"Old Ride\")][0].tss")
     check!("later PR does NOT rescore the old ride", (sfloat(old_tss) - sfloat(after_tss)).abs() < 0.01)?
 
     # ...and the new ride is scored on its own fitness, not the old ride's
     pr_tss = strjq!(ctx, ["activities", "50"], "[.data[] | select(.name==\"New PR\")][0].tss")
-    check!("new ride scored on its own window", sfloat(pr_tss) > 0.0)?
-    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (801,802);")
-    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (801,802);")
-    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id IN (801,802);")
+    check!("new ride scored on its own window's power, not the old era's", sfloat(pr_tss) > 0.0 and Str.trim(sql!(ctx.db, "SELECT load_model || '/' || CAST(ROUND(ftp_used) AS INTEGER) FROM activity_metrics WHERE activity_id=802;")) == "power_stream/304")?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (801,802,8011,8021);")
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (801,802,8011,8021);")
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id IN (801,802,8011,8021);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     Ok({})
 }
@@ -6368,15 +6420,37 @@ b_period_pace! = |ctx| {
     _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (817,821); DELETE FROM activity_metrics WHERE activity_id IN (817,821); DELETE FROM streams WHERE activity_id IN (817,821);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
 
-    # The power mirror of the same failure: an FTP anchored by one soft-pedalled
-    # stream (40 min at 60 W -> FTP 57) meets a summary-only ride whose weighted
+    # The power mirror of the same failure: an FTP anchored by soft-pedalled
+    # streams (40 min at 60 W -> FTP 57) meets a summary-only ride whose weighted
     # watts imply IF ~4.2. The power rung refuses, HR scores it, and - the leak
     # this pins - the refused ratio must not be stored as intensity_factor: a
     # NULL there is what keeps intensity_known honest in the payload. The
     # anchor itself scores power_stream at its own sane intensity (control).
+    # First, alone: one powered session derives no FTP (#574, the power twin of
+    # #567), so the anchor scores a lesser rung and the summary ride has no FTP
+    # to be judged against; a second soft pedal gives the family its FTP 57.
     _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr,weighted_avg_watts,device_watts) VALUES (817,'Soft Pedal','Ride','2020-03-01T09:00:00Z',2400,10000,NULL,NULL,1),(818,'Summary Only Ride','Ride','2020-03-05T09:00:00Z',1800,15000,150,240,1);")
     _ = seed_power_stream!(ctx.db, 817, 2400, 60)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    lone817 = Str.trim(sql!(ctx.db, "SELECT load_model || '/' || CAST(ROUND(COALESCE(ftp_used, 0)) AS INTEGER) FROM activity_metrics WHERE activity_id=817;"))
+    check!("a lone powered session derives no FTP and does not score its own stream against itself (${lone817})", !Str.starts_with(lone817, "power_stream/") and Str.ends_with(lone817, "/0"))?
+    # a meter that reported zero for a whole ride stores a best of 0, which is
+    # not a session with a best: beside two of them the soft pedal is still
+    # alone. One sits before it, inside its trailing window, and one after,
+    # inside the family's first 60 days, so each arm's count is the one that
+    # would reach 2 if a zero best were counted
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr,weighted_avg_watts,device_watts) VALUES (1032,'Dead Meter','Ride','2020-03-02T09:00:00Z',2400,10000,NULL,NULL,1),(1033,'Dead Meter Before','Ride','2020-02-28T09:00:00Z',2400,10000,NULL,NULL,1);")
+    _ = seed_power_stream!(ctx.db, 1032, 2400, 0)
+    _ = seed_power_stream!(ctx.db, 1033, 2400, 0)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    dead = Str.trim(sql!(ctx.db, "SELECT (SELECT CAST(ROUND(COALESCE(best_20min_w, -1)) AS INTEGER) FROM activity_metrics WHERE activity_id=1032) || '/' || (SELECT load_model || '/' || CAST(ROUND(COALESCE(ftp_used, 0)) AS INTEGER) FROM activity_metrics WHERE activity_id=817);"))
+    check!("a zero-watt ride on either side stores a best of 0 and still leaves the soft pedal without an FTP (${dead})", Str.starts_with(dead, "0/") and !Str.contains(dead, "power_stream") and Str.ends_with(dead, "/0"))?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (1032, 1033); DELETE FROM activity_metrics WHERE activity_id IN (1032, 1033); DELETE FROM streams WHERE activity_id IN (1032, 1033);")
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr,weighted_avg_watts,device_watts) VALUES (819,'Soft Pedal Again','Ride','2020-03-03T09:00:00Z',2400,10000,NULL,NULL,1);")
+    _ = seed_power_stream!(ctx.db, 819, 2400, 60)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    check!("the second soft pedal gives the family its FTP and the first is rescored onto power", Str.trim(sql!(ctx.db, "SELECT load_model || '/' || CAST(ROUND(COALESCE(ftp_used, 0)) AS INTEGER) FROM activity_metrics WHERE activity_id=817;")) == "power_stream/57")?
     check!("a broken FTP cannot score a ride at an impossible intensity", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=818;")) == "hr_avg")?
     check!("...its load is the humble rung's", sfloat(Str.trim(sql!(ctx.db, "SELECT COALESCE(tss,0) FROM activity_metrics WHERE activity_id=818;"))) < 100.0)?
     check!("...and the refused ratio is not stored as an intensity", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE activity_id=818 AND intensity_factor IS NULL;")) == "1")?
@@ -6385,7 +6459,14 @@ b_period_pace! = |ctx| {
     # ftp are measurements and stay, but no "(if 0.00)" dressed as a reading
     act818 = stride_human!(ctx.bin, ctx.home, ["activity", "818"])
     check!("...and the human line withholds the impossible zero beside the real NP", Str.contains(act818, "@ ftp 57") and !Str.contains(act818, "(if "))?
-    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (817,818); DELETE FROM activity_metrics WHERE activity_id IN (817,818); DELETE FROM streams WHERE activity_id IN (817,818);")
+    # a lone powered ride years later is outside the family's first 60 days, so
+    # the cold-start arm does not hand it the 2020 pair's FTP either
+    _ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr,weighted_avg_watts,device_watts) VALUES (820,'Soft Pedal Years Later','Ride','2026-06-01T09:00:00Z',2400,10000,NULL,NULL,1);")
+    _ = seed_power_stream!(ctx.db, 820, 2400, 60)
+    _ = stride!(ctx.bin, ctx.home, ["analyze"])
+    later820 = Str.trim(sql!(ctx.db, "SELECT load_model || '/' || CAST(ROUND(COALESCE(ftp_used, 0)) AS INTEGER) FROM activity_metrics WHERE activity_id=820;"))
+    check!("a lone powered ride years after the family's first pair takes no FTP from that first period (${later820})", !Str.starts_with(later820, "power_stream/") and Str.ends_with(later820, "/0"))?
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (817,818,819,820); DELETE FROM activity_metrics WHERE activity_id IN (817,818,819,820); DELETE FROM streams WHERE activity_id IN (817,818,819,820);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     Ok({})
 }
@@ -6402,6 +6483,14 @@ b_progress_a! = |ctx| {
     # lending these rides a 2026 number. Give them real power so the lens has real input.
     _ = seed_power_stream!(ctx.db, 201, 1300, 180)
     _ = seed_power_stream!(ctx.db, 202, 1300, 210)
+    # an FTP needs two sessions of the family with a best in the window (#574),
+    # so each era gets a companion of its own class (Companion Spin cannot group
+    # with Test Class) inside the trailing 60 days: the FTP those rides score by
+    # is still their era's own, and the EF lens still has np_w to read
+    _ = seed_ride!(ctx.db, "2031", "Companion Spin", "2024-12-20T10:00:00Z", "1300", "8000", "180", "150")
+    _ = seed_ride!(ctx.db, "2032", "Companion Spin", "2025-05-20T10:00:00Z", "1300", "8000", "210", "150")
+    _ = seed_power_stream!(ctx.db, 2031, 1300, 180)
+    _ = seed_power_stream!(ctx.db, 2032, 1300, 210)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("progress anchor echoes date", strjq!(ctx, ["progress", "2025-06-01"], ".data.anchor_date") == "2025-06-01")?
     check!("progress 2 sessions", strjq!(ctx, ["progress", "2025-06-01"], ".data.groups[0].sessions | length") == "2")?
@@ -6419,6 +6508,9 @@ b_progress_a! = |ctx| {
     # correctness depend on cleanup that looks redundant.
     _ = seed_ride!(ctx.db, "204", "Solo Class", "2025-03-03T10:00:00Z", "3600", "20000", "190", "150")
     _ = seed_power_stream!(ctx.db, 204, 1300, 190)
+    # its own era's companion (#574), another class, so Solo Class stays lone
+    _ = seed_ride!(ctx.db, "2041", "Companion Spin", "2025-02-20T10:00:00Z", "1300", "8000", "190", "150")
+    _ = seed_power_stream!(ctx.db, 2041, 1300, 190)
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     solo_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-03-03"])
     check!("a lone session says it is the first, not that it has a comparable", Str.contains(solo_h, "first session of this workout"))?
@@ -6431,9 +6523,9 @@ b_progress_a! = |ctx| {
     # remove the fixture and REBUILD daily_load — later checks assert on fitness numbers,
     # and an extra scored activity left behind silently moves them. A seeded row that
     # outlives its own check is how a suite starts testing the state of its neighbours.
-    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 204;")
-    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 204;")
-    _ = sql!(ctx.db, "DELETE FROM activities WHERE id = 204;")
+    _ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id IN (204, 2041);")
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (204, 2041);")
+    _ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (204, 2041);")
     _ = stride!(ctx.bin, ctx.home, ["analyze"])
     check!("progress json no-workout error", Str.contains(stride!(ctx.bin, ctx.home, ["progress", "1999-01-01"]), "no_workout_on_date"))?
     Ok({})
