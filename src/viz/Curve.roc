@@ -103,21 +103,21 @@ Curve :: [].{
 				model.cp_lbl.draw!(frame, { pos: { x: pad_l + pw + 8.0, y: cpy }, color: cp_lbl_c, align: (Middle, Left) })
 			}
 			# each line introduces itself at its first rung - the chart must be
-			# readable with no narrator
-			_ = match List.first(rungs) {
-				Ok(r0) => {
-					if r0.pr.w > 0 {
-						Text.from("best ever", model.font).size(11).draw!(frame, { pos: { x: cx(r0.i) + 14.0, y: cy(I64.to_f32(r0.pr.w)) - 8.0 }, color: Color.with_alpha(ink_muted, 130), align: (Top, Left) })
-					}
-					if r0.prev_w > 0 and r0.prev_w < r0.pr.w {
-						Text.from("previous window", model.font).size(11).draw!(frame, { pos: { x: cx(r0.i) + 14.0, y: cy(I64.to_f32(r0.prev_w)) - 8.0 }, color: ink_muted, align: (Top, Left) })
-					}
-					if r0.now_w > 0 and r0.now_w < r0.pr.w {
-						Text.from("this window", model.font).size(11).draw!(frame, { pos: { x: cx(r0.i) + 14.0, y: cy(I64.to_f32(r0.now_w)) + 6.0 }, color: Theme.ctl_c, align: (Top, Left) })
-					}
-				}
-				Err(_) => {}
+			# readable with no narrator. The first rung's delta reads the same
+			# list to keep clear of them, so the drawing and the avoidance
+			# cannot drift apart; the introductions are laid out in their dots' order
+			# first, since two bests a few watts apart would otherwise overprint
+			intro_lines = match List.first(rungs) {
+				Ok(r0) => List.join([
+					(if r0.pr.w > 0 [{ text: "best ever", y: cy(I64.to_f32(r0.pr.w)) - 8.0, dot: cy(I64.to_f32(r0.pr.w)), color: Color.with_alpha(ink_muted, 130) }] else []),
+					(if r0.prev_w > 0 and r0.prev_w < r0.pr.w [{ text: "previous window", y: cy(I64.to_f32(r0.prev_w)) - 8.0, dot: cy(I64.to_f32(r0.prev_w)), color: ink_muted }] else []),
+					(if r0.now_w > 0 and r0.now_w < r0.pr.w [{ text: "this window", y: cy(I64.to_f32(r0.now_w)) + 6.0, dot: cy(I64.to_f32(r0.now_w)), color: Theme.ctl_c }] else []),
+				])
+				Err(_) => []
 			}
+			placed = layout_intros(intro_lines)
+			List.for_each!(placed, |l| Text.from(l.text, model.font).size(11).draw!(frame, { pos: { x: cx(0.U64) + 14.0, y: l.y }, color: l.color, align: (Top, Left) }))
+			intro_boxes = List.map(placed, |l| { top: l.y, bot: l.y + 11.0 })
 			# three envelopes back to front: the record book faintest (a
 			# reference, no longer the antagonist), the previous window in
 			# quiet grey, this window loudest. Envelope segments only between
@@ -146,6 +146,8 @@ Curve :: [].{
 			ntri = (if nt < 20 (U64.to_f32(nt)) else U64.to_f32(40 - nt)) / 20.0
 			List.for_each!(rungs, |r| {
 				rec_y = cy(I64.to_f32(r.pr.w))
+				# the first rung's delta keeps clear of the introductions beside it
+				delta_top = |top| if r.i == 0.U64 (top_clear(top, 10.0, intro_boxes)) else top
 				fresh = r.pr.w > 0 and List.fold(recent7, Bool.False, |a9, hd| a9 or hd.day == r.pr.day)
 				if fresh {
 					halo_a = match F32.to_u8_try(50.0 + ntri * 50.0) { Ok(ha) => ha
@@ -169,7 +171,11 @@ Curve :: [].{
 					if dpr_txt != "" {
 						dpr_col = if r.now_w > r.prev_w tsb_c else Theme.alarm_c
 						dpr_w = model.font.measure({ text: dpr_txt, size: 10.0, spacing: Text.default_spacing }).width
-						Text.from(dpr_txt, model.font).size(10).draw!(frame, { pos: { x: delta_left_x(cx(r.i), dpr_w, pad_l + pw - label_inset), y: (cy(I64.to_f32(r.prev_w)) + rec_y) / 2.0 - 6.0 }, color: dpr_col, align: (Top, Left) })
+						# at the first rung "pr" is clamped to the plot's left edge, under the
+						# delta's x, so it counts as a box to clear too
+						dpr_boxes = if r.i == 0.U64 (List.append(intro_boxes, { top: rec_y - 20.0, bot: rec_y - 10.0 })) else []
+						dpr_top = if r.i == 0.U64 (top_clear((cy(I64.to_f32(r.prev_w)) + rec_y) / 2.0 - 6.0, 10.0, dpr_boxes)) else (cy(I64.to_f32(r.prev_w)) + rec_y) / 2.0 - 6.0
+						Text.from(dpr_txt, model.font).size(10).draw!(frame, { pos: { x: delta_left_x(cx(r.i), dpr_w, pad_l + pw - label_inset), y: dpr_top }, color: dpr_col, align: (Top, Left) })
 					}
 				} else {
 					frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 3.0, style: Draw.filled(Color.with_alpha(ink_muted, 80)) })
@@ -185,7 +191,8 @@ Curve :: [].{
 						if d_txt != "" {
 							d_col = if r.now_w > r.prev_w tsb_c else Theme.alarm_c
 							d_w = model.font.measure({ text: d_txt, size: 10.0, spacing: Text.default_spacing }).width
-							Text.from(d_txt, model.font).size(10).draw!(frame, { pos: { x: delta_left_x(cx(r.i), d_w, pad_l + pw - label_inset), y: (cy(I64.to_f32(r.prev_w)) + now_y) / 2.0 - 6.0 }, color: d_col, align: (Top, Left) })
+							d_top = delta_top((cy(I64.to_f32(r.prev_w)) + now_y) / 2.0 - 6.0)
+							Text.from(d_txt, model.font).size(10).draw!(frame, { pos: { x: delta_left_x(cx(r.i), d_w, pad_l + pw - label_inset), y: d_top }, color: d_col, align: (Top, Left) })
 						}
 					}
 				}
@@ -224,6 +231,40 @@ Curve :: [].{
 	delta_left_x : F32, F32, F32 -> F32
 	delta_left_x = |x, w, hi| if x + 10.0 + w <= hi (x + 10.0) else x - 10.0 - w
 
+
+	# the first rung's introductions laid out in the order of the dots they
+	# name: a label crossing one placed before it goes below that one.
+	# Whenever the draw includes another introduction it includes "best
+	# ever", whose dot is the topmost, so the placed labels are in y order
+	# when each next one is checked and the single pass settles. A
+	# previous-window label whose dot sits at most three pixels below the
+	# this-window dot does not cross that label and keeps its own offset,
+	# which puts it first
+	Intro : { text : Str, y : F32, dot : F32, color : Color.Rgba }
+	layout_intros : List(Intro) -> List(Intro)
+	layout_intros = |lines| {
+		by_dot = List.sort_with(lines, |a, b| if a.dot < b.dot Before else if a.dot > b.dot After else Same)
+		List.fold(by_dot, [], |acc, l| {
+			y = List.fold(acc, l.y, |y0, p| if y0 < p.y + 11.0 and y0 + 11.0 > p.y (p.y + 11.0) else y0)
+			List.append(acc, { ..l, y })
+		})
+	}
+
+	# a label of height h against boxes already placed: one whose box crosses
+	# any of them moves up or down to the nearest edge that clears every box,
+	# keeping its x; one crossing none stays. The topmost box's upper edge
+	# always clears, so a crossing label always moves. The first rung's delta
+	# is placed with it against the introductions
+	top_clear : F32, F32, List({ top : F32, bot : F32 }) -> F32
+	top_clear = |top, h, boxes| {
+		crosses = |t| List.any(boxes, |b| t < b.bot and t + h > b.top)
+		if !crosses(top) top
+		else {
+			clear = List.keep_if(List.join(List.map(boxes, |b| [b.bot, b.top - h])), |c| !crosses(c))
+			List.fold(clear, top, |best, c| if best == top or F32.abs(c - top) < F32.abs(best - top) c else best)
+		}
+	}
+
 	# the window-over-window change, said in watts with its sign - the number
 	# this view argues with. Empty when either side is absent (a comparison
 	# with nothing is not a delta) and when equal (the dots already overlap,
@@ -247,3 +288,47 @@ expect Curve.label_center_within(100.0, 40.0, 0.0, 110.0) == 70.0 and Curve.labe
 # a delta that fits to the right of its rung stays there; one that would run
 # past the plot ends 10px left of the rung instead
 expect Curve.delta_left_x(100.0, 30.0, 200.0) == 110.0 and Curve.delta_left_x(170.0, 30.0, 200.0) == 130.0 and Curve.delta_left_x(160.0, 30.0, 200.0) == 170.0
+# a first-rung delta crossing an introduction moves to the nearer clear edge,
+# above or below; crossing two stacked ones it takes the nearest edge that
+# clears both; crossing none, or touching a box's edge exactly, it stays
+expect {
+	prev = { top: 100.0, bot: 111.0 }
+	now = { top: 130.0, bot: 141.0 }
+	near = { top: 104.0, bot: 115.0 }
+	Curve.top_clear(115.0, 10.0, [prev, now]) == 115.0
+	and Curve.top_clear(104.0, 10.0, [prev, now]) == 111.0
+	and Curve.top_clear(93.0, 10.0, [prev, now]) == 90.0
+	and Curve.top_clear(125.0, 10.0, [prev, now]) == 120.0
+	and Curve.top_clear(104.0, 10.0, []) == 104.0
+	and Curve.top_clear(90.0, 10.0, [prev]) == 90.0
+	and Curve.top_clear(111.0, 10.0, [prev]) == 111.0
+	and Curve.top_clear(110.0, 10.0, [prev]) == 111.0
+	and Curve.top_clear(100.0, 10.0, [prev, near]) == 90.0
+	and Curve.top_clear(108.0, 10.0, [prev, near]) == 115.0
+}
+# introductions a few pixels apart are laid out clear of each other, the
+# later one taking the nearer clear edge of the earlier
+expect {
+	prev = { top: 100.0, bot: 111.0 }
+	Curve.top_clear(106.0, 11.0, [prev]) == 111.0 and Curve.top_clear(92.0, 11.0, [prev]) == 89.0 and Curve.top_clear(111.0, 11.0, [prev]) == 111.0 and Curve.top_clear(89.0, 11.0, [prev]) == 89.0
+}
+# the introductions come back in the order of their dots, each crossing label
+# pushed below the one before it: a window best a few watts above the previous
+# puts "this window" first and "previous window" under it; three bests within a
+# few pixels stack best, this window, previous window; labels that do not cross
+# keep their own offsets
+expect {
+	grey = Color.with_alpha(Theme.ctl_c, 130)
+	best = { text: "best ever", y: 92.0, dot: 100.0, color: grey }
+	prev_near = { text: "previous window", y: 97.0, dot: 105.0, color: grey }
+	now_between = { text: "this window", y: 108.0, dot: 102.0, color: Theme.ctl_c }
+	prev = { text: "previous window", y: 92.0, dot: 100.0, color: grey }
+	now_above = { text: "this window", y: 100.0, dot: 94.0, color: Theme.ctl_c }
+	now_far = { text: "this window", y: 136.0, dot: 130.0, color: Theme.ctl_c }
+	pair = |ls| List.map(ls, |l| (l.text, l.y))
+	pair(Curve.layout_intros([prev, now_above])) == [("this window", 100.0), ("previous window", 111.0)]
+	and pair(Curve.layout_intros([best, prev_near, now_between])) == [("best ever", 92.0), ("this window", 108.0), ("previous window", 119.0)]
+	and pair(Curve.layout_intros([prev, now_far])) == [("previous window", 92.0), ("this window", 136.0)]
+	and pair(Curve.layout_intros([prev])) == [("previous window", 92.0)]
+	and Curve.top_clear(100.5, 10.0, [{ top: 100.0, bot: 111.0 }]) == 111.0
+}
