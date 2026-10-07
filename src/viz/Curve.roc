@@ -151,7 +151,8 @@ Curve :: [].{
 					halo_a = match F32.to_u8_try(50.0 + ntri * 50.0) { Ok(ha) => ha
 						Err(_) => 50 }
 					frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 9.0 + ntri * 3.0, style: Draw.filled(Color.with_alpha(Theme.gold_c, halo_a)) })
-					Text.from("new record", model.font).size(11).draw!(frame, { pos: { x: cx(r.i), y: rec_y - 34.0 }, color: Theme.gold_c, align: (Top, Center) })
+					nr_half = model.font.measure({ text: "new record", size: 11.0, spacing: Text.default_spacing }).width / 2.0
+					Text.from("new record", model.font).size(11).draw!(frame, { pos: { x: label_center_within(cx(r.i), nr_half, pad_l, pad_l + pw - label_inset), y: rec_y - 34.0 }, color: Theme.gold_c, align: (Top, Center) })
 				}
 				if r.pr.w == 0 {
 					# a rung never ridden keeps its label and rail, nothing else
@@ -162,7 +163,8 @@ Curve :: [].{
 					# both is a decision: it is the house "good" accent, and
 					# the dot and the text differ in shape.
 					frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 5.0, style: Draw.filled(tsb_c) })
-					Text.from("pr", model.font).size(10).draw!(frame, { pos: { x: cx(r.i), y: rec_y - 20.0 }, color: tsb_c, align: (Top, Center) })
+					pr_half = model.font.measure({ text: "pr", size: 10.0, spacing: Text.default_spacing }).width / 2.0
+					Text.from("pr", model.font).size(10).draw!(frame, { pos: { x: label_center_within(cx(r.i), pr_half, pad_l, pad_l + pw - label_inset), y: rec_y - 20.0 }, color: tsb_c, align: (Top, Center) })
 					dpr_txt = delta_label(r.now_w, r.prev_w)
 					if dpr_txt != "" {
 						dpr_col = if r.now_w > r.prev_w tsb_c else Theme.alarm_c
@@ -204,6 +206,20 @@ Curve :: [].{
 	# this view argues with. Empty when either side is absent (a comparison
 	# with nothing is not a delta) and when equal (the dots already overlap,
 	# and a "+0w" would claim a precision the rounding does not carry).
+	# a centred label keeps this much plot between itself and the edge, so it
+	# reads apart from the CP label drawn just beyond it
+	label_inset : F32
+	label_inset = 8.0
+
+	# a label centred on a rung stays inside the plot: the last rung sits on
+	# the plot's right edge, where a centred label would run into the CP
+	# label beyond it, so the centre moves in by what overhangs. A label
+	# wider than the plot centres on it
+	label_center_within : F32, F32, F32, F32 -> F32
+	label_center_within = |x, half_w, lo, hi|
+		if half_w * 2.0 >= hi - lo ((lo + hi) / 2.0)
+		else F32.max(lo + half_w, F32.min(x, hi - half_w))
+
 	delta_label : I64, I64 -> Str
 	delta_label = |now, prev|
 		if now <= 0 or prev <= 0 ""
@@ -217,3 +233,6 @@ expect Curve.delta_label(300, 333) == "-33w"
 expect Curve.delta_label(300, 300) == ""
 expect Curve.delta_label(0, 300) == ""
 expect Curve.delta_label(300, 0) == ""
+# a centred label moves in from the plot's edges by its overhang and no
+# further; one wider than the plot sits on the plot's centre
+expect Curve.label_center_within(100.0, 40.0, 0.0, 110.0) == 70.0 and Curve.label_center_within(50.0, 40.0, 0.0, 110.0) == 50.0 and Curve.label_center_within(10.0, 40.0, 0.0, 110.0) == 40.0 and Curve.label_center_within(100.0, 60.0, 0.0, 110.0) == 55.0
