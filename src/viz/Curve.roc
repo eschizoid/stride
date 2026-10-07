@@ -151,7 +151,8 @@ Curve :: [].{
 					halo_a = match F32.to_u8_try(50.0 + ntri * 50.0) { Ok(ha) => ha
 						Err(_) => 50 }
 					frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 9.0 + ntri * 3.0, style: Draw.filled(Color.with_alpha(Theme.gold_c, halo_a)) })
-					Text.from("new record", model.font).size(11).draw!(frame, { pos: { x: cx(r.i), y: rec_y - 34.0 }, color: Theme.gold_c, align: (Top, Center) })
+					nr_half = model.font.measure({ text: "new record", size: 11.0, spacing: Text.default_spacing }).width / 2.0
+					Text.from("new record", model.font).size(11).draw!(frame, { pos: { x: label_center_within(cx(r.i), nr_half, pad_l, pad_l + pw - label_inset), y: rec_y - 34.0 }, color: Theme.gold_c, align: (Top, Center) })
 				}
 				if r.pr.w == 0 {
 					# a rung never ridden keeps its label and rail, nothing else
@@ -162,11 +163,13 @@ Curve :: [].{
 					# both is a decision: it is the house "good" accent, and
 					# the dot and the text differ in shape.
 					frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 5.0, style: Draw.filled(tsb_c) })
-					Text.from("pr", model.font).size(10).draw!(frame, { pos: { x: cx(r.i), y: rec_y - 20.0 }, color: tsb_c, align: (Top, Center) })
+					pr_half = model.font.measure({ text: "pr", size: 10.0, spacing: Text.default_spacing }).width / 2.0
+					Text.from("pr", model.font).size(10).draw!(frame, { pos: { x: label_center_within(cx(r.i), pr_half, pad_l, pad_l + pw - label_inset), y: rec_y - 20.0 }, color: tsb_c, align: (Top, Center) })
 					dpr_txt = delta_label(r.now_w, r.prev_w)
 					if dpr_txt != "" {
 						dpr_col = if r.now_w > r.prev_w tsb_c else Theme.alarm_c
-						Text.from(dpr_txt, model.font).size(10).draw!(frame, { pos: { x: cx(r.i) + 10.0, y: (cy(I64.to_f32(r.prev_w)) + rec_y) / 2.0 - 6.0 }, color: dpr_col, align: (Top, Left) })
+						dpr_w = model.font.measure({ text: dpr_txt, size: 10.0, spacing: Text.default_spacing }).width
+						Text.from(dpr_txt, model.font).size(10).draw!(frame, { pos: { x: delta_left_x(cx(r.i), dpr_w, pad_l + pw - label_inset), y: (cy(I64.to_f32(r.prev_w)) + rec_y) / 2.0 - 6.0 }, color: dpr_col, align: (Top, Left) })
 					}
 				} else {
 					frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 3.0, style: Draw.filled(Color.with_alpha(ink_muted, 80)) })
@@ -181,7 +184,8 @@ Curve :: [].{
 						d_txt = delta_label(r.now_w, r.prev_w)
 						if d_txt != "" {
 							d_col = if r.now_w > r.prev_w tsb_c else Theme.alarm_c
-							Text.from(d_txt, model.font).size(10).draw!(frame, { pos: { x: cx(r.i) + 10.0, y: (cy(I64.to_f32(r.prev_w)) + now_y) / 2.0 - 6.0 }, color: d_col, align: (Top, Left) })
+							d_w = model.font.measure({ text: d_txt, size: 10.0, spacing: Text.default_spacing }).width
+							Text.from(d_txt, model.font).size(10).draw!(frame, { pos: { x: delta_left_x(cx(r.i), d_w, pad_l + pw - label_inset), y: (cy(I64.to_f32(r.prev_w)) + now_y) / 2.0 - 6.0 }, color: d_col, align: (Top, Left) })
 						}
 					}
 				}
@@ -200,6 +204,26 @@ Curve :: [].{
 		Ok({})
 	}
 
+	# a label keeps this much plot between itself and the right edge, so it
+	# reads apart from the CP label drawn just beyond it
+	label_inset : F32
+	label_inset = 8.0
+
+	# a label centred on a rung stays inside the plot: the last rung sits on
+	# the plot's right edge, where a centred label would run into the CP
+	# label beyond it, so the centre moves in by what overhangs. A label
+	# wider than the plot centres on it
+	label_center_within : F32, F32, F32, F32 -> F32
+	label_center_within = |x, half_w, lo, hi|
+		if half_w * 2.0 >= hi - lo ((lo + hi) / 2.0)
+		else F32.max(lo + half_w, F32.min(x, hi - half_w))
+
+	# a delta sits 10px right of its rung, left-aligned; when that would run
+	# past the plot's right edge (the last rung is that edge, and the CP label
+	# sits just beyond it) it sits 10px left of the rung instead, ending there
+	delta_left_x : F32, F32, F32 -> F32
+	delta_left_x = |x, w, hi| if x + 10.0 + w <= hi (x + 10.0) else x - 10.0 - w
+
 	# the window-over-window change, said in watts with its sign - the number
 	# this view argues with. Empty when either side is absent (a comparison
 	# with nothing is not a delta) and when equal (the dots already overlap,
@@ -217,3 +241,9 @@ expect Curve.delta_label(300, 333) == "-33w"
 expect Curve.delta_label(300, 300) == ""
 expect Curve.delta_label(0, 300) == ""
 expect Curve.delta_label(300, 0) == ""
+# a centred label moves in from the plot's edges by its overhang and no
+# further; one wider than the plot sits on the plot's centre
+expect Curve.label_center_within(100.0, 40.0, 0.0, 110.0) == 70.0 and Curve.label_center_within(50.0, 40.0, 0.0, 110.0) == 50.0 and Curve.label_center_within(10.0, 40.0, 0.0, 110.0) == 40.0 and Curve.label_center_within(100.0, 60.0, 0.0, 110.0) == 55.0
+# a delta that fits to the right of its rung stays there; one that would run
+# past the plot ends 10px left of the rung instead
+expect Curve.delta_left_x(100.0, 30.0, 200.0) == 110.0 and Curve.delta_left_x(170.0, 30.0, 200.0) == 130.0 and Curve.delta_left_x(160.0, 30.0, 200.0) == 170.0
