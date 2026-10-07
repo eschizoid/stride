@@ -44,6 +44,11 @@ just build     # the binary, --opt=dev (see below); STRIDE_LINKER= is an escape 
 just install   # build + symlink to ~/.local/bin/stride
 ```
 
+`tests/e2e.roc` rides basic-webserver 0.17.0, the first release whose platform source
+carries no `..` on a return-position union, so the harness builds at zero warnings on
+this pin and `just e2e`, `just test` and `just e2e-sync` pass; docs/roc-new-compiler-notes.md
+has the account of the wait.
+
 CI runs more than `just test`, and a green `just test` is not a green build. These are the
 rest of it, all runnable locally — run them before pushing. Every one is network-free
 except `issue-claims`, which reads the tracker:
@@ -57,7 +62,7 @@ sh tools/adapter-fixtures.sh # every strength-notes adapter is registered, in pi
 sh tools/command-claims.sh # commands the docs name vs the binary's own table (needs ./stride)
 just layer-check           # every engine import points down the layer table (ADR 0016)
 just pin-check             # every workflow nightly-tag site agrees with the two compiler pins
-just viz-check             # type-check the window through the pin-warning-tolerant wrapper
+just viz-check             # type-check the window on the viz nightly, through the count-pinning wrapper
 just viz-test              # the window's expects + assertion-count pins, on the viz nightly
 just issue-claims          # issue-state claims in comments (needs `gh` auth)
 ```
@@ -88,7 +93,7 @@ nightlies: the ENGINE pin is the default in `.github/actions/setup-roc/action.ym
 - A failed build leaves a stale binary that e2e would happily "pass" against; `just
   test` orders steps to prevent this. Don't run `just e2e` after a failed build.
 - Toolchain: the new (Zig) compiler, pinned by exact nightly tag (engine and viz
-  pins: see *Compiler pins* under Code conventions) · basic-cli **0.22** · builtin
+  pins: see *Compiler pins* under Code conventions) · basic-cli **0.23** · builtin
   JSON. `~/.local/bin/roc` is a SYMLINK to the engine nightly; a bare `roc` in the
   justfile rides it — pin the explicit path in anything that must not depend on that
   link.
@@ -216,7 +221,21 @@ nightlies: the ENGINE pin is the default in `.github/actions/setup-roc/action.ym
 A second Roc app shares the database: the roc-ray window (`src/viz/main.roc`;
 `just viz` opens it). It pins ITS OWN compiler in its app header —
 `tools/pin-check.sh` holds every workflow `nightly-tag:` site to that pin; set
-`ROC_VIZ` to a matching nightly locally. The two apps bind different PLATFORMS
+`ROC_VIZ` to a matching nightly locally. **The window declares what it may
+touch, in its own source.** roc-ray decides a filesystem grant from the TEXT
+of a path, and `~/.stride` sits under a home known only at run time, so the
+launcher resolves it and passes it as the first argument and the startup
+config is built from argv (`App.init_for_args`). The grants are that
+directory read-write, the launch directory read-only (the checkout for `just
+viz`, the athlete's home for the packaged launchers, which change to it first),
+and two programs: `stride` for the CP fit and `sh` for the zone offset `date` reports
+under the configured timezone; captures are allowed beneath `./captures` without
+a declaration. Nothing else, so a new effect in the window is a new declaration, and an
+undeclared facility stops the app rather than failing quietly. Every launch
+path passes the directory, and the launch directory after it so a capture's status
+row can name its file by an absolute path: the `viz` recipe, the macOS `.app` launcher in
+`tools/make-viz-app.sh`, and the linux and windows launchers the release
+workflow writes. The two apps bind different PLATFORMS
 (basic-cli vs roc-ray), so effectful modules cannot be shared — each carries
 its own `Db` — but both build on one compiler and import the pure `src/core`
 package (#458): a definition BOTH surfaces state goes there (Fmt, Sports,
@@ -298,7 +317,7 @@ These are measured toolchain behaviors, not style opinions.
 
 ### Platform APIs
 
-- **Verify against the docs before writing** (basic-cli 0.22 docs, or package source in
+- **Verify against the docs before writing** (basic-cli 0.23 docs, or package source in
   `~/.cache/roc/packages/`) — alpha APIs drift.
 - **`Sqlite.query!` on a row that may not exist fails the command.** Use `query_many!`
   and match the empty list — this is how config loading must read any possibly-absent

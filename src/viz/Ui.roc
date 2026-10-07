@@ -119,8 +119,11 @@ Ui :: [].{
 		data : List(Db.Point),
 		days : List(Str),
 		day_notes : List({ day : Str, note : Str }),
-		home : Str,
-		# where the window was launched from, absolute; "" when unknown
+		# the athlete's own directory, as the launcher declared it; "" when
+		# the window was started without one and has no database to read
+		stride_dir : Str,
+		# the directory the window was launched from, as the launcher passed
+		# it; "" when it did not, and a capture's path is then relative
 		cwd : Str,
 		tick : U64,
 		view_anim : U64,

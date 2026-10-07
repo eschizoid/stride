@@ -5,7 +5,11 @@
 # its own binary (no roc needed at launch); the stride logo becomes the icon.
 #
 # The launcher widens PATH before exec: a GUI app inherits launchd's minimal
-# PATH, and the board shells out to `stride` (CP fit) and `sh`/`printenv`.
+# PATH, and the board runs `stride` for the CP fit and `sh` for the zone offset.
+# It also passes the athlete's directory, the window's read-write grant, which
+# cannot be written into the source because it sits under a home resolved at
+# launch, and the home itself as the launch directory a capture's status row
+# names its file under.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -23,8 +27,8 @@ APP="$APP_DIR/Stride.app"
 C="$APP/Contents"
 
 echo "building the viz binary ($ROC_VIZ)..."
-# through roc-viz.sh for the same reason every CI viz job is: roc-ray declares
-# an older compiler than stride pins, and roc exits non-zero on that warning
+# through roc-viz.sh for the same reason every CI viz job is: the wrapper is
+# where the viz's assertion-count pins live, and it carries roc's exit code
 ROC="$ROC_VIZ" sh tools/roc-viz.sh build src/viz/main.roc --output="$WORK/stride-viz" --opt=dev
 
 mkdir -p "$C/MacOS" "$C/Resources"
@@ -64,7 +68,7 @@ if [ -f "$res/img/stride-icon.png" ]; then
   fi
 fi
 cd "$HOME"
-exec "$here/stride-viz"
+exec "$here/stride-viz" "$HOME/.stride" "$HOME"
 SH
 chmod +x "$C/MacOS/launcher" "$C/MacOS/stride-viz"
 

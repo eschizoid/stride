@@ -25,7 +25,7 @@ Zones :: [].{
 		"${I64.to_str(h10 // 10)}.${I64.to_str(h10 % 10)}h"
 	}
 
-	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
+	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
 		win_w = model.win.w
 		win_h = model.win.h

@@ -169,3 +169,11 @@ A directive names a session by activity id, not only by day. `trace_id` and `gho
 Decision 2 above calls `viz_directives` and `viz_focus` "judgment-tier tables". That is the wrong word. AGENTS.md defines the judgment tier as data that exists only here and must never be silently destroyed; the bus tables are the reverse. `viz_directives` and `viz_focus` are recreated by the window's next poll; a directive expires 600 seconds after it is written; the focus row goes stale after 90 seconds, and is deleted at once only when the window quits by ESC — closed by the OS, it ages out. The three capability tables are rewritten wholesale at every launch. No analytics command reads any of them; `stride viz` relays capabilities and focus read-only, and `stride viz tick` drives the directive lifecycle headless. The e2e suite poisons the bus, pins doctor and summary unmoved and plan still answering, then drops the two lifecycle tables and pins summary again. These tables carry the coach's intent and the window's answer for the seconds those are current, and nothing after.
 
 AGENTS.md now names a fourth tier, UI coordination, with the five `viz_*` tables in it and that recovery story beside the other three. Decision 2's sentence should be read with "UI coordination" in place of "judgment"; the decision itself — that the window is driven through the database and observed through it — is unchanged.
+
+## Update, 2026-09-29. The pin-mismatch tolerance is retired
+
+roc-ray 0.10.0 declares the compiler this repo pins, so the viz build emits no
+mismatch warning and `tools/roc-viz.sh` forgives none. What the script still
+carries is the pair of assertion-count pins a `test` run is held to: the
+source count of `expect`/`and` lines under `src/viz`, and the summary count
+across the window's whole import graph.
