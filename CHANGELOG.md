@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.18.1](https://github.com/eschizoid/stride/compare/v0.18.0...v0.18.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **viz:** a record label at the last rung stays inside the plot ([#587](https://github.com/eschizoid/stride/issues/587)) ([979f63a](https://github.com/eschizoid/stride/commit/979f63a2f00cae2374755b32642c3e5da1fb2859))
+* **viz:** the first rung's delta sits past the introduction it would cross ([#590](https://github.com/eschizoid/stride/issues/590)) ([f092a20](https://github.com/eschizoid/stride/commit/f092a204fa42a27f71d3fd4edcbc858a9e328d8b))
+
 ## [0.18.0](https://github.com/eschizoid/stride/compare/v0.17.0...v0.18.0) (2026-10-01)
 
 
