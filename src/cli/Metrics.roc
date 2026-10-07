@@ -1256,20 +1256,22 @@ Metrics :: [].{
             _ => True
         }
 
+    # a lens fits the group when at least one row can be scored through it
+    lens_scorable : Lens, List(ProgressRow) -> Bool
+    lens_scorable = |lens, rows| List.any(rows, |r| lens_score(lens, r).is_ok())
+
     # pick the richest lens the group can actually compute (power > speed/HR > RPE)
     progress_lens : List(ProgressRow) -> [Ef, SpeedHr, Rpe, Unscorable]
-    progress_lens = |rows| {
-        scorable = |lens| List.any(rows, |r| lens_score(lens, r).is_ok())
-        if scorable(Ef) {
+    progress_lens = |rows|
+        if lens_scorable(Ef, rows) {
             Ef
-        } else if scorable(SpeedHr) {
+        } else if lens_scorable(SpeedHr, rows) {
             SpeedHr
-        } else if scorable(Rpe) {
+        } else if lens_scorable(Rpe, rows) {
             Rpe
         } else {
             Unscorable
         }
-    }
 
     # ── Strava bulk-export date parsing ─────────────────────────────────
     # activities.csv dates look like "Feb 17, 2022, 12:18:26 PM" (English-language

@@ -189,9 +189,9 @@ cannot be created, the window falls back to its default font.
 Both binaries build on **one compiler** — the tag is the `setup-roc` action's
 default, mirrored in `src/viz/main.roc`'s app header, and `tools/pin-check.sh`
 holds those two copies together while refusing any per-job override. roc-ray
-itself declares an older compiler in its own header, so a viz build emits one
-mismatch warning; `tools/roc-viz.sh` tolerates exactly that warning and nothing
-else, and comes out the day roc-ray names the compiler stride pins.
+declares that same compiler in its own header, so a viz build carries no
+mismatch warning and `tools/roc-viz.sh` forgives none: it runs roc, passes the
+exit code through, and holds a test run to its two assertion counts.
 
 ## Typography
 
@@ -359,10 +359,19 @@ a reader who cares looks at focus, not at the losing row.
 
 - No F64→F32 narrowing exists, so the SQL query CASTs to integer tenths and
   the app divides by 10 — the numeric boundary belongs to SQL.
-- No Env module on the platform; the home directory is read by capturing
-  shell output through `Cmd` — `printenv HOME` on unix, cmd's echo of
-  `%USERPROFILE%` on Windows (the same variable the CLI falls back to) — on
-  every load, which means at launch and again on each `R`.
+- What the window may touch is declared in its own source, and a declaration
+  is matched against the text of a path. The athlete's directory sits under a
+  home known only at run time, so it cannot be written there: the launcher
+  resolves it and passes it as the first argument (and the launch directory as
+  the second, which a capture's status row names its file under), and the startup config is
+  built from argv. The window declares that directory read-write, the launch
+  directory read-only (the checkout for `just viz`; the athlete's home for the
+  packaged launchers, which change to it before they exec), and two programs:
+  `stride` for the CP fit and `sh` for the one script that asks `date` for the
+  zone offset under the configured timezone. Captures are allowed beneath
+  `./captures` without a declaration. Nothing else: no environment, no network,
+  no other program.
+  Launched with no argument, the window opens and says it has no database.
 - `has` is a reserved word; uppercase identifiers are types.
 
 ## The power view (TAB)
@@ -392,7 +401,9 @@ against `stride power-curve 90 Ride --json`.
 
 **CP, W′ and r2 come from the engine**, not from a second regression here. The fit
 is `Metrics.hyperbolic_fit`'s job and a copy in the viz would drift from it, so the
-view shells out to `stride power-curve --json` and extracts each field
+view runs `stride power-curve --json` directly — no shell between, so the
+window declares that program by name (`sh` is the one other, for the zone offset
+`date` reports under the configured timezone) — and extracts each field
 independently — key ORDER cannot silently break the parse, and a missing field
 shows "CP fit unavailable" rather than a fit of zeros.
 

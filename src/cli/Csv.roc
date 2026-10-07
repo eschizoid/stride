@@ -88,6 +88,17 @@ Csv :: [].{
             })
         found.idx
     }
+
+    # the nth occurrence of a named column, read out of one row. An absent header
+    # and a row too short to reach the column are the same answer, "": a Strava
+    # export's optional columns are missing rather than empty, and every caller
+    # parses the text anyway.
+    field : List(Str), List(Str), Str, U64 -> Str
+    field = |headers, row, name, occurrence|
+        match column_index(headers, name, occurrence) {
+            Ok(i) => (List.get(row, i)).ok_or("")
+            Err(_) => ""
+        }
 }
 
 # plain fields, trailing newline ignored
@@ -104,4 +115,12 @@ expect Csv.parse("a,,c\n,,\n") == [["a", "", "c"], ["", "", ""]]
 expect {
     hs = ["Distance", "Moving Time", "Distance"]
     Csv.column_index(hs, "Distance", 0) == Ok(0) and Csv.column_index(hs, "Distance", 1) == Ok(2) and Csv.column_index(hs, "Watts", 0) == Err(NotFound)
+}
+
+# a named column read out of a row: the second "Distance" is the meters one,
+# and an absent header or a short row both read as ""
+expect {
+    hs = ["Distance", "Moving Time", "Distance"]
+    r = ["12.5", "3600", "12500"]
+    Csv.field(hs, r, "Distance", 1) == "12500" and Csv.field(hs, r, "Distance", 0) == "12.5" and Csv.field(hs, r, "Watts", 0) == "" and Csv.field(hs, ["12.5"], "Distance", 1) == ""
 }

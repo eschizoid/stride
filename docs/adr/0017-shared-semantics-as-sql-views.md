@@ -200,3 +200,12 @@ it. The e2e suite reads the window's queries out of its source, so a loader
 moved off a view fails by name, and compares each rewritten view row for
 row with the definition it replaced, and checks the tonnage arm's sum on a
 seeded covered month.
+
+## Update, 2026-09-29. roc-ray declares the compiler this repo pins
+
+roc-ray 0.10.0 names `nightly-2026-09-27-a3ce7f1` as its supported compiler,
+which is the tag both binaries pin, so a viz build carries no
+mismatch warning. The tolerance in `tools/roc-viz.sh` is gone; the script now
+runs roc, returns its exit code, and exists for the assertion-count pins a
+test run is held to. The convergence this section recorded is now a property
+of the three headers rather than something a wrapper has to absorb.

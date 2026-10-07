@@ -881,29 +881,24 @@ ReportSessions :: [].{
     # precise ones (meters/seconds); the first Distance is km. English exports only.
     export_row_to_summary : List(Str), List(Str) -> Try(Strava.ActivitySummary, [BadRow])
     export_row_to_summary = |headers, row| {
-        field = |name, occurrence|
-            match Csv.column_index(headers, name, occurrence) {
-                Ok(i) => (List.get(row, i)).ok_or("")
-                Err(_) => ""
-            }
         opt_field = |name|
-            match F64.from_str(field(name, 0)) {
+            match F64.from_str(Csv.field(headers, row, name, 0)) {
                 Ok(v) => Ok(v)
                 Err(_) => Err(Missing)
             }
         # narrowed like every other id (#201): a widened parse here makes "7e2" import
         # as id 700, and upsert_activity! would overwrite whatever real activity holds it
-        id = Metrics.arg_i64(field("Activity ID", 0)).map_err(|_| BadRow)?
-        start = Metrics.export_date_to_iso(field("Activity Date", 0)).map_err(|_| BadRow)?
-        moving_raw = field("Moving Time", 1)
-        moving_str = if Str.is_empty(moving_raw) field("Moving Time", 0) else moving_raw
+        id = Metrics.arg_i64(Csv.field(headers, row, "Activity ID", 0)).map_err(|_| BadRow)?
+        start = Metrics.export_date_to_iso(Csv.field(headers, row, "Activity Date", 0)).map_err(|_| BadRow)?
+        moving_raw = Csv.field(headers, row, "Moving Time", 1)
+        moving_str = if Str.is_empty(moving_raw) Csv.field(headers, row, "Moving Time", 0) else moving_raw
         moving_f = F64.from_str(moving_str).map_err(|_| BadRow)?
         distance =
-            match F64.from_str(field("Distance", 1)) {
+            match F64.from_str(Csv.field(headers, row, "Distance", 1)) {
                 Ok(meters) => meters
                 Err(_) =>
                     # single Distance column = km
-                    match F64.from_str(field("Distance", 0)) {
+                    match F64.from_str(Csv.field(headers, row, "Distance", 0)) {
                         Ok(km) => km * 1000.0
                         Err(_) => 0.0
                     }
@@ -912,12 +907,12 @@ ReportSessions :: [].{
         mt = (moving_f).round_to_i64_try().ok_or(0)
         Ok({
             id,
-            name: field("Activity Name", 0),
-            sport_type: field("Activity Type", 0),
+            name: Csv.field(headers, row, "Activity Name", 0),
+            sport_type: Csv.field(headers, row, "Activity Type", 0),
             start_date_local: start,
             moving_time: mt,
             distance,
-            total_elevation_gain: (F64.from_str(field("Elevation Gain", 0))).ok_or(0.0),
+            total_elevation_gain: (F64.from_str(Csv.field(headers, row, "Elevation Gain", 0))).ok_or(0.0),
             suffer_score: opt_field("Relative Effort"),
             average_watts: opt_field("Average Watts"),
             average_heartrate: opt_field("Average Heart Rate"),

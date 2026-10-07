@@ -1,5 +1,5 @@
 app [main!] {
-    pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.23.0-rc1/3hT3SoHZ6qbEsa9qVFLUW3547U5LeoNd1KbpqLpz4r1i.tar.zst",
+    pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.23.0/GNN5tt2gKdX4dhawg4915C4YB193woHFdcCkz31fhGxv.tar.zst",
     http: "https://github.com/roc-lang/http/releases/download/1.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
     core: "../core/package.roc",
     strength: "../strength/package.roc",
@@ -168,7 +168,8 @@ help_text =
 # dispatch. All arity/count validation lives in the parser and is unit-tested there.
 main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)
 main! = |raw_args| {
-    # basic-cli hands args over as an OS-native tag union — that union IS `OsStr`
+    # basic-cli hands over the arguments the user typed — no program name at index 0 —
+    # as an OS-native tag union: that union IS `OsStr`
     # (Utf8 | UnixBytes raw argv | WindowsU16s UTF-16 code units). OsStr.display decodes ALL
     # three, including Windows UTF-16, best-effort (invalid text -> U+FFFD). This is why macOS +
     # Linux + Windows all Just Work here: the platform owns the decoding, not us.
@@ -248,7 +249,7 @@ main! = |raw_args| {
 
 # Re-run THIS executable with STRIDE_FORMAT pinned for the child; stdio is
 # inherited, so output streams exactly as if the child were the process.
-# The program is Env.exe_path!(), never argv[0]: a bare argv[0] re-resolves
+# The program is Env.exe_path!(), never the bare name: a name re-resolves
 # through PATH for the child, so a shadowing entry could run a DIFFERENT binary
 # than the one executing. Killing the parent orphans the child — inherent to
 # re-exec, and the reason this stays a shim rather than growing features.
@@ -256,7 +257,7 @@ reexec_with_format! : List(Str), Str => Try({}, _)
 reexec_with_format! = |cleaned, fmt| {
     self = Env.exe_path!()?
     # `--` first: the child parses every remaining token as literal
-    child_args = List.prepend(List.map(List.drop_first(cleaned, 1), OsStr.from_str), OsStr.from_str("--"))
+    child_args = List.prepend(List.map(cleaned, OsStr.from_str), OsStr.from_str("--"))
     match Cmd.new(Path.to_os_str(self)).args(child_args).env(OsStr.from_str("STRIDE_FORMAT"), OsStr.from_str(fmt)).exec_cmd!() {
         Ok(_) => Ok({})
         # the child already printed its own error surface (envelope or human

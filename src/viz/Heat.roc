@@ -18,7 +18,7 @@ Heat :: [].{
 	row_of : I64 -> I64
 	row_of = |dow| if dow == 0 (6) else dow - 1
 
-	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64), ..])
+	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
 		win_w = model.win.w
 		win_h = model.win.h
