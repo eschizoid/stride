@@ -168,7 +168,8 @@ Curve :: [].{
 					dpr_txt = delta_label(r.now_w, r.prev_w)
 					if dpr_txt != "" {
 						dpr_col = if r.now_w > r.prev_w tsb_c else Theme.alarm_c
-						Text.from(dpr_txt, model.font).size(10).draw!(frame, { pos: { x: cx(r.i) + 10.0, y: (cy(I64.to_f32(r.prev_w)) + rec_y) / 2.0 - 6.0 }, color: dpr_col, align: (Top, Left) })
+						dpr_w = model.font.measure({ text: dpr_txt, size: 10.0, spacing: Text.default_spacing }).width
+						Text.from(dpr_txt, model.font).size(10).draw!(frame, { pos: { x: delta_left_x(cx(r.i), dpr_w, pad_l + pw - label_inset), y: (cy(I64.to_f32(r.prev_w)) + rec_y) / 2.0 - 6.0 }, color: dpr_col, align: (Top, Left) })
 					}
 				} else {
 					frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 3.0, style: Draw.filled(Color.with_alpha(ink_muted, 80)) })
@@ -183,7 +184,8 @@ Curve :: [].{
 						d_txt = delta_label(r.now_w, r.prev_w)
 						if d_txt != "" {
 							d_col = if r.now_w > r.prev_w tsb_c else Theme.alarm_c
-							Text.from(d_txt, model.font).size(10).draw!(frame, { pos: { x: cx(r.i) + 10.0, y: (cy(I64.to_f32(r.prev_w)) + now_y) / 2.0 - 6.0 }, color: d_col, align: (Top, Left) })
+							d_w = model.font.measure({ text: d_txt, size: 10.0, spacing: Text.default_spacing }).width
+							Text.from(d_txt, model.font).size(10).draw!(frame, { pos: { x: delta_left_x(cx(r.i), d_w, pad_l + pw - label_inset), y: (cy(I64.to_f32(r.prev_w)) + now_y) / 2.0 - 6.0 }, color: d_col, align: (Top, Left) })
 						}
 					}
 				}
@@ -202,11 +204,7 @@ Curve :: [].{
 		Ok({})
 	}
 
-	# the window-over-window change, said in watts with its sign - the number
-	# this view argues with. Empty when either side is absent (a comparison
-	# with nothing is not a delta) and when equal (the dots already overlap,
-	# and a "+0w" would claim a precision the rounding does not carry).
-	# a centred label keeps this much plot between itself and the edge, so it
+	# a label keeps this much plot between itself and the right edge, so it
 	# reads apart from the CP label drawn just beyond it
 	label_inset : F32
 	label_inset = 8.0
@@ -220,6 +218,16 @@ Curve :: [].{
 		if half_w * 2.0 >= hi - lo ((lo + hi) / 2.0)
 		else F32.max(lo + half_w, F32.min(x, hi - half_w))
 
+	# a delta sits 10px right of its rung, left-aligned; when that would run
+	# past the plot's right edge (the last rung is that edge, and the CP label
+	# sits just beyond it) it sits 10px left of the rung instead, ending there
+	delta_left_x : F32, F32, F32 -> F32
+	delta_left_x = |x, w, hi| if x + 10.0 + w <= hi (x + 10.0) else x - 10.0 - w
+
+	# the window-over-window change, said in watts with its sign - the number
+	# this view argues with. Empty when either side is absent (a comparison
+	# with nothing is not a delta) and when equal (the dots already overlap,
+	# and a "+0w" would claim a precision the rounding does not carry).
 	delta_label : I64, I64 -> Str
 	delta_label = |now, prev|
 		if now <= 0 or prev <= 0 ""
@@ -236,3 +244,6 @@ expect Curve.delta_label(300, 0) == ""
 # a centred label moves in from the plot's edges by its overhang and no
 # further; one wider than the plot sits on the plot's centre
 expect Curve.label_center_within(100.0, 40.0, 0.0, 110.0) == 70.0 and Curve.label_center_within(50.0, 40.0, 0.0, 110.0) == 50.0 and Curve.label_center_within(10.0, 40.0, 0.0, 110.0) == 40.0 and Curve.label_center_within(100.0, 60.0, 0.0, 110.0) == 55.0
+# a delta that fits to the right of its rung stays there; one that would run
+# past the plot ends 10px left of the rung instead
+expect Curve.delta_left_x(100.0, 30.0, 200.0) == 110.0 and Curve.delta_left_x(170.0, 30.0, 200.0) == 130.0 and Curve.delta_left_x(160.0, 30.0, 200.0) == 170.0
