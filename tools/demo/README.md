@@ -13,7 +13,12 @@ the database. Tracking issue: #591.
 - **Screen recording** for the app that runs the take (the terminal you run it
   from), and **Automation, Terminal** for it: the take opens a Terminal window
   and sets its font and colours. macOS asks for each once.
-- **An ElevenLabs key** for the narration, saved where only you can read it:
+- **A voice.** By default `voice.sh` uses the voices installed on this Mac
+  through `say`; nothing leaves the machine. A Premium or Enhanced voice
+  (System Settings, Accessibility, Spoken Content, System Voice, Manage
+  Voices) sounds much better and works the same way once downloaded.
+  `VOICE_ENGINE=elevenlabs` uses ElevenLabs instead, with the key saved where
+  only you can read it:
 
   ```
   mkdir -p ~/.config/stride-demo && pbpaste > ~/.config/stride-demo/elevenlabs.key && chmod 600 ~/.config/stride-demo/elevenlabs.key
@@ -43,8 +48,9 @@ message when either is missing; a new snapshot fixes it.
 ```
 cd tools/demo
 ./take.sh                      # ~2.5 min; you press [ at the first chime, R at the second
-./voice.sh samples             # 10-second samples in three voices
-./voice.sh render <Voice>      # the narration in the chosen voice
+./voice.sh voices              # the voices on this Mac
+./voice.sh samples             # the opening line in a few of them
+./voice.sh render "<Voice>"    # the narration in the chosen voice
 ./compose.sh                   # out/stride-demo-1440p.mp4, -1080p.mp4, poster.png, poster.gif, contact-sheet.png
 ```
 
@@ -69,7 +75,7 @@ A guard sends both windows back on top if another app takes the front. Check
 | `drive.sh` | the terminal half: types and runs each command, logs a mark at every prompt |
 | `capture.sh` | records that rectangle with ffmpeg |
 | `take.sh` | runs one take end to end |
-| `voice.sh` | the narration, by ElevenLabs |
+| `voice.sh` | the narration, by the Mac's own voices or ElevenLabs |
 | `compose.sh` | the edit: cards, captions, narration, exports |
 
 The finished MP4 goes up as a release asset or a GitHub attachment, not into
