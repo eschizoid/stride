@@ -42,16 +42,21 @@ message when either is missing; a new snapshot fixes it.
 
 ```
 cd tools/demo
-./take.sh                      # ~2.5 min; press [ in the stride window at CUE
+./take.sh                      # ~2.5 min; you press [ at the first chime, R at the second
 ./voice.sh samples             # 10-second samples in three voices
 ./voice.sh render <Voice>      # the narration in the chosen voice
-./compose.sh                   # out/stride-demo-1440p.mp4, -1080p.mp4, poster.png, poster.gif
+./compose.sh                   # out/stride-demo-1440p.mp4, -1080p.mp4, poster.png, poster.gif, contact-sheet.png
 ```
 
 During the take the stride window sits at the left of the screen and the
-Terminal window at the right; leave both alone except for the one key press
-at CUE (it steps the trace to an older session, which the next focus read
-reports). Only that rectangle of the screen is recorded.
+Terminal window at the right. The capture records that rectangle of the
+screen, so whatever comes in front of it is recorded too: quit chat and mail
+apps first, and keep your hands off the Mac except for two key presses in the
+stride window, each cued by a chime: "[" at the first (it steps the trace to
+an older session, which the next focus read reports) and "R" at the second (it
+reloads the window, so the plan view shows the edit the terminal just made).
+A guard sends both windows back on top if another app takes the front. Check
+`out/contact-sheet.png` before publishing anything.
 
 ## The files
 

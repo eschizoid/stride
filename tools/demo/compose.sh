@@ -9,8 +9,9 @@
 # (Quicksand, JetBrains Mono), since this ffmpeg has no text filter.
 #
 # Outputs in $DEMO_DIR/out: stride-demo-1440p.mp4, stride-demo-1080p.mp4,
-# poster.png (a frame from the steering scene) and poster.gif (six seconds of
-# it, for the README).
+# poster.png (a frame from the steering scene), poster.gif (six seconds of it,
+# for the README) and contact-sheet.png (twelve frames across the cut, to check
+# before publishing that nothing but the two demo windows was recorded).
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -99,5 +100,12 @@ verify=$(awk -F'\t' '$1 == "verify" {print $2}' "$work/scenes")
 ffmpeg -hide_banner -loglevel error -y -ss "$(echo "$verify - 1.5" | bc -l)" -i "$out/stride-demo-1440p.mp4" -frames:v 1 "$out/poster.png"
 ffmpeg -hide_banner -loglevel error -y -ss "$(echo "$verify - 6" | bc -l)" -t 6 -i "$out/stride-demo-1440p.mp4" \
   -vf "fps=12,scale=1000:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=160[p];[b][p]paletteuse=dither=sierra2_4a" -loop 0 "$out/poster.gif"
+# twelve frames across the cut in one image, to check before anything is
+# published that only the two demo windows ever reached the capture
+for i in $(seq 0 11); do
+  ffmpeg -hide_banner -loglevel error -y -ss "$(echo "$dur * ($i + 0.5) / 12" | bc -l)" -i "$out/stride-demo-1080p.mp4" -frames:v 1 -vf scale=640:-1 "$work/sheet-$i.png"
+done
+ffmpeg -hide_banner -loglevel error -y $(for i in $(seq 0 11); do printf -- "-i %s " "$work/sheet-$i.png"; done) \
+  -filter_complex "[0][1][2][3]hstack=4[a];[4][5][6][7]hstack=4[b];[8][9][10][11]hstack=4[c];[a][b][c]vstack=3" "$out/contact-sheet.png"
 for f in "$out"/*; do printf '%s  %s\n' "$(du -h "$f" | cut -f1)" "$f"; done
 printf 'length %.1fs\n' "$dur"
