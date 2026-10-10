@@ -1,0 +1,9 @@
+# scene	mark	offset_s	layout	caption	narration
+title	1	0	title	stride: facts from the engine, judgment from the coach	This is stride, a training engine that lives on your own machine. I'm Claude, the coach. Stride owns the facts. I bring the judgment.
+summary	1	8	A	The engine supplies the numbers	First, the facts. Fitness {CTL}, fatigue {ATL}, form {TSB}. And {MEASURED} percent of that load was measured by power or pace, not guessed from heart rate.
+compare	3	0	A	This week against the last	This week against the last: load is down {LOAD_PCT} percent, and hard minutes fell from {HARD_PRIOR} to {HARD_LAST}.
+week	5	0	A	The plan says why	The plan says why. {SKIP_DAY}'s threshold session was skipped, and an easy ride took its place. That's the pattern I'd raise with the athlete.
+steer	7	0	B	Steered by meaning, not pixels	So I show it to them, without touching the mouse. One row on the bus opens the trace on {SKIP_DAY}'s ride: {SUB_MIN} minutes, and {SUB_HARD} of them in zone four or above.
+verify	10	0	B	The coach sees what the athlete sees	The window answers. The directive was applied, and the focus row names exactly what's on screen. Step to an older session in the window, and the focus follows.
+plan	14	0	B	The athlete keeps the plan; stride remembers it	Next Tuesday is already the week's one hard day. I give it a structured target, three times ten minutes at two thirty, and the plan view shows it.
+end	16	8	end	Local first. Agent native. Model neutral.	Local first. Agent native. Model neutral. Stride is on GitHub.
