@@ -97,7 +97,7 @@ reason `--json` and still answers in JSON).
    activities, idempotent, and returns
    `{computed, stream_errors, form_tsb, form_tsb_known, form_state, form_delta_7d, form_delta_known, converged}`.
    `stream_errors` counts activities scored from summary fields because they had no
-   readable stream: one never fetched is fetched by the next sync, while a stored row
+   readable stream: one never fetched is fetched by the next sync if it has moving time, while a stored row
    that does not decode is never re-pulled. Run analyze after every sync.
 3. **Read the bundle** with `stride plan --json` before proposing anything: its
    `plan_history_28d` and `adherence_28d` record what was targeted and what happened, so
