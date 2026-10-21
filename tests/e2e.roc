@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1263)?
+    checks_ran_exactly!(1280)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -409,6 +409,7 @@ run_scenarios! = |ctx| {
     b_relabel!(ctx)?
     b_targets!(ctx)?
     b_events!(ctx)?
+    b_strength_import!(ctx)?
     b_concurrency!(ctx)?
     b_migration!(ctx)?
     Ok({})
@@ -1546,7 +1547,7 @@ b_init_config! = |ctx| {
     _ = sh!("rm -rf '${help_dir}' && mkdir -p '${help_dir}' && ${spec_names} > '${help_dir}/spec' && ${human_help} > '${help_dir}/human'")
     # Fail-closed: an empty extraction on either side would make the loop below vacuous.
     help_sizes = Str.trim(sh!("wc -l < '${help_dir}/spec' | tr -d ' '"))
-    check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "42")?
+    check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "43")?
     missing_from_help = Str.trim(sh!("while IFS= read -r c; do grep -qw -- \"\$c\" '${help_dir}/human' || printf '%s ' \"\$c\"; done < '${help_dir}/spec'"))
     check!("every command in the table is named in `stride --help` (missing: ${missing_from_help})", missing_from_help == "")?
     _ = sh!("rm -rf '${help_dir}'")
@@ -1666,11 +1667,15 @@ b_init_config! = |ctx| {
     check!("the network set is exactly auth and sync", cmdq!("[.data.commands[] | select(.network) | .name] | sort") == "[\n  \"auth\",\n  \"sync\"\n]")?
     check!("...and Strava is still reachable from exactly two call sites", Str.trim(sh!("sed 's/#.*//' src/cli/Strava.roc | grep -c 'Http.send!'")) == "2")?
     check!("...with no other module able to reach one", Str.trim(sh!("for f in src/cli/*.roc; do sed 's/#.*//' $f | grep -q 'Http.send!' && printf '%s' $f; done")) == "src/cli/Strava.roc")?
-    # `interactive` the same way: Stdin is what blocking on a human looks like, and it
-    # appears once in the whole source, inside the auth flow.
+    # `interactive` the same way: Stdin is what blocking on a human looks like. It is
+    # read in two places. The auth flow reads a pasted code from whoever is at the
+    # terminal. `strength import -` reads stdin only because its caller passed `-`, so
+    # what arrives there is what the caller piped, and the form is not interactive. Both
+    # reads are pinned, so a third is a deliberate edit here and a decision about the
+    # `interactive` column.
     check!("the interactive set is exactly auth", cmdq!("[.data.commands[] | select(.interactive) | .name]") == "[\n  \"auth\"\n]")?
-    check!("...and stdin is read from exactly one place", Str.trim(sh!("sed 's/#.*//' src/cli/Strava.roc | grep -c 'Stdin\\.'")) == "1")?
-    check!("...which is the only module that reads it", Str.trim(sh!("for f in src/cli/*.roc; do sed 's/#.*//' $f | grep -q 'Stdin\\.' && printf '%s' $f; done")) == "src/cli/Strava.roc")?
+    check!("...and stdin is read from exactly one place in each of two modules", Str.trim(sh!("for f in src/cli/Strava.roc src/cli/Import.roc; do sed 's/#.*//' $f | grep -c 'Stdin\\.'; done | tr '\\n' ' '")) == "1 1")?
+    check!("...which are the only modules that read it", Str.trim(sh!("for f in src/cli/*.roc; do sed 's/#.*//' $f | grep -q 'Stdin\\.' && printf '%s ' $f; done")) == "src/cli/Import.roc src/cli/Strava.roc")?
     # The mutation-proof for the sweep itself: a form that DOES write, run the same way,
     # must be caught. `week add` is declared mutates:true so it is not in the sweep, and
     # it is chosen over `rate` because it writes unconditionally — `rate` depends on the
@@ -7156,6 +7161,45 @@ b_import! = |ctx| {
     Ok({})
 }
 
+# ── strength import: Strava's structured strength log, via the connector ──
+# The fixture is the connector's own JSON: one workout with nine sets, and one
+# with none. Its two activity ids are seeded here as strength sessions; a third
+# session (9713) carries only a Peloton paste. 20590139628 carries the SAME
+# paste as a description, so its rows say which source the rebuild read: a
+# description that parses for 9713 and does not reach 20590139628 is the
+# log winning, not the paste failing.
+b_strength_import! : Ctx => Try({}, _)
+b_strength_import! = |ctx| {
+    fx = "tests/fixtures/strava-strength-log.json"
+    paste = "Block 1\nDumbbell Crush Press\n3 × 8 • 30 lbs/side"
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance) VALUES (20590139628, 'connector lift', 'WeightTraining', '2018-06-04T07:00:00Z', 3600, 0), (20575593919, 'connector empty lift', 'WeightTraining', '2018-06-02T07:00:00Z', 3600, 0), (9713, 'pasted lift', 'WeightTraining', '2018-06-06T07:00:00Z', 3600, 0), (9714, 'unpasted lift', 'WeightTraining', '2018-06-08T07:00:00Z', 3600, 0); INSERT OR REPLACE INTO strength_notes (activity_id, description) VALUES (20590139628, '${paste}'), (9713, '${paste}');")
+    check!("strength import stores the workout with sets and skips the empty one", strjq!(ctx, ["strength", "import", fx], ".data | tojson") == "{\"imported\":[{\"activity_id\":20590139628,\"rows\":3,\"sets\":9}],\"skipped\":[{\"activity_id\":\"20575593919\",\"reason\":\"no_sets\"}]}")?
+    check!("...as the folded rows, each naming strava as its source", Str.trim(sql!(ctx.db, "SELECT group_concat(ordinal || ':' || exercise || ':' || sets || 'x' || reps || '@' || weight_kg || ':' || source, '|') FROM (SELECT * FROM strength_sets WHERE activity_id = 20590139628 ORDER BY ordinal);")) == "0:Neutral Grip Dumbbell Bench Press:3x8@13.6:strava|1:Push Up:3x8@79.4:strava|2:Lateral Raise:3x12@5.9:strava")?
+    check!("...while the same paste still parses where no log exists, so the log won rather than the paste failing", Str.trim(sql!(ctx.db, "SELECT COUNT(*) || ':' || MIN(source) FROM strength_sets WHERE activity_id = 9713;")) == "1:peloton")?
+    check!("the stored payload is the one workout object, its activity id included", Str.trim(sh!("sqlite3 '${ctx.db}' \"SELECT payload FROM strength_logs WHERE activity_id = 20590139628;\" | jq -r '.activity_id + \":\" + (.exercise_sets | length | tostring)'")) == "20590139628:9")?
+    check!("...stamped with a UTC import time, and nothing stored for the skipped workout", Str.trim(sql!(ctx.db, "SELECT COUNT(*) || ':' || SUM(imported_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z') FROM strength_logs WHERE activity_id IN (20590139628, 20575593919);")) == "1:1")?
+    check!("strength import conforms to its schema", validate_schema!(ctx, "strength import ${fx}", "strength-import") == "")?
+    check!("...and the human line names each workout's outcome", Str.trim(stride_human!(ctx.bin, ctx.home, ["strength", "import", fx])) == "imported 20590139628: 3 rows, 9 sets\nskipped 20575593919: no_sets")?
+    # a lone workout object on stdin, same activity, different sets: the log
+    # and the rows are replaced, not appended to
+    reimport = "{\"activity_id\":\"20590139628\",\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"22 lb\"},\"reps\":{\"value\":\"10\"}},{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"22 lb\"},\"reps\":{\"value\":\"10\"}}]}"
+    check!("a lone workout on stdin re-imports", Str.trim(sh!("printf '%s' '${reimport}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - | jq -c '.data.imported'")) == "[{\"activity_id\":20590139628,\"rows\":1,\"sets\":2}]")?
+    check!("...replacing the activity's log and its rows", Str.trim(sql!(ctx.db, "SELECT (SELECT COUNT(*) FROM strength_logs WHERE activity_id = 20590139628) || ':' || group_concat(exercise || ':' || sets || 'x' || reps || '@' || CAST(ROUND(weight_kg * 1000) AS INTEGER), '|') FROM strength_sets WHERE activity_id = 20590139628;")) == "1:Curl:2x10@9979")?
+    unplaceable = "[{\"activity_id\":\"99999999999\",\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"reps\":{\"value\":\"10\"}}]},{\"activity_id\":\"lift-7\",\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"reps\":{\"value\":\"10\"}}]},{\"exercise_sets\":[]}]"
+    check!("an unknown activity, a non-numeric id and a missing one are skipped with their reasons", Str.trim(sh!("printf '%s' '${unplaceable}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - | jq -c '.data'")) == "{\"imported\":[],\"skipped\":[{\"activity_id\":\"99999999999\",\"reason\":\"unknown_activity\"},{\"activity_id\":\"lift-7\",\"reason\":\"bad_activity_id\"},{\"activity_id\":\"\",\"reason\":\"bad_activity_id\"}]}")?
+    check!("...storing nothing for them", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM strength_logs WHERE activity_id = 99999999999;")) == "0")?
+    # a log for an activity with no stored description at all: the rebuild reads
+    # logs that have no strength_notes row beside them too
+    _ = sh!("printf '%s' '{\"activity_id\":\"9714\",\"exercise_sets\":[{\"exercise_name\":\"Goblet Squat\",\"weight\":{\"value\":\"20 kg\"},\"reps\":{\"value\":\"12\"}}]}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - >/dev/null")
+    check!("a log with no description beside it still yields rows", Str.trim(sql!(ctx.db, "SELECT COUNT(*) || ':' || MIN(source) FROM strength_sets WHERE activity_id = 9714;")) == "1:strava")?
+    check!("input that is not workout JSON is bad_json", Str.trim(sh!("printf 'Curl\\n3 x 12 • 15 lbs' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - | jq -r '.error.code'")) == "bad_json")?
+    check!("a file that cannot be read is unreadable_file", strjq!(ctx, ["strength", "import", "${ctx.home}/no-such-log.json"], ".error.code") == "unreadable_file")?
+    check!("no file argument is a usage error, not the strength report", strjq!(ctx, ["strength", "import"], ".error.code") == "usage")?
+    check!("...and neither is a second one", strjq!(ctx, ["strength", "import", fx, fx], ".error.code") == "usage")?
+    _ = sql!(ctx.db, "DELETE FROM strength_sets WHERE activity_id IN (20590139628, 20575593919, 9713, 9714); DELETE FROM strength_logs WHERE activity_id IN (20590139628, 20575593919, 9714); DELETE FROM strength_notes WHERE activity_id IN (20590139628, 9713); DELETE FROM activities WHERE id IN (20590139628, 20575593919, 9713, 9714);")
+    Ok({})
+}
+
 # ── session-RPE: the athlete scores what sensors can't ──────────────
 b_rpe! : Ctx => Try({}, _)
 b_rpe! = |ctx| {
@@ -7909,6 +7953,7 @@ b_migration! = |ctx| {
     # so a migration that wiped config passed this suite (audit finding)
     check!("migration preserves judgment-tier config rows", Str.trim(sql!(migdb, "SELECT value FROM config WHERE key='hr_z2_max';")) == "153")?
     check!("ratings table created", Str.contains(sql!(migdb, "SELECT 1 FROM ratings LIMIT 0; SELECT 'ok';"), "ok"))?
+    check!("strength_logs table created, with its three columns", Str.trim(sql!(migdb, "SELECT group_concat(name, ',') FROM pragma_table_info('strength_logs');")) == "activity_id,payload,imported_at")?
     check!("metric provenance columns added", Str.contains(sql!(migdb, "SELECT load_model, metrics_rev, zones_used FROM activity_metrics LIMIT 0; SELECT 'ok';"), "ok"))?
     check!("weighted_avg_watts column added", Str.contains(sql!(migdb, "SELECT weighted_avg_watts FROM activities LIMIT 0; SELECT 'ok';"), "ok"))?
     check!("activities survive migration", Str.trim(sql!(migdb, "SELECT COUNT(*) FROM activities;")) == "2")?

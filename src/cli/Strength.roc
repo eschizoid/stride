@@ -1,9 +1,10 @@
 import strength.Adapter
 import strength.Peloton
+import strength.StravaLog
 
 Strength :: [].{
-    # ── the strength-notes adapter pack: the TABLE and its dispatcher ──────
-    # The parsers live in the `src/strength` package, one module per app,
+    # ── the strength-set adapter pack: the TABLE and its dispatcher ────────
+    # The parsers live in the `src/strength` package, one module per source,
     # each keeping the contract stated in `strength.Adapter`. This module
     # holds the ordered table that registers them and the dispatcher that
     # asks each in turn; it knows no grammar of its own. Supporting another
@@ -11,22 +12,23 @@ Strength :: [].{
 
     SetRow : Adapter.SetRow
 
-    # what one description parses to: the rows, and the NAME of the adapter
-    # that read them — stored per row (strength_sets.source) so a career of
-    # mixed apps stays distinguishable, the load_coverage discipline applied
-    # to sets. "" with no rows means no adapter recognized the text.
+    # what one text parses to: the rows, and the NAME of the adapter that
+    # read them — stored per row (strength_sets.source) so a career of mixed
+    # sources stays distinguishable, the load_coverage discipline applied to
+    # sets. "" with no rows means no adapter recognized the text.
     Parsed : { source : Str, rows : List(SetRow) }
 
     # ORDERED, and the order IS the disambiguation rule: adapters are tried
     # top to bottom and the first to yield rows wins, so a narrower grammar
     # goes ABOVE a broader one, and a new adapter's author owns the check
     # that their format does not claim text an existing adapter already
-    # reads. `tools/adapter-fixtures.sh` pins this order and holds every row
-    # to a module in the package (and every module to a row), so a reorder
-    # or an unregistered parser is a deliberate edit to the pin, never a
-    # silent one.
+    # reads. A Strava workout object is JSON, the narrower grammar, so it
+    # sits above the Peloton share summary. `tools/adapter-fixtures.sh` pins
+    # this order and holds every row to a module in the package (and every
+    # module to a row), so a reorder or an unregistered parser is a
+    # deliberate edit to the pin, never a silent one.
     adapters : List({ name : Str, parse : Str -> List(SetRow) })
-    adapters = [{ name: "peloton", parse: Peloton.parse }]
+    adapters = [{ name: "strava", parse: StravaLog.parse }, { name: "peloton", parse: Peloton.parse }]
 
     parse : Str -> Parsed
     parse = |text| first_recognized(adapters, text)
@@ -56,10 +58,15 @@ expect {
 
 # the dispatcher: the first adapter to yield rows names the provenance, and
 # unrecognized text is "" with no rows — the honest-gap contract at the pack
-# level, not just per adapter
+# level, not just per adapter. A share summary falls past the strava adapter
+# to peloton; a workout object stops at strava.
 expect {
     p = Strength.parse("A\n3 × 8 • 30 lbs")
     p.source == "peloton" and List.len(p.rows) == 1
+}
+expect {
+    p = Strength.parse(StravaLog.sample)
+    p.source == "strava" and List.len(p.rows) == 3
 }
 expect {
     p = Strength.parse("a ride description no adapter recognizes")

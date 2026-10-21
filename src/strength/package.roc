@@ -1,1 +1,1 @@
-package [Adapter, Peloton] { core: "../core/package.roc" }
+package [Adapter, Peloton, StravaLog] { core: "../core/package.roc" }

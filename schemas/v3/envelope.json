@@ -31,6 +31,7 @@
             "bad_count",
             "bad_date",
             "bad_id",
+            "bad_json",
             "bad_metric",
             "bad_period",
             "bad_rpe",
@@ -72,6 +73,7 @@
             "unreadable_config",
             "unreadable_daily_load_day",
             "unreadable_database",
+            "unreadable_file",
             "unscorable",
             "unzip_failed",
             "usage"

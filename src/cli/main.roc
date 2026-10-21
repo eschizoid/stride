@@ -89,6 +89,8 @@ help_text =
         \\    sync                        pull new activities + streams (rolling 30d self-heal)
         \\    sync --all                  force a full re-list from scratch (dev escape hatch)
         \\    import <zip|dir>            load a Strava account export — no API creds needed
+        \\    strength import <file|->    store strength sets from the JSON Strava's connector
+        \\                                returned (`-` reads stdin)
         \\    analyze                     compute training metrics (TSS, zones, CTL/ATL/TSB)
         \\
         \\WHERE DO I STAND?
@@ -407,6 +409,7 @@ dispatch! = |cmd|
         Command.Activities(c, sport) => ReportSessions.activities!(c, sport)
         Command.Top(metric, c, sport) => ReportSessions.top!(metric, c, sport)
         Command.Import(src) => Import.import_archive!(src)
+        Command.StrengthImport(src) => Import.import_strength_log!(src)
         Command.Rate(target, rpe_str) => Plan.rate!(target, rpe_str)
         Command.Progress(name, sort) => ReportSessions.progress!(name, sort)
         Command.Tte(watts) => ReportHealth.tte!(watts)

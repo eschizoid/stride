@@ -65,7 +65,7 @@ awk '
 # The command->schema join, derived from the table rather than restated.
 grep '\(reads\|writes\)("' src/cli/Command.roc | while IFS= read -r line; do
   n=$(printf '%s\n' "$line" | grep -o '\(reads\|writes\)("[^"]*"' | head -1 | sed 's/.*("//;s/"$//')
-  s=$(printf '%s\n' "$line" | grep -o '"[a-z_]*\.json"' | tail -1 | tr -d '"')
+  s=$(printf '%s\n' "$line" | grep -o '"[a-z_-]*\.json"' | tail -1 | tr -d '"')
   if [ -n "$n" ] && [ -n "$s" ]; then printf '%s\t%s\n' "$n" "$s"; fi
 done | sort -u > "$tmp/join"
 
@@ -277,8 +277,8 @@ if [ "$n" -gt 0 ]; then
 fi
 # Both counts asserted EXACTLY, not as floors: under a floor, rows can stop matching
 # while the gate prints the same clean line a healthy tree prints.
-EXPECT_PINNED=54
-EXPECT_LITERALS=42
+EXPECT_PINNED=57
+EXPECT_LITERALS=45
 if [ "$pinned" != "$EXPECT_PINNED" ] || [ "$literals" != "$EXPECT_LITERALS" ]; then
   echo "skill-shapes: enforced $pinned doc-pinned objects and matched $literals brace literals;"
   echo "skill-shapes: expected $EXPECT_PINNED and $EXPECT_LITERALS. If intended, update these"

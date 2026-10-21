@@ -1,0 +1,62 @@
+{
+  "title": "strength import",
+  "description": "Result of `stride strength import <file|->` — strength workouts as Strava's MCP connector returns them (a list of workout objects, or one), each stored in strength_logs against its activity and parsed into strength_sets before the command returns, so `stride strength` shows them without an analyze. A stored log takes precedence over the activity's description for that activity, and re-importing an activity replaces its log. `imported` and `skipped` together hold one entry per workout in the input, in input order within each list. A skipped workout is not an error: the command exits 0 and names the reason, and only unreadable input or input that is not workout JSON fails the command.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "imported",
+    "skipped"
+  ],
+  "properties": {
+    "imported": {
+      "type": "array",
+      "description": "One entry per stored workout. `rows` counts the stored set rows (consecutive sets of one exercise at the same reps and weight fold into one row); `sets` counts the sets those rows hold.",
+      "items": {
+        "type": "object",
+        "additionalKeys": false,
+        "required": [
+          "activity_id",
+          "rows",
+          "sets"
+        ],
+        "properties": {
+          "activity_id": {
+            "type": "integer"
+          },
+          "rows": {
+            "type": "integer"
+          },
+          "sets": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "skipped": {
+      "type": "array",
+      "description": "One entry per workout left unstored. `activity_id` is the input's value as given, a string because a skipped id need not be numeric (\"\" when the workout carried none).",
+      "items": {
+        "type": "object",
+        "additionalKeys": false,
+        "required": [
+          "activity_id",
+          "reason"
+        ],
+        "properties": {
+          "activity_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "bad_activity_id",
+              "no_sets",
+              "unknown_activity"
+            ],
+            "description": "bad_activity_id: absent, not a whole number, or not positive. unknown_activity: no activity with that id in the database (sync first). no_sets: no set with reps to store."
+          }
+        }
+      }
+    }
+  }
+}

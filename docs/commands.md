@@ -51,6 +51,10 @@ _How hard did it feel?_ Session-RPE (Borg): you are the sensor for strength, HII
 
 Loads a **Strava account export** (the ZIP from Settings → My Account → Download or Delete Your Account) — **no API credentials or subscription needed**. Summary-level data (no streams yet, so zone breakdowns stay honestly absent); re-import is idempotent. English-language exports only.
 
+### `stride strength import <file|->`
+
+Stores a strength workout's sets from the JSON **Strava's MCP connector** returns (`get_strength_workout_details`). Strava's app keeps each exercise, set, weight and rep count as structured data, but its public API does not return them, so `sync` cannot fetch them; a coach with the connector fetches the JSON and hands it over as a file, or on stdin with `-`. The input is a list of workout objects or one on its own, each `{ activity_id, exercise_sets: [...] }`. Each workout is stored against its activity (a re-import replaces it) and parsed into set rows straight away, so `stride strength` shows it without an `analyze`. Consecutive identical sets fold into one row, weights are stored as entered (pounds converted to kg, never doubled for dumbbells), and a set with no reps is left out. For an activity that has both a stored log and a pasted description, the log is what gets parsed. A workout that cannot be placed is reported as skipped with its reason (`unknown_activity` — sync first, `bad_activity_id`, or `no_sets`) and the rest of the batch still lands.
+
 ### `stride analyze`
 
 Computes metrics for new (or invalidated) activities — TSS, time-in-zone, normalized power — then rebuilds the daily fitness/fatigue/form series through today. Prints what it did plus a one-line form verdict.
@@ -133,7 +137,7 @@ _What has my training actually looked like, block by block?_ (the whole history,
 
 ### `stride strength`
 
-_Am I getting stronger?_ Per-exercise top-set progression — the first and latest day each repeated exercise was lifted, from the set breakdowns pasted into strength sessions' descriptions — beside monthly tonnage, each figure with its coverage stated (`3 of 7 sessions` carry sets, and a month under a third coverage claims no tonnage at all). Tonnage is volume, not strength: it falls when pull work gives way to isolation whatever happened to capacity, which is exactly the misreading the per-exercise series exists to prevent. Sessions with nothing to parse are counted out loud, and the report says how to change that.
+_Am I getting stronger?_ Per-exercise top-set progression — the first and latest day each repeated exercise was lifted, from the sets stored by `strength import` or pasted into strength sessions' descriptions — beside monthly tonnage, each figure with its coverage stated (`3 of 7 sessions` carry sets, and a month under a third coverage claims no tonnage at all). Tonnage is volume, not strength: it falls when pull work gives way to isolation whatever happened to capacity, which is exactly the misreading the per-exercise series exists to prevent. Sessions with nothing to parse are counted out loud, and the report says how to change that.
 
 ### `stride tte <watts>`
 
