@@ -278,7 +278,7 @@ fi
 # Both counts asserted EXACTLY, not as floors: under a floor, rows can stop matching
 # while the gate prints the same clean line a healthy tree prints.
 EXPECT_PINNED=60
-EXPECT_LITERALS=47
+EXPECT_LITERALS=54
 if [ "$pinned" != "$EXPECT_PINNED" ] || [ "$literals" != "$EXPECT_LITERALS" ]; then
   echo "skill-shapes: enforced $pinned doc-pinned objects and matched $literals brace literals;"
   echo "skill-shapes: expected $EXPECT_PINNED and $EXPECT_LITERALS. If intended, update these"
