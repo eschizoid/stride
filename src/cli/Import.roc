@@ -92,9 +92,12 @@ Import :: [].{
     # family is read from activity_family_month, the view strength_coverage
     # groups on, so the gate and the view cannot disagree.
     #
-    # The FIRST workout in the input naming an activity is the one considered;
-    # a later one naming it again is skipped as duplicate_activity, so a
-    # batch never stores one activity twice and reports both.
+    # An activity is claimed by the first workout in the input that is STORED
+    # for it; a later workout naming a stored activity is skipped as
+    # duplicate_activity, so a batch never stores one activity twice and
+    # reports both. A workout skipped for any other reason claims nothing, so
+    # a valid workout after an empty or unreadable one for the same activity
+    # still lands.
     StrengthImported : { activity_id : I64, rows : I64, sets : I64, dropped : List(StravaLog.Dropped), zeroed : List(StravaLog.Zeroed) }
     StrengthSkipped : { activity_id : Str, reason : Str, dropped : List(StravaLog.Dropped) }
     StrengthImportOutcome : { imported : List(StrengthImported), skipped : List(StrengthSkipped) }
@@ -149,7 +152,7 @@ Import :: [].{
                                     } else if List.contains(acc.seen, aid) {
                                         skip("duplicate_activity", [])
                                     } else {
-                                        placed = { ..acc, seen: List.append(acc.seen, aid) }
+                                        placed = acc
                                         fams = Sqlite.query_many!({
                                             path: Path.utf8(db),
                                             query: "SELECT CAST(fam AS TEXT) AS fam FROM activity_family_month WHERE activity_id = :id",
@@ -180,7 +183,7 @@ Import :: [].{
                                                         })?
                                                         sets = List.fold(got.rows, 0, |n, r| n + r.sets)
                                                         entry = { activity_id: aid, rows: List.len(got.rows).to_i64_wrap(), sets, dropped: got.dropped, zeroed: got.zeroed }
-                                                        { ..placed, imported: List.append(placed.imported, entry) }
+                                                        { ..placed, imported: List.append(placed.imported, entry), seen: List.append(placed.seen, aid) }
                                                     }
                                                 }
                                         }

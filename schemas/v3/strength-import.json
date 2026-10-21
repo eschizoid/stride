@@ -119,7 +119,7 @@
               "undecodable_workout",
               "unknown_activity"
             ],
-            "description": "undecodable_workout: the element is not a workout object the import can read (not an object, or exercise_sets or a set field of the wrong type). bad_activity_id: absent, null, not a whole number, or not positive. duplicate_activity: an earlier workout in the same input named this activity; the first one is the one considered. unknown_activity: no activity with that id in the database (sync first). not_strength: the activity is not in the strength family, the only family strength sets are counted for. no_sets: exercise_sets is empty. no_usable_sets: every set was left out; `dropped` says why for each."
+            "description": "undecodable_workout: the element is not a workout object the import can read (not an object, or exercise_sets or a set field of the wrong type). bad_activity_id: absent, null, not a whole number, or not positive. duplicate_activity: an earlier workout in the same input was already stored for this activity; only a stored workout claims its activity, so one skipped for another reason does not. unknown_activity: no activity with that id in the database (sync first). not_strength: the activity is not in the strength family, the only family strength sets are counted for. no_sets: exercise_sets is empty. no_usable_sets: every set was left out; `dropped` says why for each."
           },
           "dropped": {
             "type": "array",
