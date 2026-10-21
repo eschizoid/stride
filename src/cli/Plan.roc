@@ -196,16 +196,21 @@ Plan :: [].{
                     p.status
                 },
         })
-        # plan-vs-actual (#144): activities this week that no session references —
-        # neither as completion nor as substitute — get their own rows, so the week
-        # stops hiding what actually happened. ThisWeek only: `week all` is the
-        # SESSION log, and a lifetime of unplanned activities would bury it.
+        # Plan beside actual: every activity this week that no session claims, as
+        # completion or as substitute, gets a row of its own, so the week shows what
+        # happened next to what was planned. The row is recomputed on every read and
+        # means "no plan day claims this activity yet", not "the athlete went off-plan":
+        # `stride complete <id> <activity>` or `stride skip <id> <reason> <activity>`
+        # links it, and the row is gone on the next read. So the table and
+        # `status_shown` read `unlinked`, while `status` keeps the v3 value `unplanned`
+        # that JSON consumers match on. ThisWeek only: `week all` is the SESSION log,
+        # and every unclaimed activity in the history would bury it.
         # NOTE: the substitute arm's supersession predicate below is mirrored in
-        # live_claimant! and (positively) in the sessions query above — the three
-        # MUST agree or week's offers and the claim commands contradict each other.
-        # A week-window clause was once on this arm and caused exactly that
-        # (cross-week substitutes advertised as unplanned but refused); claims are
-        # not week-relative, so neither is this exclusion.
+        # live_claimant! and (positively) in the sessions query above. The three MUST
+        # agree, or week offers an activity that the claim commands then refuse.
+        # Claims are not week-relative, so this exclusion carries no week-window
+        # clause: with one, a substitute linked from another week would show here as
+        # unclaimed and still be refused.
         unplanned = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
@@ -279,7 +284,7 @@ Plan :: [].{
             skipped_reason: "",
             substitute_activity_id: 0.I64,
             done_date: "",
-            status_shown: "unplanned",
+            status_shown: "unlinked",
             }
         })
         # merged calendar order: sessions and unplanned actuals interleave by date.
@@ -815,7 +820,7 @@ Plan :: [].{
     # skip tombstone's substitute link is display-dead already (the week hides the
     # row), so a fresh claim STEALS it: the tombstone's link is cleared and the
     # claim proceeds. Without the steal, `week` advertises the activity as
-    # unplanned and then refuses the very command that acts on it. Live claimants
+    # unlinked and then refuses the very command that acts on it. Live claimants
     # (any completion, or a substitute on a non-superseded row) refuse the claim,
     # naming the blocking session — an error that names the rule without the id
     # leaves the reader nothing but SQLite (see the activity_required note above).
