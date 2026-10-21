@@ -95,7 +95,7 @@ Import :: [].{
     # The FIRST workout in the input naming an activity is the one considered;
     # a later one naming it again is skipped as duplicate_activity, so a
     # batch never stores one activity twice and reports both.
-    StrengthImported : { activity_id : I64, rows : I64, sets : I64, dropped : List(StravaLog.Dropped) }
+    StrengthImported : { activity_id : I64, rows : I64, sets : I64, dropped : List(StravaLog.Dropped), zeroed : List(StravaLog.Zeroed) }
     StrengthSkipped : { activity_id : Str, reason : Str, dropped : List(StravaLog.Dropped) }
     StrengthImportOutcome : { imported : List(StrengthImported), skipped : List(StrengthSkipped) }
 
@@ -179,7 +179,7 @@ Import :: [].{
                                                             ],
                                                         })?
                                                         sets = List.fold(got.rows, 0, |n, r| n + r.sets)
-                                                        entry = { activity_id: aid, rows: List.len(got.rows).to_i64_wrap(), sets, dropped: got.dropped }
+                                                        entry = { activity_id: aid, rows: List.len(got.rows).to_i64_wrap(), sets, dropped: got.dropped, zeroed: got.zeroed }
                                                         { ..placed, imported: List.append(placed.imported, entry) }
                                                     }
                                                 }
@@ -197,7 +197,17 @@ Import :: [].{
             name = if d.exercise == "" "no exercise name" else d.exercise
             "  left out set ${d.set.to_str()} (${name}): ${d.reason}"
         })
-        imported = List.join(List.map(o.imported, |i| List.concat(["imported ${(i.activity_id).to_str()}: ${counted(i.rows, "row")}, ${counted(i.sets, "set")}"], dropped_lines(i.dropped))))
+        # consecutive zeroed sets of one exercise at one recorded weight read as
+        # one line, the way they fold into one row
+        zeroed_lines = |zs| {
+            runs = List.fold(zs, [], |acc, z|
+                match List.last(acc) {
+                    Ok(prev) if prev.exercise == z.exercise and prev.recorded == z.recorded => List.append(List.drop_last(acc, 1), { ..prev, n: prev.n + 1 })
+                    _ => List.append(acc, { exercise: z.exercise, recorded: z.recorded, n: 1 })
+                })
+            List.map(runs, |r| "  counted at 0 kg as bodyweight: ${r.exercise}, ${counted(r.n, "set")} (recorded ${r.recorded})")
+        }
+        imported = List.join(List.map(o.imported, |i| List.join([["imported ${(i.activity_id).to_str()}: ${counted(i.rows, "row")}, ${counted(i.sets, "set")}"], zeroed_lines(i.zeroed), dropped_lines(i.dropped)])))
         skipped = List.join(List.map(o.skipped, |s| {
             id = if s.activity_id == "" "(no activity_id)" else s.activity_id
             List.concat(["skipped ${id}: ${s.reason}"], dropped_lines(s.dropped))

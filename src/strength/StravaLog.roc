@@ -40,13 +40,29 @@ StravaLog :: [].{
     #                        ("20,5 kg") or is negative.
     # A set with no weight at all moves 0.0 kg: Strava stored no mass, and
     # the honest reading of "nothing recorded" is zero added load.
+    #
+    # A BODYWEIGHT exercise counts 0 kg, whatever weight the log carries,
+    # and keeps its sets and reps. Strava's log can carry a weight on a
+    # bodyweight move (the shipped sample's Push Up records 79.4 kg, the
+    # athlete's own mass), and counting it would make a set of push-ups
+    # outweigh the session's lifts; the mass a rep moves on top of the body
+    # is what tonnage counts. A bodyweight exercise is one whose name is on
+    # `bodyweight_names`, compared case-, space- and hyphen-blind with a
+    # trailing plural ignored, so "Push-Ups" matches "push up" and "Weighted
+    # Pull Up" matches nothing. A list rather than a comparison with the
+    # athlete's mass, because stride stores no body weight to compare
+    # against. The set's weight is never read, so an unreadable one does not
+    # drop it. `read` returns each such set that carried a nonzero weight in
+    # `zeroed`, so a caller can say what it did not count; the stored log
+    # keeps the recorded weight, so changing the list needs no re-import.
+    #
     # Consecutive kept sets of the same exercise at the same reps and weight
     # fold into one row whose `sets` is their count, and a change of reps or
     # weight starts a new row, the shape strength_sets stores for every
     # adapter.
     #
-    # The weight is stored as Strava recorded it. Strava's log holds the
-    # weight the athlete entered for the set, and this adapter does not
+    # Every other weight is stored as Strava recorded it. Strava's log holds
+    # the weight the athlete entered for the set, and this adapter does not
     # double it for dumbbells: the log does not say whether an entered weight
     # means one dumbbell or both, so the stored number is the entered one.
     #
@@ -86,6 +102,10 @@ StravaLog :: [].{
     # a set left out of the rows: its 1-based position in exercise_sets, its
     # exercise name ("" when it had none), and the reason
     Dropped : { set : I64, exercise : Str, reason : Str }
+
+    # a bodyweight set kept at 0 kg although the log recorded a weight: its
+    # 1-based position, its exercise name, and the weight as written
+    Zeroed : { set : I64, exercise : Str, recorded : Str }
 
     parse : Str -> List(Adapter.SetRow)
     parse = |text|
@@ -129,17 +149,63 @@ StravaLog :: [].{
         }
     }
 
-    # the rows a workout yields, and every set it left out with the reason
-    read : Workout -> { rows : List(Adapter.SetRow), dropped : List(Dropped) }
+    # the rows a workout yields, every set it left out with the reason, and
+    # every bodyweight set whose recorded weight it did not count
+    read : Workout -> { rows : List(Adapter.SetRow), dropped : List(Dropped), zeroed : List(Zeroed) }
     read = |w|
-        List.fold_with_index(w.exercise_sets, { rows: [], dropped: [] }, |acc, s, i|
-            match read_set(s) {
-                Ok(one) => { ..acc, rows: fold_in(acc.rows, one) }
-                Err(why) => {
-                    entry = { set: i.to_i64_wrap() + 1, exercise: Str.trim(s.exercise_name.ok_or("")), reason: reason_code(why) }
-                    { ..acc, dropped: List.append(acc.dropped, entry) }
+        List.fold_with_index(w.exercise_sets, { rows: [], dropped: [], zeroed: [] }, |acc, s, i| {
+                pos = i.to_i64_wrap() + 1
+                match read_set(s) {
+                    Ok(one) => {
+                        recorded = Str.trim((s.weight.map_ok(|m| m.value)).ok_or(""))
+                        counted_nothing =
+                            match read_mass(recorded) {
+                                Ok(kg) => kg <= 0.0
+                                Err(_) => recorded == ""
+                            }
+                        zeroed =
+                            if is_bodyweight(one.exercise) and !counted_nothing {
+                                List.append(acc.zeroed, { set: pos, exercise: one.exercise, recorded })
+                            } else {
+                                acc.zeroed
+                            }
+                        { ..acc, rows: fold_in(acc.rows, one), zeroed }
+                    }
+                    Err(why) => {
+                        entry = { set: pos, exercise: Str.trim(s.exercise_name.ok_or("")), reason: reason_code(why) }
+                        { ..acc, dropped: List.append(acc.dropped, entry) }
+                    }
                 }
             })
+
+    # exercises done against the body's own mass, written as the comparison
+    # key `name_key` makes of a name
+    bodyweight_names : List(Str)
+    bodyweight_names = List.map([
+        "push up", "pull up", "chin up", "dip", "plank", "side plank", "sit up",
+        "crunch", "bicycle crunch", "burpee", "mountain climber", "jumping jack",
+        "air squat", "bodyweight squat", "inverted row", "leg raise",
+        "hanging leg raise", "flutter kick", "v up", "dead bug", "bird dog",
+        "superman", "wall sit", "bear crawl", "inchworm", "handstand push up",
+        "pike push up", "hollow hold",
+    ], name_key)
+
+    # a name with case, spaces, hyphens and every other non-alphanumeric
+    # removed: "Push-Ups" and "push ups" are one key
+    name_key : Str -> Str
+    name_key = |name|
+        Str.from_utf8(List.keep_if(Str.to_utf8(Str.with_ascii_lowercased(name)), |b| (b >= 97 and b <= 122) or (b >= 48 and b <= 57))).ok_or("")
+
+    # on the list as written, or as a plural of a listed name ("dips",
+    # "crunches")
+    is_bodyweight : Str -> Bool
+    is_bodyweight = |name| {
+        k = name_key(name)
+        on = |key| key != "" and List.contains(bodyweight_names, key)
+        on(k)
+            or (Str.ends_with(k, "s") and on(Str.from_utf8(List.drop_last(Str.to_utf8(k), 1)).ok_or("")))
+            or (Str.ends_with(k, "es") and on(Str.from_utf8(List.drop_last(Str.to_utf8(k), 2)).ok_or("")))
+    }
 
     reason_code : [NoExerciseName, NoReps, BadReps, UnknownWeightUnit, BadWeight] -> Str
     reason_code = |why|
@@ -179,9 +245,13 @@ StravaLog :: [].{
                 Err(BadReps)
             } else {
                 weight_kg =
-                    match s.weight {
-                        Ok(m) => read_mass(m.value)?
-                        Err(_) => 0.0
+                    if is_bodyweight(exercise) {
+                        0.0
+                    } else {
+                        match s.weight {
+                            Ok(m) => read_mass(m.value)?
+                            Err(_) => 0.0
+                        }
                     }
                 Ok({ exercise, reps, weight_kg })
             }
@@ -371,8 +441,8 @@ StravaLog :: [].{
         }
 }
 
-# the shipped sample folds nine sets into three rows, one per exercise, each
-# weight stored as entered
+# the shipped sample folds nine sets into three rows, one per exercise: each
+# lift at its entered weight, the Push Up at 0 kg as bodyweight
 expect {
     rows = StravaLog.parse(StravaLog.sample)
     match rows {
@@ -384,7 +454,7 @@ expect {
                 and b.exercise == "Push Up"
                 and b.sets == 3
                 and b.reps == 8
-                and (b.weight_kg - 79.4).abs() < 0.0001
+                and b.weight_kg.abs() < 0.0001
                 and c.exercise == "Lateral Raise"
                 and c.sets == 3
                 and c.reps == 12
@@ -506,3 +576,40 @@ expect
         Err(NotJson(why)) => why == "is empty"
         _ => False
     }
+
+# bodyweight: the sample's three Push Up sets keep their sets and reps at
+# 0 kg, and each is reported with the weight the log recorded
+expect
+    match StravaLog.decode_workout(StravaLog.sample) {
+        Ok(w) => {
+            r = StravaLog.read(w)
+            List.map(r.zeroed, |z| "${z.set.to_str()}:${z.exercise}:${z.recorded}") == ["4:Push Up:79.4 kg", "5:Push Up:79.4 kg", "6:Push Up:79.4 kg"]
+                and List.is_empty(r.dropped)
+        }
+        Err(_) => False
+    }
+
+# the match is blind to case, spacing, hyphens and a plural, and exact
+# otherwise: a weighted variant and a lift that merely starts alike keep
+# their weight
+expect
+    List.map(["Push-Ups", "pull up", "DIPS", "Crunches", "Burpees", "Chin Up"], StravaLog.is_bodyweight) == [True, True, True, True, True, True]
+expect
+    List.map(["Weighted Pull Up", "Push Press", "Dumbbell Bench Press", "Plankton", ""], StravaLog.is_bodyweight) == [False, False, False, False, False]
+
+# a bodyweight set's weight is never read: an unreadable one does not drop
+# the set, a recorded zero or no weight is not reported as zeroed, and a
+# weighted variant keeps its load
+expect {
+    text = "{\"exercise_sets\":[{\"exercise_name\":\"Pull Up\",\"weight\":{\"value\":\"44 stone\"},\"reps\":{\"value\":\"6\"}},{\"exercise_name\":\"Dips\",\"weight\":{\"value\":\"0 kg\"},\"reps\":{\"value\":\"10\"}},{\"exercise_name\":\"Plank\",\"reps\":{\"value\":\"1\"}},{\"exercise_name\":\"Weighted Pull Up\",\"weight\":{\"value\":\"10 kg\"},\"reps\":{\"value\":\"5\"}}]}"
+    match StravaLog.decode_workout(text) {
+        Ok(w) => {
+            r = StravaLog.read(w)
+            got = List.map(r.rows, |row| "${row.exercise}:${row.reps.to_str()}:${(row.weight_kg * 10.0).round_to_i64_try().ok_or(-1).to_str()}")
+            got == ["Pull Up:6:0", "Dips:10:0", "Plank:1:0", "Weighted Pull Up:5:100"]
+                and List.map(r.zeroed, |z| z.recorded) == ["44 stone"]
+                and List.is_empty(r.dropped)
+        }
+        Err(_) => False
+    }
+}
