@@ -70,8 +70,11 @@ reason `--json` and still answers in JSON).
      clear at UTC midnight, so tell them tomorrow. The two `list_*` values mean the
      activity listing is incomplete and nothing was pruned: `synced`/`pruned` describe
      a partial run.
-   - **Never re-run sync in a loop.** Any `stopped` other than `complete` is a limit and
-     the command returns at once, so wait out the remedy above before running again.
+   - **Never re-run sync in a loop.** A run with `streams_fetched: 0` and
+     `streams_skipped > 0` is stuck on unreadable bodies, whatever `stopped` says: the
+     queue runs newest first and those bodies are never stored, so they can fill every
+     budget. Stop and report it. Otherwise any `stopped` other than `complete` is a limit
+     and the command returns at once, so wait out the remedy above before running again.
      `stopped: complete` with `resumable: true` means only unreadable bodies remain
      (`streams_skipped`/`notes_skipped`); re-running returns the same envelope, so stop
      and report. Do not count `notes_fetched` as progress: it includes the routine
@@ -93,10 +96,9 @@ reason `--json` and still answers in JSON).
 2. **Analyze** with `stride analyze --json`: computes metrics for new or invalidated
    activities, idempotent, and returns
    `{computed, stream_errors, form_tsb, form_tsb_known, form_state, form_delta_7d, form_delta_known, converged}`.
-   `stream_errors` counts stored streams that did not decode; those activities were
-   scored from summary fields. Sync never re-fetches a stored stream, so these stay as
-   they are until the athlete deletes the activity's `streams` row and syncs again. Run
-   analyze after every sync.
+   `stream_errors` counts activities scored from summary fields because they had no
+   readable stream: one never fetched is fetched by the next sync, while a stored row
+   that does not decode is never re-pulled. Run analyze after every sync.
 3. **Read the bundle** with `stride plan --json` before proposing anything: its
    `plan_history_28d` and `adherence_28d` record what was targeted and what happened, so
    a plan is never a fresh guess. Check `data_freshness.last_sync` against today first.
