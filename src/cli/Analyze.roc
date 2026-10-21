@@ -1136,23 +1136,36 @@ Analyze :: [].{
     # sets twice, and the log is structured data where the description is a
     # human paste. The UNION's second arm carries logs for activities whose
     # description the drain has not fetched (or never will), so an import is
-    # never waiting on a sync. Full replace on every analyze — strength_sets
-    # is computed tier (the activity_segments discipline), the corpus is one
-    # short text per strength session, and a parser improvement then needs
-    # no invalidation story: the next analyze IS the recompute. Runs
-    # unconditionally, like rebuild_daily_load! beside it, so a deleted or
-    # stale row cannot outlive one analyze; `stride strength import` runs it
-    # too, so an import is visible without an analyze.
+    # never waiting on a sync.
+    #
+    # Both arms read only rows whose activity exists and is in the strength
+    # family, through activity_family_month: strength_sets.activity_id
+    # references activities, so a row for a missing activity would fail the
+    # insert and the whole analyze with it, and strength_coverage counts that
+    # family alone, so sets on any other activity would be tonnage no
+    # coverage figure accounts for.
+    #
+    # Full replace on every analyze — strength_sets is computed tier (the
+    # activity_segments discipline), the corpus is one short text per
+    # strength session, and a parser improvement then needs no invalidation
+    # story: the next analyze IS the recompute. Runs unconditionally, like
+    # rebuild_daily_load! beside it, so a deleted or stale row cannot outlive
+    # one analyze; `stride strength import` runs it too, so an import is
+    # visible without an analyze.
     rebuild_strength_sets! : Str => Try({}, _)
     rebuild_strength_sets! = |path| {
         notes = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT n.activity_id AS aid, COALESCE(CAST(l.payload AS TEXT), CAST(n.description AS TEXT), '') AS d
-                \\FROM strength_notes n LEFT JOIN strength_logs l ON l.activity_id = n.activity_id
+                \\FROM strength_notes n
+                \\JOIN activity_family_month fm ON fm.activity_id = n.activity_id AND fm.fam = 'WeightTraining'
+                \\LEFT JOIN strength_logs l ON l.activity_id = n.activity_id
                 \\UNION ALL
                 \\SELECT l.activity_id AS aid, COALESCE(CAST(l.payload AS TEXT), '') AS d
-                \\FROM strength_logs l WHERE NOT EXISTS (SELECT 1 FROM strength_notes n WHERE n.activity_id = l.activity_id)
+                \\FROM strength_logs l
+                \\JOIN activity_family_month fm ON fm.activity_id = l.activity_id AND fm.fam = 'WeightTraining'
+                \\WHERE NOT EXISTS (SELECT 1 FROM strength_notes n WHERE n.activity_id = l.activity_id)
             ,
             bindings: [],
             rows: |cols| |stmt| {

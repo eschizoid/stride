@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1280)?
+    checks_ran_exactly!(1286)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -645,12 +645,16 @@ run_sync! = || {
     # passed, so nothing observed it at all. `synced_at` is load-bearing here —
     # prune_deleted! exempts NULL, so a raw insert without it passes for the wrong reason.
     _ = sql!(db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) VALUES (777,'deleted upstream','Ride','2020-01-01T10:00:00Z',3600,30000.0,0.0,1);")
+    # ...carrying a row in each strength table, which all reference activities:
+    # the prune must take them with it or its DELETE of the activity fails
+    _ = sql!(db, "INSERT INTO strength_notes (activity_id, description) VALUES (777, 'x'); INSERT INTO strength_logs (activity_id, payload, imported_at) VALUES (777, '{}', '2020-01-02T00:00:00Z'); INSERT INTO strength_sets (activity_id, ordinal, exercise, sets, reps, weight_kg, source) VALUES (777, 0, 'Curl', 1, 1, 1.0, 'strava');")
     _ = sync_run!("json")
     check!("an incremental sync leaves old history alone", bfq!(".data.pruned") == "0")?
     check!("...so a row outside the window survives it", Str.trim(sql!(db, "SELECT count(*) FROM activities WHERE id=777;")) == "1")?
     _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync --all >'${bo}' 2>/dev/null")
     check!("--all re-lists everything, so the stale row is pruned", bfq!(".data.pruned") == "1")?
     check!("...and it is really gone from the database", Str.trim(sql!(db, "SELECT count(*) FROM activities WHERE id=777;")) == "0")?
+    check!("...along with its strength description, log and sets", Str.trim(sql!(db, "SELECT (SELECT count(*) FROM strength_notes WHERE activity_id=777) + (SELECT count(*) FROM strength_logs WHERE activity_id=777) + (SELECT count(*) FROM strength_sets WHERE activity_id=777);")) == "0")?
     all_human = Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' sync --all 2>/dev/null"))
     check!("...and --all does not claim it checked only the 30-day window", !(Str.contains(all_human, "30-day window")))?
 
@@ -881,7 +885,7 @@ run_notes! = || {
     _ = sh!("HOME='${home}' STRIDE_FORMAT=json '${bin}' strength >'${sto}' 2>/dev/null")
     check!("a withheld month still appears, kg an impossible-zero behind its flag", stq!("[.data.monthly[] | select(.month == \"2026-07\") | (.kg | round), (.tonnage_known | tostring), .covered, .total] | join(\"/\")") == "0/false/1/4")?
     sthuman = Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=human '${bin}' strength 2>/dev/null"))
-    check!("the human table names the gap and the capability in one line", Str.contains(sthuman, "3 of 5 strength sessions have no recorded sets") and Str.contains(sthuman, "paste the set breakdown into the activity description"))?
+    check!("the human table names the gap and both capabilities in one line", Str.contains(sthuman, "3 of 5 strength sessions have no recorded sets") and Str.contains(sthuman, "paste the set breakdown into the activity description") and Str.contains(sthuman, "`stride strength import`"))?
     check!("...renders the withheld month as a stated refusal, with its legend", Str.contains(sthuman, "no tonnage is claimed"))?
     check!("...and the progression table carries the exercise by name", Str.contains(sthuman, "Dumbbell Crush Press"))?
     _ = sql!(db, "DELETE FROM activities WHERE id IN (506, 507);")
@@ -7172,8 +7176,8 @@ b_strength_import! : Ctx => Try({}, _)
 b_strength_import! = |ctx| {
     fx = "tests/fixtures/strava-strength-log.json"
     paste = "Block 1\nDumbbell Crush Press\n3 × 8 • 30 lbs/side"
-    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance) VALUES (20590139628, 'connector lift', 'WeightTraining', '2018-06-04T07:00:00Z', 3600, 0), (20575593919, 'connector empty lift', 'WeightTraining', '2018-06-02T07:00:00Z', 3600, 0), (9713, 'pasted lift', 'WeightTraining', '2018-06-06T07:00:00Z', 3600, 0), (9714, 'unpasted lift', 'WeightTraining', '2018-06-08T07:00:00Z', 3600, 0); INSERT OR REPLACE INTO strength_notes (activity_id, description) VALUES (20590139628, '${paste}'), (9713, '${paste}');")
-    check!("strength import stores the workout with sets and skips the empty one", strjq!(ctx, ["strength", "import", fx], ".data | tojson") == "{\"imported\":[{\"activity_id\":20590139628,\"rows\":3,\"sets\":9}],\"skipped\":[{\"activity_id\":\"20575593919\",\"reason\":\"no_sets\"}]}")?
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance) VALUES (20590139628, 'connector lift', 'WeightTraining', '2018-06-04T07:00:00Z', 3600, 0), (20575593919, 'connector empty lift', 'WeightTraining', '2018-06-02T07:00:00Z', 3600, 0), (9713, 'pasted lift', 'WeightTraining', '2018-06-06T07:00:00Z', 3600, 0), (9714, 'unpasted lift', 'WeightTraining', '2018-06-08T07:00:00Z', 3600, 0), (9715, 'partly logged lift', 'WeightTraining', '2018-06-10T07:00:00Z', 3600, 0), (9716, 'unreadable lift', 'WeightTraining', '2018-06-12T07:00:00Z', 3600, 0), (9718, 'not a lift', 'Ride', '2018-06-14T07:00:00Z', 3600, 20000), (9719, 'twice-sent lift', 'WeightTraining', '2018-06-16T07:00:00Z', 3600, 0); INSERT OR REPLACE INTO strength_notes (activity_id, description) VALUES (20590139628, '${paste}'), (9713, '${paste}'), (9718, '${paste}');")
+    check!("strength import stores the workout with sets and skips the empty one", strjq!(ctx, ["strength", "import", fx], ".data | tojson") == "{\"imported\":[{\"activity_id\":20590139628,\"dropped\":[],\"rows\":3,\"sets\":9}],\"skipped\":[{\"activity_id\":\"20575593919\",\"dropped\":[],\"reason\":\"no_sets\"}]}")?
     check!("...as the folded rows, each naming strava as its source", Str.trim(sql!(ctx.db, "SELECT group_concat(ordinal || ':' || exercise || ':' || sets || 'x' || reps || '@' || weight_kg || ':' || source, '|') FROM (SELECT * FROM strength_sets WHERE activity_id = 20590139628 ORDER BY ordinal);")) == "0:Neutral Grip Dumbbell Bench Press:3x8@13.6:strava|1:Push Up:3x8@79.4:strava|2:Lateral Raise:3x12@5.9:strava")?
     check!("...while the same paste still parses where no log exists, so the log won rather than the paste failing", Str.trim(sql!(ctx.db, "SELECT COUNT(*) || ':' || MIN(source) FROM strength_sets WHERE activity_id = 9713;")) == "1:peloton")?
     check!("the stored payload is the one workout object, its activity id included", Str.trim(sh!("sqlite3 '${ctx.db}' \"SELECT payload FROM strength_logs WHERE activity_id = 20590139628;\" | jq -r '.activity_id + \":\" + (.exercise_sets | length | tostring)'")) == "20590139628:9")?
@@ -7183,10 +7187,10 @@ b_strength_import! = |ctx| {
     # a lone workout object on stdin, same activity, different sets: the log
     # and the rows are replaced, not appended to
     reimport = "{\"activity_id\":\"20590139628\",\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"22 lb\"},\"reps\":{\"value\":\"10\"}},{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"22 lb\"},\"reps\":{\"value\":\"10\"}}]}"
-    check!("a lone workout on stdin re-imports", Str.trim(sh!("printf '%s' '${reimport}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - | jq -c '.data.imported'")) == "[{\"activity_id\":20590139628,\"rows\":1,\"sets\":2}]")?
+    check!("a lone workout on stdin re-imports", Str.trim(sh!("printf '%s' '${reimport}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - | jq -c '.data.imported'")) == "[{\"activity_id\":20590139628,\"dropped\":[],\"rows\":1,\"sets\":2}]")?
     check!("...replacing the activity's log and its rows", Str.trim(sql!(ctx.db, "SELECT (SELECT COUNT(*) FROM strength_logs WHERE activity_id = 20590139628) || ':' || group_concat(exercise || ':' || sets || 'x' || reps || '@' || CAST(ROUND(weight_kg * 1000) AS INTEGER), '|') FROM strength_sets WHERE activity_id = 20590139628;")) == "1:Curl:2x10@9979")?
     unplaceable = "[{\"activity_id\":\"99999999999\",\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"reps\":{\"value\":\"10\"}}]},{\"activity_id\":\"lift-7\",\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"reps\":{\"value\":\"10\"}}]},{\"exercise_sets\":[]}]"
-    check!("an unknown activity, a non-numeric id and a missing one are skipped with their reasons", Str.trim(sh!("printf '%s' '${unplaceable}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - | jq -c '.data'")) == "{\"imported\":[],\"skipped\":[{\"activity_id\":\"99999999999\",\"reason\":\"unknown_activity\"},{\"activity_id\":\"lift-7\",\"reason\":\"bad_activity_id\"},{\"activity_id\":\"\",\"reason\":\"bad_activity_id\"}]}")?
+    check!("an unknown activity, a non-numeric id and a missing one are skipped with their reasons", Str.trim(sh!("printf '%s' '${unplaceable}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - | jq -c '.data'")) == "{\"imported\":[],\"skipped\":[{\"activity_id\":\"99999999999\",\"dropped\":[],\"reason\":\"unknown_activity\"},{\"activity_id\":\"lift-7\",\"dropped\":[],\"reason\":\"bad_activity_id\"},{\"activity_id\":\"\",\"dropped\":[],\"reason\":\"bad_activity_id\"}]}")?
     check!("...storing nothing for them", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM strength_logs WHERE activity_id = 99999999999;")) == "0")?
     # a log for an activity with no stored description at all: the rebuild reads
     # logs that have no strength_notes row beside them too
@@ -7196,7 +7200,27 @@ b_strength_import! = |ctx| {
     check!("a file that cannot be read is unreadable_file", strjq!(ctx, ["strength", "import", "${ctx.home}/no-such-log.json"], ".error.code") == "unreadable_file")?
     check!("no file argument is a usage error, not the strength report", strjq!(ctx, ["strength", "import"], ".error.code") == "usage")?
     check!("...and neither is a second one", strjq!(ctx, ["strength", "import", fx, fx], ".error.code") == "usage")?
-    _ = sql!(ctx.db, "DELETE FROM strength_sets WHERE activity_id IN (20590139628, 20575593919, 9713, 9714); DELETE FROM strength_logs WHERE activity_id IN (20590139628, 20575593919, 9714); DELETE FROM strength_notes WHERE activity_id IN (20590139628, 9713); DELETE FROM activities WHERE id IN (20590139628, 20575593919, 9713, 9714);")
+    # a stored workout whose sets are partly unreadable: the kept set lands,
+    # and each left-out set is NAMED with its position and reason
+    partial = "{\"activity_id\":\"9715\",\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"20 kg\"},\"reps\":{\"value\":\"10\"}},{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"44 stone\"},\"reps\":{\"value\":\"10\"}},{\"exercise_name\":\"Plank\",\"duration\":{\"value\":\"60\",\"unit\":\"Seconds\"}}]}"
+    check!("a workout with unreadable sets lands its readable one and names each set it left out", Str.trim(sh!("printf '%s' '${partial}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - | jq -c '.data'")) == "{\"imported\":[{\"activity_id\":9715,\"dropped\":[{\"exercise\":\"Curl\",\"reason\":\"unknown_weight_unit\",\"set\":2},{\"exercise\":\"Plank\",\"reason\":\"no_reps\",\"set\":3}],\"rows\":1,\"sets\":1}],\"skipped\":[]}")?
+    check!("...and the human answer says so too, in the singular where it is one", Str.trim(sh!("printf '%s' '${partial}' | HOME='${ctx.home}' STRIDE_FORMAT=human '${ctx.bin}' strength import -")) == "imported 9715: 1 row, 1 set\n  left out set 2 (Curl): unknown_weight_unit\n  left out set 3 (Plank): no_reps")?
+    # one batch holding every way a workout can fail beside one that lands: a
+    # bare-number id with a null weight (lands), a non-object, a workout whose
+    # every set is unreadable, a Ride, and a second workout for the first id
+    mixed = "[{\"activity_id\":9719,\"exercise_sets\":[{\"exercise_name\":\"Deadlift\",\"weight\":null,\"reps\":{\"value\":\"5\"}}]},42,{\"activity_id\":\"9716\",\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"reps\":{\"value\":\"8-10\"}}]},{\"activity_id\":\"9718\",\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"reps\":{\"value\":\"10\"}}]},{\"activity_id\":\"9719\",\"exercise_sets\":[{\"exercise_name\":\"Squat\",\"reps\":{\"value\":\"5\"}}]}]"
+    check!("one bad workout costs only itself: the good one lands and each other names its reason", Str.trim(sh!("printf '%s' '${mixed}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - | jq -c '.data'")) == "{\"imported\":[{\"activity_id\":9719,\"dropped\":[],\"rows\":1,\"sets\":1}],\"skipped\":[{\"activity_id\":\"\",\"dropped\":[],\"reason\":\"undecodable_workout\"},{\"activity_id\":\"9716\",\"dropped\":[{\"exercise\":\"Curl\",\"reason\":\"bad_reps\",\"set\":1}],\"reason\":\"no_usable_sets\"},{\"activity_id\":\"9718\",\"dropped\":[],\"reason\":\"not_strength\"},{\"activity_id\":\"9719\",\"dropped\":[],\"reason\":\"duplicate_activity\"}]}")?
+    check!("...the first workout for an activity is the one kept, at 0 kg for its null weight", Str.trim(sql!(ctx.db, "SELECT group_concat(exercise || ':' || sets || 'x' || reps || '@' || weight_kg, '|') FROM strength_sets WHERE activity_id = 9719;")) == "Deadlift:1x5@0.0")?
+    # 9718 also carries a parseable paste, so this holds only while the
+    # rebuild reads strength-family activities alone
+    check!("...and nothing is stored for the Ride, from its log or its pasted description", Str.trim(sql!(ctx.db, "SELECT (SELECT COUNT(*) FROM strength_logs WHERE activity_id = 9718) + (SELECT COUNT(*) FROM strength_sets WHERE activity_id = 9718);")) == "0")?
+    _ = sql!(ctx.db, "DELETE FROM strength_sets WHERE activity_id IN (20590139628, 20575593919, 9713, 9714, 9715, 9716, 9718, 9719); DELETE FROM strength_logs WHERE activity_id IN (20590139628, 20575593919, 9714, 9715, 9716, 9718, 9719); DELETE FROM strength_notes WHERE activity_id IN (20590139628, 9713, 9718); DELETE FROM activities WHERE id IN (20590139628, 20575593919, 9713, 9714, 9715, 9716, 9718, 9719);")
+    # a log and a description whose activity no longer exists: strength_sets
+    # references activities, so the rebuild must not read them, or analyze
+    # fails as a whole on the insert
+    _ = sql!(ctx.db, "INSERT INTO strength_logs (activity_id, payload, imported_at) VALUES (9999917, '{\"activity_id\":\"9999917\",\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"reps\":{\"value\":\"3\"}}]}', '2026-01-01T00:00:00Z'); INSERT INTO strength_notes (activity_id, description) VALUES (9999918, '${paste}');")
+    check!("an orphaned log or description does not fail analyze, and yields no rows", strjq!(ctx, ["analyze"], "(.data.computed | type) + \":\" + (.error.code // \"none\")") == "number:none" and Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM strength_sets WHERE activity_id IN (9999917, 9999918);")) == "0")?
+    _ = sql!(ctx.db, "DELETE FROM strength_logs WHERE activity_id = 9999917; DELETE FROM strength_notes WHERE activity_id = 9999918;")
     Ok({})
 }
 

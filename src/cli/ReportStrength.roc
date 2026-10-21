@@ -171,8 +171,9 @@ ReportStrength :: [].{
                 } else {
                     ""
                 }
-            # the capability, stated at the moment its absence is visible: an
-            # athlete who never pastes cannot otherwise learn pasting exists
+            # the capabilities, stated at the moment their absence is visible:
+            # an athlete who never pastes or imports cannot otherwise learn
+            # that either path exists
             gap = p.sessions.total - p.sessions.with_sets - p.sessions.pasted_unparsed
             # the noun agrees with the total, the verb with the gap: "1 of 5
             # strength sessions has", "1 of 1 strength session has"
@@ -180,7 +181,7 @@ ReportStrength :: [].{
                 if gap > 0 {
                     noun = if p.sessions.total == 1 "session" else "sessions"
                     verb = if gap == 1 "has" else "have"
-                    "\n${(gap).to_str()} of ${(p.sessions.total).to_str()} strength ${noun} ${verb} no recorded sets — paste the set breakdown into the activity description to track tonnage"
+                    "\n${(gap).to_str()} of ${(p.sessions.total).to_str()} strength ${noun} ${verb} no recorded sets — import them with `stride strength import` (the JSON Strava's connector returns), or paste the set breakdown into the activity description, to track tonnage"
                 } else {
                     ""
                 }

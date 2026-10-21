@@ -75,14 +75,28 @@ Import :: [].{
     # Strava's public API does not return a strength workout's sets; its MCP
     # connector does, and stride cannot call MCP, so a coach fetches the JSON
     # and hands it over here: a list of workout objects, or one on its own.
-    # Each workout lands in strength_logs (one row per activity, replaced on
-    # re-import), and strength_sets is rebuilt once at the end so the rows are
-    # there without an analyze. A workout that cannot be placed is a SKIPPED
-    # entry with its reason, never an error: one stale id in a batch must not
-    # cost the rest of it. Only input that is not such JSON at all, or a file
-    # that cannot be read, fails the command.
-    StrengthImported : { activity_id : I64, rows : I64, sets : I64 }
-    StrengthSkipped : { activity_id : Str, reason : Str }
+    # Each workout is decoded on its own, and each one that lands is stored
+    # in strength_logs as the text the connector wrote (one row per activity,
+    # replaced on re-import); strength_sets is rebuilt once at the end so the
+    # rows are there without an analyze.
+    #
+    # Nothing is left out silently. A workout that cannot be placed is a
+    # SKIPPED entry with its reason, never an error, so one bad workout does
+    # not cost the rest of the batch; a set left out of a stored workout is a
+    # `dropped` entry on that workout. Only input that is not a JSON object or
+    # list at all, or a file that cannot be read, fails the command.
+    #
+    # A log lands only on a strength-family activity: strength_coverage counts
+    # sessions of that family alone, and the tonnage spine joins it, so sets on
+    # any other activity would be tonnage no coverage figure accounts for. The
+    # family is read from activity_family_month, the view strength_coverage
+    # groups on, so the gate and the view cannot disagree.
+    #
+    # The FIRST workout in the input naming an activity is the one considered;
+    # a later one naming it again is skipped as duplicate_activity, so a
+    # batch never stores one activity twice and reports both.
+    StrengthImported : { activity_id : I64, rows : I64, sets : I64, dropped : List(StravaLog.Dropped) }
+    StrengthSkipped : { activity_id : Str, reason : Str, dropped : List(StravaLog.Dropped) }
     StrengthImportOutcome : { imported : List(StrengthImported), skipped : List(StrengthSkipped) }
 
     import_strength_log! : Str => Try({}, _)
@@ -102,50 +116,75 @@ Import :: [].{
             Err(UnreadableInput) => Output.err_out!("unreadable_file", "couldn't read ${label} — pass a file holding the JSON Strava's connector returned, or `-` to read it from stdin")
             Err(other) => Err(other)
             Ok(text) =>
-                match StravaLog.decode_import(text) {
-                    Err(NotWorkouts) => Output.err_out!("bad_json", "${label} is not a strength workout or a list of them — expected the JSON Strava's connector returns: { activity_id, exercise_sets: [...] }")
-                    Ok(workouts) => {
+                match StravaLog.split_input(text) {
+                    Err(NotJson(why)) => Output.err_out!("bad_json", "${label} ${why} — expected the JSON Strava's connector returns: a workout { activity_id, exercise_sets: [...] } or a list of them")
+                    Ok(pieces) => {
                         stamp = Metrics.epoch_to_iso(Db.now_secs!({}))
-                        outcome = import_workouts!(db, stamp, workouts, { imported: [], skipped: [] })?
+                        walked = import_workouts!(db, stamp, pieces, { imported: [], skipped: [], seen: [] })?
                         Analyze.rebuild_strength_sets!(db)?
+                        outcome : StrengthImportOutcome
+                        outcome = { imported: walked.imported, skipped: walked.skipped }
                         Output.out!(outcome, |o| strength_import_screen(o))
                     }
                 }
         }
     }
 
-    import_workouts! : Str, Str, List(StravaLog.Workout), StrengthImportOutcome => Try(StrengthImportOutcome, _)
-    import_workouts! = |db, stamp, workouts, acc|
-        match workouts {
+    import_workouts! : Str, Str, List(Str), { imported : List(StrengthImported), skipped : List(StrengthSkipped), seen : List(I64) } => Try({ imported : List(StrengthImported), skipped : List(StrengthSkipped), seen : List(I64) }, _)
+    import_workouts! = |db, stamp, pieces, acc|
+        match pieces {
             [] => Ok(acc)
-            [w, .. as rest] => {
-                raw_id = w.activity_id.ok_or("")
-                skip = |reason| { ..acc, skipped: List.append(acc.skipped, { activity_id: raw_id, reason }) }
+            [piece, .. as rest] => {
+                raw_id = StravaLog.activity_id_of(piece)
+                skip = |reason, dropped| { ..acc, skipped: List.append(acc.skipped, { activity_id: raw_id, reason, dropped }) }
                 next =
-                    match Metrics.arg_i64(raw_id) {
-                        Err(_) => skip("bad_activity_id")
-                        Ok(aid) =>
-                            if aid <= 0 {
-                                skip("bad_activity_id")
-                            } else if !(Report.row_exists!(db, "activities", aid)?) {
-                                skip("unknown_activity")
-                            } else {
-                                rows = StravaLog.rows(w)
-                                if List.is_empty(rows) {
-                                    skip("no_sets")
-                                } else {
-                                    Sqlite.execute!({
-                                        path: Path.utf8(db),
-                                        query: "INSERT OR REPLACE INTO strength_logs (activity_id, payload, imported_at) VALUES (:id, :p, :at)",
-                                        bindings: [
-                                            { name: ":id", value: Integer(aid) },
-                                            { name: ":p", value: String(StravaLog.encode(w)) },
-                                            { name: ":at", value: String(stamp) },
-                                        ],
-                                    })?
-                                    sets = List.fold(rows, 0, |n, r| n + r.sets)
-                                    { ..acc, imported: List.append(acc.imported, { activity_id: aid, rows: List.len(rows).to_i64_wrap(), sets }) }
-                                }
+                    match StravaLog.decode_workout(piece) {
+                        Err(_) => skip("undecodable_workout", [])
+                        Ok(w) =>
+                            match Metrics.arg_i64(raw_id) {
+                                Err(_) => skip("bad_activity_id", [])
+                                Ok(aid) =>
+                                    if aid <= 0 {
+                                        skip("bad_activity_id", [])
+                                    } else if List.contains(acc.seen, aid) {
+                                        skip("duplicate_activity", [])
+                                    } else {
+                                        placed = { ..acc, seen: List.append(acc.seen, aid) }
+                                        fams = Sqlite.query_many!({
+                                            path: Path.utf8(db),
+                                            query: "SELECT CAST(fam AS TEXT) AS fam FROM activity_family_month WHERE activity_id = :id",
+                                            bindings: [{ name: ":id", value: Integer(aid) }],
+                                            rows: Sqlite.str("fam"),
+                                        })?
+                                        skip_placed = |reason, dropped| { ..placed, skipped: List.append(placed.skipped, { activity_id: raw_id, reason, dropped }) }
+                                        match fams {
+                                            [] => skip_placed("unknown_activity", [])
+                                            [fam, ..] =>
+                                                if fam != "WeightTraining" {
+                                                    skip_placed("not_strength", [])
+                                                } else if List.is_empty(w.exercise_sets) {
+                                                    skip_placed("no_sets", [])
+                                                } else {
+                                                    got = StravaLog.read(w)
+                                                    if List.is_empty(got.rows) {
+                                                        skip_placed("no_usable_sets", got.dropped)
+                                                    } else {
+                                                        Sqlite.execute!({
+                                                            path: Path.utf8(db),
+                                                            query: "INSERT OR REPLACE INTO strength_logs (activity_id, payload, imported_at) VALUES (:id, :p, :at)",
+                                                            bindings: [
+                                                                { name: ":id", value: Integer(aid) },
+                                                                { name: ":p", value: String(piece) },
+                                                                { name: ":at", value: String(stamp) },
+                                                            ],
+                                                        })?
+                                                        sets = List.fold(got.rows, 0, |n, r| n + r.sets)
+                                                        entry = { activity_id: aid, rows: List.len(got.rows).to_i64_wrap(), sets, dropped: got.dropped }
+                                                        { ..placed, imported: List.append(placed.imported, entry) }
+                                                    }
+                                                }
+                                        }
+                                    }
                             }
                     }
                 import_workouts!(db, stamp, rest, next)
@@ -154,12 +193,19 @@ Import :: [].{
 
     strength_import_screen : StrengthImportOutcome -> Str
     strength_import_screen = |o| {
-        imported = List.map(o.imported, |i| "imported ${(i.activity_id).to_str()}: ${(i.rows).to_str()} rows, ${(i.sets).to_str()} sets")
-        skipped = List.map(o.skipped, |s| {
-            id = if s.activity_id == "" "(no activity_id)" else s.activity_id
-            "skipped ${id}: ${s.reason}"
+        dropped_lines = |ds| List.map(ds, |d| {
+            name = if d.exercise == "" "no exercise name" else d.exercise
+            "  left out set ${d.set.to_str()} (${name}): ${d.reason}"
         })
+        imported = List.join(List.map(o.imported, |i| List.concat(["imported ${(i.activity_id).to_str()}: ${counted(i.rows, "row")}, ${counted(i.sets, "set")}"], dropped_lines(i.dropped))))
+        skipped = List.join(List.map(o.skipped, |s| {
+            id = if s.activity_id == "" "(no activity_id)" else s.activity_id
+            List.concat(["skipped ${id}: ${s.reason}"], dropped_lines(s.dropped))
+        }))
         lines = List.concat(imported, skipped)
         if List.is_empty(lines) "nothing to import — the input held no workouts" else Str.join_with(lines, "\n")
     }
+
+    counted : I64, Str -> Str
+    counted = |n, noun| if n == 1 "1 ${noun}" else "${n.to_str()} ${noun}s"
 }

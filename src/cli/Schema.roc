@@ -110,9 +110,10 @@ Schema :: [].{
     # mirror tier: one structured strength log per activity, as Strava's MCP
     # connector returns it. Strava's public API does not carry these, so the
     # only writer is `stride strength import`, which a coach runs with the
-    # connector's JSON; `payload` is ONE workout object re-encoded, its
-    # activity_id included. Upstream data, re-importable, so an import
-    # replaces the row for its activity.
+    # connector's JSON; `payload` is ONE workout object, the exact text the
+    # connector wrote for it, activity_id included. Upstream data,
+    # re-importable, so an import replaces the row for its activity, and
+    # prune deletes it with the activity it references.
     strength_logs =
         \\CREATE TABLE IF NOT EXISTS strength_logs (
         \\  activity_id INTEGER PRIMARY KEY REFERENCES activities(id),
@@ -314,16 +315,19 @@ Schema :: [].{
     # rather than seconds-per-distance on purpose: higher is better for both
     # kinds, so an improving athlete's line rises whatever the sport.
     # how much of a month's strength work the parsed sets actually cover:
-    # tracked sessions carry a pasted breakdown, instructor-led classes never
-    # do, so a month's tonnage is a SAMPLE of its training — and a biased
-    # sample reads as a trend (#521). One row per strength month: how many of
-    # its sessions contributed sets, out of how many the family trained.
-    # Shared as a view so every surface states the same denominator.
-    # COUPLED to the notes drain's family gate: this WHERE and the tonnage
-    # arm's inner join both assume strength_sets rows only ever belong to
-    # the WeightTraining family, which is true because the drain fetches
-    # descriptions for exactly that family — widening one without the other
-    # makes a new family's tonnage vanish silently at the join.
+    # tracked sessions carry a pasted breakdown or an imported log,
+    # instructor-led classes never do, so a month's tonnage is a SAMPLE of
+    # its training — and a biased sample reads as a trend (#521). One row per
+    # strength month: how many of its sessions contributed sets, out of how
+    # many the family trained. Shared as a view so every surface states the
+    # same denominator.
+    # COUPLED to the family gates upstream of strength_sets: this WHERE and
+    # the tonnage arm's inner join both assume strength_sets rows only ever
+    # belong to the WeightTraining family. That holds because the notes drain
+    # fetches descriptions for that family only, `strength import` refuses a
+    # log for any other, and the strength_sets rebuild reads only activities
+    # of that family — widening one without the others makes a new family's
+    # tonnage vanish silently at the join.
     strength_coverage_drop =
         \\DROP VIEW IF EXISTS strength_coverage
     strength_coverage =
