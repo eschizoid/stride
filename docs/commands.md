@@ -153,7 +153,7 @@ _What should I do next?_ One call bundling `summary` + every open session + the 
 
 ### `stride week` / `stride week all`
 
-_What was planned, and did it happen?_ `week` is the current training week (Mon–Sun). `week all` sections the log — **upcoming**, **this week**, **last week** — and counts anything older rather than hiding it; the JSON payload always carries every row. Status is open / done / skipped, and a session completed on a different day than planned shows that date.
+_What was planned, and did it happen?_ `week` is the current training week (Mon–Sun). `week all` sections the log — **upcoming**, **this week**, **last week** — and counts anything older rather than hiding it; the JSON payload always carries every row. Status is open / done / skipped, and a session completed on a different day than planned shows that date. `week` also lists each activity of the week that no session claims yet, with status `unlinked`; `stride complete` or `stride skip <id> <reason> <activity>` links it to a plan day. In JSON that row's `status` is `unplanned` and its `status_shown` is `unlinked`.
 
 ### `stride week add <date> <type> <detail> <rationale> [target]`
 

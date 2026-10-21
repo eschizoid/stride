@@ -357,7 +357,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1261)?
+    checks_ran_exactly!(1263)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -5490,6 +5490,13 @@ b_plan! = |ctx| {
     check!("...while the id it would have meant does resolve", Str.contains(stride!(ctx.bin, ctx.home, ["--json", "activity", "300"]), "\"id\":300"))?
     # before any link: the activity surfaces as an UNPLANNED row in week
     check!("unlinked activity shows as unplanned", strjq!(ctx, ["week"], "[.data[] | select(.status == \"unplanned\" and .activity_id == 300)] | length") == "1")?
+    # The label the athlete reads is `unlinked`, in the JSON `status_shown` and in the
+    # table, while `status` keeps the v3 contract value `unplanned`. The table check
+    # finds the activity's own line by its name and requires the label ON that line,
+    # so a label printed elsewhere in the week cannot satisfy it.
+    check!("an unclaimed activity reads unlinked in status_shown while status stays unplanned", strjq!(ctx, ["week"], "[.data[] | select(.activity_id == 300) | .status + \"/\" + .status_shown] | join(\",\")") == "unplanned/unlinked")?
+    unlinked_lines = List.keep_if(Str.split_on(stride_human!(ctx.bin, ctx.home, ["week"]), "\n"), |l| Str.contains(l, "unplanned spin"))
+    check!("...and the human week table labels its row unlinked", List.len(unlinked_lines) == 1 and List.all(unlinked_lines, |l| Str.contains(l, " unlinked ")))?
     # anti-stable-sort regression pin: today's SESSION row precedes today's
     # unplanned row — ties must order sessions first, never reversed
     check!("session precedes unplanned on the same day", strjq!(ctx, ["week"], "[.data[] | select(.target_date == \"${ctx.today}\") | .status] | index(\"unplanned\") > 0") == "true")?
