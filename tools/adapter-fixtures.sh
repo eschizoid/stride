@@ -1,6 +1,6 @@
 #!/bin/sh
-# adapter-fixtures — ADR 0018's enforcement: every strength-notes adapter ships
-# with a real sample of its app's share text, and the ordered table in
+# adapter-fixtures — ADR 0018's enforcement: every strength-set adapter ships
+# with a real sample of its source's text, and the ordered table in
 # src/cli/Strength.roc and the modules in src/strength agree exactly.
 #
 # Three checks, each a property the adapter pack states in prose and nothing
@@ -25,7 +25,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-EXPECT_ORDER="${EXPECT_ORDER:-peloton}"
+EXPECT_ORDER="${EXPECT_ORDER:-strava peloton}"
 
 table=src/cli/Strength.roc
 pkg=src/strength
@@ -63,7 +63,7 @@ for m in $pkg_mods; do
   f="$pkg/$m.roc"
   # trailing whitespace tolerated so a CRLF checkout does not read as a missing sample
   if ! grep -qE '^    sample : Str[[:space:]]*$' "$f"; then
-    echo "adapter-fixtures: $f has no top-level \`sample : Str\` — an adapter ships a real sample of its app's share text" >&2
+    echo "adapter-fixtures: $f has no top-level \`sample : Str\` — an adapter ships a real sample of its source's text" >&2
     fail=1
   fi
   if ! grep -qE "$m\\.parse\\($m\\.sample\\)" "$f"; then

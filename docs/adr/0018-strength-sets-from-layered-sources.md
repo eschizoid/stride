@@ -4,6 +4,9 @@ Status: Accepted
 Date: 2026-09-18
 Amended: 2026-09-25 — the adapters became a package, the tonnage spine gained
 a minimum, and the fixture gate the consequences promised now exists.
+Amended: 2026-10-21 — the structured layer arrives through `stride strength
+import` and the `strength_logs` table, read by a `strava` adapter at the top of
+the table, because Strava's public API does not return a workout's sets.
 
 ## Context
 
@@ -28,20 +31,36 @@ habit must not be the feature's primary path.
 Strength sets come from layered sources, tried in a fixed order, and every
 stored row names the source it came from.
 
-First, the structured endpoint. When Strava returns exercise sets for an
-activity, those rows are stored as they are. Athletes who log with Strava's
-builder or a FIT device get correct data with no parsing, so the general path
-is the primary path.
+First, the structured log. Strava's app keeps a strength workout's exercises
+as structured data, one entry per set with the exercise, its muscle groups,
+and the weight and reps recorded. Strava's public API does not return it;
+Strava's MCP connector does. The engine cannot call the connector, so a coach
+fetches the JSON and hands it to `stride strength import`, which stores one
+workout object per activity in the `strength_logs` mirror table. When an
+activity has a stored log, the log is what the rebuild parses and its
+description is not consulted, because both describe the same session and
+reading both would count its sets twice. Athletes who log in Strava's own
+builder get their recorded sets with no paste and no grammar to guess, so the
+general path is the primary path.
 
-Second, description adapters. When the structured endpoint returns nothing,
-the activity's description is tried against an ordered table of parsers in
+The structured log carries a weight on bodyweight moves too, often the
+athlete's own mass, which would make push-ups outweigh the session's lifts.
+A bodyweight exercise, matched by name against a fixed list, keeps its sets
+and reps and counts 0 kg toward tonnage. Only the derived set rows read 0 kg;
+the stored log keeps the recorded weight, so the list can change without a
+re-import, and the import names every set it zeroed.
+
+Second, description adapters. When an activity has no stored log, its
+description is tried against an ordered table of parsers in
 `src/cli/Strength.roc`. The parsers themselves live in the `src/strength`
-package, one module per app, so a new format is a new file rather than a
+package, one module per source, so a new format is a new file rather than a
 longer one. `Adapter.roc` states the contract every module keeps: pure
 `Str -> List(SetRow)`, tolerant of junk, silent on formats it does not
-recognize, and shipping a real sample of its app's share text as a top-level
-`sample` that its own expects parse. `Peloton.roc` is the first adapter. Each
-table row holds a name and a parse function, the same shape as
+recognize, and shipping a real sample of its source's text as a top-level
+`sample` that its own expects parse. The stored log is read by the same
+table: `StravaLog.roc` parses a workout object and sits first, because JSON is
+the narrower grammar, and `Peloton.roc` parses Peloton's share summary below
+it. Each table row holds a name and a parse function, the same shape as
 `Sports.families`, so registering a module is one row. The first adapter that
 matches wins, so the table's order is part of the decision.
 
@@ -70,10 +89,12 @@ each other in CI: the table's order is pinned, every row names a module and
 every module has a row, and every module carries its sample and an expect that
 parses it. An adapter that arrives without its sample does not land.
 
-The parser is a fallback by construction. If Strava ever opens structured
-strength data to API writes, or Peloton starts filling the structured
-endpoint, the adapters stop being consulted, because the first layer wins
-whenever it has rows.
+The description parser is a fallback by construction. An activity with a
+stored log never reaches it, and if Strava ever returns structured strength
+data through its public API, sync can store it in the same table and the
+description adapters stop being consulted for those activities, because the
+first layer wins whenever it has rows.
 
 The sync stores descriptions for strength-class activities; that schema change
-landed with the #478 implementation.
+landed with the #478 implementation. `stride strength import` stores logs in
+`strength_logs`, a mirror table of their own, keyed by activity.

@@ -1287,6 +1287,13 @@ Strava :: [].{
                 _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM activity_metrics WHERE activity_id = :id", bindings: b })?
                 _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM activity_segments WHERE activity_id = :id", bindings: b })?
                 _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM streams WHERE activity_id = :id", bindings: b })?
+                # the strength tables reference activities too, and the database
+                # enforces it: a strength session deleted upstream with a stored
+                # description or log would otherwise fail the activity's DELETE
+                # and the whole prune with it
+                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM strength_sets WHERE activity_id = :id", bindings: b })?
+                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM strength_logs WHERE activity_id = :id", bindings: b })?
+                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM strength_notes WHERE activity_id = :id", bindings: b })?
                 _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM activities WHERE id = :id", bindings: b })?
                 prune_txn!(path, rest)
             }

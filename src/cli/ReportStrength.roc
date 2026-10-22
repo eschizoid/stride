@@ -32,14 +32,19 @@ ReportStrength :: [].{
         # per (exercise, day): the heaviest weight one rep moved, and the
         # day's summed kg·reps for that exercise. Two aggregates rather than
         # "the top set", because when the weight drops and the reps rise the
-        # product is the only number that says whether work went up.
+        # product is the only number that says whether work went up. The
+        # most reps in one set and the day's total reps ride beside them: a
+        # bodyweight exercise is stored at 0 kg, so both kg figures read 0
+        # however its reps move, and reps are the only progression it has.
         points = Sqlite.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT CAST(s.exercise AS TEXT) AS ex,
                 \\       substr(CAST(a.start_local AS TEXT), 1, 10) AS day,
                 \\       CAST(MAX(s.weight_kg) AS REAL) AS top_kg,
-                \\       CAST(SUM(s.sets * s.reps * s.weight_kg) AS REAL) AS kg_reps
+                \\       CAST(SUM(s.sets * s.reps * s.weight_kg) AS REAL) AS kg_reps,
+                \\       MAX(s.reps) AS top_reps,
+                \\       SUM(s.sets * s.reps) AS total_reps
                 \\FROM strength_sets s JOIN activities a ON a.id = s.activity_id
                 \\GROUP BY CAST(s.exercise AS TEXT), substr(CAST(a.start_local AS TEXT), 1, 10)
                 \\ORDER BY CAST(s.exercise AS TEXT), substr(CAST(a.start_local AS TEXT), 1, 10)
@@ -50,7 +55,9 @@ ReportStrength :: [].{
                 day = Sqlite.str("day")(cols)(stmt)?
                 top_kg = Sqlite.f64("top_kg")(cols)(stmt)?
                 kg_reps = Sqlite.f64("kg_reps")(cols)(stmt)?
-                Ok({ ex, day, top_kg, kg_reps })
+                top_reps = Sqlite.i64("top_reps")(cols)(stmt)?
+                total_reps = Sqlite.i64("total_reps")(cols)(stmt)?
+                Ok({ ex, day, top_kg, kg_reps, top_reps, total_reps })
             },
         })?
         # rows arrive sorted by (exercise, day); fold adjacent runs into one
@@ -58,11 +65,16 @@ ReportStrength :: [].{
         grouped = List.fold(points, [], |acc, p|
             match acc {
                 [head, .. as rest] if head.exercise == p.ex =>
-                    List.prepend(rest, { exercise: head.exercise, points: List.append(head.points, { date: p.day, top_kg: p.top_kg, kg_reps: p.kg_reps }) })
+                    List.prepend(rest, { exercise: head.exercise, points: List.append(head.points, { date: p.day, top_kg: p.top_kg, kg_reps: p.kg_reps, top_reps: p.top_reps, total_reps: p.total_reps }) })
                 _ =>
-                    List.prepend(acc, { exercise: p.ex, points: [{ date: p.day, top_kg: p.top_kg, kg_reps: p.kg_reps }] })
+                    List.prepend(acc, { exercise: p.ex, points: [{ date: p.day, top_kg: p.top_kg, kg_reps: p.kg_reps, top_reps: p.top_reps, total_reps: p.total_reps }] })
             })
-        exercises = Render.reverse_list(grouped)
+        # an exercise whose every point moved 0 kg is measured in reps: its
+        # kg figures are 0 by construction, so they cannot show a change
+        exercises = List.map(Render.reverse_list(grouped), |e| {
+            measure = if List.all(e.points, |pt| pt.top_kg <= 0.0) "reps" else "kg"
+            { exercise: e.exercise, measure, points: e.points }
+        })
         # every strength month, from the COVERAGE view — not the spine view,
         # which refuses thin months. The LEFT JOIN's NULL is the refusal,
         # published as tonnage_known false (a both-possible field, ADR 0009).
@@ -109,14 +121,14 @@ ReportStrength :: [].{
         })?
         # ANNOTATED and closed: the renderer below infers an open record, and
         # a new key would otherwise ship undeclared in schemas/v3 (ADR §9c)
-        payload : { exercises : List({ exercise : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64 }) }), monthly : List({ month : Str, kg : F64, tonnage_known : Bool, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } }
+        payload : { exercises : List({ exercise : Str, measure : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64 }) }), monthly : List({ month : Str, kg : F64, tonnage_known : Bool, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } }
         payload = { exercises, monthly, sessions: counts }
         Output.out!(payload, |p| screen(units, p))
     }
 
     # numbers in tables, meaning in legends — and no verdict line at all:
     # progression is exactly the number a coach must not have pre-judged
-    screen : [Metric, Imperial], { exercises : List({ exercise : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64 }) }), monthly : List({ month : Str, kg : F64, tonnage_known : Bool, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } } -> Str
+    screen : [Metric, Imperial], { exercises : List({ exercise : Str, measure : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64 }) }), monthly : List({ month : Str, kg : F64, tonnage_known : Bool, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } } -> Str
     screen = |units, p| {
         if p.sessions.total == 0 {
             "no strength sessions yet — they arrive with `stride sync` like every other activity"
@@ -126,13 +138,13 @@ ReportStrength :: [].{
             repeated = List.keep_if(p.exercises, |e| List.len(e.points) >= 2)
             once = List.len(p.exercises) - List.len(repeated)
             prog_rows = List.map(repeated, |e| {
-                first = List.first(e.points).ok_or({ date: "", top_kg: 0.0, kg_reps: 0.0 })
-                last = List.last(e.points).ok_or({ date: "", top_kg: 0.0, kg_reps: 0.0 })
+                first = List.first(e.points).ok_or({ date: "", top_kg: 0.0, kg_reps: 0.0, top_reps: 0, total_reps: 0 })
+                last = List.last(e.points).ok_or({ date: "", top_kg: 0.0, kg_reps: 0.0, top_reps: 0, total_reps: 0 })
                 [
                     e.exercise,
                     (List.len(e.points)).to_str(),
-                    "${first.date}  ${Units.mass_label(units, first.top_kg)}",
-                    "${last.date}  ${Units.mass_label(units, last.top_kg)}",
+                    "${first.date}  ${top_set(units, e.measure, first)}",
+                    "${last.date}  ${top_set(units, e.measure, last)}",
                 ]
             })
             # "more" needs an antecedent: with no table above it, the once-seen
@@ -171,8 +183,9 @@ ReportStrength :: [].{
                 } else {
                     ""
                 }
-            # the capability, stated at the moment its absence is visible: an
-            # athlete who never pastes cannot otherwise learn pasting exists
+            # the capabilities, stated at the moment their absence is visible:
+            # an athlete who never pastes or imports cannot otherwise learn
+            # that either path exists
             gap = p.sessions.total - p.sessions.with_sets - p.sessions.pasted_unparsed
             # the noun agrees with the total, the verb with the gap: "1 of 5
             # strength sessions has", "1 of 1 strength session has"
@@ -180,11 +193,17 @@ ReportStrength :: [].{
                 if gap > 0 {
                     noun = if p.sessions.total == 1 "session" else "sessions"
                     verb = if gap == 1 "has" else "have"
-                    "\n${(gap).to_str()} of ${(p.sessions.total).to_str()} strength ${noun} ${verb} no recorded sets — paste the set breakdown into the activity description to track tonnage"
+                    "\n${(gap).to_str()} of ${(p.sessions.total).to_str()} strength ${noun} ${verb} no recorded sets — import them with `stride strength import` (the JSON Strava's connector returns), or paste the set breakdown into the activity description, to track tonnage"
                 } else {
                     ""
                 }
             "${prog}${once_note}\n\n${months}${legend}${unparsed_note}${nudge}"
         }
     }
+
+    # a top set as its measure reads it: a mass for a weighted exercise, the
+    # most reps in one set for one measured in reps
+    top_set : [Metric, Imperial], Str, { date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64 } -> Str
+    top_set = |units, measure, pt|
+        if measure == "reps" "${pt.top_reps.to_str()} ${if pt.top_reps == 1 "rep" else "reps"}" else Units.mass_label(units, pt.top_kg)
 }

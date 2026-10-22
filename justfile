@@ -84,9 +84,9 @@ skill-shapes:
 blob-safety:
     sh tools/blob-safety.sh
 
-# Every strength-notes adapter (src/strength) is a row in src/cli/Strength.roc's
-# ordered table, in pinned order, and ships a real sample of its app's share
-# text pinned by its own expect (ADR 0018). Reads source only — no binary, no
+# Every strength-set adapter (src/strength) is a row in src/cli/Strength.roc's
+# ordered table, in pinned order, and ships a real sample of its source's text
+# pinned by its own expect (ADR 0018). Reads source only — no binary, no
 # database.
 adapter-fixtures:
     sh tools/adapter-fixtures.sh

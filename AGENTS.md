@@ -58,7 +58,7 @@ roc check src/cli/main.roc      # CI runs this on three OSes before anything els
 just e2e-sync              # mock-backed sync/skips/stops/notes drivers; no network
 sh tools/skill-shapes.sh   # the coach skill's payload keys vs schemas/v3
 sh tools/blob-safety.sh    # every TEXT decode is projected through CAST(... AS TEXT)
-sh tools/adapter-fixtures.sh # every strength-notes adapter is registered, in pinned order, with its sample (ADR 0018)
+sh tools/adapter-fixtures.sh # every strength-set adapter is registered, in pinned order, with its sample (ADR 0018)
 sh tools/command-claims.sh # commands the docs name vs the binary's own table (needs ./stride)
 just layer-check           # every engine import points down the layer table (ADR 0016)
 just pin-check             # every workflow nightly-tag site agrees with the two compiler pins
@@ -76,9 +76,9 @@ A NEW MODULE needs a row in `tools/layer-check.sh`'s table before CI will take i
 `roc check` and the whole suite pass without one, so the layer gate is the check
 nothing else reminds you of.
 
-A NEW STRENGTH-NOTES ADAPTER is a module in the `src/strength` package (one file
-per app; `Adapter.roc` states the contract), a row in `src/cli/Strength.roc`'s ordered
-table, and a real `sample` of the app's share text pinned by the module's own
+A NEW STRENGTH-SET ADAPTER is a module in the `src/strength` package (one file
+per source; `Adapter.roc` states the contract), a row in `src/cli/Strength.roc`'s
+ordered table, and a real `sample` of the source's text pinned by the module's own
 expect — `tools/adapter-fixtures.sh` refuses any of the three without the others
 (ADR 0018). A package's header file is `package.roc`; the app header that declares
 the package names it by path, so nothing about that name is compiler-imposed.

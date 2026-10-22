@@ -294,6 +294,7 @@ against the parser's own verb list; it is the authoritative list and this table 
 | ----------------------------------- | ----------------------------------------------------------------------- |
 | `sync`                              | pull new activities + streams (rolling 30d self-heal); `--all` re-lists |
 | `import <zip\|dir>`                 | load a Strava account export — no API creds needed                      |
+| `strength import <file\|->`        | store strength sets from the JSON Strava's MCP connector returned       |
 | `analyze`                           | compute training metrics (TSS, zones, CTL/ATL/TSB)                      |
 | `rate <activity_id\|latest> <1-10>` | record perceived effort for a session                                   |
 

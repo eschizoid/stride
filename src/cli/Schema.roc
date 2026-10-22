@@ -107,14 +107,30 @@ Schema :: [].{
         \\  description TEXT
         \\)
 
+    # mirror tier: one structured strength log per activity, as Strava's MCP
+    # connector returns it. Strava's public API does not carry these, so the
+    # only writer is `stride strength import`, which a coach runs with the
+    # connector's JSON; `payload` is ONE workout object, the exact text the
+    # connector wrote for it, activity_id included. Upstream data,
+    # re-importable, so an import replaces the row for its activity, and
+    # prune deletes it with the activity it references.
+    strength_logs =
+        \\CREATE TABLE IF NOT EXISTS strength_logs (
+        \\  activity_id INTEGER PRIMARY KEY REFERENCES activities(id),
+        \\  payload     TEXT NOT NULL,
+        \\  imported_at TEXT NOT NULL
+        \\)
+
     # computed tier: the parsed set rows behind the tonnage spine, rebuilt
-    # from strength_notes on every analyze (like activity_segments, deletable
-    # at will). `weight_kg` is the mass one rep MOVES — the /side variants are
-    # resolved at parse time — so tonnage is sets * reps * weight_kg. `source`
-    # records provenance per row: the name of the ADAPTER that read the paste
-    # ('peloton' today; a structured upstream source would write its own
-    # name) — the load_coverage discipline applied to sets, so a career of
-    # mixed apps and unequal sources stays distinguishable, never flattened.
+    # on every analyze (like activity_segments, deletable at will) from each
+    # activity's strength_logs payload when it has one, else its
+    # strength_notes description. `weight_kg` is the mass one rep MOVES — the
+    # /side variants are resolved at parse time — so tonnage is
+    # sets * reps * weight_kg. `source` records provenance per row: the name
+    # of the ADAPTER that read the text ('strava' for a structured log,
+    # 'peloton' for a share summary) — the load_coverage discipline applied
+    # to sets, so a career of mixed apps and unequal sources stays
+    # distinguishable, never flattened.
     strength_sets =
         \\CREATE TABLE IF NOT EXISTS strength_sets (
         \\  activity_id INTEGER REFERENCES activities(id),
@@ -299,16 +315,19 @@ Schema :: [].{
     # rather than seconds-per-distance on purpose: higher is better for both
     # kinds, so an improving athlete's line rises whatever the sport.
     # how much of a month's strength work the parsed sets actually cover:
-    # tracked sessions carry a pasted breakdown, instructor-led classes never
-    # do, so a month's tonnage is a SAMPLE of its training — and a biased
-    # sample reads as a trend (#521). One row per strength month: how many of
-    # its sessions contributed sets, out of how many the family trained.
-    # Shared as a view so every surface states the same denominator.
-    # COUPLED to the notes drain's family gate: this WHERE and the tonnage
-    # arm's inner join both assume strength_sets rows only ever belong to
-    # the WeightTraining family, which is true because the drain fetches
-    # descriptions for exactly that family — widening one without the other
-    # makes a new family's tonnage vanish silently at the join.
+    # tracked sessions carry a pasted breakdown or an imported log,
+    # instructor-led classes never do, so a month's tonnage is a SAMPLE of
+    # its training — and a biased sample reads as a trend (#521). One row per
+    # strength month: how many of its sessions contributed sets, out of how
+    # many the family trained. Shared as a view so every surface states the
+    # same denominator.
+    # COUPLED to the family gates upstream of strength_sets: this WHERE and
+    # the tonnage arm's inner join both assume strength_sets rows only ever
+    # belong to the WeightTraining family. That holds because the notes drain
+    # fetches descriptions for that family only, `strength import` refuses a
+    # log for any other, and the strength_sets rebuild reads only activities
+    # of that family — widening one without the others makes a new family's
+    # tonnage vanish silently at the join.
     strength_coverage_drop =
         \\DROP VIEW IF EXISTS strength_coverage
     strength_coverage =

@@ -1,0 +1,159 @@
+{
+  "title": "strength import",
+  "description": "Result of `stride strength import <file|->` — strength workouts as Strava's MCP connector returns them (a list of workout objects, or one), each decoded on its own, stored in strength_logs against its activity as the text the connector wrote, and parsed into strength_sets before the command returns, so `stride strength` shows them without an analyze. A stored log takes precedence over the activity's description for that activity, and re-importing an activity replaces its log. `imported` and `skipped` together hold one entry per workout in the input, in input order within each list, and every set left out of a workout is a `dropped` entry on it: nothing in the input is left out silently. A skipped workout or a dropped set is not an error: the command exits 0 and names the reason, and only unreadable input, or input that is not a JSON object or list, fails the command.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "imported",
+    "skipped"
+  ],
+  "properties": {
+    "imported": {
+      "type": "array",
+      "description": "One entry per stored workout. `rows` counts the stored set rows (consecutive sets of one exercise at the same reps and weight fold into one row); `sets` counts the sets those rows hold; `dropped` lists the workout's sets that were left out; `zeroed` lists its bodyweight sets whose recorded weight was not counted.",
+      "items": {
+        "type": "object",
+        "additionalKeys": false,
+        "required": [
+          "activity_id",
+          "rows",
+          "sets",
+          "dropped",
+          "zeroed"
+        ],
+        "properties": {
+          "activity_id": {
+            "type": "integer"
+          },
+          "rows": {
+            "type": "integer"
+          },
+          "sets": {
+            "type": "integer"
+          },
+          "dropped": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalKeys": false,
+              "required": [
+                "set",
+                "exercise",
+                "reason"
+              ],
+              "properties": {
+                "set": {
+                  "type": "integer",
+                  "description": "the set's 1-based position in the workout's exercise_sets"
+                },
+                "exercise": {
+                  "type": "string",
+                  "description": "the set's exercise name, \"\" when it had none"
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "bad_reps",
+                    "bad_weight",
+                    "no_exercise_name",
+                    "no_reps",
+                    "unknown_weight_unit"
+                  ],
+                  "description": "no_exercise_name: the set names no exercise. no_reps: no rep count, timed (duration-only) sets included. bad_reps: a rep count that is not a positive whole number (\"8-10\", \"0\"). unknown_weight_unit: a weight whose value names no kg/lb/lbs unit (\"44 stone\", a bare \"20\"). bad_weight: a kg/lb weight whose number does not parse (\"20,5 kg\") or is negative. A set with no weight at all is kept at 0 kg, not dropped."
+                }
+              }
+            }
+          },
+          "zeroed": {
+            "type": "array",
+            "description": "Bodyweight sets (push up, pull up, dip, plank, ... matched by exercise name, case, spacing, hyphens and a trailing plural ignored) kept with their sets and reps at 0 kg although the log recorded a nonzero weight (the connector's log can carry the athlete's own mass on a bodyweight move). The stored log keeps the recorded weight; only the derived set rows read 0 kg.",
+            "items": {
+              "type": "object",
+              "additionalKeys": false,
+              "required": [
+                "set",
+                "exercise",
+                "recorded"
+              ],
+              "properties": {
+                "set": {
+                  "type": "integer",
+                  "description": "the set's 1-based position in the workout's exercise_sets"
+                },
+                "exercise": {
+                  "type": "string"
+                },
+                "recorded": {
+                  "type": "string",
+                  "description": "the weight as the log wrote it, e.g. \"79.4 kg\""
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "skipped": {
+      "type": "array",
+      "description": "One entry per workout left unstored. `activity_id` is the input's value as given, a string because a skipped id need not be numeric (\"\" when the workout carried none or it could not be read).",
+      "items": {
+        "type": "object",
+        "additionalKeys": false,
+        "required": [
+          "activity_id",
+          "reason",
+          "dropped"
+        ],
+        "properties": {
+          "activity_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "bad_activity_id",
+              "duplicate_activity",
+              "no_sets",
+              "no_usable_sets",
+              "not_strength",
+              "undecodable_workout",
+              "unknown_activity"
+            ],
+            "description": "undecodable_workout: the element is not a workout object the import can read (not an object, or exercise_sets or a set field of the wrong type). bad_activity_id: absent, null, not a whole number, or not positive. duplicate_activity: an earlier workout in the same input was already stored for this activity; only a stored workout claims its activity, so one skipped for another reason does not. unknown_activity: no activity with that id in the database (sync first). not_strength: the activity is not in the strength family, the only family strength sets are counted for. no_sets: exercise_sets is empty. no_usable_sets: every set was left out; `dropped` says why for each."
+          },
+          "dropped": {
+            "type": "array",
+            "description": "the sets left out, populated for no_usable_sets and empty otherwise; same shape and reasons as imported[].dropped",
+            "items": {
+              "type": "object",
+              "additionalKeys": false,
+              "required": [
+                "set",
+                "exercise",
+                "reason"
+              ],
+              "properties": {
+                "set": {
+                  "type": "integer"
+                },
+                "exercise": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "bad_reps",
+                    "bad_weight",
+                    "no_exercise_name",
+                    "no_reps",
+                    "unknown_weight_unit"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

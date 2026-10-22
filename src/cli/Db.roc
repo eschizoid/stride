@@ -261,7 +261,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 37
+    schema_version = 38
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -280,6 +280,8 @@ Db :: [].{
         # created before the views below, which read strength_sets
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.strength_notes, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.strength_sets, bindings: [] })?
+        # v38: structured strength logs imported from Strava's connector (mirror)
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.strength_logs, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.ratings, bindings: [] })?
         # v27 (#138): event targets
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.events, bindings: [] })?

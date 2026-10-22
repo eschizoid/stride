@@ -18,6 +18,9 @@ Command := [
 	Doctor,
 	Zones,
 	Strength,
+	## a structured strength log Strava's MCP connector returned, read from a
+	## file or from stdin when the argument is `-`
+	StrengthImport(Str),
 	Version,
 	## the window's self-published bus capabilities (#439): views, directive
 	## fields, staleness - served from the database the window wrote them to
@@ -146,6 +149,8 @@ Command := [
 				}
 			["zones"] => Ok(Zones)
 			["strength"] => Ok(Strength)
+			["strength", "import", file] => Ok(StrengthImport(file))
+			["strength", "import", ..] => Err(Usage("strength import <file|-> — the JSON Strava's connector returned for one or more workouts, `-` to read it from stdin"))
 			["viz"] => Ok(VizCaps)
 			["viz", "tick"] => Ok(VizTick({ ack: True }))
 			["viz", "tick", "--no-ack"] => Ok(VizTick({ ack: False }))
@@ -477,6 +482,12 @@ Command := [
 		## empty states are payload facts, not errors, so no codes beyond
 		## the universal set
 		reads("strength", [], "strength.json"),
+		## the connector's JSON for strength workouts, stored per activity and
+		## parsed into strength_sets at once; a workout it cannot place is a
+		## `skipped` entry in the payload, not an error. The example is empty: a
+		## file path is not statically knowable, and `-` reads stdin, which an
+		## unattended caller filling arguments from this table cannot supply.
+		errs(writes("strength import", [req_ex("<file|->", "")], "strength-import.json"), ["bad_json", "unreadable_file"]),
 		errs(reads("pz", [], "zones.json"), ["no_power_data"]),
 		errs(reads("compare", [opt("<week|month>")], "compare.json"), ["bad_period", "no_data", "unreadable_activity_date", "unreadable_daily_load_day"]),
 		errs(reads("activities", [opt_ex("<limit>", "5"), opt_ex("<sport>", "Ride")], "activities.json"), ["bad_count"]),
@@ -900,6 +911,13 @@ expect match Command.parse(["skip", "3", "sick"]) { Ok(Skip("3", "sick")) => Tru
 expect match Command.parse(["relabel", "45", "threshold", "3x12 @ 230W"]) { Ok(Relabel("45", "threshold", "3x12 @ 230W")) => True  _ => False }
 expect match Command.parse(["relabel", "45", "threshold", "3x12 @ 230W", "day-swapped with Sunday"]) { Ok(RelabelWith("45", "threshold", "3x12 @ 230W", "day-swapped with Sunday")) => True  _ => False }
 expect match Command.parse(["relabel", "45"]) { Err(Usage(_)) => True  _ => False }
+# strength import: one file argument, `-` passed through for the handler to
+# read stdin, and either arity miss a usage error rather than the bare
+# `strength` report
+expect match Command.parse(["strength", "import", "log.json"]) { Ok(StrengthImport("log.json")) => True  _ => False }
+expect match Command.parse(["strength", "import", "-"]) { Ok(StrengthImport("-")) => True  _ => False }
+expect match Command.parse(["strength", "import"]) { Err(Usage(_)) => True  _ => False }
+expect match Command.parse(["strength", "import", "a.json", "b.json"]) { Err(Usage(_)) => True  _ => False }
 expect match Command.parse(["week", "add", "2026-01-01", "threshold", "3x12", "build", "3x12:00@230W"]) { Ok(WeekAddT("2026-01-01", "threshold", "3x12", "build", "3x12:00@230W")) => True  _ => False }
 expect match Command.parse(["event", "add", "2026-10-15", "Fall Century"]) { Ok(EventAdd("2026-10-15", "Fall Century")) => True  _ => False }
 expect match Command.parse(["event", "remove", "3"]) { Ok(EventRemove("3")) => True  _ => False }
