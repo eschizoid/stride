@@ -408,32 +408,40 @@ Strava :: [].{
     # deleted streams table both walk into a full drain, one run per 15-minute
     # window until the queue empties.
     #
-    # fetch time/HR/watts/altitude/distance streams for activities that lack them,
-    # newest first; pacing bounds the run (see read_limits!). altitude + distance are
-    # requested EXPLICITLY — they feed grade-adjusted pace / NGP (ADR 0003). To force
-    # a re-pull, DELETE FROM streams (mirror tier) and let the next sync refetch.
+    # fetch time/HR/watts/altitude/distance streams for the activities
+    # stream_queue_where selects; pacing bounds the run (see read_limits!). altitude
+    # + distance are requested EXPLICITLY — they feed grade-adjusted pace / NGP (ADR
+    # 0003). To force a re-pull, DELETE FROM streams (mirror tier) and let the next
+    # sync refetch.
     drain_missing! : Str, Str, DrainKind, Bool => Try(DrainOutcome, _)
     drain_missing! = |path, token, kind, all| {
         ids =
             match kind {
-                # the Streams arm ignores `all` on purpose: a stored stream is
-                # immutable — the ride happened once — so a wider scope has
-                # nothing to re-read; a forced re-pull stays DELETE FROM streams
+                # Fewest failed fetches first, then newest first. The queue is walked
+                # in this order and the read budget can end the run anywhere in it, so
+                # an id whose body keeps failing to decode sits behind every id that
+                # has not failed, and a window's worth of them cannot spend every
+                # run's budget. `all` lifts the attempt cap only: a stored stream that
+                # decodes is never re-read, because the ride happened once.
                 Streams =>
                     Sqlite.query_many!({
                         path: Path.utf8(path),
                         query:
                             \\SELECT a.id AS id FROM activities a
                             \\LEFT JOIN streams s ON s.activity_id = a.id
-                            \\WHERE s.activity_id IS NULL AND a.moving_time > 0
-                            \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}
+                            \\LEFT JOIN stream_retries r ON r.activity_id = a.id
+                            \\${stream_queue_where}
+                            \\ORDER BY COALESCE(r.attempts, 0), ${Metrics.rank_ts_sql("a.start_local", Desc)}
                         ,
-                        bindings: [],
+                        bindings: [
+                            { name: ":all", value: Integer(if all 1 else 0) },
+                            { name: ":cap", value: Integer(stream_attempt_cap) },
+                        ],
                         rows: Sqlite.i64("id"),
                     })?
                 Notes =>
                     # WIDER than pending_notes! on purpose, where the Streams queue
-                    # mirrors its pending count exactly. A description is written
+                    # mirrors its pending count on a plain sync. A description is written
                     # AFTER the activity — the athlete finishes, syncs, and pastes
                     # the breakdown that evening — and can be edited any time, so a
                     # stored copy inside the rolling window the listing re-checks is
@@ -530,7 +538,7 @@ Strava :: [].{
             Notes => pending_notes!(path)
         }
 
-    store_response! : Str, DrainKind, I64, Response.Response => Try([Stored, SkippedNonUtf8], _)
+    store_response! : Str, DrainKind, I64, Response.Response => Try([Stored, Skipped, SkippedFinal(I64)], _)
     store_response! = |path, kind, id, resp|
         match kind {
             Streams => store_stream_response!(path, id, resp)
@@ -559,8 +567,9 @@ Strava :: [].{
         }
     }
 
-    # count activities still lacking streams, so a run that stopped on the read budget
-    # reports the shortfall honestly instead of looking like completion
+    # count the streams a plain `sync` still owes: the queue drain_missing! walks
+    # without `--all`, through the same predicate, so a run that stopped on the read
+    # budget reports the shortfall honestly instead of looking like completion
     pending_streams! : Str => Try(I64, _)
     pending_streams! = |path|
         Sqlite.query!({
@@ -568,14 +577,104 @@ Strava :: [].{
             query:
                 \\SELECT COUNT(*) AS n FROM activities a
                 \\LEFT JOIN streams s ON s.activity_id = a.id
-                \\WHERE s.activity_id IS NULL AND a.moving_time > 0
+                \\LEFT JOIN stream_retries r ON r.activity_id = a.id
+                \\${stream_queue_where}
             ,
-            bindings: [],
+            bindings: [
+                { name: ":all", value: Integer(0) },
+                { name: ":cap", value: Integer(stream_attempt_cap) },
+            ],
+            row: Sqlite.i64("n"),
+        })
+
+    # How many fetches of one activity's stream may return a body stride cannot
+    # decode before a plain `sync` stops asking. Each failed fetch spends a read
+    # from the same budget as every other stream, so the cap is what bounds the
+    # reads one bad id can cost: nothing but a stored body resets the count, so
+    # at most this many until then, plus one per explicit `sync --all`.
+    stream_attempt_cap : I64
+    stream_attempt_cap = 3
+
+    # THE streams queue: activities with moving time and no stored stream, plus
+    # every activity with a stream_retries row (a fetch that would not decode, or
+    # a stored body analyze could not decode — whatever its moving time, since
+    # analyze has promised that row a fetch), while the failed-fetch count is
+    # under :cap, or regardless of it when :all = 1. Callers join
+    # `activities a`, `streams s` and `stream_retries r` and bind :all and :cap.
+    stream_queue_where : Str
+    stream_queue_where =
+        \\WHERE ((s.activity_id IS NULL AND a.moving_time > 0) OR r.activity_id IS NOT NULL)
+        \\  AND (:all = 1 OR COALESCE(r.attempts, 0) < :cap)
+
+    # A fetch returned a body stride cannot decode: count it, and say whether a
+    # plain sync will ask again.
+    count_unreadable_fetch! : Str, I64 => Try([Stored, Skipped, SkippedFinal(I64)], _)
+    count_unreadable_fetch! = |path, id| {
+        Sqlite.execute!({
+            path: Path.utf8(path),
+            query: "INSERT INTO stream_retries (activity_id, attempts) VALUES (:id, 1) ON CONFLICT(activity_id) DO UPDATE SET attempts = stream_retries.attempts + 1",
+            bindings: [{ name: ":id", value: Integer(id) }],
+        })?
+        n = Sqlite.query!({
+            path: Path.utf8(path),
+            query: "SELECT attempts AS n FROM stream_retries WHERE activity_id = :id",
+            bindings: [{ name: ":id", value: Integer(id) }],
+            row: Sqlite.i64("n"),
+        })?
+        if n < stream_attempt_cap Ok(Skipped) else Ok(SkippedFinal(n))
+    }
+
+    # Analyze found a STORED stream it cannot decode: give it a retry row at
+    # attempts 0 so the next sync fetches it. An existing row is left as it is,
+    # so a rescore never re-arms the cap: an id costs at most stream_attempt_cap
+    # failed reads in its life, plus one per explicit `sync --all`, and only a
+    # fetch that stores a body clears the row.
+    flag_stream_refetch! : Str, I64 => Try({}, _)
+    flag_stream_refetch! = |path, id|
+        Sqlite.execute!({
+            path: Path.utf8(path),
+            query: "INSERT OR IGNORE INTO stream_retries (activity_id, attempts) VALUES (:id, 0)",
+            bindings: [{ name: ":id", value: Integer(id) }],
+        })
+
+    # how many of these activities have failed stream_attempt_cap fetches
+    count_capped_among! : Str, List(I64) => Try(U64, _)
+    count_capped_among! = |path, ids|
+        match ids {
+            [] => Ok(0)
+            [id, .. as rest] => {
+                n = Sqlite.query!({
+                    path: Path.utf8(path),
+                    query: "SELECT COUNT(*) AS n FROM stream_retries WHERE activity_id = :id AND attempts >= :cap",
+                    bindings: [
+                        { name: ":id", value: Integer(id) },
+                        { name: ":cap", value: Integer(stream_attempt_cap) },
+                    ],
+                    row: Sqlite.i64("n"),
+                })?
+                more = count_capped_among!(path, rest)?
+                Ok(more + (if n > 0 1 else 0))
+            }
+        }
+
+    # count the activities whose stream has failed stream_attempt_cap fetches, so
+    # a plain sync no longer asks for it: the ids pending_streams! leaves out on
+    # purpose, which only `sync --all` fetches again
+    capped_streams! : Str => Try(I64, _)
+    capped_streams! = |path|
+        Sqlite.query!({
+            path: Path.utf8(path),
+            query:
+                \\SELECT COUNT(*) AS n FROM stream_retries r
+                \\JOIN activities a ON a.id = r.activity_id
+                \\WHERE r.attempts >= :cap
+            ,
+            bindings: [{ name: ":cap", value: Integer(stream_attempt_cap) }],
             row: Sqlite.i64("n"),
         })
 
     # the notes twin — but NARROWER than the Notes queue, where the streams
-    # pair mirror each other exactly: pending is work the next run is OWED,
+    # pair mirror each other on a plain sync: pending is work the next run is OWED,
     # and only a never-asked activity qualifies. The queue also re-reads
     # stored in-window descriptions (#519); counting those here would make
     # every steady-state sync report itself resumable about maintenance it
@@ -638,11 +737,11 @@ Strava :: [].{
                                 store_note!(path, id, "")?
                                 Ok(Stored)
                             } else {
-                                Ok(SkippedNonUtf8)
+                                Ok(Skipped)
                             }
                     }
                 }
-                Err(_) => Ok(SkippedNonUtf8)
+                Err(_) => Ok(Skipped)
             }
         } else {
             text = Str.from_utf8(Response.body(resp)).ok_or("<non-utf8 body>")
@@ -674,6 +773,12 @@ Strava :: [].{
                 { name: ":id", value: Integer(id) },
                 { name: ":raw", value: String(text) },
             ],
+        })?
+        # a stored body ends the id's retries
+        _ = Sqlite.execute!({
+            path: Path.utf8(path),
+            query: "DELETE FROM stream_retries WHERE activity_id = :id",
+            bindings: [{ name: ":id", value: Integer(id) }],
         })?
         # streams just arrived — invalidate any metrics computed before them so the
         # next analyze recomputes zones/NP from the real data (they were frozen otherwise)
@@ -874,22 +979,24 @@ Strava :: [].{
             .with_timeout(TimeoutMilliseconds(60000)),
         )
 
-    # store a streams response like the sync path: 404 => honest empty marker,
-    # 2xx => body (skip if non-utf8 so it retries), other => propagate the error
-    # THE stream-response policy: 404 => "{}" marker
-    # (no streams recorded; don't refetch), 2xx => store, non-utf8 => skip WITHOUT
-    # storing (storing would mark it done forever; it retries next run).
+    # THE stream-response policy. 404 => the "{}" marker (no streams recorded;
+    # don't refetch). 2xx with a body that decodes => store it. 2xx with a body
+    # that is not UTF-8 or will not decode => store NOTHING and count the failed
+    # fetch in stream_retries: a stored body retires the id from the queue, so
+    # storing an unreadable one would leave analyze reading it forever, and the
+    # count is what stops the id being fetched forever. Anything else => the
+    # error propagates. Both stores clear the id's stream_retries row.
     store_stream_response! = |path, id, resp|
         if Response.status(resp) == 404 {
             store_streams!(path, id, "{}")?
             Ok(Stored)
         } else if Response.status(resp) < 300 {
             match Str.from_utf8(Response.body(resp)) {
-                Ok(text) => {
+                Ok(text) if !(Streams.decode_streams(NotNull(text)).failed) => {
                     store_streams!(path, id, text)?
                     Ok(Stored)
                 }
-                Err(_) => Ok(SkippedNonUtf8)
+                _ => count_unreadable_fetch!(path, id)
             }
         } else {
             text = Str.from_utf8(Response.body(resp)).ok_or("<non-utf8 body>")
@@ -1002,17 +1109,22 @@ Strava :: [].{
                     Store({ window, today, after }) => {
                         save_reads_for_day!(path, st.day, today)?
                         # 404 => empty marker, 2xx => body, other => error propagated.
-                        # MATCHED, not discarded: SkippedNonUtf8 writes no row, so that id
-                        # stays pending and retries next run. Counting it as fetched reported
-                        # rows that were never stored and let a lossy run present itself as a
-                        # clean one — a bug that had to be fixed twice (#218, #224) back when
-                        # this loop had a twin.
+                        # MATCHED, not discarded: a skip writes no stream row, so it is
+                        # counted as skipped and never as fetched, or a lossy run would
+                        # present itself as a clean one. Skipped = the id stays in the
+                        # queue for the next plain sync; SkippedFinal = it has failed
+                        # stream_attempt_cap fetches and only `sync --all` asks again.
                         counted =
                             match store_response!(path, kind, id, resp)? {
                                 Stored => { stored: st.stored + 1, skipped: st.skipped }
-                                SkippedNonUtf8 => {
+                                Skipped => {
                                     bar_done!(st)
                                     Output.say!("  activity ${I64.to_str(id)}: stream data would not decode — skipped, retries next run")?
+                                    { stored: st.stored, skipped: st.skipped + 1 }
+                                }
+                                SkippedFinal(n) => {
+                                    bar_done!(st)
+                                    Output.say!("  activity ${I64.to_str(id)}: stream data would not decode — skipped after ${I64.to_str(n)} failed fetches; plain syncs stop asking, `stride sync --all` asks again")?
                                     { stored: st.stored, skipped: st.skipped + 1 }
                                 }
                             }
@@ -1287,6 +1399,7 @@ Strava :: [].{
                 _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM activity_metrics WHERE activity_id = :id", bindings: b })?
                 _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM activity_segments WHERE activity_id = :id", bindings: b })?
                 _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM streams WHERE activity_id = :id", bindings: b })?
+                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM stream_retries WHERE activity_id = :id", bindings: b })?
                 # the strength tables reference activities too, and the database
                 # enforces it: a strength session deleted upstream with a stored
                 # description or log would otherwise fail the activity's DELETE

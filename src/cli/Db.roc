@@ -261,7 +261,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 38
+    schema_version = 39
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -276,6 +276,14 @@ Db :: [].{
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.planned_sessions, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.config, bindings: [] })?
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.streams, bindings: [] })?
+        # v39: per-activity count of stream fetches that would not decode
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.stream_retries, bindings: [] })?
+        # ...and a retry row for every stored body that is not JSON at all. Earlier
+        # versions stored any UTF-8 body, and analyze reports one only when it
+        # rescores the activity, which a converged row never needs; without this a
+        # body stored before v39 would never be fetched again. OR IGNORE keeps the
+        # count of a row that exists, so re-running the migration re-arms nothing.
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.seed_stream_retries, bindings: [] })?
         # v34 (#478): strength notes (mirror) + parsed set rows (computed) —
         # created before the views below, which read strength_sets
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.strength_notes, bindings: [] })?

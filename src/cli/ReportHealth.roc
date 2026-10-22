@@ -224,6 +224,7 @@ ReportHealth :: [].{
             },
         })?
         pending = Strava.pending_streams!(path)?
+        capped = Strava.capped_streams!(path)?
         cfg = Sqlite.query!({
             path: Path.utf8(path),
             query:
@@ -382,6 +383,7 @@ ReportHealth :: [].{
             conf_low: conf.lo,
             conf_none: conf.non,
             pending_streams: pending,
+            streams_retry_capped: capped,
             # What `analyze` would recompute right now, beside what it has never scored at all
             # (#238): `unanalyzed` is `m.activity_id IS NULL`, right for a COVERAGE field, but
             # it read 0 on a database where every row was due after a metrics_rev bump (735
@@ -427,7 +429,7 @@ ReportHealth :: [].{
             # single-line Str.contains and stayed green.
             undateable =
                 if p.undateable_activities > 0
-                    ["  activities with an unreadable date: ${(p.undateable_activities).to_str()} — `stride activities` lists them first; delete each by id and re-sync"]
+                    ["  activities with an unreadable date: ${(p.undateable_activities).to_str()} — `stride activities` lists them first; `stride sync --all` replaces each one Strava still lists"]
                 else
                     []
             # ...and the WIDER count on its own line: `activities` led with rows whose date
@@ -441,7 +443,15 @@ ReportHealth :: [].{
                     if p.undateable_activities > 0
                         ["  activities the engine cannot order in time: ${(p.unrankable_activities - p.undateable_activities).to_str()} more — a readable date with an unusable clock; same repair"]
                     else
-                        ["  activities the engine cannot order in time: ${(p.unrankable_activities).to_str()} — a readable date with an unusable clock; `stride activities` lists them first; delete each by id and re-sync"]
+                        ["  activities the engine cannot order in time: ${(p.unrankable_activities).to_str()} — a readable date with an unusable clock; `stride activities` lists them first; `stride sync --all` replaces each one Strava still lists"]
+                else
+                    []
+            # a fault count, so silent at zero like the date-health lines: streams
+            # that failed Strava.stream_attempt_cap fetches leave `pending_streams`,
+            # and this line is where they stay visible
+            capped_line =
+                if p.streams_retry_capped > 0
+                    ["  streams that would not decode after ${(Strava.stream_attempt_cap).to_str()} or more fetches: ${(p.streams_retry_capped).to_str()} — plain syncs stopped asking; `stride sync --all` fetches them again"]
                 else
                     []
             Str.join_with(
@@ -493,6 +503,7 @@ ReportHealth :: [].{
                     # now leads with these rows.
                     undateable,
                     unrankable,
+                    capped_line,
                     [
                         "  config: hr zones ${if p.zones_set "set" else "incomplete"}, ${(p.sport_zone_overrides).to_str()} per-sport zone key(s) set · ${(p.ftp_derived_sports).to_str()} sport(s) have a derived FTP (FTP is never configured — see summary)",
                         "  time: ${p.time}",

@@ -70,35 +70,48 @@ reason `--json` and still answers in JSON).
      clear at UTC midnight, so tell them tomorrow. The two `list_*` values mean the
      activity listing is incomplete and nothing was pruned: `synced`/`pruned` describe
      a partial run.
-   - **Never re-run sync in a loop.** A run with `streams_fetched: 0` and
-     `streams_skipped > 0` is stuck on unreadable bodies, whatever `stopped` says: the
-     queue runs newest first and those bodies are never stored, so they can fill every
-     budget. Stop and report it. Otherwise any `stopped` other than `complete` is a limit
-     and the command returns at once, so wait out the remedy above before running again.
-     `stopped: complete` with `resumable: true` means only unreadable bodies remain
-     (`streams_skipped`/`notes_skipped`); re-running returns the same envelope, so stop
-     and report. Do not count `notes_fetched` as progress: it includes the routine
-     re-reads of descriptions inside the window.
-   - A body that does not decode is not stored and retries next run; a 404 (Strava has
-     no streams) stores an empty marker and retires the activity. Every stored stream
-     is permanent, so a large first sync spans several runs and possibly days.
+   - **Never re-run sync in a loop.** Any `stopped` other than `complete` is a limit and
+     the command returns at once, so wait out the remedy above before running again. A
+     run with `streams_fetched: 0` and `streams_skipped > 0` read only bodies that would
+     not decode: stop and report it. The next scheduled sync still makes progress,
+     because the queue puts every activity not yet tried ahead of a body that has
+     failed. `stopped: complete` with `resumable: true` means only bodies that would not
+     decode remain (`streams_skipped`/`notes_skipped`); the next sync asks for them
+     again, so stop and report rather than re-running now. Do not count
+     `notes_fetched` as progress: it includes the routine re-reads of descriptions
+     inside the window.
+   - A stream body that does not decode (not UTF-8, or not stream JSON) is never
+     stored. Each failed fetch is counted, and nothing but a stored body resets the
+     count; the next sync asks again, up to 3 failed fetches. Then a plain sync stops
+     asking: the activity leaves `pending_streams`, `resumable` goes false, stderr says
+     so, and `stride doctor` counts it in `streams_retry_capped`. `stride sync --all`
+     asks again. A 404 (Strava has no streams) stores an empty marker and retires the
+     activity. A stream that decodes is stored for good, so a large first sync spans
+     several runs and possibly days.
    - Stride counts its own daily reads in config rows `strava_reads_today` and
      `strava_reads_day` (a UTC day number; a stale stamp is the reset). Do not touch
      them unless Stride itself names `stride config set strava_reads_today 0` as the
      repair.
-   - `stride sync --all` drops the window and re-lists everything. It is the only way a
-     deletion in old history propagates, and the only way an edit to a description
-     older than 30 days gets in; if it stops on the budget, the remainder waits for the
-     next `--all`, not the next plain sync.
+   - `stride sync --all` drops the window, re-lists everything and replaces each
+     activity row Strava still lists with Strava's copy. It is the only way a deletion
+     in old history propagates, the repair Stride names for an activity with an
+     unreadable date or clock, the way to ask again for a stream past its 3 failed
+     fetches, and the only way an edit to a description older than 30 days gets in; if
+     it stops on the budget, the remainder waits for the next `--all`, not the next
+     plain sync. No Stride command deletes a single activity.
    - No API credentials: `stride import <export.zip|dir> --json` loads a Strava account
      export (English column headers), summary-level only (no streams), idempotent;
      returns `{imported, skipped}` counts of archive rows.
 2. **Analyze** with `stride analyze --json`: computes metrics for new or invalidated
    activities, idempotent, and returns
-   `{computed, stream_errors, form_tsb, form_tsb_known, form_state, form_delta_7d, form_delta_known, converged}`.
-   `stream_errors` counts activities scored from summary fields because they had no
-   readable stream: one never fetched is fetched by the next sync if it has moving time, while a stored row
-   that does not decode is never re-pulled. Run analyze after every sync.
+   `{computed, stream_errors, stream_errors_capped, form_tsb, form_tsb_known, form_state, form_delta_7d, form_delta_known, converged}`.
+   `stream_errors` counts activities (each once) whose STORED stream does not decode.
+   They are scored from summary fields. Analyze queues each one that has no retry
+   count yet for the next sync, which fetches it again (up to 3 failed fetches, as
+   above); a rescore never resets that count. `stream_errors_capped` is how many of
+   them have already failed 3 or more fetches, which only `stride sync --all` asks
+   for again. An activity with no stored stream is not an error: sync fetches it if
+   it has moving time. Run analyze after every sync.
 3. **Read the bundle** with `stride plan --json` before proposing anything: its
    `plan_history_28d` and `adherence_28d` record what was targeted and what happened, so
    a plan is never a fresh guess. Check `data_freshness.last_sync` against today first.
@@ -244,7 +257,7 @@ Pick by question: `season` for the shape of a year, `compare` for this week or m
 | `stride tte <watts>` | time to exhaustion at one power from a Ride-family CP fit over 90 days: `{watts, seconds, known, status, cp, w_prime, fit_points, fit_r2, window_days, sport_family, demonstrated_s, demonstrated_w, demonstrated_known, contradicts_model}`. Weigh the fit first: `fit_r2` below ~0.9 is noise, and `fit_points` (max 3) cannot detect a bad fit. `status`: `in_model` (2-20 min), `outside_model` (a direction, not a number), `below_cp` (the model says indefinitely; bodies do not). `contradicts_model: true` = the athlete already held this power longer than predicted, so the number is unusable; `false` is not reassurance. The fit excludes today. Errors: `bad_watts`, `no_cp_fit` |
 | `stride reps [date]` | the anchor session's work reps beside same-shaped reps of earlier sessions: `{anchor_date, anchor_activity_id, shape, sport_family, matched_total, sessions}`. `shape` `{rep_count, mean_dur_s, band_lo_s, band_hi_s, signal}` is the comparability rule: same sport family, same rep count, mean rep duration inside the band, same signal (watts never beside m/s), never later than the anchor. Sessions (at most 12; `matched_total` counts every match) carry per-rep `avg_signal`/`avg_hr`, `mean_signal`, `fade_signal` (last minus first), `hr_rise_bpm` + `hr_rise_known`, and `min_dur_s`/`max_dur_s`/`uniformity` so you can judge uneven sessions. Errors: `no_detected_intervals`, `no_intervals_on_date`, `irregular_anchor` (the anchor's own reps vary too much in duration to be one repeated shape) |
 | `stride progress [date] [asc\|desc]` | `{anchor_date, anchor_scored, groups}`, each group `{name, grouped_by, lens, sessions, hidden, hidden_lens, hidden_scope}`. `lens` is `ef`, `speed_hr` or `rpe`; each session has a `score`. `grouped_by: structure` (same detected workout shape, names ignored) beats `name` when both could answer. `anchor_scored: false` = the asked-about session is not in the trend. `sessions` is the whole history only when `hidden` is 0. `hidden_scope` rows belong to another distance bucket (more than 10% away) and are not fixable. `hidden_lens` rows lacked what the lens needs (EF: normalized power and HR; speed/HR: distance and HR; RPE: a rating), usually fixable with a power meter, a strap or a rating, except when the stored reading itself is broken (see the heart-rate rule below). The counts carry no ids: find the rows with `stride activities --json`. Errors: `no_workout_on_date`, `unscorable`, `no_scorable_workouts` |
-| `stride doctor` | dataset health: coverage counts, `scored_by` per load model, `strength_unrated`, the time anchor in use, `undateable_activities` (`date_known: false` rows) and `unrankable_activities` (`rankable: false`, a superset). `unanalyzed` = never scored; `awaiting_metrics` = what `analyze` would recompute now (the one to act on); `awaiting_metrics_known: false` means it could not be computed and `config_error` says why |
+| `stride doctor` | dataset health: coverage counts, `scored_by` per load model, `strength_unrated`, the time anchor in use, `undateable_activities` (`date_known: false` rows) and `unrankable_activities` (`rankable: false`, a superset), each repaired by `stride sync --all` when Strava still lists the activity; `pending_streams` (what a plain sync still owes) and `streams_retry_capped` (streams that failed 3 or more fetches, which only `stride sync --all` asks for again). `unanalyzed` = never scored; `awaiting_metrics` = what `analyze` would recompute now (the one to act on); `awaiting_metrics_known: false` means it could not be computed and `config_error` says why |
 | `stride viz` | the desktop window's published capabilities and focus: `{ protocol, published_at, staleness_seconds, focus_staleness_seconds, focus, views, fields, history, captures }`; see the next section |
 
 ## Reading the numbers

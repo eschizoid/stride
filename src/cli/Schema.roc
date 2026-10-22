@@ -87,6 +87,30 @@ Schema :: [].{
         \\  raw_json    TEXT
         \\)
 
+    # sync bookkeeping beside the streams mirror: one row per activity whose
+    # stream sync must fetch again, with the number of fetches that returned a
+    # body stride could not decode. A row with no `streams` row is a fetch that
+    # keeps failing; a row beside a stored stream is a stored body analyze could
+    # not decode, flagged at attempts 0. The streams queue retries an id while
+    # attempts < Strava.stream_attempt_cap and orders by attempts, so failing
+    # ids sit behind every other id; `sync --all` retries past the cap. A good
+    # fetch deletes the row. Deletable at will: deleting resets the counts,
+    # which costs at most the cap in reads per id.
+    stream_retries =
+        \\CREATE TABLE IF NOT EXISTS stream_retries (
+        \\  activity_id INTEGER PRIMARY KEY REFERENCES activities(id),
+        \\  attempts    INTEGER NOT NULL
+        \\)
+
+    # queue every stored body that is not JSON at all, the bodies stride stored
+    # before it began refusing them; one that is JSON but not stream JSON is
+    # caught when analyze next rescores its activity
+    seed_stream_retries =
+        \\INSERT OR IGNORE INTO stream_retries (activity_id, attempts)
+        \\SELECT s.activity_id, 0 FROM streams s
+        \\JOIN activities a ON a.id = s.activity_id
+        \\WHERE json_valid(s.raw_json) = 0
+
     # key-value store: strava tokens + client creds, sync watermark, ftp, zone bounds
     config =
         \\CREATE TABLE IF NOT EXISTS config (

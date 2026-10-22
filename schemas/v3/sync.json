@@ -35,12 +35,12 @@
       "type": "integer"
     },
     "streams_skipped": {
-      "description": "reads whose body would not decode as UTF-8. Nothing was stored, so these stay pending and retry next run. A value that repeats across runs means the data is unreadable rather than merely late",
+      "description": "reads whose body stride could not decode: not UTF-8, or not stream JSON. Nothing was stored. Each such read counts toward that activity's cap of 3 failed fetches: below it the activity stays pending and the next sync asks again, after every activity not yet tried; at it a plain sync stops asking and the activity leaves pending_streams (`stride sync --all` asks again). A value that repeats across runs means the data is unreadable rather than merely late",
       "type": "integer"
     },
     "pending_streams": {
       "type": "integer",
-      "description": "activities still without any streams row after this run. An activity Strava has no streams for does NOT count: its 404 stores an empty marker, which retires it permanently"
+      "description": "activities a plain `sync` still owes a stream fetch after this run: those with moving time and no streams row, plus those with a retry row (a stored body analyze could not decode, or fetches that would not decode), in both cases only while the activity has failed fewer than 3 fetches. An activity Strava has no streams for does NOT count: its 404 stores an empty marker, which retires it permanently"
     },
     "notes_fetched": {
       "description": "strength-family activity DESCRIPTIONS stored this run (#478) — the pasted set breakdown lives there, feeding the tonnage spine. The description drain runs only after the stream queue empties, on the same read budget. A description is written AFTER the activity, so stored copies inside the listing's rolling window are RE-READ every sync (a late paste or an edit self-heals, #519) and count here each time; outside the window a stored row is permanent, and an empty or missing description still stores a '' marker, which is what retires the id",
