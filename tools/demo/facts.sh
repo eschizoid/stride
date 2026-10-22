@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # The facts the take shows and the narration speaks, read from the demo home
 # by stride itself, never typed by hand: the summary's fitness, fatigue, form
-# and measured share; the week-over-week load and hard minutes; this week's
-# skipped threshold session and the ride that replaced it, with its length and
-# its minutes in Z4 and above; and the
-# next Tuesday, which must already carry a planned threshold session for the
-# take to give it a structured target. Written as KEY=value
-# lines to $DEMO_DIR/facts.env; a fact stride cannot supply stops the take.
+# and measured share; the last seven days' load and hard minutes against the
+# seven before, which the narration says fell and rose; this week's skipped endurance session and the ride that
+# replaced it, with its length and its minutes in Z4 and above, which the
+# narration calls a hard class; and the next Tuesday, which must already carry
+# a planned threshold session for the take to give it a structured target.
+# Written as KEY=value lines to $DEMO_DIR/facts.env; a fact stride cannot
+# supply, or one that contradicts the narration, stops the take.
 set -euo pipefail
 
 DEMO_DIR="${DEMO_DIR:-/tmp/stride-demo}"
@@ -29,13 +30,19 @@ load_pct=$(jq -r '(.data.current.tss - .data.prior.tss) / .data.prior.tss * 100 
 hard_prior=$(jq -r '.data.prior.hard_min' <<<"$cmp");  need HARD_PRIOR "$hard_prior"
 hard_last=$(jq -r '.data.current.hard_min' <<<"$cmp");  need HARD_LAST "$hard_last"
 
-row=$(jq -c '[.data[] | select(.status == "skipped" and .session_type == "threshold" and (.substitute_activity_id // 0) > 0)][0] // empty' <<<"$wk")
-need "a skipped threshold session with a substitute this week" "$row"
+# the narration says load is down and hard minutes rose
+[ "$load_pct" -lt 0 ] || { echo "facts: load is not down week over week ($load_pct%)" >&2; exit 1; }
+[ "$hard_last" -gt "$hard_prior" ] || { echo "facts: hard minutes did not rise ($hard_prior -> $hard_last)" >&2; exit 1; }
+
+row=$(jq -c '[.data[] | select(.status == "skipped" and .session_type == "endurance" and (.substitute_activity_id // 0) > 0)][0] // empty' <<<"$wk")
+need "a skipped endurance session with a substitute this week" "$row"
 skip_date=$(jq -r '.target_date // .date' <<<"$row")
 trace=$(jq -r '.substitute_activity_id' <<<"$row")
 sub=$(jq -c --argjson id "$trace" '[.data[] | select(.id == $id)][0] // empty' <<<"$acts"); need "the substitute ride $trace" "$sub"
 sub_min=$(jq -r '.moving_time / 60 | round' <<<"$sub")
 sub_hard=$(jq -r '(.z4_s + .z5_s) / 60 | round' <<<"$sub")
+# the narration calls the substitute a hard class
+[ "$sub_hard" -ge 10 ] || { echo "facts: the substitute has only $sub_hard min in Z4+, not a hard class" >&2; exit 1; }
 skip_day=$(date -j -f %Y-%m-%d "$skip_date" +%A)
 next_tue=$(d=$(date +%Y-%m-%d); for i in 1 2 3 4 5 6 7; do n=$(date -j -v+${i}d -f %Y-%m-%d "$d" +%Y-%m-%d); [ "$(date -j -f %Y-%m-%d "$n" +%u)" = 2 ] && { echo "$n"; break; }; done)
 
