@@ -5,468 +5,378 @@ description: Coach the user's training using stride, their local multi-sport tra
 
 # Stride — local training engine
 
-`stride` syncs the user's Strava data into `~/.stride/db.sqlite` and computes
-training metrics deterministically. **You are the coach brain; stride is the
-data engine.** Don't recompute what stride already computed. Consume its JSON.
-Never do training math yourself: read stride's numbers, add judgment.
+`stride` syncs the user's Strava data into `~/.stride/db.sqlite` and computes training
+metrics deterministically. **You are the coach brain; Stride is the data engine.** Never
+do training math yourself: read stride's numbers and add judgment. Stride states
+measurements; whether a trend is good, a workout was hit, or a plan is "on track" is
+your sentence, never the payload's.
+
+## Calling stride
+
+**PASS `--json` ON EVERY QUERY YOU RUN.** Without it, Stride prints human tables. The flag
+works in any argv position; `--human` forces tables; `STRIDE_FORMAT=json|human` sets a
+shell default that the flag beats, but each tool call is usually a fresh shell, so pass
+the flag. `--` ends flag parsing (`stride skip 5 --json -- --json` stores the literal
+reason `--json` and still answers in JSON).
+
+- Success is `{"schema_version":3,"data":{…}}`; failure is
+  `{"schema_version":3,"error":{"code":"…","message":"…"}}` and exits 1. Every payload
+  below lives under `.data`. Branch on `error.code`, never on the message.
+- `stride --json` answers with the command table `{commands, flags, universal_error_codes}`,
+  one entry per callable form (`week` and `week add` are separate):
+  `{name, args, mutates, network, interactive, schema, error_codes}`, each arg
+  `{name, required, example}`. CI checks the table against the parser and the binary's
+  behaviour, so **when it and this file disagree, the table is right.** `error_codes`
+  lists each form's codes on top of `universal_error_codes` (not promised exhaustive;
+  `schemas/v3/envelope.json` holds every code Stride can emit). Report only what a
+  payload returned: never invent a code, a skip reason, or a row. `interactive: true`
+  marks `auth`, the one form you never run unattended. Each payload's formal shape is
+  `schemas/v3/<schema>` in the repo.
+- Universal error codes: `no_database` (run `stride init`), `unreadable_database`
+  (present but unopenable; `init` will not fix it), `corrupt_database`, `database_error`
+  (SQLite refused, e.g. a lock), `internal_error` (a bug; the message carries the tag),
+  `usage`. A misspelled command answers `unknown_command`.
+- **`rate_limited` appears on both sides.** As an error code the command made no
+  progress (exit 1). As `sync`'s `stopped` value the drain did real work first and the
+  envelope is a success at exit 0. Discriminate on the envelope shape, not the token.
+
+**Missing values (ADR 0009).** JSON null is never emitted; absence is flagged.
+- Impossible-zero fields (`np_w`, `avg_hr`, `intensity`, `ftp_used`, target magnitudes):
+  0 means not available. `power_known`/`intensity_known`/`hr_known`/`zones_known` say
+  which (np can exist without intensity: power stream, no FTP yet).
+- Possible-zero fields carry a `_known` flag (`decoupling_known`, `form_delta_known`,
+  `hr_drift_known`, `rec_drop_known`, `form_tsb_known` on `analyze`, …). Trust the flag,
+  never the magnitude. The rule is per payload: `summary` ships `form_tsb` bare because
+  it is always computable there.
+- `tss: 0` is ambiguous: read `load_model` (`""`/`"none"` = unscored; anything else = a
+  scored near-zero effort). Zone seconds `z1_s..z5_s` are literal only with
+  `zones_known: true`; all-zero with `false` means no HR stream. `distance_m` 0 is
+  always literal.
+- `tte`'s `known` is the exception: it means only that the arithmetic ran.
 
 ## Coaching workflow
 
-1. `stride sync --json` is the ONE command that pulls data from Strava (#232). It re-lists a
-   rolling 30-day window so recent edits self-heal, then drains every activity still
-   missing streams, paced against Strava's limits. A first run on a fresh install is the
-   whole history pull.
-   It ends in the usual envelope (`schemas/v3/sync.json`) with progress on stderr.
-   Read `resumable` to decide whether to run it again. It is usually `pending_streams > 0`.
-   It is also true when the LISTING was cut short and the queue is empty, and when the
-   run was refused BEFORE its first request because the day was already spent. Read
-   `stopped` for why the run ended (`complete` / `budget_reached` / `rate_limited` /
-   `daily_cap_reached` / `list_rate_limited` / `list_daily_cap_reached`). The two
-   `list_*` tokens mean a 429 on the ACTIVITY LIST rather than a stream. That refusal
-   leaves the listing INCOMPLETE and prunes nothing. Rows are missing, so `synced` and
-   `pruned` describe a partial run. `list_daily_cap_reached` is that refusal on a day
-   whose allowance is already gone: both facts at once.
-   THE REMEDY DIFFERS, and the remedy is the point of the distinction. `budget_reached`,
-   `rate_limited` and `list_rate_limited` all clear when Strava's 15-minute window rolls
-   over, so tell the athlete about fifteen minutes. `daily_cap_reached` clears at UTC
-   MIDNIGHT, and so does `list_daily_cap_reached`. Tell them tomorrow. Advising fifteen
-   minutes there is an instruction that cannot succeed.
-   A first sync on a large history takes one run per 15-minute window, bounded by
-   Strava's daily read allowance rather than by a fixed number of runs. Stride counts
-   its own reads against that allowance, so a few thousand activities spans a day or
-   two. The run that exhausts the day says so. Each run says how far it got. Every
-   stored stream is permanent, so re-running is never wasted.
-   The count lives in two config rows, `strava_reads_today` and `strava_reads_day`. The
-   second is a UTC day number. A stamp that is not today IS the reset, so nothing runs
-   at midnight.
-   The engine maintains both rows. The only reason to touch them is the escape hatch
-   stride names if the count is unreadable: `stride config set strava_reads_today 0`.
-   `complete` can still leave work: a stream body that does not
-   decode is skipped WITHOUT storing, so it retries next run and shows up in
-   `streams_skipped`. An activity Strava has no streams for is NOT that case. A
-   404 stores an empty marker and retires it permanently (#218).
-   Strength-family activities get a second, smaller drain once the stream queue is
-   empty: their DESCRIPTIONS (where a pasted set breakdown lives, feeding the
-   career tonnage spine) — reported as `notes_fetched` / `notes_skipped` /
-   `pending_notes`, same budget, same skip-and-retry policy, and `resumable`
-   covers both queues. Descriptions inside the listing's rolling window are
-   re-read every sync, so the ordinary habit — finish, sync, paste the breakdown
-   that evening — lands on the next run without any command; an edit heals the
-   same way. `stride sync --all` drops the window and re-reads every stored
-   description, which is how an edit OLDER than the window gets in — and if that
-   run stops on the read budget, the remainder waits for the next `--all`, not
-   the next plain sync. A session whose window passed with no paste keeps its
-   empty marker and simply never contributes tonnage; nothing fails on
-   unparseable text.
-   **Do not loop on `resumable` alone. The rule is `streams_fetched == 0` with
-   `resumable: true`. Stop and report.** That one condition covers both ways a
-   run can do nothing and still ask for another: unreadable bodies
-   (`streams_skipped > 0`, which will keep returning the identical envelope), and
-   a rate limit (`stopped: "rate_limited"`, where the wait is ~15 minutes and the
-   command returns immediately rather than blocking). The earlier rule keyed on
-   `streams_skipped > 0` alone and did NOT fire on the rate-limited shape, where
-   a loop can issue dozens of Strava requests per second.
-   `stride sync --all` forces a full re-list from scratch. It is a dev-mode escape
-   hatch and the only way a deletion in OLD history propagates. Normal use never
-   needs it.
-   **No API credentials** (Strava requires a subscription for API access since
-   June 2026): `stride import <export.zip|dir> --json` loads a Strava account export.
-   The import is summary-level activities only (no streams), idempotent, and limited
-   to English exports.
-2. `stride analyze --json` computes metrics for new/invalidated activities. It is
-   idempotent and prints a count plus a form verdict. The full report lives in
-   `summary`. If any stored streams won't decode it says "N had unreadable stream
-   data", and they retry next sync.
-3. **`stride plan --json`** is THE payload for weekly planning: summary + the open
-   sessions + last-14d activities + `plan_history_28d` + `adherence_28d` +
-   `data_freshness`, in one call. `plan_history_28d` and `adherence_28d` close the
-   loop: they record what was targeted and what actually happened. Without them each
-   week's plan would be a fresh guess, so read them before proposing anything.
-   `data_freshness` reports how current the rest of the payload is, as four
-   measurements. You decide what counts as too stale to plan from. Use
-   `stride summary --json` alone for quick check-ins.
-4. Reason: polarization, zone gaps, form (TSB), FTP staleness, sport balance.
-   AND reconcile the open plan against recent activities (match by date/type,
-   then `stride complete <session_id> <activity_id> --json` for each match).
-5. Plan the coming week: `stride week add <YYYY-MM-DD> <type> "<detail>" "<rationale>" ["<target>"] --json`
-   - `type` is the INTENSITY INTENT, not the sport: vo2max | threshold | endurance |
-     recovery | strength | rest (free-form ok). The sport/modality goes in `detail`
-     ("easy row...", "outdoor ride..."): type answers *why/how hard*, detail answers
-     *what exactly*.
-   - the optional target is a strict literal `<reps>x<mm:ss>@<watts>W` (`3x12:00@230W`,
-     ADR 0014) stored BESIDE the prose, power only. Add it when the session genuinely
-     has numbers; prose stays canonical and a prose-only session is unchanged. The echo
-     carries `target_known` with impossible-zero magnitudes (`target_reps`,
-     `target_dur_s`, `target_watts`); `plan`'s open sessions carry the same four. A
-     revise REPLACES the whole prescription, so re-planning a date WITHOUT the target
-     clears it. Malformed literals refuse with `bad_target`.
-   - an EVENT the athlete is training toward: `stride event add <YYYY-MM-DD> "<name>"
-     --json` (future dates only; removable via `stride event remove <id>`, since a
-     target is not a record). `stride events --json` returns
-     `{projected_from, baseline_known, ftp_known, events:[{id, event_date, name,
-     days_away, ctl, atl, tsb, planned_in_window, sessions_projected}]}`. The payload
-     is CTL/ATL/TSB projected onto each event date by the SAME recurrence daily_load
-     runs, folded over the open plan's structured targets. Untargeted sessions
-     contribute zero, and the two counts say how blind the projection is.
-     `baseline_known: false` means no computed history, so every number is decay over
-     zero. The window is `(projected_from, event_date]`. A session dated ON the
-     baseline day (usually today) is excluded, because the measured baseline already
-     contains today. Asking what tonight's session does to Saturday means planning it
-     for a day the baseline has not absorbed yet. The projection is ADR 0010 arithmetic:
-     stride projects the recorded plan's consequences and never proposes, ranks, or
-     solves for a plan. Whether to CHANGE the plan in response is your judgment, and
-     "on track" is a sentence only you may write.
-   - TAPER planning: `stride project <YYYY-MM-DD> ["<date>=<target>,..."] --json` returns
-     `{target_date, days_away, projected_from, baseline_known, ftp_known, plan_source,
-     ctl, atl, tsb, sessions_considered, sessions_projected, hypothetical}`, the same
-     walk at any horizon. Bare = the recorded open plan; with the literal, the walk
-     runs over YOUR hypothetical plan INSTEAD (each pair `<YYYY-MM-DD>=<RxMM:SS@WWWW>`),
-     echoed back in `hypothetical` (dates verbatim, targets as parsed canonical fields) and never stored. Compare candidate tapers
-     by calling it once per candidate. Stride will not solve for the plan that reaches
-     a TSB, even if you name one. That inverse is prescription (ADR 0010), and the
-     judgment is yours.
-   - completing a TARGETED session against an activity reports the arithmetic:
-     `complete` returns `{target_known, target_reps, target_dur_s, target_watts,
-     detected_known, detected_reps, detected_mean_dur_s, detected_mean_watts,
-     reps_delta, watts_pct}`, the recorded target beside the detected shape.
-     `reps_delta`/`watts_pct` mean something only when BOTH flags are true; a session
-     without power segments compares to nothing and says so. Whether the numbers
-     constitute hitting the workout is YOUR judgment. Stride states them.
-   - re-planning a date REVISES its open session in place (the response echoes the same
-     id). A plan edit is not a skip, so you can just `week add` again to change a day.
-     Re-planning never leaves skipped tombstones. Reserve `skip` for a session that was
-     going to happen and didn't (a real adherence miss).
-   - `complete`/`skip` also REFUSE unknown ids (error code `session_not_found`
-     / `activity_not_found` / `bad_id`), so a typo can't silently desync the log.
-     Check for an error field instead of assuming success.
-   - a session that didn't happen: `stride skip <id> "<reason>" [activity_id|none] --json`.
-     The optional link names the activity done INSTEAD (a substitution, not a
-     completion; rendered `→ id` in week). `none` releases a link, and a bare re-skip
-     keeps one. Refusals: `activity_already_linked` (that activity already tells
-     another session's story, and the error names the blocker and the release path)
-     and `session_done` (completions are permanent; fix a mis-link by re-completing,
-     never by skip). Skipped ≠ silently open forever.
-   - a REST day that happened: `stride complete <id> --json` with no activity id (rest has
-     nothing to link; any other type still refuses without its activity, error
-     code `activity_required`).
-   - a WRONG LABEL on any session, done ones included: `stride relabel <id> <type>
-     "<detail>" ["<rationale>"] --json` edits only the descriptive fields and returns
-     `{id, session_type, target_date, status}`: the same id echoed, with status
-     untouched as proof the edit was cosmetic (links and metrics never move; omitting
-     the rationale keeps the stored one). A common case is a swap of days: an activity
-     completed against Saturday's session whose label still says Sunday's plan. Do NOT
-     `week add` the same date to fix a label, because that inserts a duplicate row you
-     then have to skip. Refuses unknown ids (`session_not_found`) and non-numeric ids
-     (`bad_id`), like complete/skip. One label IS behavioral, on any status: `rest`
-     decides whether a bare `complete` needs an activity id. That path checks the
-     label, not the status, so relabeling to or from `rest` changes what a completion
-     (or re-completion) will demand.
+1. **Sync** with `stride sync --json`, the only command that talks to Strava. It
+   re-lists a rolling 30-day window (so recent edits heal), then drains every activity
+   still missing streams, then strength descriptions, paced against Strava's read
+   limits. Progress narrates on stderr; stdout is the envelope
+   `{synced, new_activities, updated_activities, pruned, streams_fetched, streams_skipped, pending_streams, notes_fetched, notes_skipped, pending_notes, stopped, resumable}`.
+   - `resumable: true` means work is still owed: a queue is pending, a `list_*` stop cut
+     the listing short, or a pre-flight refusal on a spent day made no request at all
+     (`daily_cap_reached` with empty queues).
+   - `stopped` and its remedy: `complete` (both queues walked); `budget_reached`,
+     `rate_limited`, `list_rate_limited` clear when Strava's 15-minute window rolls
+     over, so tell the athlete ~15 minutes; `daily_cap_reached`, `list_daily_cap_reached`
+     clear at UTC midnight, so tell them tomorrow. The two `list_*` values mean the
+     activity listing is incomplete and nothing was pruned: `synced`/`pruned` describe
+     a partial run.
+   - **Never re-run sync in a loop.** A run with `streams_fetched: 0` and
+     `streams_skipped > 0` is stuck on unreadable bodies, whatever `stopped` says: the
+     queue runs newest first and those bodies are never stored, so they can fill every
+     budget. Stop and report it. Otherwise any `stopped` other than `complete` is a limit
+     and the command returns at once, so wait out the remedy above before running again.
+     `stopped: complete` with `resumable: true` means only unreadable bodies remain
+     (`streams_skipped`/`notes_skipped`); re-running returns the same envelope, so stop
+     and report. Do not count `notes_fetched` as progress: it includes the routine
+     re-reads of descriptions inside the window.
+   - A body that does not decode is not stored and retries next run; a 404 (Strava has
+     no streams) stores an empty marker and retires the activity. Every stored stream
+     is permanent, so a large first sync spans several runs and possibly days.
+   - Stride counts its own daily reads in config rows `strava_reads_today` and
+     `strava_reads_day` (a UTC day number; a stale stamp is the reset). Do not touch
+     them unless Stride itself names `stride config set strava_reads_today 0` as the
+     repair.
+   - `stride sync --all` drops the window and re-lists everything. It is the only way a
+     deletion in old history propagates, and the only way an edit to a description
+     older than 30 days gets in; if it stops on the budget, the remainder waits for the
+     next `--all`, not the next plain sync.
+   - No API credentials: `stride import <export.zip|dir> --json` loads a Strava account
+     export (English column headers), summary-level only (no streams), idempotent;
+     returns `{imported, skipped}` counts of archive rows.
+2. **Analyze** with `stride analyze --json`: computes metrics for new or invalidated
+   activities, idempotent, and returns
+   `{computed, stream_errors, form_tsb, form_tsb_known, form_state, form_delta_7d, form_delta_known, converged}`.
+   `stream_errors` counts activities scored from summary fields because they had no
+   readable stream: one never fetched is fetched by the next sync if it has moving time, while a stored row
+   that does not decode is never re-pulled. Run analyze after every sync.
+3. **Read the bundle** with `stride plan --json` before proposing anything: its
+   `plan_history_28d` and `adherence_28d` record what was targeted and what happened, so
+   a plan is never a fresh guess. Check `data_freshness.last_sync` against today first.
+   `stride summary --json` alone suits quick check-ins.
+4. **Reason**: polarization, zone gaps, form (TSB), FTP trajectory, sport balance. Then
+   reconcile open sessions against recent activities (match by date and type) and
+   `stride complete <session_id> <activity_id> --json` each match.
+   `stride complete latest --json` closes the open session on the newest activity's day
+   with that activity (`no_open_session` when that day has none).
+5. **Plan** with `stride week add <YYYY-MM-DD> <type> "<detail>" "<rationale>" ["<target>"] --json`.
+   - `type` is the intensity intent, not the sport: vo2max | threshold | endurance |
+     recovery | strength | rest (free-form accepted). The sport goes in `detail`.
+   - The optional target is the strict literal `<reps>x<mm:ss>@<watts>W` (`3x12:00@230W`;
+     reps 1-99, rep at least 0:30, watts 1-2500), power only, stored beside the prose.
+     Malformed: `bad_target`. The echo and `plan`'s open sessions carry `target_known`,
+     `target_reps`, `target_dur_s`, `target_watts`.
+   - Adding a session on a date that already has an open one REVISES it in place (same
+     id) and replaces the whole prescription, so re-planning without the target clears
+     it. Never `skip` to re-plan.
 
-## Reading decoupling and detected structure
+### Closing sessions
 
-- **Aerobic decoupling** (`decoupling_pct` + `decoupling_known` on `activity` and every
-  progress session row; `decoupling_signal` = "power", "pace" (grade-adjusted), or
-  "speed" (no altitude stream, terrain NOT normalized, read cautiously on hilly
-  routes)): second-half vs first-half efficiency drift. LOWER is better; ≤ +5% on a
-  steady 1h+ effort = solid durability. Only meaningful on STEADY sessions. On
-  intervals it reflects workout shape (check `segments`: when work reps are present,
-  don't read drift as durability). Unknown when: no usable signal, the signal covers
-  less than half the session, or |value| > 50% (artifact).
-- **W′ balance** (`activity.w_prime_balance`): `min_j` is the lowest the anaerobic
-  tank got during the ride and `end_j` is where it finished. Both read against the CP
-  fit for that session's OWN sport family (`fit_family`) from the 90 days STRICTLY
-  BEFORE it, so a session is never inside its own fit (`cp_used`/`w_prime_used`/`fit_points`).
-  `min_j: 0` means it emptied exactly. **A NEGATIVE `min_j` is the model failing, not
-  depth achieved**. It means more above-CP work was done than the fitted tank holds,
-  so the CP/W′ is stale or degenerate. `model_exceeded: true` flags exactly that, and
-  `|min_j| / w_prime_used` is how badly. Report it as evidence the fit needs
-  refreshing, NEVER as "how deep they went". Normalize by `w_prime_used` before
-  comparing sessions. The fitted capacity moves between dates, so raw joules are not
-  comparable. When `model_exceeded` is true, ONLY `min_j` means anything: the
-  recovery term drives on the deficit against the CURRENT balance, so a balance far
-  below zero refills faster than the model's own ceiling allows. `end_j` is then
-  arithmetic on a broken premise. `fit_r2` grades the fit itself. CP jumps at the
-  window edges as rides enter and leave the 90 days, so these are WITHIN-session
-  measures, not a comparable series. `known: false` means there was no fit or
-  no power stream. Never read it as "the tank stayed full".
-- **Rep-level progression** (`stride reps --json`): whether the SAME workout shape is
-  being ridden harder than it used to be, shown as per-rep watts across sessions and
-  the within-session fade. Use it when a structured session repeats; `progress` when
-  comparing whole sessions.
-- **Detected structure** (`stride activity <id> --json`): `interval_summary` ("3×[12:00 @
-  230W / 4:00 easy]"; a pace-routed sport reads as time-per-distance, for example
-  "5×[4:00 @ 4:00/km / 2:00 easy]", and the payload is ALWAYS metric whatever `units`
-  is set to. The human screen follows the setting; this field does not), `segments`
-  (per-rep kind/duration/avg + HR peak/avg/60s
-  recovery drop), `hr_drift` + `hr_drift_known` (rising across reps = fatigue), and
-  `detection_attempted` (false = couldn't look, meaning no power/pace signal, which is
-  NOT the same as "verified: no structure"). The detector reports; matching structure
-  to a prescription stays YOUR judgment.
+- `stride complete <id> <activity_id> --json` returns
+  `{completed_session, replaced_activity, dropped_substitute, target_known, target_reps, target_dur_s, target_watts, detected_known, detected_reps, detected_mean_dur_s, detected_mean_watts, reps_delta, watts_pct}`.
+  `reps_delta`/`watts_pct` mean something only when both `target_known` and
+  `detected_known` are true. Completing a done session overwrites its link:
+  `replaced_activity` names the old one (0 if none) and `plan_history_28d` keeps it as
+  `superseded_activity_id`. That is the repair for a mis-linked completion.
+- A rest day that happened: `stride complete <id> --json` with no activity. Any non-rest
+  session refuses without one (`activity_required`).
+- A session that did not happen: `stride skip <id> "<reason>" [activity_id|none] --json`.
+  The activity names a substitution (done instead, shown `→ id` in `week`); `none`
+  releases a link; a bare re-skip keeps it. Refusals: `activity_already_linked` (the
+  message names the blocker and how to release it), `session_done` (completions are
+  permanent; re-complete instead).
+- A wrong label, any status: `stride relabel <id> <type> "<detail>" ["<rationale>"] --json`
+  returns `{id, session_type, target_date, status}` with links and metrics untouched
+  (omitting the rationale keeps the stored one). Use it, not `week add`, for a swapped
+  day. The `rest` label is behavioral: it decides whether `complete` needs an activity.
+- `complete`, `skip` and `relabel` refuse unknown or non-numeric ids (`session_not_found`,
+  `activity_not_found`, `bad_id`). Check for `error` instead of assuming success.
 
-## Output modes
+### Events and projection
 
-**PASS `--json` ON EVERY QUERY YOU RUN.** Stride prints human tables by default and
-machine JSON only when asked. Nothing infers the mode from your environment, so a
-command without the flag gives you a table no matter what your harness exports. The
-flag works in any argv position and the last one wins; `--human` forces tables even for you. `STRIDE_FORMAT=json|human`
-(case-insensitive) sets a shell-session default and the flag beats it. Note each
-shell command you run is typically a FRESH shell, so exporting it does not reliably
-carry between calls. `--json` is the one route that always works. `--` ends flag
-parsing, so `stride skip 5 --json -- --json` stores the literal string as the
-reason and still returns JSON. Note the flag is present BEFORE the terminator,
-because `--` stops flag parsing for everything after it. If output ever looks like a table when you
-wanted data, you left `--json` off. Every machine response you will
-consume is a versioned envelope, including usage errors (`{"error":{"code":"usage",…}}`) and a
-bare `stride --json`, which answers with the command table rather than the
-human help screen (#180). That table DESCRIBES rather than names (#219): one entry per
-callable form, each carrying `{name, args:[{name,required,example}], mutates, network, interactive, schema}`.
-`week` and `week add` are separate entries, because one reads and one writes. So
-you can determine argument shape, whether a call writes, whether it needs Strava, and
-which file under `schemas/v3` the answer validates against, without reading this document.
-`interactive: true` marks the one form you must never call unattended (`auth`). Prefer
-that table over anything written here if the two ever disagree. The table is
-cross-checked against the parser in CI, and this file is not. It is hand-written, not
-generated: the verb set, the schema names, `mutates`, `network` and `interactive` are
-each checked against the source or against behaviour, while the free placeholder TEXT
-(`<days>` versus `<limit>`) is declared. Literal
-argument names, both arity bounds, and the rule that required arguments come first are
-all checked against the parser. One thing is NOT enveloped: `stride auth`, an interactive browser
-flow you run by hand. `stride sync` narrates progress on stderr while it runs. Its stdout is
-the envelope, so you can read it (#218, #232). Platform failures are enveloped (#183): `no_database` (absent, run `init`),
-`unreadable_database` (present but unopenable, from permissions or a directory in its
-place, which `init` will NOT fix), `corrupt_database`, `database_error` (SQLite
-refused the operation, e.g. a lock), `network_unreachable` (Strava never
-answered), `strava_error` / `rate_limited` (it answered with a status),
-`stdin_closed`, and `internal_error` for anything unforeseen, carrying the
-clipped tag in its message. A failure without a code is therefore a bug, not a shrug.
-An expired token still arrives as `not_authenticated`, from the boundary as well
-as from sync. Success looks like
-`{"schema_version":3,"data":{…}}`, and error looks like
-`{"schema_version":3,"error":{"code":"…","message":"…"}}`. The payloads described in
-the table below all live under `.data`. Every payload here (every query, every action
-you branch on, the command list and the envelope itself, one
-file per published payload in `schemas/v3/`, so the directory listing is the inventory)
-is described formally in `schemas/v3/*.json` in the repo (required keys, types,
-enums, and the error-code vocabulary, which is diffed against the source in CI so
-a code stride can emit cannot be missing from the contract).
-`error` is an OBJECT whose `code` carries the
-in-band error names used throughout this file (`unknown_command`, `missing_config`, `not_authenticated`,
-`derived_key`, …), with the human text nested in `error.message`. An error
-envelope is ALSO an exit status: stride exits 1 whenever it emits one (0 on
-success; a bare `stride` prints help and exits 0). Read either channel; the two
-never disagree. **`rate_limited` is the one code that appears on both sides (#227):** as
-an ERROR code it means the command made no progress and exits 1; as `sync`'s `stopped`
-value it means the drain did real work before Strava capped it, so it is a success
-envelope at exit 0 with `resumable` telling you whether anything is still missing.
-Discriminate on the envelope shape, never on the token. `sync` and `analyze`
-emit JSON results too (`{synced, new_activities, updated_activities, pruned, streams_fetched,
-streams_skipped, pending_streams, stopped, resumable}` / `{computed, stream_errors, form_tsb, form_tsb_known, form_state,
-form_delta_7d, form_delta_known, converged}`), and `stride config get <key> --json` emits `{key, value}` (or the `not_set`
-error envelope). That call is how you read `timezone` back, which governs what "today"
-means for every date below. `stride config unset <key> --json` REMOVES a stored key, emitting `{key, removed}`. `removed: false` means it was already absent, which is not an error. Use it rather than `config set <key> ""`. An empty value is refused for every key class: emptiness is ambiguous between "clear this" and "set to nothing", and `unset` is the unambiguous spelling of the first.
-`stride config set units imperial` switches HUMAN distance and pace readouts to miles and min/mi; `metric` is the default. It covers distances and pace columns, NOT the raw `m/s` rate shown for detected intervals on a pace-routed sport (#351). It does not change JSON at all. Every payload stays SI, so `distance_m` is metres and `stats`' `km` is kilometres whatever the setting says. If the athlete mentions miles, that is a display preference, not a change to the numbers you read.
+- `stride event add <YYYY-MM-DD> "<name>" --json` (future dates only, else `bad_date`)
+  returns `{id, event_date, name, days_away}`; `stride event remove <id> --json` deletes
+  it. `stride events --json` returns
+  `{projected_from, baseline_known, ftp_known, events:[{id, event_date, name, days_away, ctl, atl, tsb, planned_in_window, sessions_projected}]}`:
+  CTL/ATL/TSB projected onto each event date over the open plan's structured targets,
+  window `(projected_from, event_date]`. Untargeted sessions contribute zero, so the gap
+  between `planned_in_window` and `sessions_projected` is how blind the projection is.
+  `baseline_known: false` means no computed history. A session dated on the baseline day
+  is excluded because the baseline already contains today. Negative `days_away` echoes
+  the current baseline, not a projection.
+- `stride project <YYYY-MM-DD> ["<date>=<target>,..."] --json` returns
+  `{target_date, days_away, projected_from, baseline_known, ftp_known, plan_source, ctl, atl, tsb, sessions_considered, sessions_projected, hypothetical}`.
+  Bare, it walks the recorded plan; with pairs it walks your hypothetical plan instead,
+  echoed in `hypothetical` and never stored. Compare tapers by calling once per
+  candidate. Stride never solves for the plan that reaches a TSB; that is your call.
 
-## Query commands (add `--json` to every one of these)
+## Strength
+
+Strava's public API does not return a strength workout's sets, so Stride reads them from
+two sources and parses both into the same per-set rows:
+
+1. **The activity description.** The athlete pastes a Peloton-style share summary
+   (an exercise line, then `3 × 8 • 30 lbs/side`; `/side` variants resolved to the mass
+   actually moved); no other paste format is read. A bodyweight line is kept only when
+   it names a weight, stored as written. Sync fetches strength-family descriptions after
+   the stream queue empties and re-reads them inside the 30-day window, so a paste the
+   same evening lands on the next sync. Unrecognised text yields nothing and is never an
+   error.
+2. **The Strava log, via `stride strength import <file|-> --json`.** Fetch it with the
+   Strava MCP connector's `get_strength_workout_details` (it takes `activity_ids`), then
+   pass the returned JSON unchanged (a list of workouts or one; a bare-number
+   `activity_id` and `null` fields are fine) from a file or on stdin with `-`. It returns
+   `{imported: [{activity_id, rows, sets, dropped: [{set, exercise, reason}], zeroed: [{set, exercise, recorded}]}], skipped: [{activity_id, reason, dropped}]}`.
+   - `dropped` lists every set left out, by 1-based position, with reason
+     `no_exercise_name`, `no_reps` (timed sets included), `bad_reps` (`8-10`, `0`),
+     `unknown_weight_unit` (no kg/lb/lbs) or `bad_weight` (unparseable or negative).
+     **Tell the athlete about every dropped set**: tonnage does not include it. A set
+     with no weight at all is kept at 0 kg.
+   - `zeroed` lists bodyweight sets (push up, pull up, chin up, dip, plank, sit up and
+     similar, matched by exact normalised name, so `Weighted Pull Up` is not one) that
+     the log recorded with a weight, often the athlete's own body mass. They keep their
+     sets and reps but count 0 kg; the stored log keeps `recorded`. Say so when you
+     report tonnage.
+   - A skipped workout's `reason`: `undecodable_workout`, `bad_activity_id`,
+     `duplicate_activity` (an earlier workout in the input was already stored for that
+     activity; only a stored workout claims an id), `unknown_activity` (sync first),
+     `not_strength`, `no_sets` (empty `exercise_sets`, what the connector returns for an
+     activity with no logged sets) or `no_usable_sets` (every set dropped, each in its
+     `dropped`). A skip stores nothing, so an existing log stays.
+   - Skips and drops exit 0, and one bad workout does not stop the rest. Only
+     `unreadable_file` and `bad_json` (the input as a whole is not one JSON object or
+     list: empty, unclosed brackets or strings, or trailing text) fail the command. The
+     sets are visible at once, without `analyze`, and re-importing an activity replaces
+     its log.
+
+**A stored log wins over the description** for that activity (counting both would double
+its sets). The log is stored verbatim. Its weights are kept as entered (pounds converted
+to kg), never doubled for dumbbells: the log does not say whether a weight is one dumbbell
+or the pair, so ask the athlete before reading it as a total.
+
+`stride strength --json` reads both:
+`{exercises: [{exercise, measure, points: [{date, top_kg, kg_reps, top_reps, total_reps}]}], monthly: [{month, kg, tonnage_known, covered, total}], sessions: {total, with_sets, pasted_unparsed}}`.
+Exercises match by exact name; points are per day. `measure: "kg"` exercises progress in
+`top_kg` (heaviest weight one rep moved) and `kg_reps` (the day's volume). `measure:
+"reps"` means every point moved 0 kg (a bodyweight move or a weightless set from an
+imported log), so its kg figures are 0 by construction and it progresses in `top_reps`
+(most reps in one set) and `total_reps`; any loaded point makes the exercise "kg", and its
+rep change then shows only in the rep fields. `tonnage_known: false` means the month is
+under the coverage bar and its `kg` is not a measurement; quote monthly tonnage only with
+`covered`/`total`, so a coverage change does not read as a training trend.
+`pasted_unparsed` counts sessions whose description yielded nothing, a different fact
+from never pasted. Tonnage is volume, not strength.
+
+Strength load comes from session-RPE: after a strength/HIIT/yoga session ask how hard it
+felt (1-10) and run `stride rate <activity_id|latest> <n> --json`. Load = hours × RPE × 10,
+on the TSS scale; for strength-class sports the rating outranks heart rate. Ratings
+survive re-syncs and trigger a rescore on the next `analyze`. `doctor`'s
+`strength_unrated` counts sessions waiting for one.
+
+## Query commands (add `--json` to every one)
+
+Pick by question: `season` for the shape of a year, `compare` for this week or month against the one before, `load` for the daily series behind a trend, `progress` for whether whole sessions of a repeated workout got better, `reps` for the same interval shape compared rep by rep.
 
 | Command | Returns |
 |---|---|
-| `stride plan --json` | **planning bundle**: `summary` + `recent_activities_14d` + `open_sessions` + `plan_history_28d` (EVERY session targeted in the trailing 28d, any status, with `skipped_reason`, `completed_activity_id` (plus `superseded_activity_id`: the completion a re-`complete` erased, 0 if none, and the only durable record of an overwrite)/`substitute_activity_id` links and `completed_on` = the linked activity's date) + `adherence_28d` `{planned, completed, skipped, substituted, still_open, rested, completion_pct, unplanned_activities}` (raw counts, `planned == completed + skipped + rested + still_open`, `substituted ⊆ skipped`; `rested` = open rest sessions whose date passed with no load on the day — resolved in fact, so they leave `still_open` and `completion_pct`'s denominator (`completed / (planned - rested)`), while a rest day that DID carry load stays in `still_open` as the deviation it is; the denominator still includes `still_open`, so an in-window session not yet done counts against it) + `data_freshness` `{newest_activity, last_sync, activities_awaiting_metrics, activities_awaiting_metrics_known, activities_awaiting_streams}` (measurements, not a verdict). Read `last_sync` first, against today. It is the only field that detects an install where nothing has run in days (note it is UTC, so near midnight it can differ by a day from the local `today` the `timezone` setting governs). The `summary.as_of` / `newest_activity` gap will NOT tell you that: `as_of` is pinned to the day `analyze` last ran, so the gap equals days since the last ride only when analyze ran TODAY. Otherwise the gap just stops growing. A gap of 3 is equally consistent with "rode 3 days ago, analyzed today" and "analyzed a week ago". Treat a non-zero `activities_awaiting_metrics` as "run `stride analyze` before trusting the numbers". It counts rows never scored plus rows whose FTP, threshold pace, zones, metrics_rev or underlying inputs (a newly arrived stream being the commonest) changed since scoring, so it is never fewer than doctor's `unanalyzed` and equal to it in the ordinary case. `activities_awaiting_metrics_known: false` means the count could not be computed at all, so a 0 beside it is not "nothing to do"; run `stride analyze` to see why. Planned-vs-actual reconstructs from this ONE call |
-| `stride summary --json` | as_of, CTL/ATL/TSB (the keys are `fitness_ctl`, `fatigue_atl`, `form_tsb`, NOT `ctl`/`atl`/`tsb`), plus `ctl_warming_up`, `ramp_7d`/`ramp_28d_avg`, `form_delta_7d` + `form_delta_known` (spelled exactly so, no _7d_ in the flag), `form_band_days`+`_capped`, `form_state` (the stable band id to switch on: `high_modeled_fatigue`|`modeled_fatigue_building`|`balanced`|`fresh`|`very_fresh`), `last_7d` + `last_28d` zone blocks (`z1_s`..`z5_s` seconds, `tss`, `moving_time`, `distance_m`, `sessions`, and `easy_pct`/`moderate_pct`/`hard_pct`; there is no total-seconds key, so sum the zones), `last_hard_session_date` ('' = none on record), `pending_sessions`, `ftp: {best_20min_w_60d, estimated_ftp_w}` (DERIVED; see gotchas), `hr_zones`, `load_days`, per-sport 28d breakdown (rows carry `last_date`), `hard_days` `{d14, d28, spacing_median_days_28d, spacing_known, days_since_last, days_since_known}` (DISTINCT hard days, so two hard sessions in one day count once; pi_*-aware (power or pace) 5+ min hard predicate, same as week's hard column; the days_since pair is 28d-scoped, so it can read known: false while the all-time `last_hard_session_date` still carries a date), `load_windows` `{d7, d28, d90, prior_d7, prior_d28, delta_7d, delta_28d}` (adjacent same-width prior windows, raw deltas), `ftp.prior_60d_best_20min_w + prior_60d_known` (threshold trajectory); `last_7d`/`last_28d` carry `load_coverage` `{high_pct, medium_pct, low_pct, known}` (TSS-weighted confidence tiers: high = measured power or distance-measured pace, medium = HR/RPE, low = relative-effort; they sum to exactly 100, `known: false` = empty window) and `form_coverage_90d` is the same shape over ~two CTL time constants, the provenance of CTL/ATL/TSB. Descriptive only: stride states the mix, and you decide if it matters |
-| `stride season --json` | the season at block and month scale: `blocks` + `months` + `gap_weeks`. A BLOCK is a maximal run of training weeks (not necessarily consecutive, it may contain blank weeks) closed by `gap_weeks`+ calendar weeks with NO load (ADR 0011). Blocks are bounded by absence because absence is the only boundary in the data that is not a judgment call. **Blocks are described, never named**. There is no base/build/peak field and you should not invent one: load observes volume, not intent. Each block carries `start_date`/`end_date` (the first Monday of its first training week, through the last day WITH training; the two ends are not symmetric), `weeks` (weeks WITH training) and `span_weeks` (calendar weeks covered; they differ because a block may contain up to `gap_weeks`-1 blank weeks per interruption), `total_load`, `mean_weekly_load` (divides by `span_weeks`, NOT `weeks`), `sessions` (activities inside the block's window; the count does NOT always equal the `months[]` total, because an activity that scored no load inside an absence belongs to a month and to no block), `closed`, `easy_pct`/`moderate_pct`/`hard_pct` + `polarization_known`, and the trend and threshold fields below. **Read `fitted_start_load`/`fitted_end_load` before `slope_tss_per_week` or `trend_r2`.** A low `trend_r2` means the weeks were SCATTERED around the line, NOT that the block had no trend. On this athlete a block at r2 0.10 still fell from 315 to 214 TSS/week over 71 weeks, and saying it "had no trend" is the most likely false statement this payload can produce. Weigh the slope against `weeks`. `trend_known: false` means under three complete weeks. **`closed: false` means no absence has ended the block**. Records simply stop, so its numbers are still moving. A trailing week that has not finished yet is excluded from the trend (leaving it in halved the slope on a single session) while still counting in `weeks`, `sessions` and `total_load`. A block is often open with its last week already complete, and in that case nothing is excluded. `ftp_start`/`ftp_end` are CHRONOLOGICAL and are what to quote, on blocks AND on months. `ftp_lo`/`ftp_hi` are an unordered min/max that reads as a direction it does not have. `ftp_family` names WHOSE threshold it is (a rowing threshold and a cycling FTP are different quantities) and `ftp_family_pct` its share. Near 50 the block is genuinely mixed, and the other family's threshold is NOT published. Do not describe such a block by one sport. `months[]` carries `{month, load, sessions, partial, ftp_family, ftp_family_pct, ftp_lo, ftp_hi, ftp_start, ftp_end, ftp_known}`; **`partial: true` marks a month still in progress. Never compare its load to a complete month** (a partial month's total against a complete one reads as a collapse even when its daily rate is higher). Reach for `season` for the shape of a year; `compare` for one window against the one before it, `load` for the weekly series behind a slope, `progress` for whether individual sessions got better. In-band errors: `no_activities` |
-| `stride activities [N] [sport] --json` | last N activities (default 30), optionally filtered by sport (sport FAMILY words, case-insensitive: the `words` lists in `Sports.families` widen to their Strava spellings: `bike`, `run`, `row`, `swim`, `walk`/`hike`, `strength`/`weights`/`lifting`, with e-bikes excluded from `bike`; non-family sport_types filter exactly). Rows carry date, sport, tss, np_w, `id`, `date`, `name`, `sport`, `moving_time`, `distance_m`, `tss`, `np_w`, `intensity`, `load_model`, `hard_s`, `relative_effort`, `z1_s`, `z2_s`, `z3_s`, `z4_s`, `z5_s`, `avg_hr`, `avg_hr_scored`, and the companions `power_known`, `intensity_known`, `hr_known`, `zones_known`, `date_known`, `rankable`. TWO heart-rate numbers, and picking the wrong one is the mistake this row exists to prevent: `avg_hr` is what the device reported, `avg_hr_scored` is what the engine divides by (#311, #319). Score anything from `avg_hr_scored` and quote `avg_hr` back to the athlete. Reading the pair: they are EQUAL whenever no usable stream mean exists, which includes the most damaged streams. A stream lossy enough to corrupt Strava's summary also fails the coverage gate and falls back, so the most damaged streams publish the same broken number in both fields. They differ when a stream did pass the gate and its mean differs — true of nearly every row, almost always by a rounded decimal and only rarely by a real correction over 15 bpm. And an out-of-band `avg_hr_scored` means the EF and speed/HR lenses refused the row, but NOT the converse. The lenses also need a normalized-power `load_model` or distance and moving time, so in-band sessions can be refused anyway. `hr_known` still answers only whether a reading was recorded at all. Rows carry `date_known`: false means the stored start_local is unreadable and `date` is an EMPTY STRING, a hole, not a value. Do not read that as "none on record", which is what '' means for `last_hard_session_date`; these rows are hoisted to the TOP of the listing so a limit cannot hide them, and each is repaired by deleting it by id and re-syncing. Rows also carry `rankable`: false means the engine will not give the row a ranking position, which is a WIDER condition than `date_known`: `2026-08-23T37:00:00Z` has a perfectly readable date and an impossible clock, so it publishes `date_known: true` with `rankable: false`. `rankable` is what the hoist keys on, so it is the field that says why row one is row one. It is NOT a `_known` flag and licenses no magnitude. |
-| `stride top <metric> [n] [sport] --json` | best sessions ranked by `hr`, `tss`, `power`, `intensity`, `distance`, `time`, or `output` (kJ), the leaderboard to `activities`' timeline. Rows carry `date_known` and `rankable` on the same rules as `activities`. Note `rankable` means CHRONOLOGICALLY orderable and says nothing about the metric you ranked by. A row can be unrankable and still lead this leaderboard, and unrankable there still means the row needs repair. In particular `rankable` is not about `time`: `moving_time` on these rows is as trustworthy as on any other. |
-| `stride zones --json` (alias `pz`) | the 7 power zones as watt ranges from the DERIVED ride FTP: `{ ftp, zones: [{ z, name, lo_w, hi_w }] }` (0 = open-ended bound) |
-| `stride strength --json` | per-exercise progression + monthly tonnage, each with the fact that qualifies it: `exercises: [{exercise, points}]` (exact-name matched; points are per DAY: `{date, top_kg, kg_reps}` — the heaviest weight one rep moved and the day's summed kg·reps, two numbers because when weight drops and reps rise the product is what says whether work went up) + `monthly: [{month, kg, tonnage_known, covered, total}]` (EVERY strength month, including those the career spine refuses; `tonnage_known: false` means the month sits under the coverage bar and its `kg: 0` is an impossible-zero behind the flag, never a measurement; `covered`/`total` is the denominator that keeps a coverage shift from reading as a training trend — quote tonnage ONLY with it) + `sessions` `{total, with_sets, pasted_unparsed}` (the gaps made visible: `pasted_unparsed` carried a description that yielded nothing, a different fact from never pasted). **Tonnage is volume, not strength** — the per-exercise series is the "am I getting stronger" figure, and whether a trend is good is your sentence, never the payload's. Each exercise carries `measure`: `"reps"` when every point moved 0 kg (a bodyweight move from an imported log, counted at 0 kg, or an imported set logged with no weight), and then its progression is each point's `top_reps` (most reps in one set) and `total_reps` (the day's summed reps), not the kg figures, which are 0 by construction |
-| `stride strength import <file\|-> --json` | stores Strava's structured strength log: the JSON the Strava MCP connector's `get_strength_workout_details` returns, a list of workouts or one on its own, from a file or from stdin with `-`. Strava's public API does not return these sets, so this is the only way they reach stride: fetch them with the connector, then pass the JSON here unchanged (a bare-number `activity_id` and `null` fields are fine). Returns `{imported: [{activity_id, rows, sets, dropped, zeroed}], skipped: [{activity_id, reason, dropped}]}`. Each `zeroed` entry is `{set, exercise, recorded}`: a bodyweight set (push up, pull up, dip, plank and similar, matched by name; `Weighted Pull Up` is not one) kept with its sets and reps but counted at 0 kg, with the weight the log recorded, often the athlete's own body weight; say so when you report tonnage. In `stride strength` such an exercise has `measure: "reps"` and progresses in reps; any loaded point (a weight vest, or a weight written on a pasted bodyweight line, which is kept as written) makes the exercise `measure: "kg"`, and the rep change then shows only in the JSON. Each `dropped` entry is `{set, exercise, reason}`: a set left out, with reason `no_exercise_name`, `no_reps` (timed sets included), `bad_reps`, `unknown_weight_unit` or `bad_weight`. **Tell the athlete about every dropped set**; their tonnage does not include it. A skipped workout's `reason` is `undecodable_workout`, `bad_activity_id`, `duplicate_activity` (an earlier workout was already stored for that activity; a skipped one claims nothing), `unknown_activity` (sync first), `not_strength`, `no_sets` or `no_usable_sets` (every set dropped). Skips and drops are not errors, and one bad workout does not stop the rest. The sets land in strength_sets at once with source `strava` and take precedence over that activity's pasted description; re-importing an activity replaces its log. Other weights are stored as entered, never doubled for dumbbells. Errors: `unreadable_file`, `bad_json` (input that is not a JSON object or list). |
-| `stride viz --json` | the window's self-published bus capabilities and what it is looking at: `{ protocol, published_at, staleness_seconds, focus_staleness_seconds, focus: {present, live, age_seconds, updated_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id, detail_day, sport, family}, views: [{id, name}], fields: [{name, kind, accepts}], history: [{id, created_at, status, error, applied_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id, capture, result}], captures: [{id, created_at, status, error, applied_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id, capture, result}] }`. `history` is the last ten directives, newest first, with the status and error the lifecycle recorded; empty until the window has created the table. `focus.live` is the liveness verdict: a row younger than `focus_staleness_seconds`; `present` false means the window quit by ESC (which deletes the row) or never ran; a window closed by the OS button leaves a row that goes not-live after `focus_staleness_seconds`. The window rewrites it at every launch, so THIS is the discovery source for steering (view numbers, directive fields, staleness), not any doc's copy. In-band error `no_viz_capabilities` = the window has never run against this database |
-| `stride power-curve [days] [sport] --json` (alias `pc`) | best mean-max power per ladder duration over the window (default 90 days): `{ window_days, sport, points: [{dur_s, watts}], cp, w_prime, fit_points, fit_r2 }`. **Weigh the fit with `fit_r2`**. The regression is power against 1/duration, so a LOW value means the 5/10/20-min bests do not fall on a line and CP/W' are drawn through scatter. A HIGH value says the line fits, not that the model fits the athlete: bests taken from steady rather than maximal efforts sit on a near-flat line that scores well and yields an implausibly small W'. It is 1 by construction at two points and 0 when there is no fit (`cp` 0). The payload is the CP curve behind FTP |
-| `stride pace-curve [days] [sport] --json` (alias `cs`) | the pace-sport twin of `power-curve`: best mean-max GRADE-ADJUSTED speed per ladder duration over the window (default 90 days), returning `{ window_days, sport, points: [{dur_s, speed}], cs, d_prime, fit_points, fit_r2, available_sports }`. **`cs` is METRES PER SECOND and `d_prime` is METRES, always**. Both are SI, and they do not move with the `units` setting even though the human screen renders min/km or min/mi. Convert for the athlete yourself: `cs` 3.6 m/s is 4:38/km. `d_prime` is a DISTANCE where the power model's `w_prime` is an energy, and it is the finite capacity spendable above `cs`. **Naming a sport is required in practice: with `[sport]` omitted the command REFUSES and fits nothing**, returning `cs` 0 with empty `points` and `sport: ""`. An empty result there means no sport was named, not "no pace data". `available_sports` then lists the sport_types that DO hold a speed ladder in the window, most-trained first, so you can re-ask without a second call; it is empty when a sport was named. Sport matching is EXACT, not by family as `power-curve` matches: a pool swim, an open-water swim and a trail run do not share a speed model, and pooling them would fit one curve through unrelated populations (the ladder is stored for anything with a distance stream, so an unfiltered fit is mostly RIDES and comes back at bike speed). Ask for the one you mean. The curve is grade-adjusted so a hilly interval is comparable with a flat one. `fit_r2` carries exactly the caveats it carries for `power-curve`: 1 by construction at two points, 0 when there is no fit (`cs` 0), and a quality signal only at 3 points |
-| `stride activity <id> --json` | one session in depth: flat z1_s to z5_s + hard_s, hard minutes, power bests (1/3/5/20min) from streams, plus `streams_unreadable` (true = the 0s are corrupt data, NOT a real zero). Use it to review whether a planned session hit its targets before `complete`-ing it; `baselines` compares this ride with the athlete's OWN prior comparables (90d before the activity, same sport family + duration band via ONE shared rule): per metric (`ef`, `np`, `decoupling`) `{current, baseline_median, percentile, delta_pct, sample_count, known}`; `percentile` is a rank whose direction is already handled (higher is better for ef/np, lower for decoupling), so weigh it by `sample_count`; `w_prime_balance` `{min_j, end_j, known, model_exceeded, cp_used, w_prime_used, fit_points, fit_r2, fit_family}`; see the W′ balance note above, since a negative `min_j` diagnoses the FIT, not the athlete; `splits` is per-kilometre rows from the distance stream, each `{n, distance_m, elapsed_s, elev_gain_m, elev_known, avg_hr, hr_known}` — SI always (the human table re-segments at the athlete's unit), `elapsed_s` is wall seconds so a stop inside a split belongs to it, one row can span several kilometres across a recording dropout (`n` then leaves a gap so later rows keep their distance position), and empty means no distance stream |
-| `stride stats --json` | career + year-to-date totals per sport (sessions, hours, km) |
-| `stride load [days] --json` | daily tss/ctl/atl/tsb series, chronological (default 90) |
-| `stride week --json` | this week (Mon-Sun) PLUS `unplanned` rows for activities no session references. Statuses are open/done/skipped/unplanned. Rows carry `substitute_activity_id` ("did this instead" links, rendered `→ id`). Unplanned rows carry their id in `activity_id`, NOT `completed_activity_id`, so discriminate on `status`. `stride week all --json` = full session log, no unplanned rows. |
-| `stride doctor --json` | dataset health: coverage counts, per-model load provenance (`scored_by`), `strength_unrated` (strength sessions awaiting a rating), and two nested counts about date health: `undateable_activities` (rows with `date_known: false`) and `unrankable_activities` (rows with `rankable: false`, a SUPERSET, since it also counts readable dates with unusable clocks). Each corresponds to one row flag, so both can be cross-checked against `stride activities`. Two counts about metrics, and they answer different questions: `unanalyzed` is rows NEVER scored, a coverage number; `awaiting_metrics` is what `analyze` would recompute right now, the same figure `plan` reports, and it is the one to act on. A changed FTP or a new stream leaves `unanalyzed` at 0 while `awaiting_metrics` is the whole history. `awaiting_metrics_known: false` means it could not be computed at all, and `config_error` says why (a zone key that will not parse); the 0 beside it is not "nothing to do" |
-| `stride compare [week\|month] --json` | rolling window vs the prior one: `{period, window_label, current, prior}`, each side with tss/sessions/hard_min/easy_pct/ctl + `has_data` + `polarization_known`. `has_data: false` is the discriminator for an empty window (do not read its 0s as training); `polarization_known: false` means the window holds no zone seconds, so that side's hard_min and easy_pct are not measurements (the human table renders them `-`) — same name and predicate class as season's block-level flag, and deliberately NOT `zones_known`, which on other payloads means an HR stream existed |
-| `stride tte <watts> --json` | time to exhaustion at a power YOU name, from a CP model fitted on the Ride family over a hard 90 days, returning `{watts, seconds, known, status, cp, w_prime, fit_points, fit_r2, window_days, sport_family, demonstrated_s, demonstrated_w, demonstrated_known, contradicts_model}`. Reach for it when the athlete names a target power and asks how long; `power-curve` gives the whole curve, `zones` gives prescriptive bands, `tte` answers ONE point and says nothing about pacing. **Weigh the FIT before the number.** `fit_r2` is how well the line fits its own points and is the only quality signal that does not depend on what you asked (below ~0.9 the model is describing noise; it is 1 by construction when `fit_points` is 2, where the count is the signal instead). `demonstrated_*` is the longest effort at or above `watts` the athlete already has on record in the same window the fit came from, so `contradicts_model: true` means the model predicts less than its own inputs prove. The fit understates this rider, and the number is not usable. **`contradicts_model: false` is NOT reassurance**. The check only fires where a recorded effort happens to overlap the queried power, which on real data is a few watts of a fifty-watt band. `status` qualifies the rest: `in_model` (2-20min, where the two-parameter model holds), `outside_model` (real arithmetic, but the model overshoots, so read it as a direction, not a number), `below_cp` (the model says indefinitely; bodies do not). **`known` here is the ONE `_known` flag in stride that does NOT license trusting the magnitude**. It only means the arithmetic ran; `status` and `contradicts_model` are what qualify the number. `fit_points` counts how many of the 5/10/20-min bests existed (max 3) and is 3 for a perfect fit AND a degenerate one, so it cannot detect a bad fit alone. Note the fit EXCLUDES its own anchor date and `tte` anchors on today, so a ride synced today is NOT in the fit that answers today's question. `activity.w_prime_balance` applies the same rule anchored on each session's date, so the two differ by anchor and family, not by whether today counts. In-band errors: `bad_watts`, `no_cp_fit` |
-| `stride reps [date] --json` | rep-level comparison: the anchor session's detected work blocks beside the same-shaped blocks of earlier sessions, returning `{anchor_date, anchor_activity_id, shape, sport_family, sessions}`. `shape` `{rep_count, mean_dur_s, band_lo_s, band_hi_s, signal}` IS the comparability rule (same sport family, same rep count, same rep-duration band, and the same signal, so watts never sit beside m/s, and never later than the anchor). `matched_total` is how many sessions matched BEFORE the 12-row window, so you can see what you are not seeing. Sessions carry per-rep `avg_signal`/`avg_hr`, `mean_signal` (unweighted mean of the reps), `fade_signal` (last rep minus first, signed), `hr_rise_bpm`+`_known` (known only when BOTH end reps carry HR), and `min_dur_s`/`max_dur_s`/`uniformity`. That last trio is each row's own spread, because whether an uneven session is "the same workout" is YOUR judgment, not the engine's. In-band errors: `no_detected_intervals`, `no_intervals_on_date`, `irregular_anchor` (the anchor's own blocks vary too much to be one repeated shape) |
-| `stride progress [date] [asc\|desc] --json` | `{anchor_date, anchor_scored, groups:[{name, grouped_by, lens, sessions, hidden, hidden_lens, hidden_scope}]}`. `lens` is `ef`\|`speed_hr`\|`rpe` (sport-aware), and each session carries a `score` in that lens. `grouped_by` says which key built the group. `structure` applies when the anchor-day session has detected work segments AND passes the same uniformity gate `reps` applies to anchors (1.6× rep-duration spread). Its mates are found by reps' shape predicate (sport family, exact rep count, mean rep duration band, signal), so the trend spans every session of that WORKOUT whatever the classes were named. It excludes different workouts sharing a name. `name` is the fallback for sessions without detected structure, for irregular anchors reps would refuse as `irregular_anchor`, and for a shaped session whose structure group has nothing the lens can score. Trust a `structure` trend over a `name` trend when both could answer the question. Class names are evidence of neither sameness nor difference. Bare = latest analyzed workout; `desc` lists newest first without changing the trend. **`anchor_scored: false` means a workout anchored on that date could not be scored by its group's lens, so it is absent from that group's `sessions[]` and the trends exclude it**. Do not read the trend as covering the session you asked about. In-band errors: `no_workout_on_date`, `unscorable`, `no_scorable_workouts`. `hidden` is how many sessions of that workout are NOT in `sessions`, withheld either by the group's distance SCOPE (auto-named groups match by distance) or by its LENS (EF needs power+HR, speed/HR needs distance+HR, RPE needs a rating). Read `sessions` as the whole history ONLY when `hidden` is 0. A group holding one session with `hidden: 10` is a workout done eleven times, not once. `hidden_lens` and `hidden_scope` split it by cause and sum to it. The LENS half is USUALLY the fixable one: the session is in this workout's history and the lens cannot score it, so supplying what it needs (a power stream, a heart-rate strap, a rating) normally brings the row into the table. The exception is a session that already carries the field but records an impossible value: an average heart rate outside 35 to 220 bpm is refused by the EF and speed/HR lenses. No amount of wearing the strap changes that, because the strap was worn and the reading itself is broken. Before telling the athlete to go fix their kit, read `avg_hr_scored` on the `progress` sessions. That field is the number the lens divided by, and from #311 it is the in-band mean of the session's HR stream whenever one spans at least half the longer of its own extent and the session's moving time. A stored `avg_hr` outside 35 to 220 is therefore NOT sufficient to conclude the row was refused: if the stream is good the row scores anyway, and the two fields will disagree. The lens refused when `avg_hr_scored` itself is out of band, which happens when there was no usable stream to fall back from. For rows missing from `sessions[]` entirely, `stride activities --json` gives you ids to work from and carries `avg_hr_scored` too (#319), so one call narrows it. An `avg_hr_scored` outside 35 to 220 means those lenses refused the row. NOT the converse: the lenses also need a normalized-power `load_model` (EF) or distance and moving time (speed/HR), so sessions can sit inside the bound and be refused anyway. An in-band reading is necessary, not sufficient. A LARGE gap between the two HR fields says Strava's summary came off a lossy stream; any gap does not: nearly every row differs by a stored rounding, and only a rare few by more than 15 bpm. `progress` gives a count and no ids. If `avg_hr` is already present and implausible, the remedy is repairing or deleting that activity, not equipment. `stride activity <id>`'s `baselines.ef` refuses such a row (`known: false` with `current: 0`), so an absent EF there is corroboration that the reading is broken rather than a verdict about fitness (#305). Corroboration about `avg_hr_scored`, not about `avg_hr`: a session with an impossible stored reading and a healthy stream publishes a normal EF, and that is correct. Note it does NOT tell you which: `hr_known` and `power_known` both still read true on that payload, so an impossible heart rate and a genuinely missing signal look the same. Check `avg_hr` yourself. The SCOPE half is not fixable and is not about the same training: those sessions belong to a different distance bucket of the same auto-named workout. Branch on the split, not on the total. |
+| `stride plan` | the planning bundle: `summary`, `recent_activities_14d`, `open_sessions`, `plan_history_28d` (every session targeted in 28 days, any status, with `skipped_reason`, `completed_activity_id`, `superseded_activity_id`, `substitute_activity_id`, `completed_on` = the linked activity's date), `adherence_28d` `{planned, completed, skipped, substituted, still_open, rested, completion_pct, unplanned_activities}` (`planned == completed + skipped + rested + still_open`, `substituted ⊆ skipped`; `rested` = open rest sessions whose past day has a `daily_load` row under 1.0 load, excluded from `completion_pct`'s denominator; a rest day that carried load stays `still_open`), and `data_freshness` `{newest_activity, last_sync, activities_awaiting_metrics, activities_awaiting_metrics_known, activities_awaiting_streams}`. `completion_pct` is `completed / (planned - rested)`, and that denominator includes sessions still open later this week, so a low value mid-week is not poor adherence. `last_sync` is when the last successful sync began ("" = never), the only field that detects an install idle for days; it is UTC, so near midnight its date can differ by one from the local today. The `summary.as_of` to `newest_activity` gap cannot detect staleness, because `as_of` is the day `analyze` last ran. Non-zero `activities_awaiting_metrics` means run `stride analyze` first; with `activities_awaiting_metrics_known: false` its 0 means unknown, not nothing to do. `recent_activities_14d` rows carry the raw `avg_hr` only; read `avg_hr_scored` from `activities` before judging a heart rate |
+| `stride summary` | `as_of`; `fitness_ctl`, `fatigue_atl`, `form_tsb` (not `ctl`/`atl`/`tsb`); `ctl_warming_up`; `ramp_7d`, `ramp_28d_avg`; `form_delta_7d` + `form_delta_known`; `form_band_days` + `form_band_days_capped`; `form_state` (switch on it: `high_modeled_fatigue`, `modeled_fatigue_building`, `balanced`, `fresh`, `very_fresh`); `last_7d`/`last_28d` (`z1_s`..`z5_s`, `tss`, `moving_time`, `distance_m`, `sessions`, `easy_pct`/`moderate_pct`/`hard_pct`; no total-seconds key, sum the zones); `last_hard_session_date` ('' = none on record); `pending_sessions`; `ftp` `{best_20min_w_60d, estimated_ftp_w, prior_60d_best_20min_w, prior_60d_known}`; `hr_zones`; `load_days`; `sports_28d` rows `{sport, sessions, tss, moving_time, distance_m, last_date}`; `hard_days` `{d14, d28, spacing_median_days_28d, spacing_known, days_since_last, days_since_known}` (distinct days holding a session with 5+ hard minutes; the days-since pair is 28-day scoped); `load_windows` `{d7, d28, d90, prior_d7, prior_d28, delta_7d, delta_28d}`; `load_coverage` on each window and `form_coverage_90d` `{high_pct, medium_pct, low_pct, known}`: TSS share scored by measured power or pace (high), HR or RPE (medium), relative effort (low) |
+| `stride season` | `{blocks, months, gap_weeks}`. A block is a run of training weeks closed by `gap_weeks` or more weeks with no load (ADR 0011); blocks are described, never named (no base/build/peak). Block: `{start_date, end_date, weeks, span_weeks, total_load, mean_weekly_load, sessions, closed, easy_pct, moderate_pct, hard_pct, polarization_known, slope_tss_per_week, trend_r2, trend_known, fitted_start_load, fitted_end_load, ftp_start, ftp_end, ftp_lo, ftp_hi, ftp_known, ftp_family, ftp_family_pct}`. `weeks` counts weeks with training, `span_weeks` calendar weeks; `mean_weekly_load` divides by `span_weeks`. Read `fitted_start_load`/`fitted_end_load` before the slope: a low `trend_r2` means scattered weeks, not no trend. `trend_known: false` = under three complete weeks; an unfinished trailing week is left out of the trend. `closed: false` = still moving. Quote `ftp_start`/`ftp_end` (chronological), not `ftp_lo`/`ftp_hi` (unordered); `ftp_family` says whose threshold, and near 50 `ftp_family_pct` means a mixed block. Months: `{month, load, sessions, partial, ftp_family, ftp_family_pct, ftp_lo, ftp_hi, ftp_start, ftp_end, ftp_known}`; never compare a `partial: true` month's load with a complete one. Error: `no_activities` |
+| `stride compare [week\|month]` | `{period, window_label, current, prior}`, each side with `tss`, `sessions`, `hard_min`, `easy_pct`, `ctl`, `has_data`, `polarization_known`. `has_data: false` = empty window; `polarization_known: false` = no zone seconds, so `hard_min`/`easy_pct` are not measurements |
+| `stride activities [N] [sport]` | the last N activities (default 30), newest first, each `{id, date, name, sport, moving_time, distance_m, tss, np_w, intensity, load_model, hard_s, relative_effort, z1_s, z2_s, z3_s, z4_s, z5_s, avg_hr, avg_hr_scored, power_known, intensity_known, hr_known, zones_known, date_known, rankable}`. Sport filters by family word (`bike`, `run`, `row`, `swim`, `walk`/`hike`, `strength`/`weights`/`lifting`; e-bikes excluded), else exact sport_type. Rows with `rankable: false` (unusable timestamp) are hoisted to the top; `date_known: false` means `date` is an empty hole, not "none". No command repairs such a row, so name it to the athlete rather than reasoning from its date |
+| `stride activity <id>` | one session in depth: zones, `hard_s`, power bests, `streams_unreadable` (true = its zeros are corrupt data), decoupling, detected structure (below); `baselines` per metric (`ef`, `np`, `decoupling`) `{current, baseline_median, percentile, delta_pct, sample_count, known}` against the athlete's own comparable sessions from the prior 90 days. `percentile` is the share of those sessions at or below `current`, with no direction applied: high is good for `ef` and `np`, low is good for `decoupling`; weigh it by `sample_count`. `w_prime_balance` `{min_j, end_j, known, model_exceeded, cp_used, w_prime_used, fit_points, fit_r2, fit_family}`; `splits`, per-kilometre rows `{n, distance_m, elapsed_s, elev_gain_m, elev_known, avg_hr, hr_known}`, always SI, empty without a distance stream. `elapsed_s` is wall time, so a stop inside a split belongs to it and a stop is not a slow kilometre; one row can span several kilometres across a recording dropout, and `n` then skips |
+| `stride top <metric> [n] [sport]` | best sessions by `hr`, `tss`, `power`, `intensity`, `distance`, `time` or `output` (kJ). `rankable` means chronologically orderable, not about the ranked metric |
+| `stride stats` | career and year-to-date totals per sport, rows `{sport, sessions, hours, km}` |
+| `stride load [days]` | daily `tss`/`ctl`/`atl`/`tsb` series, chronological (default 90 days) |
+| `stride week` | this week (Mon-Sun): its sessions, plus one row per activity of the week that no session claims. That row has `status: "unplanned"` and `status_shown: "unlinked"` (the human table says unlinked), with its id in `activity_id`; link it to a plan day with `stride complete` or `stride skip <id> <reason> <activity>`. `status` is open/done/skipped/unplanned. `stride week all --json` is the whole session log without those rows |
+| `stride zones` (alias `pz`) | the 7 power zones from the derived ride FTP: `{ ftp, zones: [{ z, name, lo_w, hi_w }] }` (0 = open bound). Error: `no_power_data` |
+| `stride power-curve [days] [sport]` (alias `pc`) | best mean-max power per duration (default 90 days) and the CP fit: `{ window_days, sport, points: [{dur_s, watts}], cp, w_prime, fit_points, fit_r2 }`. A low `fit_r2` means the 5/10/20-minute bests do not fall on a line, so CP and W′ were fitted through scatter. `fit_r2` is 1 by construction at two points and 0 with no fit (`cp` 0); a high value from steady (not maximal) bests still yields an implausibly small W′ |
+| `stride pace-curve [days] [sport]` (alias `cs`) | the pace twin, grade-adjusted: `{ window_days, sport, points: [{dur_s, speed}], cs, d_prime, fit_points, fit_r2, available_sports }`. `cs` is m/s and `d_prime` metres, always (3.6 m/s = 4:38/km). **Name a sport**: without one it fits nothing (`cs` 0, empty `points`) and `available_sports` lists the sport_types that have data. Matching is exact sport_type, not family |
+| `stride tte <watts>` | time to exhaustion at one power from a Ride-family CP fit over 90 days: `{watts, seconds, known, status, cp, w_prime, fit_points, fit_r2, window_days, sport_family, demonstrated_s, demonstrated_w, demonstrated_known, contradicts_model}`. Weigh the fit first: `fit_r2` below ~0.9 is noise, and `fit_points` (max 3) cannot detect a bad fit. `status`: `in_model` (2-20 min), `outside_model` (a direction, not a number), `below_cp` (the model says indefinitely; bodies do not). `contradicts_model: true` = the athlete already held this power longer than predicted, so the number is unusable; `false` is not reassurance. The fit excludes today. Errors: `bad_watts`, `no_cp_fit` |
+| `stride reps [date]` | the anchor session's work reps beside same-shaped reps of earlier sessions: `{anchor_date, anchor_activity_id, shape, sport_family, matched_total, sessions}`. `shape` `{rep_count, mean_dur_s, band_lo_s, band_hi_s, signal}` is the comparability rule: same sport family, same rep count, mean rep duration inside the band, same signal (watts never beside m/s), never later than the anchor. Sessions (at most 12; `matched_total` counts every match) carry per-rep `avg_signal`/`avg_hr`, `mean_signal`, `fade_signal` (last minus first), `hr_rise_bpm` + `hr_rise_known`, and `min_dur_s`/`max_dur_s`/`uniformity` so you can judge uneven sessions. Errors: `no_detected_intervals`, `no_intervals_on_date`, `irregular_anchor` (the anchor's own reps vary too much in duration to be one repeated shape) |
+| `stride progress [date] [asc\|desc]` | `{anchor_date, anchor_scored, groups}`, each group `{name, grouped_by, lens, sessions, hidden, hidden_lens, hidden_scope}`. `lens` is `ef`, `speed_hr` or `rpe`; each session has a `score`. `grouped_by: structure` (same detected workout shape, names ignored) beats `name` when both could answer. `anchor_scored: false` = the asked-about session is not in the trend. `sessions` is the whole history only when `hidden` is 0. `hidden_scope` rows belong to another distance bucket (more than 10% away) and are not fixable. `hidden_lens` rows lacked what the lens needs (EF: normalized power and HR; speed/HR: distance and HR; RPE: a rating), usually fixable with a power meter, a strap or a rating, except when the stored reading itself is broken (see the heart-rate rule below). The counts carry no ids: find the rows with `stride activities --json`. Errors: `no_workout_on_date`, `unscorable`, `no_scorable_workouts` |
+| `stride doctor` | dataset health: coverage counts, `scored_by` per load model, `strength_unrated`, the time anchor in use, `undateable_activities` (`date_known: false` rows) and `unrankable_activities` (`rankable: false`, a superset). `unanalyzed` = never scored; `awaiting_metrics` = what `analyze` would recompute now (the one to act on); `awaiting_metrics_known: false` means it could not be computed and `config_error` says why |
+| `stride viz` | the desktop window's published capabilities and focus: `{ protocol, published_at, staleness_seconds, focus_staleness_seconds, focus, views, fields, history, captures }`; see the next section |
+
+## Reading the numbers
+
+- **FTP is derived, never configured**: per sport family, best 20-min power × 0.95 over
+  the 60 days up to each activity, once two sessions of the family carry a 20-minute
+  best. `summary.ftp` shows `best_20min_w_60d` and `estimated_ftp_w` (0 until then). The
+  `ftp`/`ftp_<sport>` config keys refuse with `derived_key`. Interpret the trajectory: a
+  falling estimate is detraining or a power-data gap; check `doctor` coverage first.
+- **Load ladder**, endurance sports: stream NP → Strava weighted watts → average watts →
+  pace (`rtss`) → HR zones → average HR → session-RPE → relative effort. Strength-class
+  sports put session-RPE above heart rate. `load_model` on each row names the rung
+  (`power_stream`, `weighted_watts`, `avg_watts`, `rtss`, `hr_zones`, `hr_avg`,
+  `session_rpe`, `relative_effort`, `none`). It is a mixed model, not pure TSS.
+- **Zones are HR-based**. Power feeds TSS/NP; pace feeds the intensity split for distance
+  sports without power, a pool swim included.
+- **Metrics recompute** when the derived FTP or threshold pace moves, HR zones change, a
+  stream arrives, a rating changes, or an activity's inputs are edited. So always
+  `analyze` after `sync`.
+- **CTL/ATL/TSB are as of today** (rest days filled with zero), so `form_tsb` needs no
+  decay adjustment. "Today" is the local day from config `timezone` (IANA, DST-aware,
+  preferred) or `utc_offset_minutes`, else UTC; without either, athletes west of UTC see
+  a phantom "tomorrow" each evening. `stride config get timezone --json` returns
+  `{key, value}`. Weeks run Monday to Sunday (2026-07-27 was a Monday).
+- **Two heart rates.** `avg_hr` is what the device reported; `avg_hr_scored` is what
+  the engine divides by (the stream's in-band mean when a usable stream exists, else
+  the stored average). Quote `avg_hr`, reason from `avg_hr_scored`. The plausible band is
+  35-220 bpm: stream samples outside it are dropped, and an out-of-band
+  `avg_hr_scored` makes the EF and speed/HR lenses refuse the row (in-band is necessary,
+  not sufficient). An out-of-band stored `avg_hr` on a session without HR zone seconds
+  also drops the load ladder a rung, which changes its TSS and so CTL, ATL and form. To
+  find broken readings, look in `activities` for an out-of-band `avg_hr_scored` with
+  `hr_known: true`; without `hr_known` you also catch sessions that never wore a strap,
+  which need equipment rather than repair. Equal fields are not a sign of health: they
+  are equal whenever no usable stream mean exists, the most damaged streams included.
+  Only a large gap between them signals a lossy stream; small rounding gaps are normal.
+  `top hr` ranks the stored `avg_hr` and silently omits out-of-band readings, so absence
+  there proves nothing. A dead strap on a strength session leaves near-zero TSS, which
+  is "no data", not zero effort: weigh strength by session count and RPE.
+- **Aerobic decoupling** (`decoupling_pct`, `decoupling_known`, `decoupling_signal` =
+  `power`, `pace` (grade-adjusted) or `speed` (no altitude; read cautiously on hills)):
+  second-half vs first-half efficiency drift, lower is better, ≤ +5% on a steady 1h+
+  effort is solid. Meaningful only on steady sessions; on intervals it reflects the
+  workout's shape. Unknown when the signal spans under ~10 minutes or under half the
+  session, or beyond ±50%.
+- **W′ balance** (`activity.w_prime_balance`) reads against a CP fit for the session's
+  own sport family from the 90 days strictly before it. `min_j` is the lowest the tank
+  went. **A negative `min_j` is the model failing, not depth achieved**: with
+  `model_exceeded: true` the fit is stale or degenerate, so report it as a reason to
+  refresh the fit and ignore `end_j`. Normalize by `w_prime_used` before comparing sessions, and
+  treat it as a within-session measure. `known: false` = no fit or no power stream, not
+  "the tank stayed full".
+- **Detected structure** (`stride activity <id> --json`): `interval_summary` (e.g.
+  "3×[12:00 @ 230W / 4:00 easy]"; a pace sport reads "5×[4:00 @ 4:00/km / 2:00 easy]",
+  per km in JSON whatever `units` says), `segments` (per-rep kind, duration, average, HR
+  peak and recovery drop), `hr_drift` + `hr_drift_known` (HR rising across reps at the
+  same output means fatigue), and `detection_attempted` (false = no power or pace signal
+  to look at, not "no structure"). Matching structure to a prescription is your judgment.
+- **Units.** `stride config set units imperial` changes human readouts only. Every JSON
+  payload stays SI (`distance_m` metres, `stats`' `km` kilometres), so a mention of miles
+  is a display preference, not a change to the numbers you read.
+- **Clearing config**: `stride config unset <key> --json` returns `{key, removed}`
+  (`removed: false` = already absent). An empty value is refused (`bad_value`).
 
 ## Steering the window (the bus)
 
-The desktop window reads the same database, and you can drive it while you coach —
-put the session you are discussing on screen, ghost the one you are comparing it
-to, park the cursor on the day in question. No sockets: you write a row, the window
-polls it about once a second, and every row reaches a status you can read back.
+The desktop window reads the same database. You can put the session you are discussing
+on screen, ghost a comparison, or park the cursor on a day by writing one row; the window
+polls about once a second and every row reaches a status you can read back.
 
-1. **Discover before you steer.** `stride viz --json` is the window's own statement
-   of what it accepts — the view numbers, every directive field with what it takes,
-   the staleness windows — and the window rewrites it at every launch. Read the
-   field list from there, never from memory or a doc: after an upgrade the list is
-   whatever the LAST window to run published, so the athlete launches the app once
-   and then the vocabulary is current. The in-band error `no_viz_capabilities` means
-   the window has never run against this database: there is nothing to hand it
-   directly, so ask the athlete to launch the window once (or, per docs/viz.md,
-   pre-create the two bus tables with its DDL and write a directive, which lands
-   only if the window opens within the freshness window).
-2. **Steer with one INSERT.** `sqlite3 ~/.stride/db.sqlite "INSERT INTO viz_directives
-   (view, trace_id) VALUES (2, 20355183143);"` — every column is optional and NULL
-   means leave that alone, so a directive names only what it changes. The table
-   exists once the window has finished its first real load against this database,
-   which is what step 1's `no_viz_capabilities` tells you it has not; on a database
-   the window never touched the INSERT fails with "no such table". A session is
-   named exactly by its activity id (`trace_id`, `ghost_id`; read the id from
-   `stride activities --json`) or loosely by its day (`trace_day`, `ghost_day`, which
-   pick that day's newest session); the id wins when both are given. `ghost_day =
-   'none'` dismisses the ghost. Never name a session by day when the athlete has two
-   that day. `capture` asks for a file: `'png'` writes the view the directive lands
-   on, once it has settled, to `captures/<view>.png` under the directory the window
-   was launched from; `'webm_start'` and `'webm_stop'` begin and end a recording of
-   it. The row stays pending until the host answers (a PNG written, a recording
-   running or finished), then `result` names the file by its absolute path; one
-   capture is in flight at a time. `stride viz --json` lists those rows under
-   `captures` (status, error, result) so you never list the directory yourself.
-3. **Verify by id, not by hope.** Read the row back from `stride viz --json`, whose
-   `history` lists the last ten directives newest first (empty while none has been
-   written), or with `SELECT status, error FROM
-   viz_directives WHERE id = <id>`. `applied` means every field was honoured;
-   `applied_partial` means some were refused and `error` names each one with why
-   (`trace_id 1 not in the picker`, `ghost_id 9 is Rowing, the session is Ride`,
-   `range 45 not 30/60/90`); `superseded` means a newer row existed by the time
-   anything polled this one — whoever wrote it, the newest wins; `stale` means it sat
-   unread past the freshness window — nothing polled it in time, whether no window
-   was running or one was open and never got there. A refused field is a fact about
-   the picker or the athlete's data, not a retry — read `error`, then decide.
-4. **Observe with freshness.** The window writes what the athlete is looking at to
-   `viz_focus`, and `stride viz --json` serves it judged: `focus.present` says a row
-   exists, `focus.live` says it is younger than the published `focus_staleness_seconds`.
-   A window closed by the OS leaves its last row behind, so a row that is present but
-   not live is history; `present` false is a clean quit (ESC deletes the row) or a
-   window that never ran. Read `live`, never the timestamp. Beside the view, the
-   range and the session, the row names the day whose detail panel is open on the
-   table (`detail_day`), the trace's sport filter (`sport`) and the family the career
-   view is on (`family`), each empty when none.
-5. **Focus is context, not evidence.** What the athlete is looking at tells you what
-   they are asking about; it tells you nothing about their training. Every claim you
-   make still comes from the query commands. Steer when the athlete would benefit from
-   seeing the thing you are talking about; answer, and do not steer, when they asked a
-   question the numbers settle. A directive is a suggestion to the screen, and the
-   athlete's own clicks win the moment they make them.
+1. **Discover first.** `stride viz --json` serves what the window published at its last
+   launch: `views: [{id, name}]`, `fields: [{name, kind, accepts}]`, `staleness_seconds`
+   and `focus_staleness_seconds`. Read the vocabulary there, never from memory; after an
+   upgrade it is whatever the last window to run published, so a fresh launch updates
+   it. `no_viz_capabilities` means the window has never run against this database: ask
+   the athlete to launch it once.
+2. **Steer with one INSERT**: `sqlite3 ~/.stride/db.sqlite "INSERT INTO viz_directives
+   (view, trace_id) VALUES (2, 20355183143);"`. On a database the window never opened
+   the INSERT fails with "no such table". Every column is optional and NULL means leave
+   it alone. Name a session exactly by activity id (`trace_id`, `ghost_id`) or by day
+   (`trace_day`, `ghost_day`, which pick that day's newest session; never use a day when
+   it holds two sessions). The id wins when both are given. `ghost_day = 'none'`
+   dismisses the ghost. `capture = 'png'` writes the landed view to
+   `captures/<view>.png` under the window's launch directory; `'webm_start'` and
+   `'webm_stop'` record. One capture runs at a time.
+3. **Verify by id.** `stride viz --json` lists the last ten directives newest first in
+   `history` and capture rows in `captures`, each
+   `{id, created_at, status, error, applied_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id, capture, result}`
+   (`result` = the capture's absolute path); `SELECT status, error FROM viz_directives
+   WHERE id = <id>` reads one row directly. `applied` = every field honoured;
+   `applied_partial` = `error` names each refused field and why; `superseded` = a newer
+   row won; `stale` = nothing read it within the freshness window. A refused field is a
+   fact about the data or the picker, not a reason to retry.
+4. **Observe with freshness.** `stride viz --json` serves `focus`
+   `{present, live, age_seconds, updated_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id, detail_day, sport, family}`.
+   Read `live`, never the timestamp: a window closed by the OS leaves a row that is
+   present but not live; `present: false` is a clean quit (ESC) or a window that never ran.
+5. **Focus is context, not evidence.** It tells you what the athlete is asking about,
+   never anything about their training. Steer when seeing the thing helps; answer without
+   steering when the numbers settle the question. The athlete's own clicks win.
 
-`stride viz tick` runs one poll-and-mark cycle of the same lifecycle without a window,
-for tests; it consumes directives, so never run it while a window is open unless you
-mean to take that window's directive from it. The full contract, including the
-lifecycle's every state, is in docs/viz.md.
+`stride viz tick` runs one headless poll-and-mark cycle for tests. It consumes
+directives, so never run it while a window is open. The full contract is docs/viz.md.
 
-## Conventions & gotchas
-
-- **Training weeks run Monday to Sunday by default.** Plan and present weeks with
-  Monday first; when computing day-of-week from dates, verify against a known anchor
-  (2026-07-27 was a Monday).
-- **The window's game layer is display-only. No command surfaces it, so know
-  the rules when the athlete asks.** Athlete LEVEL comes from career hours
-  across every sport (reaching level L costs 5·L·(L+1) cumulative hours, so
-  each level costs ten hours more than the last; tiers every ten levels:
-  rookie / grinder / engine / machine / legend). The hours are the same
-  career totals `stats` reports, so you can derive the level and the hours to
-  the next level yourself. The STREAK is consecutive Mon to Sun weeks with any load,
-  every sport counting, and a loadless week still in progress does not break it. The
-  plan view's quest pips are the week's done/total from the plan bundle. Gold
-  celebrations fire for a ride power record set in the last seven days (power
-  view) and for any family whose threshold peak IS the current month (career
-  view). None of this is steerable over the bus, and none of it appears in any
-  `--json` payload. It lives in the window, documented in docs/viz.md.
-- **Missing-value contract (ADR 0009):** JSON null is not expressible (encoder
-  stringifies tags), so absence is flagged, not nulled. Impossible-zero fields
-  (`np_w`, `avg_hr`, `intensity`, `ftp_used`): 0 = not available. `activity`,
-  `activities`, and `plan.recent_activities_14d` rows carry
-  `power_known`/`intensity_known`/`hr_known`/`zones_known` + `load_model`; `top`
-  rows carry the first three (they are separate flags because np can exist while
-  intensity does not: power stream, no FTP yet). `tss: 0` is AMBIGUOUS, so read
-  `load_model`: `""`/`"none"` = unscored, anything else = a scored near-zero
-  effort. Zone seconds `z1_s..z5_s` mean their 0 literally ONLY when
-  `zones_known: true`; all-zero with `zones_known: false` = no HR stream (summary
-  `avg_hr` can exist without one, and `hr_known` does not cover zones). `distance_m`
-  0 is always literal. Fields that are BOTH possible-zero and possibly-absent
-  carry a `_known` flag (`decoupling_known`, `form_delta_known`, `hr_drift_known`,
-  `rec_drop_known`, and `form_tsb_known` in `analyze`). Trust the flag, never the
-  magnitude. The rule is PER PAYLOAD, not per field name: `summary` ships `form_tsb`
-  bare because it is always computable there. Read the schema for the command.
-  `progress` sessions carry only `decoupling_known` and no other flag on purpose: rows exist only
-  because the group lens scored them.
-- Zone seconds are **HR-based** (universal across sports). Power feeds TSS/NP, and
-  pace feeds the intensity split for any endurance-class DISTANCE sport without power (a pool swim
-  qualifies, since only a distance stream is needed, not GPS or altitude).
-- Load ladder for ENDURANCE sports: stream-NP → Strava weighted watts → avg watts →
-  **pace (rtss)** → hrTSS (zone-weighted) → avg-HR → **session-RPE** → relative_effort.
-  Strength-class sports rank session-RPE ABOVE heart rate (`Sports.class`, ADR 0003),
-  because the athlete is the better sensor there. The ladder is a mixed model, not
-  "TSS"; `load_model` on each row records which rung scored it.
-- **FTP is DERIVED, never configured.** Per sport, per activity era: best 20-min power
-  × 0.95 over the 60 days up to each activity, once two sessions of the family carry a
-  20-minute best there (a lone session would be its own threshold) (`summary.ftp` = `{best_20min_w_60d,
-  estimated_ftp_w}` for rides: the best is the raw measurement over the inclusive 59-day
-  display window, the estimate follows the two-session rule over the 60-day scoring
-  window and reads 0 without it). The `ftp` / `ftp_<sport>` config keys are REFUSED with
-  error code `derived_key`. There is nothing to fix when FTP moves; INTERPRET the
-  trajectory instead (a rising `estimated_ftp_w` is fitness, a falling one is
-  detraining or a power-data gap; check `doctor` coverage before concluding).
-- **Metric recompute triggers (what invalidates metrics):** derived-FTP change (metrics
-  store `ftp_used`), derived threshold-pace change (`threshold_pace_used`, the pace
-  analog, keyed per sport),
-  HR-zone change, **stream arrival**, **rating change**, and
-  activity-input edits (analyze compares each row's stored inputs; sync itself never
-  deletes metrics). So after a sync, always `analyze` to pick up recomputes.
-- CTL/ATL/TSB are **as of today** (daily_load extends through today with 0-TSS rest
-  days), so `form_tsb` is current, with no mental decay adjustments needed. "Today" is the
-  LOCAL day, anchored by config **`timezone`** (IANA, e.g. `America/Chicago`, DST-correct
-  automatically; preferred) or a fixed **`utc_offset_minutes`** fallback (e.g. -300);
-  precedence is timezone > offset > UTC. Without either, users west of UTC get a phantom
-  "tomorrow" row each evening. `doctor` shows which anchor is active.
-- **Session-RPE**: after a strength/HIIT/yoga session, ask the user how hard it felt
-  (1-10) and run `stride rate <activity_id|latest> <n> --json`. Load = hours × RPE × 10
-  (on the same scale as TSS). For strength-class sports the rating outranks HR in the load
-  ladder; for endurance, measured power/HR outrank it. Rating an activity
-  invalidates its metrics (re-`analyze` rescores). Ratings live in their own table
-  and survive re-syncs.
-- Junk HR (outside 35 to 220 bpm) is filtered at analyze time for stream SAMPLES, so sessions with bad straps
-  (common on Peloton strength workouts) get near-0 TSS. That result is honest
-  "no data", not zero effort. Weigh strength by session count, not TSS. `avg_hr` in
-  `activities` output is raw (unfiltered).
-- The same 35 to 220 bound is applied again at REPORT time by four consumers, each with a different consequence. TWO of them apply it to `avg_hr_scored`: the mean of the session's in-band HR stream when the surviving samples span at least half the LONGER of the stream's own extent and the session's moving time, and the stored average otherwise (#311). Those two are `progress`'s lenses and `activity`'s `baselines.ef`. The other two read the STORED `avg_hr`: `top hr` bounds that column by design (#315), and the load ladder's `hr_avg` rung reads it. That rung is reachable only when the stream yields no zone seconds, which FORCES `avg_hr_stream` to be NULL as well. The implication runs one way, not both: a stream can yield zone seconds and still be too short to produce a mean. Either way the ladder can never divide by a number that differs from `avg_hr_scored`. So a session whose stored reading is impossible can still be scored, from its stream, and one whose stream is a dead strap's first few minutes is refused even though its stored reading looks fine. `progress`, `activity` and `activities` all publish `avg_hr_scored` beside `avg_hr` (#319), so the divisor behind any EF verdict is readable rather than inferred. `progress` counts the refused session in `hidden_lens` and omits it from `sessions[]`, while the HUMAN table still shows the row with its lens cells blank and the columns that never needed a heart rate filled (#286). The agent reads `hidden_lens` and the athlete sees the ride. `activity` publishes `ef.known: false` with `ef.current: 0`. The load ladder falls to its next rung and names it in `load_model`, so this one DOES change TSS. It is the consumer that propagates, into CTL, ATL and every form verdict. `top hr` does not rank the reading at all: it is absent from that list. Absence there is not corroboration that a reading is broken, because `top hr` bounds the stored value while the lenses score the corrected one. A session the engine RESCUED (EF published, load scored from its stream) is missing from `top hr` too. Check `avg_hr_scored` rather than reading absence there. A refused reading's id is not recoverable from the JSON, and if every reading is out of band the list comes back EMPTY. `{"data":[]}` then reads as "never recorded a heart rate" for an athlete with years of recordings. To find the broken sessions themselves use `stride activities --json` and look for an **`avg_hr_scored`** under 35 or over 220 AND `hr_known: true`. That field is the one the lenses divide by; testing `avg_hr` instead misses refused rows, because a session can store an impossible reading and still score fine from its stream. The `hr_known` half is what separates a broken reading from a session that simply never wore a strap: nearly all out-of-band rows never recorded anything at all. Without it you report many times too many and tell the athlete to repair activities that need equipment instead. A LARGE gap between the two fields is a further signal (Strava computing its summary from a lossy stream), but any gap is not: nearly every row differs by a rounded decimal, while only a rare few differ by more than 15 bpm. `plan` echoes the raw `avg_hr` only, and `activity` publishes it beside `hr_known: true`.
-- `created_at` in planned sessions is an ISO datetime string (UTC, e.g. `2026-07-27T18:04:22Z`).
-- Streams are drained by `sync` until the read budget stops it; older activities gain zone data over
-  repeated syncs. `sqlite3 ~/.stride/db.sqlite "SELECT COUNT(*) FROM streams"` shows progress.
+The window also shows a game layer that no `--json` payload carries: athlete level from
+career hours across all sports (level L needs 5·L·(L+1) cumulative hours; tiers every ten
+levels: rookie, grinder, engine, machine, legend), a streak of consecutive Mon-Sun weeks
+with any load (the current week cannot break it), and gold celebrations for a ride power
+record in the last seven days or a family's threshold peaking this month. Derive level
+from `stats` hours if asked.
 
 ## Setup & credentials
 
-Day-to-day: none. `stride auth` stores the Strava client id/secret and tokens in the
-db, and sync auto-refreshes. `STRAVA_CLIENT_ID`/`STRAVA_CLIENT_SECRET` env vars act as
-overrides if set. A locked/corrupt db surfaces as a real error, not a false
-"not authenticated".
+Day to day there is nothing to do: `stride auth` stored the Strava client id, secret and
+tokens in the database, and sync refreshes them (`STRAVA_CLIENT_ID`/`STRAVA_CLIENT_SECRET`
+in the environment override the stored values). A locked or corrupt database surfaces as
+its own error, not as `not_authenticated`.
 
-First-time on a new machine: create a Strava API app (strava.com/settings/api), then
-`stride init --json` → `STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth`
-(browser paste flow, interactive, the one command you run WITHOUT `--json`) →
-`stride config set hr_z1_max..hr_z4_max --json` (+ `timezone`, IANA) →
-`stride sync --json` → `stride analyze --json`. Each step's failure is an envelope
-you can branch on (`not_authenticated`, `missing_config`), which is the point of
-flagging a setup chain. The db self-migrates on any command, so upgrading the binary against
-an existing db is safe.
+New machine: create a Strava API app (strava.com/settings/api), then
+`stride init --json` → `STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth` (the
+interactive browser-paste flow, the one command run by hand without `--json`) →
+`stride config set hr_z1_max <bpm> --json` through `hr_z4_max` (z5 is above `hr_z4_max`;
+per-sport overrides like `hr_z2_max_ride` are accepted) and `timezone` →
+`stride sync --json` → `stride analyze --json`. Failures along the way are envelopes
+(`not_authenticated`, `missing_client_creds`, `missing_config`). The database migrates
+itself on any command, so upgrading the binary is safe.
 
 ## Development
 
-`just test` is the single entry point (pure expects → fresh build → `just e2e`, the
-sandbox-HOME suite embedded in the justfile, and the same pipeline CI runs). The ordering
-matters: a failed build leaves a stale binary that the e2e suite would happily "pass"
-against, which is why `just test` builds in between.
-
-Toolchain: Roc's new (Zig) compiler (one nightly, pinned as the default of
-`.github/actions/setup-roc`; no per-job overrides, and `tools/pin-check.sh` enforces
-it) + basic-cli 0.23 (the line named in `src/cli/main.roc`'s platform URL; e2e
-holds this sentence to that header) + builtin JSON (roc-json dropped). The
-full `just test` (expects, build, and e2e) runs green; the roc#10469 perf gate is
-fixed. Build flags take `=` (`--output=`, `--main=`) and always `--opt=dev`, since the
-optimized backend was miscompiling (issue #32, fixed on the 2026-08-17 pin; dev is now
-kept for build time). A Roc gotcha that keeps recurring: floats have
-no Eq, so never `x == 0.0` in an expect; use `(x).abs() < 0.001` (`Num.abs` does not exist). Compiler syntax/stdlib
-reference: `docs/roc-new-compiler-notes.md`.
+`just test` runs the pure expects, a fresh build, then `just e2e` against a sandbox HOME.
+CI (`.github/workflows/build.yml`) runs more: `just e2e-sync` and the gate scripts under
+`tools/`, among them `skill-shapes.sh` and `command-claims.sh`, which read this file. A
+change to SKILL.md must pass `just skill-shapes` and `just command-claims`. The engine
+builds with Roc's new compiler on basic-cli 0.23; contributor rules live in AGENTS.md and
+compiler notes in `docs/roc-new-compiler-notes.md`.
