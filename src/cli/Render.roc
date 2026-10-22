@@ -864,10 +864,13 @@ Render :: [].{
         # that one out gives back exactly the exhaustiveness this type exists to buy.
         match stopped {
             # The ONLY way to drain the queue and still be pending: a stream body
-            # that would not decode is skipped WITHOUT storing, so it retries next
-            # run. A 404 is NOT this case — it stores a `{}` marker and leaves the
-            # pending set at once, which is why "Strava has no streams for these" is
-            # the wrong sentence here however plausible it sounds.
+            # that would not decode is skipped WITHOUT storing, and the id stays
+            # queued until it has failed Strava.stream_attempt_cap fetches — the
+            # pending count holds only ids under that cap, so each of them is
+            # fetched again by the next sync. A 404 is NOT this case — it stores a
+            # `{}` marker and leaves the pending set at once, which is why "Strava
+            # has no streams for these" is the wrong sentence here however
+            # plausible it sounds.
             Complete => if pending == 0 "" else "${I64.to_str(pending)} had unreadable stream data — they retry next sync"
             BudgetReached => if pending == 0 "" else "filled Strava's 15-minute read window — ${I64.to_str(pending)} to go, run `stride sync` again in ~15 minutes"
             RateLimited => if pending == 0 "" else "Strava rate-limited this run — ${I64.to_str(pending)} to go, try again in ~15 minutes"

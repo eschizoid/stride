@@ -261,8 +261,11 @@ pacing itself well inside Strava's rate limits: it drains up to 95 reads against
 100-per-15-minute window, then STOPS rather than sleeping, says so, and sets `resumable`.
 Run it again in about fifteen minutes and it continues. Strava's daily cap is 1000, so
 roughly ten runs a day is the ceiling and a multi-thousand-activity history converges over
-a few days of that — hands-off, and never holding your terminal. After that the same command is a two-second incremental. `stride sync --all`
-exists only to force a full re-list from scratch.
+a few days of that — hands-off, and never holding your terminal. After that the same command is a two-second incremental. A stream body that will not decode is not stored: the next run
+asks again, after any activity not yet tried, and after three failed fetches plain syncs
+stop asking. A stored stream that `analyze` cannot decode is queued for the next sync the
+same way. `stride sync --all` forces a full re-list from scratch, which replaces every
+activity row Strava still lists with Strava's copy and asks again for those streams.
 
 After `auth`, credentials live in the db — no env vars ever again. Day-to-day:
 

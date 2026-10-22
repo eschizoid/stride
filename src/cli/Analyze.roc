@@ -275,7 +275,7 @@ Analyze :: [].{
                 \\SELECT a.id AS id, COALESCE(CAST(a.start_local AS TEXT), '') AS start, a.moving_time AS mt,
                 \\       COALESCE(CAST(a.sport_type AS TEXT), '') AS sport,
                 \\       CAST(a.relative_effort AS REAL) AS re, CAST(a.avg_watts AS REAL) AS aw, CAST(a.avg_hr AS REAL) AS ahr,
-                \\       CAST(a.weighted_avg_watts AS REAL) AS waw, CAST(r.rpe AS REAL) AS rpe, COALESCE(CAST(s.raw_json AS TEXT), '') AS raw,
+                \\       CAST(a.weighted_avg_watts AS REAL) AS waw, CAST(r.rpe AS REAL) AS rpe, CAST(s.raw_json AS TEXT) AS raw,
                 \\       COALESCE(a.device_watts, 1) AS dw,
                 \\       CAST(ROUND(${period_ftp_sql}) AS REAL) AS pftp,
                 \\       CAST(ROUND((${period_threshold_sql}) * 1000) AS REAL) / 1000.0 AS pthr,
@@ -324,6 +324,10 @@ Analyze :: [].{
             [] => Ok(acc)
             [row, .. as rest] => {
                 failed = compute_one!(path, zb, cfg, row)?
+                # a STORED body that will not decode (an absent one decodes as no
+                # streams): queue it for the next sync, which is what makes the
+                # "will retry next sync" line true
+                _ = if failed Strava.flag_stream_refetch!(path, row.id)? else {}
                 next = {
                     computed: acc.computed + 1,
                     stream_errors: acc.stream_errors + (if failed 1 else 0),

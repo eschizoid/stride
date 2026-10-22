@@ -22,6 +22,7 @@
     "rated",
     "scored_by",
     "sport_zone_overrides",
+    "streams_retry_capped",
     "strength_unrated",
     "time",
     "time_ok",
@@ -111,6 +112,10 @@
     },
     "sport_zone_overrides": {
       "type": "integer"
+    },
+    "streams_retry_capped": {
+      "type": "integer",
+      "description": "Activities whose stream failed to decode on 3 or more fetches, so a plain sync stopped asking for it and pending_streams leaves it out. `stride sync --all` fetches them again."
     },
     "strength_unrated": {
       "type": "integer"

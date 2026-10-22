@@ -221,21 +221,23 @@ Output :: [].{
     # code refuses the date on purpose.
     #
     # PARENTHESISED, not "is": `raw` is the COMPONENT that failed, never the whole
-    # column — quoting the whole start_local sent users to a DELETE matching zero
-    # rows. The full column is not available from this query (three aggregates, so
-    # SQLite's bare-column rule pins nothing) and the id is the handle anyway. The
-    # remedy leads with the id because `sync --all` silently no-ops on an imported
-    # row (synced_at NULL — Strava does not list it), so the sync remedy is stated
-    # as conditional.
+    # column, so the quoted text is not a value a WHERE clause can match. The full
+    # column is not available from this query (three aggregates, so SQLite's
+    # bare-column rule pins nothing); the id is the handle.
+    #
+    # The remedy names only what stride can do. `sync --all` re-lists every
+    # activity Strava has and replaces each row with Strava's copy, which repairs
+    # the date; a row Strava does not list is out of its reach, so the remedy is
+    # conditional. No stride command deletes a single activity, and the message
+    # says so instead of pointing at hand-written SQL: deleting an activities row
+    # leaves its streams, metrics and ratings rows behind, because no foreign key
+    # cascades.
     #
     # EMPTY `raw` gets its own wording: NULL and '' arrive identically through the
     # COALESCE, and quoting ('') reads as though the empty string is stored. A BLOB
-    # start_local is the remaining gap, recorded rather than repaired: the
-    # parenthetical renders the decoded bytes, no TEXT literal can match a BLOB, and
-    # the bytes can look like a perfectly plausible date — worse than visible
-    # garbage, because the user copies a normal-looking handle into a DELETE and
-    # gets zero rows with no signal. The id-based remedy is what works there, and
-    # these rows only reach this message because #296 stopped them crashing first.
+    # start_local renders its decoded bytes in the parenthetical, and those bytes
+    # can look like a plausible date that no TEXT literal matches; the id is the
+    # handle there too.
     unreadable_activity_date_msg : Str, I64 -> Str
     unreadable_activity_date_msg = |raw, id| {
         what =
@@ -244,14 +246,13 @@ Output :: [].{
             } else {
                 "an unreadable start_local ('${raw}')"
             }
-        "activity ${(id).to_str()} has ${what} — delete that row by id and re-sync, or run `stride sync --all` if Strava still lists the activity"
+        "activity ${(id).to_str()} has ${what} — `stride sync --all` replaces the row with Strava's copy if Strava still lists the activity; no stride command deletes a single activity"
     }
 
     # The TIME half of the same column, with its own wording: `raw` here is the nine
-    # characters after the date — a COMPONENT, never the stored value — so quoting it
-    # as the date message does puts a string in the reproduction handle that
-    # `WHERE start_local='T37:00:00'` matches zero rows of. The component is named
-    # OUTSIDE the handle; the id leads the remedy, being the only actionable thing.
+    # characters after the date — a COMPONENT, never the stored value — so it is
+    # named outside the parenthetical the date message uses for the stored text.
+    # The id is the handle, and the remedy is the date message's.
     unreadable_activity_time_msg : Str, I64 -> Str
     unreadable_activity_time_msg = |raw, id| {
         what =
@@ -260,7 +261,7 @@ Output :: [].{
             } else {
                 "an unreadable time after its date — the time component reads '${raw}'"
             }
-        "activity ${(id).to_str()} has ${what} — delete that row by id and re-sync, or run `stride sync --all` if Strava still lists the activity"
+        "activity ${(id).to_str()} has ${what} — `stride sync --all` replaces the row with Strava's copy if Strava still lists the activity; no stride command deletes a single activity"
     }
 
     unreadable_activity_time! : Str, I64 => Try({}, _)

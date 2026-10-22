@@ -206,12 +206,17 @@ respond! = |req, _ctx| {
             # Lengthened the STREAM rather than shortening moving_time, which would move
             # the pinned TSS.
             Ok(mock_json(mock_power_stream_json(3600, 200)))
+        } else if Str.contains(uri, "/activities/509/") {
+            # a 200 whose body IS UTF-8 but is not stream JSON. 509 is in no
+            # listing; only run_skips! inserts it, so no other driver reads it.
+            Ok(mock_json("not json at all"))
         } else if env_or!("E2E_BAD_STREAM", "") == "1" {
-            # 200 with a body that is NOT UTF-8 — store_stream_response! returns
-            # SkippedNonUtf8 and writes no row, so the id stays pending and retries
-            # next run. This is the only way to reach `complete` with pending > 0,
-            # which is the state `resumable` exists for (#218). Served by a SECOND
-            # mock instance so the 404-marker fixture above stays untouched.
+            # 200 with a body that is NOT UTF-8 — store_stream_response! stores
+            # nothing and counts the failed fetch, so the id stays pending and
+            # retries next run until the attempt cap. This is the only way to
+            # reach `complete` with pending > 0, which is the state `resumable`
+            # exists for (#218). Served by a SECOND mock instance so the
+            # 404-marker fixture above stays untouched.
             Ok(mock_bad_utf8)
         } else {
             # 404 = "no streams recorded" — exercises the {} marker path
@@ -357,7 +362,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1292)?
+    checks_ran_exactly!(1307)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -377,6 +382,7 @@ run_scenarios! = |ctx| {
     b_load_stats!(ctx)?
     b_activity_detail!(ctx)?
     b_junk_filter!(ctx)?
+    b_stream_retry!(ctx)?
     b_period_ftp!(ctx)?
     b_period_pace!(ctx)?
     b_progress_a!(ctx)?
@@ -645,6 +651,9 @@ run_sync! = || {
     # passed, so nothing observed it at all. `synced_at` is load-bearing here —
     # prune_deleted! exempts NULL, so a raw insert without it passes for the wrong reason.
     _ = sql!(db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) VALUES (777,'deleted upstream','Ride','2020-01-01T10:00:00Z',3600,30000.0,0.0,1);")
+    # a capped stream_retries row references the activity, so the prune must delete
+    # it too or the activity's DELETE fails and the whole prune with it
+    _ = sql!(db, "INSERT OR REPLACE INTO stream_retries (activity_id, attempts) VALUES (777, 3);")
     # ...carrying a row in each strength table, which all reference activities:
     # the prune must take them with it or its DELETE of the activity fails
     _ = sql!(db, "INSERT INTO strength_notes (activity_id, description) VALUES (777, 'x'); INSERT INTO strength_logs (activity_id, payload, imported_at) VALUES (777, '{}', '2020-01-02T00:00:00Z'); INSERT INTO strength_sets (activity_id, ordinal, exercise, sets, reps, weight_kg, source) VALUES (777, 0, 'Curl', 1, 1, 1.0, 'strava');")
@@ -654,6 +663,7 @@ run_sync! = || {
     _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync --all >'${bo}' 2>/dev/null")
     check!("--all re-lists everything, so the stale row is pruned", bfq!(".data.pruned") == "1")?
     check!("...and it is really gone from the database", Str.trim(sql!(db, "SELECT count(*) FROM activities WHERE id=777;")) == "0")?
+    check!("...along with its stream_retries row", Str.trim(sql!(db, "SELECT count(*) FROM stream_retries WHERE activity_id=777;")) == "0")?
     check!("...along with its strength description, log and sets", Str.trim(sql!(db, "SELECT (SELECT count(*) FROM strength_notes WHERE activity_id=777) + (SELECT count(*) FROM strength_logs WHERE activity_id=777) + (SELECT count(*) FROM strength_sets WHERE activity_id=777);")) == "0")?
     all_human = Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' sync --all 2>/dev/null"))
     check!("...and --all does not claim it checked only the 30-day window", !(Str.contains(all_human, "30-day window")))?
@@ -661,6 +671,23 @@ run_sync! = || {
     check_near!("501's metrics are restored after the drain block", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 110.8, 1.0)?
     # the mate leaves here: the drain scenarios below count fetches by id
     _ = sql!(db, "DELETE FROM activities WHERE id = 599; DELETE FROM activity_metrics WHERE activity_id = 599; DELETE FROM streams WHERE activity_id = 599;")
+
+    # ── a STORED stream analyze cannot decode is fetched again by the next sync,
+    # and the fetched copy replaces it: the promise analyze's warning line makes
+    _ = sql!(db, "UPDATE streams SET raw_json = 'not json at all' WHERE activity_id = 501; DELETE FROM activity_metrics WHERE activity_id = 501;")
+    flagged = Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' analyze 2>/dev/null"))
+    check!("analyze reports the stored body it cannot decode, promising the next sync", Str.contains(flagged, "1 had unreadable stream data — computed from summary fields, will retry next sync"))?
+    _ = sync_run!("json")
+    check!("...and the next sync keeps that promise, fetching it again", bfq!(".data.streams_fetched") == "1")?
+    check!("...replacing the unreadable body and clearing its retry row", Str.trim(sql!(db, "SELECT (SELECT substr(raw_json, 1, 8) FROM streams WHERE activity_id = 501) || '/' || (SELECT count(*) FROM stream_retries);")) == "{\"time\":/0")?
+    _ = sync_stride!(bin, home, base, ["analyze"])
+    check_near!("...so 501 reads its stream again: the constant 200 W shows as its 60 s best", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.power_bests.w60")), 200.0, 1.0)?
+    # ── the date-error remedy is real: `sync --all` replaces a listed row with
+    # Strava's copy, which is the repair the unreadable-date message names
+    _ = sql!(db, "UPDATE activities SET start_local = 'garbage-date' WHERE id = 501;")
+    check!("a garbled start_local on a listed activity is refused by name", sync_strjq!(bin, home, base, ["season"], ".error.code") == "unreadable_activity_date")?
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync --all >'${bo}' 2>/dev/null")
+    check!("...and the `stride sync --all` its message names restores Strava's date", Str.trim(sql!(db, "SELECT start_local FROM activities WHERE id = 501;")) == "2026-07-28T10:00:00Z")?
 
     # #208: the two config reads on the SYNC path. Both swallowed an unreadable
     # value — last_sync_epoch folded into "never synced" (a silent full re-pull,
@@ -682,25 +709,66 @@ run_sync! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_at_least!(52)?
+    checks_ran_at_least!(60)?
     Stdout.line!("SYNC E2E CHECKS PASS")
+}
+
+# ── stream_errors counts only STORED bodies that will not decode, and each one is
+# queued for the next sync. Its own HOME: the pending count below is exact, and the
+# shared fixture's queue is whatever earlier scenarios left in it.
+b_stream_retry! : Ctx => Try({}, _)
+b_stream_retry! = |ctx| {
+    rh = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+    rctx = { ..ctx, home: rh, db: "${rh}/.stride/db.sqlite" }
+    _ = stride!(rctx.bin, rctx.home, ["init"])
+    _ = sql!(rctx.db, "INSERT OR REPLACE INTO config (key,value) VALUES ('hr_z1_max','120'),('hr_z2_max','140'),('hr_z3_max','160'),('hr_z4_max','175');")
+    # no streams row for either: 971 is one sync has not fetched yet, 973 has no
+    # moving time, so sync never fetches it — neither is unreadable data
+    _ = sql!(rctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,avg_hr) VALUES (971,'never fetched','Run','${ctx.d1}T07:00:00Z',1800,150);")
+    _ = sql!(rctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,relative_effort) VALUES (973,'no moving time','Run','${ctx.d1}T09:00:00Z',0,10);")
+    check!("an activity with no stored stream is not counted as unreadable stream data, with or without moving time", strjq!(rctx, ["analyze"], ".data.stream_errors") == "0")?
+    check!("...and only the one with moving time is pending", strjq!(rctx, ["doctor"], ".data.pending_streams") == "1")?
+    check!("...and doctor reports no capped streams, printing no line for them", strjq!(rctx, ["doctor"], ".data.streams_retry_capped") == "0" and !(Str.contains(stride_human!(rctx.bin, rctx.home, ["doctor"]), "would not decode after")))?
+    # 972 has a stored body that will not decode
+    _ = sql!(rctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,avg_hr) VALUES (972,'stored garbage','Run','${ctx.d2}T07:00:00Z',1800,150);")
+    _ = sql!(rctx.db, "INSERT INTO streams (activity_id, raw_json) VALUES (972, 'not json at all');")
+    human = stride_human!(rctx.bin, rctx.home, ["analyze"])
+    check!("a stored body that will not decode is reported, with the retry its line promises", Str.contains(human, "⚠ 1 had unreadable stream data — computed from summary fields, will retry next sync"))?
+    check!("...and analyze queues it for the next sync at a fresh attempt count", Str.trim(sql!(rctx.db, "SELECT activity_id || ':' || attempts FROM stream_retries;")) == "972:0")?
+    check!("...so doctor's pending streams counts it beside the never-fetched one", strjq!(rctx, ["doctor"], ".data.pending_streams") == "2")?
+    # a body that has failed the cap's worth of fetches leaves the plain-sync queue
+    _ = sql!(rctx.db, "UPDATE stream_retries SET attempts = 3 WHERE activity_id = 972;")
+    check!("an id at the attempt cap is no longer pending", strjq!(rctx, ["doctor"], ".data.pending_streams") == "1")?
+    # ...and doctor is where it stays visible, with the command that fetches it again
+    check!("...and doctor counts it as capped, naming `stride sync --all`", strjq!(rctx, ["doctor"], ".data.streams_retry_capped") == "1" and Str.contains(stride_human!(rctx.bin, rctx.home, ["doctor"]), "streams that would not decode after 3 fetches: 1 — plain syncs stopped asking; `stride sync --all` fetches them again"))?
+    # ...until analyze rescores it and reports it again, which re-queues it
+    _ = sql!(rctx.db, "DELETE FROM activity_metrics WHERE activity_id = 972;")
+    check!("a rescore that meets the bad body again reports it", strjq!(rctx, ["analyze"], ".data.stream_errors") == "1")?
+    check!("...and resets its count, so the line's next-sync promise holds again", Str.trim(sql!(rctx.db, "SELECT attempts FROM stream_retries WHERE activity_id = 972;")) == "0")?
+    # a stored unreadable body on an activity with no moving time is promised the
+    # same fetch, so it must be in the same queue
+    _ = sql!(rctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,relative_effort) VALUES (974,'garbage, no moving time','Run','${ctx.d2}T09:00:00Z',0,10);")
+    _ = sql!(rctx.db, "INSERT INTO streams (activity_id, raw_json) VALUES (974, 'not json at all');")
+    check!("a zero-moving-time activity's unreadable stored body is reported", strjq!(rctx, ["analyze"], ".data.stream_errors") == "1")?
+    check!("...and queued like any other, so its next-sync promise holds", strjq!(rctx, ["doctor"], ".data.pending_streams") == "3")?
+    _ = sh!("rm -rf '${rh}'")
+    Ok({})
 }
 
 # ── sync against a mock whose stream bodies do not decode (#218, #232) ───────
 # The one state run_sync! cannot reach: a run that DRAINS its queue and still has
-# work left. store_stream_response! deliberately does not store a non-UTF-8 body,
-# so that id stays pending and retries next run — making `complete` with pending
-# > 0 reachable, and `resumable` TRUE after it. Without this, a build with
-# `resumable` hardcoded false passed every run_sync! check, and `resumable` is
-# the one field SKILL.md tells agents to branch on. Runs under `just e2e-sync`
-# (in CI).
+# work left. store_stream_response! stores no body it cannot decode and counts the
+# failed fetch, so that id stays pending and retries next run — making `complete`
+# with pending > 0 reachable, and `resumable` TRUE after it — until it has failed
+# Strava.stream_attempt_cap (3) fetches, when a plain sync stops asking and
+# `sync --all` still asks. `resumable` is the one field SKILL.md tells agents to
+# branch on. Runs under `just e2e-sync` (in CI).
 run_skips! : () => Try({}, _)
 run_skips! = || {
     reset_checks!({})?
-    # Every driver resets the run-scoped failure log on entry and asserts it empty before
-    # finishing (#226). Adding a driver without both is SILENT: the rebase that brought
-    # this scenario onto a main carrying that log merged cleanly and left it with neither,
-    # which is the guard's own hole reopened by new code that git had no way to see.
+    # Every driver resets the run-scoped failure log on entry and asserts it empty
+    # before finishing (#226); a driver without both leaves fixture-write errors
+    # unreported.
     reset_sqlite_errors!({})
     bin = env_or!("STRIDE_BIN", "./stride")
     base = env_or!("STRIDE_API_BASE", "http://127.0.0.1:8798")
@@ -710,64 +778,98 @@ run_skips! = || {
     _ = wait_ready!(base, 50)
     check!("bad-stream mock came up on ${base}", mock_up!(base))?
 
+    creds = "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','mock-access'),('strava_refresh_token','mock-refresh'),('strava_expires_at','9999999999');"
     _ = sync_stride!(bin, home, base, ["init"])
-    _ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','mock-access'),('strava_refresh_token','mock-refresh'),('strava_expires_at','9999999999');")
-    # sync pulls both activities; 501's streams store, 502's body does not decode.
-    # #224: this skip path used to report NOTHING under sync —
-    # no counter, no line, no payload field. It is the command that runs daily, so it
-    # is where the loss actually happens; the only trace was `pending_streams` failing
-    # to move, which is indistinguishable from a rate-limited partial.
+    _ = sql!(db, creds)
+    # fetch 1 of 502: 501's streams store, 502's body does not decode. The skip is
+    # counted, named on stderr and carried in the payload, because sync is the
+    # command that runs daily and `pending_streams` alone cannot tell a skip from a
+    # rate-limited partial.
     sync_err = "${home}/sync.err"
     _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${home}/sync.out' 2>'${sync_err}'")
     syncq! = |filter| Str.trim(sh!("jq -r '${filter}' '${home}/sync.out' 2>&1"))
     check!("sync counts the undecodable body", syncq!(".data.streams_skipped") == "1")?
     check!("...and stores only the one that decoded", syncq!(".data.streams_fetched") == "1")?
-    check!("...naming it on stderr, with the activity id", Str.contains(sh!("cat '${sync_err}'"), "502: stream data would not decode"))?
+    check!("...naming it on stderr, with the activity id and the retry", Str.contains(sh!("cat '${sync_err}'"), "502: stream data would not decode — skipped, retries next run"))?
     check!("...while its stdout stays exactly the envelope", Str.starts_with(Str.trim(sh!("cat '${home}/sync.out'")), "{\"schema_version\"") and List.len(Str.split_on(Str.trim(sh!("cat '${home}/sync.out'")), "\n")) == 1)?
     check!("sync conforms to its schema with the new key", Str.trim(sh!("jq '.data' '${home}/sync.out' 2>&1 | jq -r --slurpfile schema schemas/v3/sync.json -f tools/validate.jq 2>&1")) == "")?
-    check!("humans are told too, not just machines", Str.contains(Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' sync 2>/dev/null")), "unreadable stream data"))?
-
-    bo = "${home}/bf.out"
-    be = "${home}/bf.err"
-    bfq! = |filter| Str.trim(sh!("jq -r '${filter}' '${bo}' 2>&1"))
-    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>'${be}'")
-
-    check!("an undecodable body is COUNTED, not silently dropped", bfq!(".data.streams_skipped") == "1")?
-    # the counter alone is a number nobody reads; the run must SAY it, naming the id
-    check!("...and named on stderr, with the activity id", Str.contains(sh!("cat '${be}'"), "502: stream data would not decode"))?
-    check!("...and stores nothing", bfq!(".data.streams_fetched") == "0")?
-    check!("...so the activity stays pending", bfq!(".data.pending_streams") == "1")?
+    check!("...so the activity stays pending", syncq!(".data.pending_streams") == "1")?
     # the queue emptied, so the drain IS complete — and there is still work to do.
-    # These two assertions together are the whole point: deriving `resumable` from
-    # `stopped` reports false here, about a row stride itself intends to retry.
-    check!("the queue drained, so stopped is complete", bfq!(".data.stopped") == "complete")?
-    check!("...yet the run is resumable, because that id retries next run", bfq!(".data.resumable") == "true")?
-    check!("the skip payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v3/sync.json -f tools/validate.jq 2>&1")) == "")?
+    # Deriving `resumable` from `stopped` would report false here, about a row
+    # stride itself intends to retry.
+    check!("the queue drained, so stopped is complete", syncq!(".data.stopped") == "complete")?
+    check!("...yet the run is resumable, because that id retries next run", syncq!(".data.resumable") == "true")?
 
-    # re-running really does re-attempt it — the claim `resumable: true` makes
-    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null")
-    check!("a second run re-attempts the skipped id rather than retiring it", bfq!(".data.streams_skipped") == "1")?
-
-    _ = sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null")
-    human = Str.trim(sh!("cat '${bo}'"))
+    # fetch 2 of 502, rendered for a human
+    human = Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' '${bin}' sync 2>/dev/null"))
     check!("humans are told the data was unreadable", Str.contains(human, "unreadable stream data"))?
     # this mock lists no strength activities, so both notes counts are 0 and
     # the clause must not appear — a standing "0 descriptions" would be noise
     # about a feature this athlete does not use
     check!("...and nothing about strength descriptions, which do not exist here", !(Str.contains(human, "strength descriptions")))?
-    # Re-pointed. This asserted the absence of `"all streams present"`, which was meaningful
-    # while that string existed and the pending guard suppressed it — and became VACUOUS the
-    # moment this branch deleted the string, because a `contains` on text no producer can
-    # emit cannot fail for any input. What it actually cares about is that a run which
-    # skipped unreadable streams does not also claim the queue is drained, so it says that
-    # against the number instead of against a dead literal.
+    # a run that skipped unreadable streams must not also claim the queue is drained
     check!("...and told they retry next sync", Str.contains(human, "retry next sync"))?
 
+    # fetch 3 of 502: the cap. It is still fetched, and this failure retires it.
+    bo = "${home}/bf.out"
+    be = "${home}/bf.err"
+    bfq! = |filter| Str.trim(sh!("jq -r '${filter}' '${bo}' 2>&1"))
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>'${be}'")
+    check!("a later run re-attempts the skipped id rather than retiring it at once", bfq!(".data.streams_skipped") == "1" and bfq!(".data.streams_fetched") == "0")?
+    check!("...and on the cap's failure says plain syncs stop asking and names `sync --all`", Str.contains(sh!("cat '${be}'"), "502: stream data would not decode — skipped after 3 failed fetches; plain syncs stop asking, `stride sync --all` asks again"))?
+    check!("...leaving nothing pending and the run not resumable", bfq!(".data.pending_streams") == "0" and bfq!(".data.resumable") == "false" and bfq!(".data.stopped") == "complete")?
+    check!("the skip payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v3/sync.json -f tools/validate.jq 2>&1")) == "")?
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null")
+    check!("a retired id costs a plain sync no read", bfq!(".data.streams_skipped") == "0" and bfq!(".data.streams_fetched") == "0")?
+    _ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync --all >'${bo}' 2>'${be}'")
+    check!("`sync --all` asks again past the cap", bfq!(".data.streams_skipped") == "1" and Str.contains(sh!("cat '${be}'"), "502: stream data would not decode — skipped after 4 failed fetches"))?
     _ = sh!("rm -rf '${home}'")
+
+    # ── the read budget cannot be spent on a failing id ahead of new work. At one
+    # read per run, 502 (the newest) is read first; it fails, and the next run's one
+    # read goes to 501 instead of re-reading 502.
+    sh2 = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+    db2 = "${sh2}/.stride/db.sqlite"
+    o2 = "${sh2}/sync.out"
+    q2! = |filter| Str.trim(sh!("jq -r '${filter}' '${o2}' 2>&1"))
+    _ = sync_stride!(bin, sh2, base, ["init"])
+    _ = sql!(db2, creds)
+    _ = sh!("HOME='${sh2}' STRIDE_FORMAT=json STRIDE_READS_PER_WINDOW=1 STRIDE_API_BASE='${base}' '${bin}' sync >'${o2}' 2>/dev/null")
+    check!("at one read per run, the newest id is read first and fails", q2!(".data.streams_skipped") == "1" and q2!(".data.stopped") == "budget_reached")?
+    _ = sh!("HOME='${sh2}' STRIDE_FORMAT=json STRIDE_READS_PER_WINDOW=1 STRIDE_API_BASE='${base}' '${bin}' sync >'${o2}' 2>/dev/null")
+    check!("...and the next run's read goes to the id that has not failed", q2!(".data.streams_fetched") == "1" and q2!(".data.streams_skipped") == "0")?
+    # a UTF-8 body that is not stream JSON is refused the same way as a non-UTF-8
+    # one: not stored, counted. 509 exists only here, and this mock serves it that
+    # body; synced_at stays NULL, so no prune touches it.
+    _ = sql!(db2, "INSERT INTO activities (id,name,sport_type,start_local,moving_time) VALUES (509,'garbled stream','Ride','2026-08-01T10:00:00Z',3600);")
+    _ = sh!("HOME='${sh2}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${o2}' 2>/dev/null")
+    check!("a UTF-8 body that will not decode is not stored, and its failed fetch is counted", Str.trim(sql!(db2, "SELECT (SELECT count(*) FROM streams WHERE activity_id = 509) || '/' || (SELECT attempts FROM stream_retries WHERE activity_id = 509);")) == "0/1")?
+    _ = sh!("rm -rf '${sh2}'")
+
+    # ── the read bound holds across the daily loop. A stored body analyze cannot
+    # decode is queued once; each sync's failed fetch counts against the cap, and
+    # analyze does not rescore a converged row, so it does not re-queue it. After the
+    # cap, an analyze-then-sync cycle spends no read on that id.
+    sh3 = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+    db3 = "${sh3}/.stride/db.sqlite"
+    o3 = "${sh3}/sync.out"
+    _ = sync_stride!(bin, sh3, base, ["init"])
+    _ = sql!(db3, creds)
+    _ = sql!(db3, "INSERT OR REPLACE INTO config (key,value) VALUES ('hr_z1_max','120'),('hr_z2_max','140'),('hr_z3_max','160'),('hr_z4_max','175');")
+    _ = sh!("HOME='${sh3}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >/dev/null 2>&1")
+    _ = sql!(db3, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (502, 'not json at all'); DELETE FROM stream_retries;")
+    cycle! = |_| sh!("HOME='${sh3}' STRIDE_FORMAT=json '${bin}' analyze >/dev/null 2>&1; HOME='${sh3}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${o3}' 2>/dev/null")
+    _ = cycle!(1)
+    _ = cycle!(2)
+    _ = cycle!(3)
+    _ = cycle!(4)
+    check!("after the cap, an analyze-then-sync cycle spends no read on a body analyze already reported", Str.trim(sh!("jq -r '.data.streams_skipped' '${o3}'")) == "0" and Str.trim(sql!(db3, "SELECT attempts FROM stream_retries WHERE activity_id = 502;")) == "3")?
+    _ = sh!("rm -rf '${sh3}'")
+
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_at_least!(20)?
+    checks_ran_at_least!(25)?
     Stdout.line!("SKIPS E2E CHECKS PASS")
 }
 
@@ -4023,6 +4125,9 @@ b_seed_analyze! = |ctx| {
     # not a fault in either.
     doc_h = sh!("HOME='${ctx.home}' '${ctx.bin}' doctor 2>/dev/null")
     check!("doctor's human screen carries both date-health lines, the wider one as a remainder", Str.contains(doc_h, "activities with an unreadable date: 4 —") and Str.contains(doc_h, "cannot order in time: 1 more"))?
+    # the repair it names is one stride has: `sync --all` replaces every row Strava
+    # still lists. No stride command deletes a single activity, so no line may say to.
+    check!("...the undateable line naming `stride sync --all` as its repair, and no line advising a delete", Str.contains(doc_h, "activities with an unreadable date: 4 — `stride activities` lists them first; `stride sync --all` replaces each one Strava still lists") and !(Str.contains(doc_h, "delete each")))?
     # ...and the ALONE branch, in its own database: the check above asserts the
     # undateable line, which only renders when `undateable > 0`, so it pins the
     # PAIRED branch by definition — and the dangling wart only exists at 0
@@ -4037,6 +4142,7 @@ b_seed_analyze! = |ctx| {
     _ = sql!("${alone_home}/.stride/db.sqlite", "INSERT INTO activities (id,name,sport_type,start_local,moving_time) VALUES (960,'alone clock probe','Ride','2099-04-01T37:00:00Z',3600);")
     alone_h = sh!("HOME='${alone_home}' '${ctx.bin}' doctor 2>/dev/null")
     check!("...and stands on its own when nothing undateable precedes it", Str.contains(alone_h, "cannot order in time: 1 —") and Str.contains(alone_h, "`stride activities` lists them first") and !(Str.contains(alone_h, "cannot order in time: 1 more")) and !(Str.contains(alone_h, "unreadable date")))?
+    check!("...carrying the same `stride sync --all` repair on its own", Str.contains(alone_h, "cannot order in time: 1 — a readable date with an unusable clock; `stride activities` lists them first; `stride sync --all` replaces each one Strava still lists"))?
     _ = sh!("rm -rf '${alone_home}'")
     # ...and one whose bad time sorts LOW — the half a `T37` fixture cannot see:
     # `T37:00:00` sorts HIGH, so under the defect it lands ahead of the readable
@@ -4429,10 +4535,12 @@ b_seed_analyze! = |ctx| {
     # matching zero rows. The daily_load arm quotes its column whole and has always been
     # asserted; this one was not, which is how the sentence stayed false.
     check!("...quoting the ten characters it actually read", Str.contains(strjq!(ctx, ["season"], ".error.message"), "start_local ('garbage-da')"))?
-    # and the remedy leads with the one that always works. `sync --all` silently no-ops on
-    # an imported row (synced_at NULL, so the upsert never sees it and prune exempts it),
-    # so it is stated as conditional and second.
-    check!("...leading with the remedy that does not depend on Strava still listing it", Str.contains(strjq!(ctx, ["season"], ".error.message"), "delete that row by id and re-sync"))?
+    # ...and the remedy is one stride has. `sync --all` replaces each row Strava lists
+    # with Strava's copy, so it is conditional on Strava listing this one; no stride
+    # command deletes a single activity, and the message says so instead of advising it.
+    bad_msg = strjq!(ctx, ["season"], ".error.message")
+    check!("...naming `stride sync --all` as the repair, conditional on Strava listing the activity", Str.contains(bad_msg, "`stride sync --all` replaces the row with Strava's copy if Strava still lists the activity"))?
+    check!("...and stating that no command deletes one activity rather than advising a delete", Str.contains(bad_msg, "no stride command deletes a single activity") and !(Str.contains(bad_msg, "delete that row")))?
     # ...and PARSEABLE is not enough. "2026-3-01" parses fine and sorts after
     # every 2026-1x date, so it became ftp_end for its month AND its block and
     # published the threshold running backwards -- at exit 0, which is the
