@@ -451,7 +451,7 @@ ReportHealth :: [].{
             # and this line is where they stay visible
             capped_line =
                 if p.streams_retry_capped > 0
-                    ["  streams that would not decode after ${(Strava.stream_attempt_cap).to_str()} fetches: ${(p.streams_retry_capped).to_str()} — plain syncs stopped asking; `stride sync --all` fetches them again"]
+                    ["  streams that would not decode after ${(Strava.stream_attempt_cap).to_str()} or more fetches: ${(p.streams_retry_capped).to_str()} — plain syncs stopped asking; `stride sync --all` fetches them again"]
                 else
                     []
             Str.join_with(

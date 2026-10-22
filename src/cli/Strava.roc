@@ -590,8 +590,8 @@ Strava :: [].{
     # How many fetches of one activity's stream may return a body stride cannot
     # decode before a plain `sync` stops asking. Each failed fetch spends a read
     # from the same budget as every other stream, so the cap is what bounds the
-    # reads one bad id can cost: at most this many per id, plus one per explicit
-    # `sync --all`, plus this many again after analyze flags a stored body.
+    # reads one bad id can cost: nothing but a stored body resets the count, so
+    # at most this many until then, plus one per explicit `sync --all`.
     stream_attempt_cap : I64
     stream_attempt_cap = 3
 
@@ -624,18 +624,38 @@ Strava :: [].{
         if n < stream_attempt_cap Ok(Skipped) else Ok(SkippedFinal(n))
     }
 
-    # Analyze found a STORED stream it cannot decode: queue it for the next sync
-    # with a fresh attempt count. Resetting to 0 rather than keeping the count
-    # means a plain sync always asks again after analyze reports the row, and the
-    # reset happens only when analyze rescores that activity, so the reads stay
-    # bounded by stream_attempt_cap per rescoring.
+    # Analyze found a STORED stream it cannot decode: give it a retry row at
+    # attempts 0 so the next sync fetches it. An existing row is left as it is,
+    # so a rescore never re-arms the cap: an id costs at most stream_attempt_cap
+    # failed reads in its life, plus one per explicit `sync --all`, and only a
+    # fetch that stores a body clears the row.
     flag_stream_refetch! : Str, I64 => Try({}, _)
     flag_stream_refetch! = |path, id|
         Sqlite.execute!({
             path: Path.utf8(path),
-            query: "INSERT INTO stream_retries (activity_id, attempts) VALUES (:id, 0) ON CONFLICT(activity_id) DO UPDATE SET attempts = 0",
+            query: "INSERT OR IGNORE INTO stream_retries (activity_id, attempts) VALUES (:id, 0)",
             bindings: [{ name: ":id", value: Integer(id) }],
         })
+
+    # how many of these activities have failed stream_attempt_cap fetches
+    count_capped_among! : Str, List(I64) => Try(U64, _)
+    count_capped_among! = |path, ids|
+        match ids {
+            [] => Ok(0)
+            [id, .. as rest] => {
+                n = Sqlite.query!({
+                    path: Path.utf8(path),
+                    query: "SELECT COUNT(*) AS n FROM stream_retries WHERE activity_id = :id AND attempts >= :cap",
+                    bindings: [
+                        { name: ":id", value: Integer(id) },
+                        { name: ":cap", value: Integer(stream_attempt_cap) },
+                    ],
+                    row: Sqlite.i64("n"),
+                })?
+                more = count_capped_among!(path, rest)?
+                Ok(more + (if n > 0 1 else 0))
+            }
+        }
 
     # count the activities whose stream has failed stream_attempt_cap fetches, so
     # a plain sync no longer asks for it: the ids pending_streams! leaves out on

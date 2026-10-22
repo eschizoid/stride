@@ -102,6 +102,15 @@ Schema :: [].{
         \\  attempts    INTEGER NOT NULL
         \\)
 
+    # queue every stored body that is not JSON at all, the bodies stride stored
+    # before it began refusing them; one that is JSON but not stream JSON is
+    # caught when analyze next rescores its activity
+    seed_stream_retries =
+        \\INSERT OR IGNORE INTO stream_retries (activity_id, attempts)
+        \\SELECT s.activity_id, 0 FROM streams s
+        \\JOIN activities a ON a.id = s.activity_id
+        \\WHERE json_valid(s.raw_json) = 0
+
     # key-value store: strava tokens + client creds, sync watermark, ftp, zone bounds
     config =
         \\CREATE TABLE IF NOT EXISTS config (

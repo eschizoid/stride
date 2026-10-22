@@ -6,6 +6,7 @@
   "required": [
     "computed",
     "stream_errors",
+    "stream_errors_capped",
     "converged",
     "form_tsb",
     "form_tsb_known",
@@ -18,7 +19,12 @@
       "type": "integer"
     },
     "stream_errors": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Activities whose STORED stream body would not decode, counted once each however many scoring passes met it. They are scored from summary fields. An activity with no stored stream is not counted: sync has simply not fetched it."
+    },
+    "stream_errors_capped": {
+      "type": "integer",
+      "description": "How many of stream_errors have failed 3 or more fetches, so a plain sync no longer asks for them; `stride sync --all` does. The rest are queued for the next sync."
     },
     "converged": {
       "type": "boolean"

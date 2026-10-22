@@ -362,7 +362,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1307)?
+    checks_ran_exactly!(1311)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -740,18 +740,38 @@ b_stream_retry! = |ctx| {
     _ = sql!(rctx.db, "UPDATE stream_retries SET attempts = 3 WHERE activity_id = 972;")
     check!("an id at the attempt cap is no longer pending", strjq!(rctx, ["doctor"], ".data.pending_streams") == "1")?
     # ...and doctor is where it stays visible, with the command that fetches it again
-    check!("...and doctor counts it as capped, naming `stride sync --all`", strjq!(rctx, ["doctor"], ".data.streams_retry_capped") == "1" and Str.contains(stride_human!(rctx.bin, rctx.home, ["doctor"]), "streams that would not decode after 3 fetches: 1 — plain syncs stopped asking; `stride sync --all` fetches them again"))?
-    # ...until analyze rescores it and reports it again, which re-queues it
+    check!("...and doctor counts it as capped, naming `stride sync --all`", strjq!(rctx, ["doctor"], ".data.streams_retry_capped") == "1" and Str.contains(stride_human!(rctx.bin, rctx.home, ["doctor"]), "streams that would not decode after 3 or more fetches: 1 — plain syncs stopped asking; `stride sync --all` fetches them again"))?
+    # ...and a rescore does not re-arm it: the count stays at the cap, and analyze
+    # says which command fetches it again instead of promising the next sync
     _ = sql!(rctx.db, "DELETE FROM activity_metrics WHERE activity_id = 972;")
-    check!("a rescore that meets the bad body again reports it", strjq!(rctx, ["analyze"], ".data.stream_errors") == "1")?
-    check!("...and resets its count, so the line's next-sync promise holds again", Str.trim(sql!(rctx.db, "SELECT attempts FROM stream_retries WHERE activity_id = 972;")) == "0")?
+    check!("a rescore that meets a capped body counts it as capped, not as retrying", strjq!(rctx, ["analyze"], "[.data.stream_errors, .data.stream_errors_capped] | map(tostring) | join(\"/\")") == "1/1")?
+    check!("...and leaves its count at the cap, so a rescore never re-arms the reads", Str.trim(sql!(rctx.db, "SELECT attempts FROM stream_retries WHERE activity_id = 972;")) == "3")?
+    _ = sql!(rctx.db, "DELETE FROM activity_metrics WHERE activity_id = 972;")
+    capped_h = stride_human!(rctx.bin, rctx.home, ["analyze"])
+    check!("...and its human line names `stride sync --all`, not the next sync", Str.contains(capped_h, "⚠ 1 had unreadable stream data that failed 3 or more fetches — computed from summary fields; `stride sync --all` fetches them again") and !(Str.contains(capped_h, "will retry next sync")))?
     # a stored unreadable body on an activity with no moving time is promised the
     # same fetch, so it must be in the same queue
     _ = sql!(rctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,relative_effort) VALUES (974,'garbage, no moving time','Run','${ctx.d2}T09:00:00Z',0,10);")
     _ = sql!(rctx.db, "INSERT INTO streams (activity_id, raw_json) VALUES (974, 'not json at all');")
     check!("a zero-moving-time activity's unreadable stored body is reported", strjq!(rctx, ["analyze"], ".data.stream_errors") == "1")?
-    check!("...and queued like any other, so its next-sync promise holds", strjq!(rctx, ["doctor"], ".data.pending_streams") == "3")?
+    # 971 (never fetched) and 974; 972 stays out at the cap
+    check!("...and queued like any other, so its next-sync promise holds", strjq!(rctx, ["doctor"], ".data.pending_streams") == "2")?
     _ = sh!("rm -rf '${rh}'")
+    # ── stream_errors counts ACTIVITIES. A first analyze scores 975-977 twice: the
+    # first pass gives 975 and 976 their 20-minute bests, which moves the FTP in
+    # force for all three, so a second pass rescores them. One bad body is still 1.
+    dh = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+    dctx = { ..ctx, home: dh, db: "${dh}/.stride/db.sqlite" }
+    _ = stride!(dctx.bin, dctx.home, ["init"])
+    _ = sql!(dctx.db, "INSERT OR REPLACE INTO config (key,value) VALUES ('hr_z1_max','120'),('hr_z2_max','140'),('hr_z3_max','160'),('hr_z4_max','175');")
+    ptimes = Str.join_with(List.map(int_seq(1300), |i| U64.to_str(i)), ",")
+    pwatts = Str.join_with(List.map(int_seq(1300), |_| "200"), ",")
+    pjson = "{\"time\":{\"data\":[${ptimes}]},\"watts\":{\"data\":[${pwatts}]}}"
+    _ = sql!(dctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,device_watts,avg_watts) VALUES (975,'p1','Ride','${ctx.d1}T06:00:00Z',1300,10000,1,200),(976,'p2','Ride','${ctx.d1}T08:00:00Z',1300,10000,1,200),(977,'bad','Ride','${ctx.d2}T06:00:00Z',1300,10000,1,200);")
+    _ = sql!(dctx.db, "INSERT INTO streams (activity_id, raw_json) VALUES (975, '${pjson}'), (976, '${pjson}'), (977, 'not json at all');")
+    twice = strjq!(dctx, ["analyze"], "[.data.computed, .data.stream_errors] | map(tostring) | join(\"/\")")
+    check!("a bad body scored in two passes is one stream error, not two (computed/errors: ${twice})", twice == "6/1")?
+    _ = sh!("rm -rf '${dh}'")
     Ok({})
 }
 
@@ -847,9 +867,9 @@ run_skips! = || {
     _ = sh!("rm -rf '${sh2}'")
 
     # ── the read bound holds across the daily loop. A stored body analyze cannot
-    # decode is queued once; each sync's failed fetch counts against the cap, and
-    # analyze does not rescore a converged row, so it does not re-queue it. After the
-    # cap, an analyze-then-sync cycle spends no read on that id.
+    # decode gets a retry row once; each sync's failed fetch counts against the cap,
+    # and analyze never resets an existing row's count, even when it rescores the
+    # activity. After the cap, an analyze-then-sync cycle spends no read on that id.
     sh3 = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
     db3 = "${sh3}/.stride/db.sqlite"
     o3 = "${sh3}/sync.out"
@@ -864,12 +884,16 @@ run_skips! = || {
     _ = cycle!(3)
     _ = cycle!(4)
     check!("after the cap, an analyze-then-sync cycle spends no read on a body analyze already reported", Str.trim(sh!("jq -r '.data.streams_skipped' '${o3}'")) == "0" and Str.trim(sql!(db3, "SELECT attempts FROM stream_retries WHERE activity_id = 502;")) == "3")?
+    # a zone edit rescores every activity, 502 included, and must not re-arm it
+    _ = sync_stride!(bin, sh3, base, ["config", "set", "hr_z4_max", "184"])
+    _ = cycle!(5)
+    check!("...and a rescore between capped syncs re-arms nothing: 502 rescored, no read, count still at the cap", Str.contains(sql!(db3, "SELECT zones_used FROM activity_metrics WHERE activity_id = 502;"), "184") and Str.trim(sh!("jq -r '.data.streams_skipped' '${o3}'")) == "0" and Str.trim(sql!(db3, "SELECT attempts FROM stream_retries WHERE activity_id = 502;")) == "3")?
     _ = sh!("rm -rf '${sh3}'")
 
     check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_at_least!(25)?
+    checks_ran_at_least!(26)?
     Stdout.line!("SKIPS E2E CHECKS PASS")
 }
 
@@ -8117,6 +8141,16 @@ b_migration! = |ctx| {
     # made that check redundant — run_all!'s single one covers this sandbox too, and
     # covers it on the ABORT path as well, which a check placed here never could.
     _ = sh!("rm -rf '${mighome}'")
+    # ── v38 to v39: a body stored before stride refused unreadable ones. v39 adds
+    # only stream_retries, so a v38 database is a current one without that table.
+    v38home = Str.trim(sh!("mktemp -d"))
+    v38db = "${v38home}/.stride/db.sqlite"
+    _ = stride!(ctx.bin, v38home, ["init"])
+    _ = sql!(v38db, "DROP TABLE stream_retries; PRAGMA user_version = 38; INSERT INTO activities (id,name,sport_type,start_local,moving_time) VALUES (981,'stored before v39','Ride','${ctx.d1}T07:00:00Z',1800),(982,'readable','Ride','${ctx.d2}T07:00:00Z',1800); INSERT INTO streams (activity_id, raw_json) VALUES (981, 'not json at all'), (982, '{}');")
+    _ = stride!(ctx.bin, v38home, ["config", "get", "timezone"])
+    check!("migrating a v38 database queues its stored body that is not JSON, and only that one", Str.trim(sql!(v38db, "SELECT group_concat(activity_id || ':' || attempts) FROM stream_retries;")) == "981:0")?
+    check!("...so the next plain sync owes it a fetch", strjq!({ ..ctx, home: v38home, db: v38db }, ["doctor"], ".data.pending_streams") == "1")?
+    _ = sh!("rm -rf '${v38home}'")
     Ok({})
 }
 

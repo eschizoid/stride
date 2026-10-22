@@ -229,9 +229,11 @@ Output :: [].{
     # activity Strava has and replaces each row with Strava's copy, which repairs
     # the date; a row Strava does not list is out of its reach, so the remedy is
     # conditional. No stride command deletes a single activity, and the message
-    # says so instead of pointing at hand-written SQL: deleting an activities row
-    # leaves its streams, metrics and ratings rows behind, because no foreign key
-    # cascades.
+    # says so instead of pointing at hand-written SQL. Stride's own connection
+    # enforces the foreign keys, so there a DELETE of an activity that child rows
+    # reference fails; a client with foreign keys off, which is the sqlite3 CLI's
+    # default, deletes it and leaves those rows (streams, metrics and the rest)
+    # pointing at nothing.
     #
     # EMPTY `raw` gets its own wording: NULL and '' arrive identically through the
     # COALESCE, and quoting ('') reads as though the empty string is stored. A BLOB

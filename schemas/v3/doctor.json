@@ -132,7 +132,7 @@
     },
     "undateable_activities": {
       "type": "integer",
-      "description": "Activities whose `start_local` cannot be read — NULL, empty, malformed, or a year before 1000. These are the rows that make `analyze`, `summary`, `season`, `plan`, `stats` and `week` refuse with `unreadable_activity_date`, and doctor reported a clean engine beside them until #265. A COUNT, not a verdict: the remedy is per-row, so `stride activities` lists them first and each is repaired by deleting it by id and re-syncing. Zero on a healthy database, and the human screen omits the line entirely at zero rather than printing a row the eye learns to skip."
+      "description": "Activities whose `start_local` cannot be read — NULL, empty, malformed, or a year before 1000. These are the rows that make `analyze`, `summary`, `season`, `plan`, `stats` and `week` refuse with `unreadable_activity_date`, and doctor reported a clean engine beside them until #265. A COUNT, not a verdict: the remedy is per-row, so `stride activities` lists them first, and `stride sync --all` repairs each one Strava still lists by replacing the row with Strava's copy; no stride command deletes a single activity. Zero on a healthy database, and the human screen omits the line entirely at zero rather than printing a row the eye learns to skip."
     },
     "unrankable_activities": {
       "type": "integer",

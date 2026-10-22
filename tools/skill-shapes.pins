@@ -9,7 +9,7 @@ activity.json	baseline_median,current,delta_pct,known,percentile,sample_count	ba
 activity.json	cp_used,end_j,fit_family,fit_points,fit_r2,known,min_j,model_exceeded,w_prime_used	cp_used,end_j,fit_family,fit_points,fit_r2,known,min_j,model_exceeded,w_prime_used	doc	properties.w_prime_balance
 activity.json	easy_s,hard_s,moderate_s	easy_s,hard_s,moderate_s	-	properties.power_intensity
 activity.json	w1200,w180,w300,w60	w1200,w180,w300,w60	-	properties.power_bests
-analyze.json	computed,converged,form_delta_7d,form_delta_known,form_state,form_tsb,form_tsb_known,stream_errors	computed,converged,form_delta_7d,form_delta_known,form_state,form_tsb,form_tsb_known,stream_errors	-	$
+analyze.json	computed,converged,form_delta_7d,form_delta_known,form_state,form_tsb,form_tsb_known,stream_errors,stream_errors_capped	computed,converged,form_delta_7d,form_delta_known,form_state,form_tsb,form_tsb_known,stream_errors,stream_errors_capped	-	$
 auth.json	authorized,expires_at	authorized,expires_at	-	$
 commands.json	args,error_codes,interactive,mutates,name,network,schema	args,error_codes,interactive,mutates,name,network,schema	-	properties.commands.items
 commands.json	commands,flags,universal_error_codes	commands,flags,universal_error_codes	-	$

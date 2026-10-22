@@ -278,6 +278,12 @@ Db :: [].{
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.streams, bindings: [] })?
         # v39: per-activity count of stream fetches that would not decode
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.stream_retries, bindings: [] })?
+        # ...and a retry row for every stored body that is not JSON at all. Earlier
+        # versions stored any UTF-8 body, and analyze reports one only when it
+        # rescores the activity, which a converged row never needs; without this a
+        # body stored before v39 would never be fetched again. OR IGNORE keeps the
+        # count of a row that exists, so re-running the migration re-arms nothing.
+        Sqlite.execute!({ path: Path.utf8(path), query: Schema.seed_stream_retries, bindings: [] })?
         # v34 (#478): strength notes (mirror) + parsed set rows (computed) —
         # created before the views below, which read strength_sets
         Sqlite.execute!({ path: Path.utf8(path), query: Schema.strength_notes, bindings: [] })?

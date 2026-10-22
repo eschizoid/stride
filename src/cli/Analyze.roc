@@ -38,9 +38,14 @@ Analyze :: [].{
                 # (cold streams, 64 rows) and narrating only on its completion leaves the
                 # command silent through the longest single wait of the run
                 _ = if goal > 0 { Output.narrate!("rescoring", 0, goal)? } else { {} }
-                passes = converge_metrics!(path, zb, 1000, { computed: 0, stream_errors: 0 }, goal)
+                passes = converge_metrics!(path, zb, 1000, { computed: 0, failed: [] }, goal)
                 _ = if goal > 0 { Output.narrate_done!({})? } else { {} }
                 res = passes?
+                # distinct activities, and of those the ones whose stream has failed
+                # Strava.stream_attempt_cap fetches: a plain sync no longer asks for
+                # those, so they get their own line and their own count
+                stream_errors = List.len(res.failed)
+                stream_errors_capped = Strava.count_capped_among!(path, res.failed)?
                 Output.say!("rebuilding daily load…")?
                 rebuild_daily_load!(path)?
                 rebuild_strength_sets!(path)?
@@ -116,7 +121,8 @@ Analyze :: [].{
                     # collides with "not available".
                     Output.emit_ok!({
                         computed: res.computed,
-                        stream_errors: res.stream_errors,
+                        stream_errors,
+                        stream_errors_capped,
                         form_tsb,
                         # stable band id (#154); "" when TSB itself is unknown — an id
                         # derived from a placeholder 0.0 would claim a band nobody measured
@@ -132,8 +138,13 @@ Analyze :: [].{
                         Stdout.line!("⚠ more activities still pending — run `stride analyze` again to continue")
                     else
                         Ok({}))?
-                    (if res.stream_errors > 0
-                        Stdout.line!("⚠ ${U64.to_str(res.stream_errors)} had unreadable stream data — computed from summary fields, will retry next sync")
+                    queued = stream_errors - stream_errors_capped
+                    (if queued > 0
+                        Stdout.line!("⚠ ${U64.to_str(queued)} had unreadable stream data — computed from summary fields, will retry next sync")
+                    else
+                        Ok({}))?
+                    (if stream_errors_capped > 0
+                        Stdout.line!("⚠ ${U64.to_str(stream_errors_capped)} had unreadable stream data that failed ${(Strava.stream_attempt_cap).to_str()} or more fetches — computed from summary fields; `stride sync --all` fetches them again")
                     else
                         Ok({}))?
                     # one verdict line; the full report lives in `stride summary`
@@ -219,16 +230,21 @@ Analyze :: [].{
     # pace threshold invalidated them.
     # `converged: False` means fuel ran out with work remaining — the caller says so
     # instead of presenting a partial recompute as a finished one.
-    converge_metrics! : Str, Metrics.ZoneBounds, U64, { computed : U64, stream_errors : U64 }, U64 => Try({ computed : U64, stream_errors : U64, converged : Bool }, _)
+    converge_metrics! : Str, Metrics.ZoneBounds, U64, { computed : U64, failed : List(I64) }, U64 => Try({ computed : U64, failed : List(I64), converged : Bool }, _)
     converge_metrics! = |path, zb, fuel, acc, goal|
         if fuel == 0 {
-            Ok({ computed: acc.computed, stream_errors: acc.stream_errors, converged: False })
+            Ok({ computed: acc.computed, failed: acc.failed, converged: False })
         } else {
             r = compute_missing_metrics!(path, zb)?
-            # accumulate BOTH counters across passes: the final converged pass computes 0
-            # rows, so taking only its stream_errors would erase unreadable-stream warnings
-            # raised in earlier passes and hide them from the report / JSON.
-            total = { computed: acc.computed + r.computed, stream_errors: acc.stream_errors + r.stream_errors }
+            # accumulate BOTH across passes: the final converged pass computes 0 rows, so
+            # taking only its failures would erase unreadable-stream warnings raised in
+            # earlier passes. `failed` holds distinct ACTIVITY ids — a row is rescored in
+            # more than one pass when an earlier pass moves its derived FTP, and one bad
+            # body is one activity, not one per pass.
+            total = {
+                computed: acc.computed + r.computed,
+                failed: List.fold(r.failed, acc.failed, |ids, id| if List.contains(ids, id) ids else List.append(ids, id)),
+            }
             # narrate AFTER the batch lands, so the number on screen is work actually done
             # rather than work announced. A run with nothing to score says nothing.
             # ...and a pass that scored NOTHING reports nothing: the final converged pass
@@ -236,10 +252,10 @@ Analyze :: [].{
             # under `\r`, a duplicated line in machine mode). The last frame drawn is
             # already the finished state.
             _ = if goal > 0 and r.computed > 0 { Output.narrate!("rescoring", total.computed, goal)? } else { {} }
-            if r.computed == 0 { Ok({ computed: total.computed, stream_errors: total.stream_errors, converged: True }) } else converge_metrics!(path, zb, fuel - 1, total, goal)
+            if r.computed == 0 { Ok({ computed: total.computed, failed: total.failed, converged: True }) } else converge_metrics!(path, zb, fuel - 1, total, goal)
         }
 
-    compute_missing_metrics! : Str, Metrics.ZoneBounds => Try({ computed : U64, stream_errors : U64 }, _)
+    compute_missing_metrics! : Str, Metrics.ZoneBounds => Try({ computed : U64, failed : List(I64) }, _)
     compute_missing_metrics! = |path, zb| {
         # recompute a row when its stored ftp_used no longer matches the FTP that was in force
         # WHEN IT HAPPENED (ADR 0005 — period_ftp_sql below), or the HR zones / metrics_rev
@@ -316,21 +332,21 @@ Analyze :: [].{
                 Ok({ id, start, mt, sport, re, aw, ahr, waw, rpe, raw, pftp, pthr, dw: dw != 0, s_mt, s_dist, s_elev, s_aw, s_ahr, s_waw, s_re, s_dw, s_slen })
             },
         })?
-        process_rows!(path, zb, cfg, rows, { computed: 0, stream_errors: 0 })
+        process_rows!(path, zb, cfg, rows, { computed: 0, failed: [] })
     }
-    process_rows! : Str, Metrics.ZoneBounds, List((Str, Str)), List(ActivityRow), { computed : U64, stream_errors : U64 } => Try({ computed : U64, stream_errors : U64 }, _)
+    process_rows! : Str, Metrics.ZoneBounds, List((Str, Str)), List(ActivityRow), { computed : U64, failed : List(I64) } => Try({ computed : U64, failed : List(I64) }, _)
     process_rows! = |path, zb, cfg, rows, acc|
         match rows {
             [] => Ok(acc)
             [row, .. as rest] => {
                 failed = compute_one!(path, zb, cfg, row)?
                 # a STORED body that will not decode (an absent one decodes as no
-                # streams): queue it for the next sync, which is what makes the
-                # "will retry next sync" line true
+                # streams): give it a retry row if it has none, so the next sync
+                # fetches it; an existing row keeps its count, so the cap holds
                 _ = if failed Strava.flag_stream_refetch!(path, row.id)? else {}
                 next = {
                     computed: acc.computed + 1,
-                    stream_errors: acc.stream_errors + (if failed 1 else 0),
+                    failed: if failed and !(List.contains(acc.failed, row.id)) List.append(acc.failed, row.id) else acc.failed,
                 }
                 process_rows!(path, zb, cfg, rest, next)
             }
