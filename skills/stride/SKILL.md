@@ -166,33 +166,55 @@ two sources and parses both into the same per-set rows:
 
 1. **The activity description.** The athlete pastes a Peloton-style share summary
    (an exercise line, then `3 × 8 • 30 lbs/side`; `/side` variants resolved to the mass
-   actually moved); no other paste format is read. Sync fetches strength-family descriptions after the stream queue empties and
-   re-reads them inside the 30-day window, so a paste the same evening lands on the next
-   sync. Unrecognised text yields nothing and is never an error.
+   actually moved); no other paste format is read. A bodyweight line is kept only when
+   it names a weight, stored as written. Sync fetches strength-family descriptions after
+   the stream queue empties and re-reads them inside the 30-day window, so a paste the
+   same evening lands on the next sync. Unrecognised text yields nothing and is never an
+   error.
 2. **The Strava log, via `stride strength import <file|-> --json`.** Fetch it with the
    Strava MCP connector's `get_strength_workout_details` (it takes `activity_ids`), then
-   pass the returned JSON unchanged, a list of workouts or one, from a file or on stdin
-   with `-`. It returns `{imported: [{activity_id, rows, sets}], skipped: [{activity_id, reason}]}`;
-   a skip `reason` is `unknown_activity` (sync first), `bad_activity_id`, or `no_sets` (the
-   workout has no set with reps, which is what the connector returns for an activity
-   with no logged sets). Skips exit 0; only `unreadable_file` and `bad_json` fail it. The
-   sets are visible at once, without `analyze`. Re-importing an activity replaces its log;
-   a `no_sets` skip leaves an existing log alone.
+   pass the returned JSON unchanged (a list of workouts or one; a bare-number
+   `activity_id` and `null` fields are fine) from a file or on stdin with `-`. It returns
+   `{imported: [{activity_id, rows, sets, dropped: [{set, exercise, reason}], zeroed: [{set, exercise, recorded}]}], skipped: [{activity_id, reason, dropped}]}`.
+   - `dropped` lists every set left out, by 1-based position, with reason
+     `no_exercise_name`, `no_reps` (timed sets included), `bad_reps` (`8-10`, `0`),
+     `unknown_weight_unit` (no kg/lb/lbs) or `bad_weight` (unparseable or negative).
+     **Tell the athlete about every dropped set**: tonnage does not include it. A set
+     with no weight at all is kept at 0 kg.
+   - `zeroed` lists bodyweight sets (push up, pull up, chin up, dip, plank, sit up and
+     similar, matched by exact normalised name, so `Weighted Pull Up` is not one) that
+     the log recorded with a weight, often the athlete's own body mass. They keep their
+     sets and reps but count 0 kg; the stored log keeps `recorded`. Say so when you
+     report tonnage.
+   - A skipped workout's `reason`: `undecodable_workout`, `bad_activity_id`,
+     `duplicate_activity` (an earlier workout in the input was already stored for that
+     activity; only a stored workout claims an id), `unknown_activity` (sync first),
+     `not_strength`, `no_sets` (empty `exercise_sets`, what the connector returns for an
+     activity with no logged sets) or `no_usable_sets` (every set dropped, each in its
+     `dropped`). A skip stores nothing, so an existing log stays.
+   - Skips and drops exit 0, and one bad workout does not stop the rest. Only
+     `unreadable_file` and `bad_json` (the input as a whole is not one JSON object or
+     list: empty, unclosed brackets or strings, or trailing text) fail the command. The
+     sets are visible at once, without `analyze`, and re-importing an activity replaces
+     its log.
 
 **A stored log wins over the description** for that activity (counting both would double
-its sets). Log weights are stored as entered, never doubled for dumbbells: the log does not
-say whether a weight is one dumbbell or the pair, so ask the athlete before reading it as a
-total. In the log, a set without weight counts as 0 kg, and a set without reps or with an
-unrecognised weight unit is dropped.
+its sets). The log is stored verbatim. Its weights are kept as entered (pounds converted
+to kg), never doubled for dumbbells: the log does not say whether a weight is one dumbbell
+or the pair, so ask the athlete before reading it as a total.
 
 `stride strength --json` reads both:
-`{exercises: [{exercise, points: [{date, top_kg, kg_reps}]}], monthly: [{month, kg, tonnage_known, covered, total}], sessions: {total, with_sets, pasted_unparsed}}`.
-Exercises match by exact name. `top_kg` (heaviest weight one rep moved that day) and
-`kg_reps` (the day's volume) are the "am I getting stronger" series. `tonnage_known: false`
-means the month is under the coverage bar and its `kg` is not a measurement; quote monthly
-tonnage only with `covered`/`total`, so a coverage change does not read as a training
-trend. `pasted_unparsed` counts sessions whose description yielded nothing, a different
-fact from never pasted. Tonnage is volume, not strength.
+`{exercises: [{exercise, measure, points: [{date, top_kg, kg_reps, top_reps, total_reps}]}], monthly: [{month, kg, tonnage_known, covered, total}], sessions: {total, with_sets, pasted_unparsed}}`.
+Exercises match by exact name; points are per day. `measure: "kg"` exercises progress in
+`top_kg` (heaviest weight one rep moved) and `kg_reps` (the day's volume). `measure:
+"reps"` means every point moved 0 kg (a bodyweight move or a weightless set from an
+imported log), so its kg figures are 0 by construction and it progresses in `top_reps`
+(most reps in one set) and `total_reps`; any loaded point makes the exercise "kg", and its
+rep change then shows only in the rep fields. `tonnage_known: false` means the month is
+under the coverage bar and its `kg` is not a measurement; quote monthly tonnage only with
+`covered`/`total`, so a coverage change does not read as a training trend.
+`pasted_unparsed` counts sessions whose description yielded nothing, a different fact
+from never pasted. Tonnage is volume, not strength.
 
 Strength load comes from session-RPE: after a strength/HIIT/yoga session ask how hard it
 felt (1-10) and run `stride rate <activity_id|latest> <n> --json`. Load = hours × RPE × 10,
@@ -215,7 +237,7 @@ Pick by question: `season` for the shape of a year, `compare` for this week or m
 | `stride top <metric> [n] [sport]` | best sessions by `hr`, `tss`, `power`, `intensity`, `distance`, `time` or `output` (kJ). `rankable` means chronologically orderable, not about the ranked metric |
 | `stride stats` | career and year-to-date totals per sport, rows `{sport, sessions, hours, km}` |
 | `stride load [days]` | daily `tss`/`ctl`/`atl`/`tsb` series, chronological (default 90 days) |
-| `stride week` | this week (Mon-Sun) plus `unplanned` rows for activities no session references. `status` is open/done/skipped/unplanned; unplanned rows carry their id in `activity_id`. `stride week all --json` is the whole session log without unplanned rows |
+| `stride week` | this week (Mon-Sun): its sessions, plus one row per activity of the week that no session claims. That row has `status: "unplanned"` and `status_shown: "unlinked"` (the human table says unlinked), with its id in `activity_id`; link it to a plan day with `stride complete` or `stride skip <id> <reason> <activity>`. `status` is open/done/skipped/unplanned. `stride week all --json` is the whole session log without those rows |
 | `stride zones` (alias `pz`) | the 7 power zones from the derived ride FTP: `{ ftp, zones: [{ z, name, lo_w, hi_w }] }` (0 = open bound). Error: `no_power_data` |
 | `stride power-curve [days] [sport]` (alias `pc`) | best mean-max power per duration (default 90 days) and the CP fit: `{ window_days, sport, points: [{dur_s, watts}], cp, w_prime, fit_points, fit_r2 }`. A low `fit_r2` means the 5/10/20-minute bests do not fall on a line, so CP and W′ were fitted through scatter. `fit_r2` is 1 by construction at two points and 0 with no fit (`cp` 0); a high value from steady (not maximal) bests still yields an implausibly small W′ |
 | `stride pace-curve [days] [sport]` (alias `cs`) | the pace twin, grade-adjusted: `{ window_days, sport, points: [{dur_s, speed}], cs, d_prime, fit_points, fit_r2, available_sports }`. `cs` is m/s and `d_prime` metres, always (3.6 m/s = 4:38/km). **Name a sport**: without one it fits nothing (`cs` 0, empty `points`) and `available_sports` lists the sport_types that have data. Matching is exact sport_type, not family |
