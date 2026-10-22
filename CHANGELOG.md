@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.19.0](https://github.com/eschizoid/stride/compare/v0.18.0...v0.19.0) (2026-10-22)
+
+
+### Features
+
+* **strength:** import Strava's structured strength log ([#597](https://github.com/eschizoid/stride/issues/597)) ([7c05b4d](https://github.com/eschizoid/stride/commit/7c05b4d7ba39f45ce5ff39b382812c8b41b7cf16))
+
+
+### Bug Fixes
+
+* **sync:** retry unreadable streams, bounded, and name real repairs ([#599](https://github.com/eschizoid/stride/issues/599)) ([35435fc](https://github.com/eschizoid/stride/commit/35435fc93156ece5e3b5d59e6224a80ad82e7064))
+* **viz:** a record label at the last rung stays inside the plot ([#587](https://github.com/eschizoid/stride/issues/587)) ([979f63a](https://github.com/eschizoid/stride/commit/979f63a2f00cae2374755b32642c3e5da1fb2859))
+* **viz:** the first rung's delta sits past the introduction it would cross ([#590](https://github.com/eschizoid/stride/issues/590)) ([f092a20](https://github.com/eschizoid/stride/commit/f092a204fa42a27f71d3fd4edcbc858a9e328d8b))
+* **week:** an activity no session claims reads "unlinked", not "unplanned" ([#596](https://github.com/eschizoid/stride/issues/596)) ([19f1f24](https://github.com/eschizoid/stride/commit/19f1f24b8f14ffaa14e84090ead6bc4c5e885d79))
+
 ## [0.18.0](https://github.com/eschizoid/stride/compare/v0.17.0...v0.18.0) (2026-10-01)
 
 
