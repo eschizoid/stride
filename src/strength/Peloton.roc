@@ -76,15 +76,16 @@ Peloton :: [].{
     }
 
     # the text before any bullet is exactly `S × R`, or `S × R` and one word
-    # from `count_units` in any case, however many spaces separate the parts;
-    # a name that merely starts that way ("5 x 5 Back Squat") is not
+    # that `unit_word` turns into one of `count_units`, however many spaces
+    # separate the parts; a name that merely starts that way ("5 x 5 Back
+    # Squat") is not
     is_set_shaped : Str -> Bool
     is_set_shaped = |line| {
         left = Str.trim(List.first(Str.split_on(line, " • ")).ok_or(line))
         bare =
             match List.keep_if(Str.split_on(left, " "), |t| t != "") {
                 [_, _, _] => True
-                [_, _, _, unit] => List.contains(count_units, Str.with_ascii_lowercased(unit))
+                [_, _, _, unit] => List.contains(count_units, unit_word(unit))
                 _ => False
             }
         match parse_sets_reps(left) {
@@ -95,7 +96,15 @@ Peloton :: [].{
 
     # the words a bare set count may name after its rep figure
     count_units : List(Str)
-    count_units = List.concat(["reps", "reps/side"], time_units)
+    count_units = List.concat(["reps"], time_units)
+
+    # a unit word lowercased and without a trailing `/side`, so `Reps/Side`
+    # and `sec/side` look up as `reps` and `sec`
+    unit_word : Str -> Str
+    unit_word = |w| {
+        lower = Str.with_ascii_lowercased(w)
+        if Str.ends_with(lower, "/side") Str.from_utf8(List.drop_last(Str.to_utf8(lower), 5)).ok_or(lower) else lower
+    }
 
     # the words that make R a duration rather than a rep count
     time_units : List(Str)
@@ -131,7 +140,8 @@ Peloton :: [].{
     # `3 × 8`, `3 × 8 reps`, `3 × 8 reps/side`, `3 × 30 sec` — ASCII `x`
     # tolerated, since a re-typed paste is one keyboard away from the
     # multiplication sign. `timed` says the word after R is one of
-    # `time_units`, so R counts seconds or minutes, not reps.
+    # `time_units` (through `unit_word`, so in any case and with or without
+    # `/side`), so R counts seconds or minutes, not reps.
     parse_sets_reps : Str -> Try({ sets : I64, reps : I64, per_side : Bool, timed : Bool }, [NotASetLine])
     parse_sets_reps = |left| {
         parts =
@@ -153,7 +163,7 @@ Peloton :: [].{
         } else {
             timed =
                 match List.keep_if(reps_tokens, |t| t != "") {
-                    [_, unit, ..] => List.contains(time_units, Str.with_ascii_lowercased(unit))
+                    [_, unit, ..] => List.contains(time_units, unit_word(unit))
                     _ => False
                 }
             Ok({ sets, reps, per_side: Str.contains(reps_part, "/side"), timed })
@@ -313,6 +323,16 @@ expect {
     rows = Peloton.parse("Weighted Plank\n3 × 30 sec • 20 lbs\n3 × 1 Min • 20 lbs\n3 × 6 • 20 lbs\nCurl\n3 × 10 • 20 lbs")
     match rows {
         [a, b] => a.exercise == "Weighted Plank" and a.reps == 6 and b.exercise == "Curl" and b.sets == 3 and b.reps == 10 and (b.weight_kg - 9.0718474).abs() < 0.001
+        _ => False
+    }
+}
+
+# a per-side timed hold is timed too, and a bare per-side count is skipped
+# like any other: neither counts seconds as reps or takes over the name
+expect {
+    rows = Peloton.parse("Suitcase Hold\n3 × 30 sec/side • 20 lbs\n3 × 30 Sec/Side\n3 × 8 reps/side • 20 lbs/side")
+    match rows {
+        [a] => a.exercise == "Suitcase Hold" and a.reps == 16 and (a.weight_kg - 9.0718474).abs() < 0.001
         _ => False
     }
 }
