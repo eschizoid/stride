@@ -7,7 +7,7 @@ import Db
 import Output
 import Metrics
 import Render
-import pf.Sqlite
+import Sql
 import pf.Path
 
 ReportSeason :: [].{
@@ -73,7 +73,7 @@ ReportSeason :: [].{
     season! : {} => Try({}, _)
     season! = |_| {
         path = Db.open_db!({})?
-        day_rows = Sqlite.query_many!({
+        day_rows = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT COALESCE(CAST(day AS TEXT), '') AS day, CAST(COALESCE(tss, 0) AS REAL) AS tss,
@@ -84,11 +84,11 @@ ReportSeason :: [].{
             ,
             bindings: [],
             rows: |cols| |stmt| {
-                d = Sqlite.str("day")(cols)(stmt)?
-                tss = Sqlite.f64("tss")(cols)(stmt)?
-                ctl = Sqlite.f64("ctl")(cols)(stmt)?
-                atl = Sqlite.f64("atl")(cols)(stmt)?
-                tsb = Sqlite.f64("tsb")(cols)(stmt)?
+                d = Sql.str("day")(cols)(stmt)?
+                tss = Sql.f64("tss")(cols)(stmt)?
+                ctl = Sql.f64("ctl")(cols)(stmt)?
+                atl = Sql.f64("atl")(cols)(stmt)?
+                tsb = Sql.f64("tsb")(cols)(stmt)?
                 # NOT ok_or(0): an unparseable day collapses to epoch 0, giving a block
                 # a nonsense span and zero load while still exiting 0. `summary` refuses
                 # the same row loudly, and so should this. Parseable is not enough either
@@ -103,7 +103,7 @@ ReportSeason :: [].{
         } else {
             # Per date AND family. Block boundaries come from the weekly series
             # and have no SQL expression, so the bucketing happens in Roc.
-            pol_rows = Sqlite.query_many!({
+            pol_rows = Sql.query_many!({
                 path: Path.utf8(path),
                 query:
                     \\SELECT COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date,
@@ -137,15 +137,15 @@ ReportSeason :: [].{
                 ,
                 bindings: [],
                 rows: |cols| |stmt| {
-                    d = Sqlite.str("date")(cols)(stmt)?
-                    fam = Sqlite.str("fam")(cols)(stmt)?
-                    n = Sqlite.i64("n")(cols)(stmt)?
-                    easy_s = Sqlite.f64("easy_s")(cols)(stmt)?
-                    mod_s = Sqlite.f64("mod_s")(cols)(stmt)?
-                    hard_s = Sqlite.f64("hard_s")(cols)(stmt)?
-                    ftp_lo = Sqlite.f64("ftp_lo")(cols)(stmt)?
-                    ftp_hi = Sqlite.f64("ftp_hi")(cols)(stmt)?
-                    example_id = Sqlite.i64("example_id")(cols)(stmt)?
+                    d = Sql.str("date")(cols)(stmt)?
+                    fam = Sql.str("fam")(cols)(stmt)?
+                    n = Sql.i64("n")(cols)(stmt)?
+                    easy_s = Sql.f64("easy_s")(cols)(stmt)?
+                    mod_s = Sql.f64("mod_s")(cols)(stmt)?
+                    hard_s = Sql.f64("hard_s")(cols)(stmt)?
+                    ftp_lo = Sql.f64("ftp_lo")(cols)(stmt)?
+                    ftp_hi = Sql.f64("ftp_hi")(cols)(stmt)?
+                    example_id = Sql.i64("example_id")(cols)(stmt)?
                     # Same rule as daily_load.day: absorbing silently drops the activity from
                     # sessions, polarization AND the threshold range while still exiting 0.
                     # Merely PARSEABLE is not enough — "2026-3-01T" sorts last, so it becomes
@@ -156,7 +156,7 @@ ReportSeason :: [].{
                     Ok({ days, fam, n, easy_s, mod_s, hard_s, ftp_lo, ftp_hi })
                 },
             })?
-            month_load = Sqlite.query_many!({
+            month_load = Sql.query_many!({
                 path: Path.utf8(path),
                 query:
                     \\-- the monthly_load view's definition, shared with the career view
@@ -164,8 +164,8 @@ ReportSeason :: [].{
                 ,
                 bindings: [],
                 rows: |cols| |stmt| {
-                    month = Sqlite.str("month")(cols)(stmt)?
-                    load = Sqlite.f64("load")(cols)(stmt)?
+                    month = Sql.str("month")(cols)(stmt)?
+                    load = Sql.f64("load")(cols)(stmt)?
                     Ok({ month, load })
                 },
             })?

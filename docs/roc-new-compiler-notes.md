@@ -4,6 +4,50 @@ Working reference for the new (Zig) compiler + basic-cli, learned empirically
 against the compiler and roc-lang/roc source during the migration (completed
 2026-08-02). The migration's progress log is gone — this is the part worth keeping.
 
+## Toolchain pin: `nightly-2026-10-26-3c0fffe`
+
+**Bumped 2026-10-29**, from `nightly-2026-09-27-a3ce7f1`, alongside basic-cli
+0.26.0, roc-ray 0.11.1 and basic-webserver 0.19.0. basic-cli 0.26.0 sets a floor
+of `nightly-2026-10-12-2664a27`, and roc-ray 0.11 names no compiler at all, so
+the viz app header carries no `roc:` field and the `setup-roc` default is the
+only pin. The ceiling is the e2e harness: basic-webserver 0.19.0's own
+`Sqlite.roc` stops type-checking on `nightly-2026-10-27-de79a0f` (a
+`MalformedRow` tag its annotations do not list), so 10-26 is the newest nightly
+on which all three platforms compile.
+
+**basic-cli 0.26 replaced the SQLite API.** `Sqlite.open!` returns a `Db`
+connection, parameters are `${…}` interpolations or `?` markers, and rows decode
+through `Decoder` values. The engine keeps its named-binding call shape through
+`src/cli/Sql.roc`: each call opens a connection, rewrites `:name` parameters to
+numbered `?N` markers for their position in `bindings` (longest name first, so
+`:s` cannot rewrite the front of `:start`), reads the whole row with
+`Decoder.row`, and hands `|cols| |values|` decoders the column names and values.
+Failures are mapped back to `SqliteErr(code, message)`, `NoRowsReturned`,
+`TooManyRowsReturned`, `RowsReturnedUseQueryInstead` and `NoSuchField(name)`.
+A connection lives for one call, so a transaction goes through
+`Sql.transaction!`, which runs BEGIN, the body's statements and COMMIT on one
+connection.
+
+**`Cmd` has four ways to run a command.** `exec_output!` became `capture!`
+(stdout as text, a non-zero exit is `BadExitStatus`; the default output limit
+is 16 MiB, so the zip import sets `output_limit(NoLimit)`), and `exec_cmd!`
+became `call!`, whose failure carries the child's `Output` with an
+`Exited(code)` or `Signaled(signal)` status.
+
+**`Http.send!` takes a trailing options record**; `{}` keeps the old behaviour
+of returning the first response.
+
+**`main!`'s annotation crashes the type checker.** On this nightly,
+`main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)`
+segfaults `roc check` once `main!`'s body reaches `Output.emit_ok!`, whose error
+row carries an unresolved `JsonEncodeFailed(err)`. Without the annotation the
+inferred type is the same and the module checks clean.
+
+**roc-ray 0.11 types shader uniforms.** `Draw.Shader` and its `uniform_*!`
+handles are gone: `Shader.from_source!(source, { res_x: w, res_y: h })` checks
+the record against the compiled program once, and the values travel with the
+`Shader({ res_x : F32, res_y : F32 })` value into `frame.with_shader!`.
+
 ## Toolchain pin: `nightly-2026-09-27-a3ce7f1`
 
 **Bumped 2026-09-29**, from `nightly-2026-09-16-a49a16f`, alongside basic-cli
@@ -284,6 +328,10 @@ MISCOMPILED this codebase (issue #32's intermittent SIGABRT; it also silently dr
   `${}` interpolation.
 
 ## Platform (basic-cli 0.23)
+
+Written against 0.23. The 0.26 changes to SQLite, `Cmd` and `Http` are in the
+2026-10-29 pin section at the top; the engine reads SQLite through `src/cli/Sql.roc`,
+which keeps the call shapes below.
 
 - Header: `app [main!] { pf: platform "…/0.23.0/….tar.zst" }`. HTTP data types
   (Method/Request/Response) come from the `http` package, not `pf`.

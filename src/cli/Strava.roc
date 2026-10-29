@@ -1,7 +1,7 @@
 import Db
 import Output
 import pf.Http
-import pf.Sqlite
+import Sql
 import pf.Stdout
 import pf.Stdin
 import pf.Cmd
@@ -38,7 +38,7 @@ Strava :: [].{
     token_url! = |{}| "${api_base!({})}/oauth/token"
 
     # best-effort browser launch: macOS `open`, then Linux `xdg-open`. Silent on
-    # failure — the URL is always printed as the manual fallback. exec_output! so a
+    # failure — the URL is always printed as the manual fallback. capture! so a
     # failing launcher can't spew stderr into the auth instructions or hand the TTY
     # to a console browser on a headless box.
     # ...and NOT when the token endpoint is a loopback mock: `STRIDE_API_BASE` is
@@ -55,12 +55,12 @@ Strava :: [].{
         if Str.starts_with(api_base!({}), "http://127.0.0.1") or Str.starts_with(api_base!({}), "http://localhost") {
             {}
         } else
-        match Cmd.new(OsStr.from_str("open")).arg(OsStr.from_str(url)).exec_output!() {
+        match Cmd.new(OsStr.from_str("open")).arg(OsStr.from_str(url)).capture!() {
             Ok(_) => {}
             Err(_) =>
                 # detach xdg-open: exec waits for the child, and xdg-open can resolve to
                 # a FOREGROUND handler (console browser) that would block auth forever
-                match Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", "xdg-open \"$1\" >/dev/null 2>&1 &", "sh", url], OsStr.from_str)).exec_output!() {
+                match Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", "xdg-open \"$1\" >/dev/null 2>&1 &", "sh", url], OsStr.from_str)).capture!() {
                     Ok(_) => {}
                     Err(_) => {}
                 }
@@ -148,7 +148,7 @@ Strava :: [].{
         # what bug C double-freed. #105 is FIXED (basic-cli 0.22.0), so the copy is now
         # merely pointless; this note stays because it is a tempting fix for the next
         # mystery crash.
-        Sqlite.execute!({
+        Sql.execute!({
             path: Path.utf8(path),
             query:
                 \\INSERT OR REPLACE INTO config (key, value) VALUES
@@ -193,6 +193,7 @@ Strava :: [].{
             .add_header("Content-Type", "application/x-www-form-urlencoded")
             .with_body(form.to_utf8())
             .with_timeout(TimeoutMilliseconds(30000)),
+            {},
         )?
         ok_body(resp)
     }
@@ -424,7 +425,7 @@ Strava :: [].{
                 # run's budget. `all` lifts the attempt cap only: a stored stream that
                 # decodes is never re-read, because the ride happened once.
                 Streams =>
-                    Sqlite.query_many!({
+                    Sql.query_many!({
                         path: Path.utf8(path),
                         query:
                             \\SELECT a.id AS id FROM activities a
@@ -437,7 +438,7 @@ Strava :: [].{
                             { name: ":all", value: Integer(if all 1 else 0) },
                             { name: ":cap", value: Integer(stream_attempt_cap) },
                         ],
-                        rows: Sqlite.i64("id"),
+                        rows: Sql.i64("id"),
                     })?
                 Notes =>
                     # WIDER than pending_notes! on purpose, where the Streams queue
@@ -466,7 +467,7 @@ Strava :: [].{
                     # week query uses — never a conditionally interpolated SQL
                     # fragment, which is the shape the house rule exists to keep
                     # out of query strings
-                    Sqlite.query_many!({
+                    Sql.query_many!({
                         path: Path.utf8(path),
                         query:
                             \\SELECT a.id AS id FROM activities a
@@ -476,7 +477,7 @@ Strava :: [].{
                             \\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}
                         ,
                         bindings: [{ name: ":all", value: Integer(if all 1 else 0) }],
-                        rows: Sqlite.i64("id"),
+                        rows: Sql.i64("id"),
                     })?
             }
         total = List.len(ids)
@@ -572,7 +573,7 @@ Strava :: [].{
     # budget reports the shortfall honestly instead of looking like completion
     pending_streams! : Str => Try(I64, _)
     pending_streams! = |path|
-        Sqlite.query!({
+        Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT COUNT(*) AS n FROM activities a
@@ -584,7 +585,7 @@ Strava :: [].{
                 { name: ":all", value: Integer(0) },
                 { name: ":cap", value: Integer(stream_attempt_cap) },
             ],
-            row: Sqlite.i64("n"),
+            row: Sql.i64("n"),
         })
 
     # How many fetches of one activity's stream may return a body stride cannot
@@ -610,16 +611,16 @@ Strava :: [].{
     # plain sync will ask again.
     count_unreadable_fetch! : Str, I64 => Try([Stored, Skipped, SkippedFinal(I64)], _)
     count_unreadable_fetch! = |path, id| {
-        Sqlite.execute!({
+        Sql.execute!({
             path: Path.utf8(path),
             query: "INSERT INTO stream_retries (activity_id, attempts) VALUES (:id, 1) ON CONFLICT(activity_id) DO UPDATE SET attempts = stream_retries.attempts + 1",
             bindings: [{ name: ":id", value: Integer(id) }],
         })?
-        n = Sqlite.query!({
+        n = Sql.query!({
             path: Path.utf8(path),
             query: "SELECT attempts AS n FROM stream_retries WHERE activity_id = :id",
             bindings: [{ name: ":id", value: Integer(id) }],
-            row: Sqlite.i64("n"),
+            row: Sql.i64("n"),
         })?
         if n < stream_attempt_cap Ok(Skipped) else Ok(SkippedFinal(n))
     }
@@ -631,7 +632,7 @@ Strava :: [].{
     # fetch that stores a body clears the row.
     flag_stream_refetch! : Str, I64 => Try({}, _)
     flag_stream_refetch! = |path, id|
-        Sqlite.execute!({
+        Sql.execute!({
             path: Path.utf8(path),
             query: "INSERT OR IGNORE INTO stream_retries (activity_id, attempts) VALUES (:id, 0)",
             bindings: [{ name: ":id", value: Integer(id) }],
@@ -643,14 +644,14 @@ Strava :: [].{
         match ids {
             [] => Ok(0)
             [id, .. as rest] => {
-                n = Sqlite.query!({
+                n = Sql.query!({
                     path: Path.utf8(path),
                     query: "SELECT COUNT(*) AS n FROM stream_retries WHERE activity_id = :id AND attempts >= :cap",
                     bindings: [
                         { name: ":id", value: Integer(id) },
                         { name: ":cap", value: Integer(stream_attempt_cap) },
                     ],
-                    row: Sqlite.i64("n"),
+                    row: Sql.i64("n"),
                 })?
                 more = count_capped_among!(path, rest)?
                 Ok(more + (if n > 0 1 else 0))
@@ -662,7 +663,7 @@ Strava :: [].{
     # purpose, which only `sync --all` fetches again
     capped_streams! : Str => Try(I64, _)
     capped_streams! = |path|
-        Sqlite.query!({
+        Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT COUNT(*) AS n FROM stream_retries r
@@ -670,7 +671,7 @@ Strava :: [].{
                 \\WHERE r.attempts >= :cap
             ,
             bindings: [{ name: ":cap", value: Integer(stream_attempt_cap) }],
-            row: Sqlite.i64("n"),
+            row: Sql.i64("n"),
         })
 
     # the notes twin — but NARROWER than the Notes queue, where the streams
@@ -681,7 +682,7 @@ Strava :: [].{
     # just performed.
     pending_notes! : Str => Try(I64, _)
     pending_notes! = |path|
-        Sqlite.query!({
+        Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT COUNT(*) AS n FROM activities a
@@ -690,7 +691,7 @@ Strava :: [].{
                 \\  AND COALESCE(a.sport_family, a.sport_type) = 'WeightTraining'
             ,
             bindings: [],
-            row: Sqlite.i64("n"),
+            row: Sql.i64("n"),
         })
 
     # THE note-response policy, the stream policy one endpoint over: 404 => ''
@@ -755,7 +756,7 @@ Strava :: [].{
     # rebuilt
     store_note! : Str, I64, Str => Try({}, _)
     store_note! = |path, id, desc|
-        Sqlite.execute!({
+        Sql.execute!({
             path: Path.utf8(path),
             query: "INSERT OR REPLACE INTO strength_notes (activity_id, description) VALUES (:id, :d)",
             bindings: [
@@ -766,7 +767,7 @@ Strava :: [].{
 
     store_streams! : Str, I64, Str => Try({}, _)
     store_streams! = |path, id, text| {
-        Sqlite.execute!({
+        Sql.execute!({
             path: Path.utf8(path),
             query: "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (:id, :raw)",
             bindings: [
@@ -775,7 +776,7 @@ Strava :: [].{
             ],
         })?
         # a stored body ends the id's retries
-        _ = Sqlite.execute!({
+        _ = Sql.execute!({
             path: Path.utf8(path),
             query: "DELETE FROM stream_retries WHERE activity_id = :id",
             bindings: [{ name: ":id", value: Integer(id) }],
@@ -793,12 +794,12 @@ Strava :: [].{
         # the missing metrics row makes the next analyze redo the activity, which
         # re-deletes and rebuilds segments — the failure self-heals. The reverse
         # order strands segment-less activities that analyze never revisits.
-        _ = Sqlite.execute!({
+        _ = Sql.execute!({
             path: Path.utf8(path),
             query: "DELETE FROM activity_metrics WHERE activity_id = :id",
             bindings: [{ name: ":id", value: Integer(id) }],
         })?
-        Sqlite.execute!({
+        Sql.execute!({
             path: Path.utf8(path),
             query: "DELETE FROM activity_segments WHERE activity_id = :id",
             bindings: [{ name: ":id", value: Integer(id) }],
@@ -977,6 +978,7 @@ Strava :: [].{
             .add_header("Authorization", "Bearer ${token}")
             .with_body([])
             .with_timeout(TimeoutMilliseconds(60000)),
+            {},
         )
 
     # THE stream-response policy. 404 => the "{}" marker (no streams recorded;
@@ -1260,7 +1262,7 @@ Strava :: [].{
     # including it would mark every row updated — which is precisely the misreporting this
     # exists to remove.
     classify_activity! = |path, a| {
-        rows = Sqlite.query_many!({
+        rows = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT
@@ -1273,8 +1275,8 @@ Strava :: [].{
             ,
             bindings: activity_bindings(a),
             rows: |cols| |stmt| {
-                existed = Sqlite.i64("existed")(cols)(stmt)?
-                same = Sqlite.i64("same")(cols)(stmt)?
+                existed = Sql.i64("existed")(cols)(stmt)?
+                same = Sql.i64("same")(cols)(stmt)?
                 Ok((existed, same))
             },
         })?
@@ -1318,7 +1320,7 @@ Strava :: [].{
         # never mistakes an imported activity (never on Strava) for a deleted one. Real
         # sync stamps are now_secs epochs, never 0.
         synced_val = if stamp == 0 Null else Integer(stamp)
-        Sqlite.execute!({
+        Sql.execute!({
             path: Path.utf8(path),
             query:
                 \\INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance, elevation, relative_effort, avg_watts, avg_hr, weighted_avg_watts, device_watts, synced_at)
@@ -1352,7 +1354,7 @@ Strava :: [].{
     # transaction so a crash can't half-prune. Returns the number of activities removed.
     prune_deleted! : Str, I64, Str => Try(U64, _)
     prune_deleted! = |path, stamp, window_start| {
-        victims = Sqlite.query_many!({
+        victims = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT id AS id FROM activities
@@ -1369,46 +1371,35 @@ Strava :: [].{
                 { name: ":stamp", value: Integer(stamp) },
                 { name: ":ws", value: String(window_start) },
             ],
-            rows: Sqlite.i64("id"),
+            rows: Sql.i64("id"),
         })?
         if List.len(victims) == 0
             Ok(0)
         else {
-            _ = Sqlite.execute!({ path: Path.utf8(path), query: "BEGIN", bindings: [] })?
-            match prune_txn!(path, victims) {
-                Ok(_) => {
-                    _ = Sqlite.execute!({ path: Path.utf8(path), query: "COMMIT", bindings: [] })?
-                    Ok(List.len(victims))
-                }
-                Err(e) =>
-                    # a failed ROLLBACK (lock, corruption) is the more actionable signal —
-                    # surface it; otherwise return the error that aborted the prune
-                    match Sqlite.execute!({ path: Path.utf8(path), query: "ROLLBACK", bindings: [] }) {
-                        Ok(_) => Err(e)
-                        Err(re) => Err(re)
-                    }
-            }
+            # one connection for the whole prune: BEGIN, the deletes and COMMIT
+            # must share it, or each delete autocommits on its own
+            Sql.transaction!(Path.utf8(path), |run!| prune_txn!(run!, victims))?
+            Ok(List.len(victims))
         }
     }
-    prune_txn! : Str, List(I64) => Try({}, _)
-    prune_txn! = |path, ids|
+    prune_txn! = |run!, ids|
         match ids {
             [] => Ok({})
             [id, .. as rest] => {
                 b = [{ name: ":id", value: Integer(id) }]
-                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM activity_metrics WHERE activity_id = :id", bindings: b })?
-                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM activity_segments WHERE activity_id = :id", bindings: b })?
-                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM streams WHERE activity_id = :id", bindings: b })?
-                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM stream_retries WHERE activity_id = :id", bindings: b })?
+                _ = run!("DELETE FROM activity_metrics WHERE activity_id = :id", b)?
+                _ = run!("DELETE FROM activity_segments WHERE activity_id = :id", b)?
+                _ = run!("DELETE FROM streams WHERE activity_id = :id", b)?
+                _ = run!("DELETE FROM stream_retries WHERE activity_id = :id", b)?
                 # the strength tables reference activities too, and the database
                 # enforces it: a strength session deleted upstream with a stored
                 # description or log would otherwise fail the activity's DELETE
                 # and the whole prune with it
-                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM strength_sets WHERE activity_id = :id", bindings: b })?
-                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM strength_logs WHERE activity_id = :id", bindings: b })?
-                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM strength_notes WHERE activity_id = :id", bindings: b })?
-                _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM activities WHERE id = :id", bindings: b })?
-                prune_txn!(path, rest)
+                _ = run!("DELETE FROM strength_sets WHERE activity_id = :id", b)?
+                _ = run!("DELETE FROM strength_logs WHERE activity_id = :id", b)?
+                _ = run!("DELETE FROM strength_notes WHERE activity_id = :id", b)?
+                _ = run!("DELETE FROM activities WHERE id = :id", b)?
+                prune_txn!(run!, rest)
             }
         }
 }

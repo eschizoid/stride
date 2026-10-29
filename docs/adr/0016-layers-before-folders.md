@@ -94,3 +94,7 @@ layers over the import lists, now scanning those four folders and failing on a
 `.roc` anywhere else, `src/` itself included. `strength` is the first package to
 depend on another package (`core`); the header syntax allows it and the pinned
 compiler resolves it.
+
+## Update, 2026-10-29
+
+`Sql` joins the io row. It is the engine's one door to SQLite on basic-cli 0.26, imported by `Db`, `Strava` and the analytics and app modules, and it imports only the platform.

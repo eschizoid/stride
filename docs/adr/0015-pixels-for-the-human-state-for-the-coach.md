@@ -177,3 +177,7 @@ mismatch warning and `tools/roc-viz.sh` forgives none. What the script still
 carries is the pair of assertion-count pins a `test` run is held to: the
 source count of `expect`/`and` lines under `src/viz`, and the summary count
 across the window's whole import graph.
+
+## Update, 2026-10-29. roc-ray names no compiler
+
+roc-ray 0.11 names no compiler, so the viz app header no longer carries a `roc:` field and the `setup-roc` action's default is the only pin. `tools/pin-check.sh` now refuses a compiler named in the header and holds the justfile's local viz default to the pin. The 2026-09-29 update's conclusion stands: the viz build has no mismatch warning to forgive, now because there is nothing to mismatch.

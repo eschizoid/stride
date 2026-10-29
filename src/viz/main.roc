@@ -8,7 +8,7 @@
 ## The header carries its own compiler version, so `roc src/viz/main.roc` with a
 ## matching nightly is the whole build. roc-ray declares that same compiler, so
 ## the two apps and the platform all name one nightly.
-app [Model, program] { rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.10.0/5xecDmRJroKT9fnSiYsGdCKEzNWLnRKGtHJ5CxuCnpb9.tar.zst", core: "../core/package.roc", roc: "nightly-2026-09-27-a3ce7f1" }
+app [Model, program] { rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.11.1/4NWnSt7bKCyVx4xDFH89pV11ekYbiGQ43kdjfZ9NBJQn.tar.zst", core: "../core/package.roc" }
 
 import rr.App
 import rr.Assets
@@ -17,6 +17,7 @@ import rr.Camera
 import rr.Color
 import rr.Draw
 import rr.Mouse
+import rr.Shader
 import rr.Sqlite
 import rr.Task
 import rr.Text
@@ -497,7 +498,7 @@ glow_frag = Str.join_with(
 	"\n",
 )
 
-build_glow! : { w : F32, h : F32 } => [Unbuilt, Unavailable({ gw : F32, gh : F32 }), Ready({ rt : Draw.RenderTexture, shader : Draw.Shader, rx : Draw.F32Uniform, ry : Draw.F32Uniform, gw : F32, gh : F32 })]
+build_glow! : { w : F32, h : F32 } => [Unbuilt, Unavailable({ gw : F32, gh : F32 }), Ready({ rt : Draw.RenderTexture, shader : Shader({ res_x : F32, res_y : F32 }), gw : F32, gh : F32 })]
 build_glow! = |win|
 	# a size that will not convert cleanly is a size we refuse to guess at -
 	# the pass exists only window-sized, so failure here degrades like any
@@ -509,17 +510,9 @@ build_glow! = |win|
 					match Draw.RenderTexture.load!({ width: wi, height: hi }) {
 						Err(_) => Unavailable({ gw: win.w, gh: win.h })
 						Ok(rt) =>
-							match Draw.Shader.from_source!({ vertex_source: "", fragment_source: glow_frag }) {
+							match Shader.from_source!({ vertex_source: "", fragment_source: glow_frag }, { res_x: win.w, res_y: win.h }) {
 								Err(_) => Unavailable({ gw: win.w, gh: win.h })
-								Ok(shader) =>
-									match Draw.Shader.uniform_f32!(shader, "res_x") {
-										Err(_) => Unavailable({ gw: win.w, gh: win.h })
-										Ok(rx) =>
-											match Draw.Shader.uniform_f32!(shader, "res_y") {
-												Err(_) => Unavailable({ gw: win.w, gh: win.h })
-												Ok(ry) => Ready({ rt, shader, rx, ry, gw: win.w, gh: win.h })
-											}
-									}
+								Ok(shader) => Ready({ rt, shader, gw: win.w, gh: win.h })
 							}
 					}
 				_ => Unavailable({ gw: win.w, gh: win.h })
@@ -2519,8 +2512,6 @@ render! = |model, frame| {
 					Err(_) => {}
 					Ok(_) => {
 						td = { texture: g.rt.texture(), source: g.rt.source(), dest: { x: 0.0, y: 0.0, width: g.gw, height: g.gh }, origin: { x: 0.0, y: 0.0 }, rotation: 0.0, tint: Color.white }
-						g.rx.set!(g.gw)
-						g.ry.set!(g.gh)
 						_ = frame.with_blend_mode!(Additive, |f2|
 							f2.with_shader!(g.shader, |f3| {
 								f3.texture!(td)

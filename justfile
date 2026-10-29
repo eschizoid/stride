@@ -55,6 +55,7 @@ test:
     {{roc}} test --main=src/cli/main.roc src/cli/Command.roc
     {{roc}} test --main=src/cli/main.roc src/cli/Config.roc
     {{roc}} test --main=src/cli/main.roc src/cli/Streams.roc
+    {{roc}} test --main=src/cli/main.roc src/cli/Sql.roc
     # Strength carries the src/strength package's expects too: a package
     # module that imports core resolves only through an app declaring both,
     # so a bare run of src/strength/Peloton.roc cannot find Units, and
@@ -349,7 +350,9 @@ schema-check: build
 e2e-sync: build
     #!/usr/bin/env bash
     set -uo pipefail
-    {{roc}} build tests/e2e.roc --output=e2e --opt=dev || exit 1
+    # --no-cache: on the pinned nightly a harness built from a cache that
+    # `roc check`/`roc test` warmed segfaults as the mock server starts
+    {{roc}} build tests/e2e.roc --output=e2e --opt=dev --no-cache || exit 1
     E2E_MODE=mock MOCK_PORT={{mock_port}} ./e2e &
     MOCK=$!
     # kill the mock on ANY exit, or an interrupted run leaves the port bound. EXIT
@@ -432,18 +435,18 @@ up: sync analyze summary
 
 # ── e2e test suite (native Roc: tests/e2e.roc — sandboxed HOME, no network) ──
 e2e:
-    {{roc}} build tests/e2e.roc --output=e2e --opt=dev
+    # --no-cache for the reason the e2e-sync recipe gives
+    {{roc}} build tests/e2e.roc --output=e2e --opt=dev --no-cache
     test -x ./stride || {  echo "e2e needs a ./stride binary — run \`just build\` first"; exit 1; }
     ./e2e
 
 # ── the app (src/viz/main.roc — the roc-ray window, ADR 0015) ─────────────────
-# The viz names its compiler in its OWN app header (see src/viz/main.roc), and
-# roc-ray declares that same nightly, so one tag serves both binaries and the
-# platform. Point ROC_VIZ at a matching nightly, or leave it and hope the PATH
-# roc is close enough.
+# The viz builds on the same nightly as the engine: the `setup-roc` action's
+# default is the one pin, and roc-ray names no compiler of its own. Point
+# ROC_VIZ at that nightly, or leave it and hope the PATH roc is close enough.
 # defaults to the pinned viz nightly when installed (tools/make-viz-app.sh and
 # the docs both point there); ROC_VIZ still overrides, PATH roc is the last resort
-viz_pin := `sh -c 'P="$HOME/.local/share/roc/nightly-2026-09-27-a3ce7f1/roc"; [ -x "$P" ] && echo "$P" || echo roc'`
+viz_pin := `sh -c 'P="$HOME/.local/share/roc/nightly-2026-10-26-3c0fffe/roc"; [ -x "$P" ] && echo "$P" || echo roc'`
 roc_viz := env("ROC_VIZ", viz_pin)
 
 # open the app window (ESC quits). The two arguments are the athlete's directory,

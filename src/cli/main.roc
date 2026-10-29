@@ -1,5 +1,5 @@
 app [main!] {
-    pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.23.0/GNN5tt2gKdX4dhawg4915C4YB193woHFdcCkz31fhGxv.tar.zst",
+    pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.26.0/GddgvsGjiNXrHFW6au5i5dUDbTs8FinQdrgE2Gqmw53t.tar.zst",
     http: "https://github.com/roc-lang/http/releases/download/1.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
     core: "../core/package.roc",
     strength: "../strength/package.roc",
@@ -37,7 +37,7 @@ import http.Response
 import http.Method
 import pf.Utc
 import pf.Sleep
-import pf.Sqlite
+import Sql
 import pf.Cmd
 import pf.Path
 import Csv
@@ -168,7 +168,9 @@ help_text =
 
 # main! stays thin: parse argv into a typed Command (pure, in Command.roc), then
 # dispatch. All arity/count validation lives in the parser and is unit-tested there.
-main! : List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)
+# Its type is inferred: on the pinned compiler an annotation of
+# `List([Utf8(Str), UnixBytes(List(U8)), WindowsU16s(List(U16))]) => Try({}, _)`
+# crashes type-checking, and the inferred type is the same one.
 main! = |raw_args| {
     # basic-cli hands over the arguments the user typed — no program name at index 0 —
     # as an OS-native tag union: that union IS `OsStr`
@@ -260,13 +262,18 @@ reexec_with_format! = |cleaned, fmt| {
     self = Env.exe_path!()?
     # `--` first: the child parses every remaining token as literal
     child_args = List.prepend(List.map(cleaned, OsStr.from_str), OsStr.from_str("--"))
-    match Cmd.new(Path.to_os_str(self)).args(child_args).env(OsStr.from_str("STRIDE_FORMAT"), OsStr.from_str(fmt)).exec_cmd!() {
+    match Cmd.new(Path.to_os_str(self)).args(child_args).env(OsStr.from_str("STRIDE_FORMAT"), OsStr.from_str(fmt)).call!() {
         Ok(_) => Ok({})
         # the child already printed its own error surface (envelope or human
         # text) — carry its STATUS verbatim and print nothing more. Exit(code)
         # is the one error the platform reports silently; anything else would
-        # stack a Roc runtime banner on top of the child's own message.
-        Err(ExecCmdFailed(f)) => Err(Exit(f.exit_code))
+        # stack a Roc runtime banner on top of the child's own message. A child
+        # killed by a signal exits 128 + the signal, as a shell reports it.
+        Err(BadExitStatus(out)) =>
+            match out.status {
+                Exited(code) => Err(Exit(code))
+                Signaled(signal) => Err(Exit(128 + signal))
+            }
         Err(e) => Err(ReexecFailed(e))
     }
 }
@@ -366,7 +373,7 @@ run_command! = |cmd|
         Err(HttpErr(e)) =>
             Output.err_out!("network_unreachable", "could not reach the Strava API (${clip_msg(Str.inspect(e))}) — check the connection and retry")
         # a paste flow with nothing on stdin
-        Err(EndOfFile) =>
+        Err(EndOfInput) =>
             Output.err_out!("stdin_closed", "stdin closed before input arrived — `stride auth` needs a terminal to paste into")
         # anything else still becomes an envelope rather than a runtime banner;
         # the inspected tag rides in the message so the report is actionable
@@ -519,11 +526,11 @@ config_show! = |key|
 config_list! : {} => Try({}, _)
 config_list! = |{}| {
     path = Db.open_db!({})?
-    rows = Sqlite.query_many!({
+    rows = Sql.query_many!({
         path: Path.utf8(path),
         query: "SELECT COALESCE(CAST(key AS TEXT), '') AS k FROM config WHERE COALESCE(CAST(value AS TEXT), '') <> '' ORDER BY key",
         bindings: [],
-        rows: Sqlite.str("k"),
+        rows: Sql.str("k"),
     })?
     entries = List.map(
         rows,

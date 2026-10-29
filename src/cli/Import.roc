@@ -7,7 +7,7 @@ import Csv
 import Metrics
 import Analyze
 import strength.StravaLog
-import pf.Sqlite
+import Sql
 import pf.Cmd
 import pf.OsStr
 import pf.Path
@@ -29,8 +29,8 @@ Import :: [].{
         # is passed as a single argv value, never shell-interpolated. (From mason's #69.)
         text_result =
             if Str.ends_with(Str.with_ascii_lowercased(src), ".zip") {
-                match Cmd.new(OsStr.from_str("unzip")).args(List.map(["-p", "-q", src, "activities.csv"], OsStr.from_str)).exec_output!() {
-                    Ok(out) => Ok(out.stdout_utf8)
+                match Cmd.new(OsStr.from_str("unzip")).args(List.map(["-p", "-q", src, "activities.csv"], OsStr.from_str)).output_limit(NoLimit).capture!() {
+                    Ok(out) => Ok(out)
                     Err(_) => Err(UnzipFailed)
                 }
             } else {
@@ -153,11 +153,11 @@ Import :: [].{
                                         skip("duplicate_activity", [])
                                     } else {
                                         placed = acc
-                                        fams = Sqlite.query_many!({
+                                        fams = Sql.query_many!({
                                             path: Path.utf8(db),
                                             query: "SELECT CAST(fam AS TEXT) AS fam FROM activity_family_month WHERE activity_id = :id",
                                             bindings: [{ name: ":id", value: Integer(aid) }],
-                                            rows: Sqlite.str("fam"),
+                                            rows: Sql.str("fam"),
                                         })?
                                         skip_placed = |reason, dropped| { ..placed, skipped: List.append(placed.skipped, { activity_id: raw_id, reason, dropped }) }
                                         match fams {
@@ -172,7 +172,7 @@ Import :: [].{
                                                     if List.is_empty(got.rows) {
                                                         skip_placed("no_usable_sets", got.dropped)
                                                     } else {
-                                                        Sqlite.execute!({
+                                                        Sql.execute!({
                                                             path: Path.utf8(db),
                                                             query: "INSERT OR REPLACE INTO strength_logs (activity_id, payload, imported_at) VALUES (:id, :p, :at)",
                                                             bindings: [

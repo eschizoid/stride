@@ -17,7 +17,7 @@ import Render
 import core.Sports
 import Streams
 import Csv
-import pf.Sqlite
+import Sql
 import pf.Stdout
 import pf.Path
 
@@ -35,7 +35,7 @@ ReportSessions :: [].{
     activity_body! = |path, id_str, aid| {
         # Human branch only — the JSON payload below emits distance_m in metres.
         units = Db.units!(path)?
-        rows = Sqlite.query_many!({
+        rows = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, COALESCE(CAST(a.sport_type AS TEXT), '') AS sport,
@@ -62,36 +62,36 @@ ReportSessions :: [].{
             ,
             bindings: [{ name: ":id", value: Integer(aid) }],
             rows: |cols| |stmt| {
-                id = Sqlite.i64("id")(cols)(stmt)?
-                date = Sqlite.str("date")(cols)(stmt)?
-                sport = Sqlite.str("sport")(cols)(stmt)?
-                family = Sqlite.str("family")(cols)(stmt)?
-                name = Sqlite.str("name")(cols)(stmt)?
-                moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
-                distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
-                tss = Sqlite.f64("tss")(cols)(stmt)?
-                np_w = Sqlite.f64("np_w")(cols)(stmt)?
-                intensity = Sqlite.f64("intensity")(cols)(stmt)?
-                ftp_used = Sqlite.f64("ftp_used")(cols)(stmt)?
-                z1_s = Sqlite.i64("z1_s")(cols)(stmt)?
-                z2_s = Sqlite.i64("z2_s")(cols)(stmt)?
-                z3_s = Sqlite.i64("z3_s")(cols)(stmt)?
-                z4_s = Sqlite.i64("z4_s")(cols)(stmt)?
-                z5_s = Sqlite.i64("z5_s")(cols)(stmt)?
-                avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
-                avg_hr_scored = Sqlite.f64("avg_hr_scored")(cols)(stmt)?
+                id = Sql.i64("id")(cols)(stmt)?
+                date = Sql.str("date")(cols)(stmt)?
+                sport = Sql.str("sport")(cols)(stmt)?
+                family = Sql.str("family")(cols)(stmt)?
+                name = Sql.str("name")(cols)(stmt)?
+                moving_time = Sql.i64("moving_time")(cols)(stmt)?
+                distance_m = Sql.f64("distance_m")(cols)(stmt)?
+                tss = Sql.f64("tss")(cols)(stmt)?
+                np_w = Sql.f64("np_w")(cols)(stmt)?
+                intensity = Sql.f64("intensity")(cols)(stmt)?
+                ftp_used = Sql.f64("ftp_used")(cols)(stmt)?
+                z1_s = Sql.i64("z1_s")(cols)(stmt)?
+                z2_s = Sql.i64("z2_s")(cols)(stmt)?
+                z3_s = Sql.i64("z3_s")(cols)(stmt)?
+                z4_s = Sql.i64("z4_s")(cols)(stmt)?
+                z5_s = Sql.i64("z5_s")(cols)(stmt)?
+                avg_hr = Sql.f64("avg_hr")(cols)(stmt)?
+                avg_hr_scored = Sql.f64("avg_hr_scored")(cols)(stmt)?
                 # split into value + flag in SQL rather than a nullable decoder: 0.0 is a
                 # REAL result here (a perfectly steady session), so the flag is the only
                 # thing that separates "flat" from "no power meter" (#94)
-                decoupling_pct = Sqlite.f64("decoupling_pct")(cols)(stmt)?
-                decoupling_known = Sqlite.i64("decoupling_known")(cols)(stmt)?
-                decoupling_signal = Sqlite.str("decoupling_signal")(cols)(stmt)?
-                power_known = Sqlite.i64("power_known")(cols)(stmt)?
-                intensity_known = Sqlite.i64("intensity_known")(cols)(stmt)?
-                hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
-                zones_known = Sqlite.i64("zones_known")(cols)(stmt)?
-                load_model = Sqlite.str("load_model")(cols)(stmt)?
-                dw = Sqlite.i64("dw")(cols)(stmt)?
+                decoupling_pct = Sql.f64("decoupling_pct")(cols)(stmt)?
+                decoupling_known = Sql.i64("decoupling_known")(cols)(stmt)?
+                decoupling_signal = Sql.str("decoupling_signal")(cols)(stmt)?
+                power_known = Sql.i64("power_known")(cols)(stmt)?
+                intensity_known = Sql.i64("intensity_known")(cols)(stmt)?
+                hr_known = Sql.i64("hr_known")(cols)(stmt)?
+                zones_known = Sql.i64("zones_known")(cols)(stmt)?
+                load_model = Sql.str("load_model")(cols)(stmt)?
+                dw = Sql.i64("dw")(cols)(stmt)?
                 Ok({ id, date, sport, family, name, moving_time, distance_m, tss, np_w, intensity, ftp_used, dw: dw != 0, z1_s, z2_s, z3_s, z4_s, z5_s, avg_hr, avg_hr_scored, decoupling_pct, decoupling_known: decoupling_known != 0, decoupling_signal, power_known: power_known != 0, intensity_known: intensity_known != 0, hr_known: hr_known != 0, zones_known: zones_known != 0, load_model })
             },
         })?
@@ -112,11 +112,11 @@ ReportSessions :: [].{
                 # from it and must refuse. Reporting is only defensible where the wrong
                 # value cannot become a wrong answer.
                 _ = (Metrics.usable_date_days(a.date)).map_err(|_| BadActivityDate(a.date, a.id))?
-                raw_rows = Sqlite.query_many!({
+                raw_rows = Sql.query_many!({
                     path: Path.utf8(path),
                     query: "SELECT COALESCE(CAST(raw_json AS TEXT), '') AS raw FROM streams WHERE activity_id = :id",
                     bindings: [{ name: ":id", value: Integer(aid) }],
-                    rows: Sqlite.str("raw"),
+                    rows: Sql.str("raw"),
                 })?
                 raw_opt =
                     match List.first(raw_rows) {
@@ -131,7 +131,7 @@ ReportSessions :: [].{
                 # analyze stored rather than today's threshold applied to an old ride.
                 pi_ftp = a.ftp_used
                 # detected interval structure (ADR 0008) — computed tier, may be empty
-                seg_rows = Sqlite.query_many!({
+                seg_rows = Sql.query_many!({
                     path: Path.utf8(path),
                     query:
                         \\SELECT ordinal, COALESCE(CAST(kind AS TEXT), '') AS kind, start_s, dur_s, CAST(avg_signal AS REAL) AS avg_signal, COALESCE(CAST(signal AS TEXT), '') AS signal,
@@ -142,16 +142,16 @@ ReportSessions :: [].{
                     ,
                     bindings: [{ name: ":id", value: Integer(aid) }],
                     rows: |cols| |stmt| {
-                        ordinal = Sqlite.i64("ordinal")(cols)(stmt)?
-                        kind = Sqlite.str("kind")(cols)(stmt)?
-                        start_s = Sqlite.i64("start_s")(cols)(stmt)?
-                        dur_s = Sqlite.i64("dur_s")(cols)(stmt)?
-                        avg_signal = Sqlite.f64("avg_signal")(cols)(stmt)?
-                        signal = Sqlite.str("signal")(cols)(stmt)?
-                        peak_hr = Sqlite.f64("peak_hr")(cols)(stmt)?
-                        avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
-                        rec_drop = Sqlite.f64("rec_drop")(cols)(stmt)?
-                        rdk = Sqlite.i64("rec_drop_known")(cols)(stmt)?
+                        ordinal = Sql.i64("ordinal")(cols)(stmt)?
+                        kind = Sql.str("kind")(cols)(stmt)?
+                        start_s = Sql.i64("start_s")(cols)(stmt)?
+                        dur_s = Sql.i64("dur_s")(cols)(stmt)?
+                        avg_signal = Sql.f64("avg_signal")(cols)(stmt)?
+                        signal = Sql.str("signal")(cols)(stmt)?
+                        peak_hr = Sql.f64("peak_hr")(cols)(stmt)?
+                        avg_hr = Sql.f64("avg_hr")(cols)(stmt)?
+                        rec_drop = Sql.f64("rec_drop")(cols)(stmt)?
+                        rdk = Sql.i64("rec_drop_known")(cols)(stmt)?
                         Ok({ ordinal, kind, start_s, dur_s, avg_signal, signal, peak_hr, avg_hr, rec_drop, rec_drop_known: rdk == 1 })
                     },
                 })?
@@ -242,7 +242,7 @@ ReportSessions :: [].{
                 # today) and strictly BEFORE it: recomputing an old ride months
                 # later yields the same baseline, and future data cannot leak in.
                 band = Metrics.duration_band(a.moving_time)
-                comps = Sqlite.query_many!({
+                comps = Sql.query_many!({
                     path: Path.utf8(path),
                     query:
                         \\SELECT CAST(COALESCE(m.normalized_power, 0) AS REAL) AS np,
@@ -263,11 +263,11 @@ ReportSessions :: [].{
                         { name: ":bhi", value: Integer(band.hi) },
                     ],
                     rows: |cols| |stmt| {
-                        np = Sqlite.f64("np")(cols)(stmt)?
-                        np_known = Sqlite.i64("np_known")(cols)(stmt)?
-                        hr = Sqlite.f64("hr")(cols)(stmt)?
-                        dec_pct = Sqlite.f64("dec_pct")(cols)(stmt)?
-                        dec_known = Sqlite.i64("dec_known")(cols)(stmt)?
+                        np = Sql.f64("np")(cols)(stmt)?
+                        np_known = Sql.i64("np_known")(cols)(stmt)?
+                        hr = Sql.f64("hr")(cols)(stmt)?
+                        dec_pct = Sql.f64("dec_pct")(cols)(stmt)?
+                        dec_known = Sql.i64("dec_known")(cols)(stmt)?
                         Ok({ np, np_known: np_known != 0, hr, dec_pct, dec_known: dec_known != 0 })
                     },
                 })?
@@ -531,7 +531,7 @@ ReportSessions :: [].{
         # empty string CRASHED this backend in str_concat (roc#10595,
         # fixed upstream and carried by the current pin). Non-empty by construction is
         # the rule the :all-flag comment in Plan.roc states, and it stays.
-        rows = Sqlite.query_many!({
+        rows = Sql.query_many!({
             path: Path.utf8(path),
             query:
             # `${Report.date_known_sql}` and `${Report.rankable_sql}` stay on the RAW column
@@ -615,31 +615,31 @@ ReportSessions :: [].{
             ,
             bindings: sf.binds,
             rows: |cols| |stmt| {
-                id = Sqlite.i64("id")(cols)(stmt)?
-                date = Sqlite.str("date")(cols)(stmt)?
-                date_known = Sqlite.i64("date_known")(cols)(stmt)?
-                rankable = Sqlite.i64("rankable")(cols)(stmt)?
-                sport = Sqlite.str("sport")(cols)(stmt)?
-                name = Sqlite.str("name")(cols)(stmt)?
-                moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
-                distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
-                tss = Sqlite.f64("tss")(cols)(stmt)?
-                np_w = Sqlite.f64("np_w")(cols)(stmt)?
-                intensity = Sqlite.f64("intensity")(cols)(stmt)?
-                z1_s = Sqlite.i64("z1_s")(cols)(stmt)?
-                z2_s = Sqlite.i64("z2_s")(cols)(stmt)?
-                z3_s = Sqlite.i64("z3_s")(cols)(stmt)?
-                z4_s = Sqlite.i64("z4_s")(cols)(stmt)?
-                z5_s = Sqlite.i64("z5_s")(cols)(stmt)?
-                hard_s = Sqlite.i64("hard_s")(cols)(stmt)?
-                relative_effort = Sqlite.f64("relative_effort")(cols)(stmt)?
-                avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
-                avg_hr_scored = Sqlite.f64("avg_hr_scored")(cols)(stmt)?
-                power_known = Sqlite.i64("power_known")(cols)(stmt)?
-                intensity_known = Sqlite.i64("intensity_known")(cols)(stmt)?
-                hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
-                zones_known = Sqlite.i64("zones_known")(cols)(stmt)?
-                load_model = Sqlite.str("load_model")(cols)(stmt)?
+                id = Sql.i64("id")(cols)(stmt)?
+                date = Sql.str("date")(cols)(stmt)?
+                date_known = Sql.i64("date_known")(cols)(stmt)?
+                rankable = Sql.i64("rankable")(cols)(stmt)?
+                sport = Sql.str("sport")(cols)(stmt)?
+                name = Sql.str("name")(cols)(stmt)?
+                moving_time = Sql.i64("moving_time")(cols)(stmt)?
+                distance_m = Sql.f64("distance_m")(cols)(stmt)?
+                tss = Sql.f64("tss")(cols)(stmt)?
+                np_w = Sql.f64("np_w")(cols)(stmt)?
+                intensity = Sql.f64("intensity")(cols)(stmt)?
+                z1_s = Sql.i64("z1_s")(cols)(stmt)?
+                z2_s = Sql.i64("z2_s")(cols)(stmt)?
+                z3_s = Sql.i64("z3_s")(cols)(stmt)?
+                z4_s = Sql.i64("z4_s")(cols)(stmt)?
+                z5_s = Sql.i64("z5_s")(cols)(stmt)?
+                hard_s = Sql.i64("hard_s")(cols)(stmt)?
+                relative_effort = Sql.f64("relative_effort")(cols)(stmt)?
+                avg_hr = Sql.f64("avg_hr")(cols)(stmt)?
+                avg_hr_scored = Sql.f64("avg_hr_scored")(cols)(stmt)?
+                power_known = Sql.i64("power_known")(cols)(stmt)?
+                intensity_known = Sql.i64("intensity_known")(cols)(stmt)?
+                hr_known = Sql.i64("hr_known")(cols)(stmt)?
+                zones_known = Sql.i64("zones_known")(cols)(stmt)?
+                load_model = Sql.str("load_model")(cols)(stmt)?
                 Ok({ id, date, date_known: date_known != 0, rankable: rankable != 0, sport, name, moving_time, distance_m, tss, load_model, np_w, power_known: power_known != 0, intensity, intensity_known: intensity_known != 0, z1_s, z2_s, z3_s, z4_s, z5_s, zones_known: zones_known != 0, hard_s, relative_effort, avg_hr, avg_hr_scored, hr_known: hr_known != 0 })
             },
         })?
@@ -700,11 +700,11 @@ ReportSessions :: [].{
         }
     known_sports! : Str => Try(List(Str), _)
     known_sports! = |path|
-        Sqlite.query_many!({
+        Sql.query_many!({
             path: Path.utf8(path),
             query: "SELECT DISTINCT COALESCE(CAST(sport_type AS TEXT), '') AS s FROM activities WHERE sport_type IS NOT NULL AND sport_type <> '' ORDER BY s",
             bindings: [],
-            rows: Sqlite.str("s"),
+            rows: Sql.str("s"),
         })
 
     # An empty filtered result has TWO honest explanations and the hint must pick
@@ -713,11 +713,11 @@ ReportSessions :: [].{
     # the existence of runs while listing Run in the same sentence.
     empty_hint! = |path, word, what| {
         sf = Report.sport_filter_sql(word)
-        n = Sqlite.query!({
+        n = Sql.query!({
             path: Path.utf8(path),
             query: "SELECT COUNT(*) AS n FROM activities a WHERE 1=1${sf.frag}",
             bindings: sf.binds,
-            row: Sqlite.i64("n"),
+            row: Sql.i64("n"),
         })?
         if n == 0 {
             known = known_sports!(path)?
@@ -752,7 +752,7 @@ ReportSessions :: [].{
                 sf = Report.sport_filter_sql(sport_filter)
                 sport_where = sf.frag
                 sport_binding = sf.binds
-                rows = Sqlite.query_many!({
+                rows = Sql.query_many!({
                     path: Path.utf8(path),
                     query:
             # `${Report.date_known_sql}` / `${Report.rankable_sql}` stay on the RAW column
@@ -780,22 +780,22 @@ ReportSessions :: [].{
                     ,
                     bindings: sport_binding,
                     rows: |cols| |stmt| {
-                        id = Sqlite.i64("id")(cols)(stmt)?
-                        date = Sqlite.str("date")(cols)(stmt)?
-                        date_known = Sqlite.i64("date_known")(cols)(stmt)?
-                        rankable = Sqlite.i64("rankable")(cols)(stmt)?
-                        sport = Sqlite.str("sport")(cols)(stmt)?
-                        name = Sqlite.str("name")(cols)(stmt)?
-                        moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
-                        distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
-                        tss = Sqlite.f64("tss")(cols)(stmt)?
-                        np_w = Sqlite.f64("np_w")(cols)(stmt)?
-                        intensity = Sqlite.f64("intensity")(cols)(stmt)?
-                        avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
-                        output_kj = Sqlite.f64("output_kj")(cols)(stmt)?
-                        power_known = Sqlite.i64("power_known")(cols)(stmt)?
-                        intensity_known = Sqlite.i64("intensity_known")(cols)(stmt)?
-                        hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
+                        id = Sql.i64("id")(cols)(stmt)?
+                        date = Sql.str("date")(cols)(stmt)?
+                        date_known = Sql.i64("date_known")(cols)(stmt)?
+                        rankable = Sql.i64("rankable")(cols)(stmt)?
+                        sport = Sql.str("sport")(cols)(stmt)?
+                        name = Sql.str("name")(cols)(stmt)?
+                        moving_time = Sql.i64("moving_time")(cols)(stmt)?
+                        distance_m = Sql.f64("distance_m")(cols)(stmt)?
+                        tss = Sql.f64("tss")(cols)(stmt)?
+                        np_w = Sql.f64("np_w")(cols)(stmt)?
+                        intensity = Sql.f64("intensity")(cols)(stmt)?
+                        avg_hr = Sql.f64("avg_hr")(cols)(stmt)?
+                        output_kj = Sql.f64("output_kj")(cols)(stmt)?
+                        power_known = Sql.i64("power_known")(cols)(stmt)?
+                        intensity_known = Sql.i64("intensity_known")(cols)(stmt)?
+                        hr_known = Sql.i64("hr_known")(cols)(stmt)?
                         Ok({ id, date, date_known: date_known != 0, rankable: rankable != 0, sport, name, moving_time, distance_m, tss, np_w, power_known: power_known != 0, intensity, intensity_known: intensity_known != 0, avg_hr, hr_known: hr_known != 0, output_kj })
                     },
                 })?
@@ -813,11 +813,11 @@ ReportSessions :: [].{
                         if Str.is_empty(bound) {
                             0
                         } else {
-                            Sqlite.query!({
+                            Sql.query!({
                                 path: Path.utf8(path),
                                 query: "SELECT COUNT(*) AS n FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE ${col} > 0${sport_where} AND NOT (${Str.replace_each(bound, "@", col)})",
                                 bindings: sport_binding,
-                                row: Sqlite.i64("n"),
+                                row: Sql.i64("n"),
                             })?
                         }
                     if n_excluded > 0 {
@@ -857,11 +857,11 @@ ReportSessions :: [].{
                         if Str.is_empty(bound) {
                             0
                         } else {
-                            Sqlite.query!({
+                            Sql.query!({
                                 path: Path.utf8(path),
                                 query: "SELECT COUNT(*) AS n FROM (SELECT ${col} AS v FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE ${col} > 0${sport_where} ORDER BY CAST(${col} AS REAL) DESC, a.id DESC LIMIT ${(limit).to_str()}) WHERE NOT (${Str.replace_each(bound, "@", "v")})",
                                 bindings: sport_binding,
-                                row: Sqlite.i64("n"),
+                                row: Sql.i64("n"),
                             })?
                         }
                     if excluded > 0 {
@@ -947,7 +947,7 @@ ReportSessions :: [].{
         # the anchor: the named date's session with work blocks, else the most
         # recent one that has any. A date with no detected structure is an
         # honest in-band error rather than an empty comparison.
-        anchor = Sqlite.query_many!({
+        anchor = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, COALESCE(CAST(a.name AS TEXT), '') AS name,
@@ -965,15 +965,15 @@ ReportSessions :: [].{
             ,
             bindings: [{ name: ":d", value: String(date_arg) }],
             rows: |cols| |stmt| {
-                id = Sqlite.i64("id")(cols)(stmt)?
-                date = Sqlite.str("date")(cols)(stmt)?
-                name = Sqlite.str("name")(cols)(stmt)?
-                fam = Sqlite.str("fam")(cols)(stmt)?
-                reps = Sqlite.i64("reps")(cols)(stmt)?
-                mean_dur = Sqlite.i64("mean_dur")(cols)(stmt)?
-                min_dur = Sqlite.i64("min_dur")(cols)(stmt)?
-                max_dur = Sqlite.i64("max_dur")(cols)(stmt)?
-                signal = Sqlite.str("signal")(cols)(stmt)?
+                id = Sql.i64("id")(cols)(stmt)?
+                date = Sql.str("date")(cols)(stmt)?
+                name = Sql.str("name")(cols)(stmt)?
+                fam = Sql.str("fam")(cols)(stmt)?
+                reps = Sql.i64("reps")(cols)(stmt)?
+                mean_dur = Sql.i64("mean_dur")(cols)(stmt)?
+                min_dur = Sql.i64("min_dur")(cols)(stmt)?
+                max_dur = Sql.i64("max_dur")(cols)(stmt)?
+                signal = Sql.str("signal")(cols)(stmt)?
                 Ok({ id, date, name, fam, reps, mean_dur, min_dur, max_dur, signal })
             },
         })?
@@ -1010,7 +1010,7 @@ ReportSessions :: [].{
                 # same family, same rep count, same rep-duration band, and never
                 # later than the anchor — the same no-future-leak rule as #160,
                 # so re-running this on an old session reproduces its answer.
-                sessions = Sqlite.query_many!({
+                sessions = Sql.query_many!({
                     path: Path.utf8(path),
                     query:
                         \\SELECT a2.id AS id, COALESCE(substr(CAST(a2.start_local AS TEXT), 1, 10), '') AS date, COALESCE(CAST(a2.name AS TEXT), '') AS name,
@@ -1053,14 +1053,14 @@ ReportSessions :: [].{
                         { name: ":sig", value: String(a.signal) },
                     ],
                     rows: |cols| |stmt| {
-                        id = Sqlite.i64("id")(cols)(stmt)?
-                        date = Sqlite.str("date")(cols)(stmt)?
-                        name = Sqlite.str("name")(cols)(stmt)?
-                        reps = Sqlite.i64("reps")(cols)(stmt)?
-                        mean_w = Sqlite.f64("mean_w")(cols)(stmt)?
-                        mean_dur = Sqlite.i64("mean_dur")(cols)(stmt)?
-                        min_dur = Sqlite.i64("min_dur")(cols)(stmt)?
-                        max_dur = Sqlite.i64("max_dur")(cols)(stmt)?
+                        id = Sql.i64("id")(cols)(stmt)?
+                        date = Sql.str("date")(cols)(stmt)?
+                        name = Sql.str("name")(cols)(stmt)?
+                        reps = Sql.i64("reps")(cols)(stmt)?
+                        mean_w = Sql.f64("mean_w")(cols)(stmt)?
+                        mean_dur = Sql.i64("mean_dur")(cols)(stmt)?
+                        min_dur = Sql.i64("min_dur")(cols)(stmt)?
+                        max_dur = Sql.i64("max_dur")(cols)(stmt)?
                         Ok({ id, date, name, reps, mean_w, mean_dur, min_dur, max_dur })
                     },
                 })?
@@ -1069,7 +1069,7 @@ ReportSessions :: [].{
                 # precedent), and review found the cap evicting the only two
                 # genuinely comparable sessions in the history while keeping
                 # eleven unrelated ones.
-                matched = Sqlite.query!({
+                matched = Sql.query!({
                     path: Path.utf8(path),
                     query:
                         \\SELECT COUNT(*) AS n FROM (
@@ -1093,9 +1093,9 @@ ReportSessions :: [].{
                         { name: ":bhi", value: Integer(band.hi) },
                         { name: ":sig", value: String(a.signal) },
                     ],
-                    row: Sqlite.i64("n"),
+                    row: Sql.i64("n"),
                 })?
-                rows_for! = |aid| Sqlite.query_many!({
+                rows_for! = |aid| Sql.query_many!({
                     path: Path.utf8(path),
                     query:
                         \\SELECT ordinal AS ordinal, dur_s AS dur_s, CAST(avg_signal AS REAL) AS avg_signal,
@@ -1113,14 +1113,14 @@ ReportSessions :: [].{
                     ,
                     bindings: [{ name: ":aid", value: Integer(aid) }],
                     rows: |cols| |stmt| {
-                        ordinal = Sqlite.i64("ordinal")(cols)(stmt)?
-                        dur_s = Sqlite.i64("dur_s")(cols)(stmt)?
-                        avg_signal = Sqlite.f64("avg_signal")(cols)(stmt)?
-                        signal = Sqlite.str("signal")(cols)(stmt)?
-                        avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
-                        hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
-                        rec_drop = Sqlite.f64("rec_drop")(cols)(stmt)?
-                        rec_drop_known = Sqlite.i64("rec_drop_known")(cols)(stmt)?
+                        ordinal = Sql.i64("ordinal")(cols)(stmt)?
+                        dur_s = Sql.i64("dur_s")(cols)(stmt)?
+                        avg_signal = Sql.f64("avg_signal")(cols)(stmt)?
+                        signal = Sql.str("signal")(cols)(stmt)?
+                        avg_hr = Sql.f64("avg_hr")(cols)(stmt)?
+                        hr_known = Sql.i64("hr_known")(cols)(stmt)?
+                        rec_drop = Sql.f64("rec_drop")(cols)(stmt)?
+                        rec_drop_known = Sql.i64("rec_drop_known")(cols)(stmt)?
                         Ok({ ordinal, dur_s, avg_signal, signal, avg_hr, hr_known: hr_known != 0, rec_drop, rec_drop_known: rec_drop_known != 0 })
                     },
                 })
@@ -1211,7 +1211,7 @@ ReportSessions :: [].{
             if !(Str.is_empty(date_arg))
                 date_arg
             else {
-                latest = Sqlite.query_many!({
+                latest = Sql.query_many!({
                     path: Path.utf8(path),
                     query:
                         \\SELECT COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS d, COALESCE(CAST(a.name AS TEXT), '') AS name, a.id AS id
@@ -1220,9 +1220,9 @@ ReportSessions :: [].{
                     ,
                     bindings: [],
                     rows: |cols| |stmt| {
-                        d = Sqlite.str("d")(cols)(stmt)?
-                        name = Sqlite.str("name")(cols)(stmt)?
-                        id = Sqlite.i64("id")(cols)(stmt)?
+                        d = Sql.str("d")(cols)(stmt)?
+                        name = Sql.str("name")(cols)(stmt)?
+                        id = Sql.i64("id")(cols)(stmt)?
                         Ok({ d, name, id })
                     },
                 })?
@@ -1238,7 +1238,7 @@ ReportSessions :: [].{
                 }
             }
         prows : List(Metrics.ProgressRow)
-        prows = Sqlite.query_many!({
+        prows = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT COALESCE(CAST(a.name AS TEXT), '') AS name, a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, COALESCE(CAST(a.sport_type AS TEXT), '') AS sport,
@@ -1259,21 +1259,21 @@ ReportSessions :: [].{
             ,
             bindings: [{ name: ":date", value: String(date) }],
             rows: |cols| |stmt| {
-                name = Sqlite.str("name")(cols)(stmt)?
-                row_id = Sqlite.i64("id")(cols)(stmt)?
-                row_date = Sqlite.str("date")(cols)(stmt)?
-                sport = Sqlite.str("sport")(cols)(stmt)?
-                distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
-                moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
-                np_w = Sqlite.f64("np_w")(cols)(stmt)?
-                avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
-                avg_hr_scored = Sqlite.f64("avg_hr_scored")(cols)(stmt)?
-                rpe = Sqlite.f64("rpe")(cols)(stmt)?
-                output_kj = Sqlite.f64("output_kj")(cols)(stmt)?
-                tss = Sqlite.f64("tss")(cols)(stmt)?
-                load_model = Sqlite.str("load_model")(cols)(stmt)?
-                dpct = Sqlite.f64("decoupling_pct")(cols)(stmt)?
-                dknown = Sqlite.i64("decoupling_known")(cols)(stmt)?
+                name = Sql.str("name")(cols)(stmt)?
+                row_id = Sql.i64("id")(cols)(stmt)?
+                row_date = Sql.str("date")(cols)(stmt)?
+                sport = Sql.str("sport")(cols)(stmt)?
+                distance_m = Sql.f64("distance_m")(cols)(stmt)?
+                moving_time = Sql.i64("moving_time")(cols)(stmt)?
+                np_w = Sql.f64("np_w")(cols)(stmt)?
+                avg_hr = Sql.f64("avg_hr")(cols)(stmt)?
+                avg_hr_scored = Sql.f64("avg_hr_scored")(cols)(stmt)?
+                rpe = Sql.f64("rpe")(cols)(stmt)?
+                output_kj = Sql.f64("output_kj")(cols)(stmt)?
+                tss = Sql.f64("tss")(cols)(stmt)?
+                load_model = Sql.str("load_model")(cols)(stmt)?
+                dpct = Sql.f64("decoupling_pct")(cols)(stmt)?
+                dknown = Sql.i64("decoupling_known")(cols)(stmt)?
                 Ok({ name, date: row_date, sport, distance_m, moving_time, np_w, avg_hr, avg_hr_scored, rpe, output_kj, tss, load_model, decoupling_pct: dpct, decoupling_known: dknown == 1, id: row_id })
             },
         })?
@@ -1293,7 +1293,7 @@ ReportSessions :: [].{
         # (three groups of one), while one recurring name holds 17 sessions of unlike
         # shapes. Sessions without detected structure keep name grouping unchanged.
         structure_mates! = |fam, sig, reps, blo, bhi|
-            Sqlite.query_many!({
+            Sql.query_many!({
                 path: Path.utf8(path),
                 query:
                     \\SELECT COALESCE(CAST(a.name AS TEXT), '') AS name, a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, COALESCE(CAST(a.sport_type AS TEXT), '') AS sport,
@@ -1330,25 +1330,25 @@ ReportSessions :: [].{
                     { name: ":bhi", value: Integer(bhi) },
                 ],
                 rows: |cols| |stmt| {
-                    name = Sqlite.str("name")(cols)(stmt)?
-                    row_id = Sqlite.i64("id")(cols)(stmt)?
-                    row_date = Sqlite.str("date")(cols)(stmt)?
-                    sport = Sqlite.str("sport")(cols)(stmt)?
-                    distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
-                    moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
-                    np_w = Sqlite.f64("np_w")(cols)(stmt)?
-                    avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
-                    avg_hr_scored = Sqlite.f64("avg_hr_scored")(cols)(stmt)?
-                    rpe = Sqlite.f64("rpe")(cols)(stmt)?
-                    output_kj = Sqlite.f64("output_kj")(cols)(stmt)?
-                    tss = Sqlite.f64("tss")(cols)(stmt)?
-                    load_model = Sqlite.str("load_model")(cols)(stmt)?
-                    dpct = Sqlite.f64("decoupling_pct")(cols)(stmt)?
-                    dknown = Sqlite.i64("decoupling_known")(cols)(stmt)?
+                    name = Sql.str("name")(cols)(stmt)?
+                    row_id = Sql.i64("id")(cols)(stmt)?
+                    row_date = Sql.str("date")(cols)(stmt)?
+                    sport = Sql.str("sport")(cols)(stmt)?
+                    distance_m = Sql.f64("distance_m")(cols)(stmt)?
+                    moving_time = Sql.i64("moving_time")(cols)(stmt)?
+                    np_w = Sql.f64("np_w")(cols)(stmt)?
+                    avg_hr = Sql.f64("avg_hr")(cols)(stmt)?
+                    avg_hr_scored = Sql.f64("avg_hr_scored")(cols)(stmt)?
+                    rpe = Sql.f64("rpe")(cols)(stmt)?
+                    output_kj = Sql.f64("output_kj")(cols)(stmt)?
+                    tss = Sql.f64("tss")(cols)(stmt)?
+                    load_model = Sql.str("load_model")(cols)(stmt)?
+                    dpct = Sql.f64("decoupling_pct")(cols)(stmt)?
+                    dknown = Sql.i64("decoupling_known")(cols)(stmt)?
                     Ok({ name, date: row_date, sport, distance_m, moving_time, np_w, avg_hr, avg_hr_scored, rpe, output_kj, tss, load_model, decoupling_pct: dpct, decoupling_known: dknown == 1, id: row_id })
                 },
             })
-        shapes = Sqlite.query_many!({
+        shapes = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT s.activity_id AS id, COUNT(*) AS reps,
@@ -1364,14 +1364,14 @@ ReportSessions :: [].{
             ,
             bindings: [{ name: ":date", value: String(date) }],
             rows: |cols| |stmt| {
-                sid = Sqlite.i64("id")(cols)(stmt)?
-                reps = Sqlite.i64("reps")(cols)(stmt)?
-                mean_dur = Sqlite.i64("mean_dur")(cols)(stmt)?
-                mn = Sqlite.i64("mn")(cols)(stmt)?
-                mx = Sqlite.i64("mx")(cols)(stmt)?
-                sig = Sqlite.str("sig")(cols)(stmt)?
-                fam = Sqlite.str("fam")(cols)(stmt)?
-                aname = Sqlite.str("aname")(cols)(stmt)?
+                sid = Sql.i64("id")(cols)(stmt)?
+                reps = Sql.i64("reps")(cols)(stmt)?
+                mean_dur = Sql.i64("mean_dur")(cols)(stmt)?
+                mn = Sql.i64("mn")(cols)(stmt)?
+                mx = Sql.i64("mx")(cols)(stmt)?
+                sig = Sql.str("sig")(cols)(stmt)?
+                fam = Sql.str("fam")(cols)(stmt)?
+                aname = Sql.str("aname")(cols)(stmt)?
                 Ok({ sid, reps, mean_dur, mn, mx, sig, fam, aname })
             },
         })?
@@ -1496,13 +1496,13 @@ ReportSessions :: [].{
             if Str.is_empty(date) {
                 Output.err_out!("no_scorable_workouts", "nothing to compare yet — analyze activities first (and `stride rate` your strength sessions)")
             } else {
-                on_date = Sqlite.query_many!({
+                on_date = Sql.query_many!({
                     path: Path.utf8(path),
                     query: "SELECT COALESCE(CAST(name AS TEXT), '') AS name, id AS id FROM activities WHERE substr(start_local, 1, 10) = :date LIMIT 1",
                     bindings: [{ name: ":date", value: String(date) }],
                     rows: |cols| |stmt| {
-                        name = Sqlite.str("name")(cols)(stmt)?
-                        id = Sqlite.i64("id")(cols)(stmt)?
+                        name = Sql.str("name")(cols)(stmt)?
+                        id = Sql.i64("id")(cols)(stmt)?
                         Ok({ name, id })
                     },
                 })?

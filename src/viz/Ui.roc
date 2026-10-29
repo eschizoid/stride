@@ -1,6 +1,7 @@
 import core.Series
 import rr.Capture
 import rr.Draw
+import rr.Shader
 import rr.Text
 import rr.Texture
 import Db
@@ -207,7 +208,7 @@ Ui :: [].{
 		# to the window. Unavailable remembers the size the GPU refused at, so
 		# a resize earns one fresh attempt; between refusals the app renders
 		# exactly as before the feature existed
-		glow : [Unbuilt, Unavailable({ gw : F32, gh : F32 }), Ready({ rt : Draw.RenderTexture, shader : Draw.Shader, rx : Draw.F32Uniform, ry : Draw.F32Uniform, gw : F32, gh : F32 })],
+		glow : [Unbuilt, Unavailable({ gw : F32, gh : F32 }), Ready({ rt : Draw.RenderTexture, shader : Shader({ res_x : F32, res_y : F32 }), gw : F32, gh : F32 })],
 		glow_on : Bool,
 		mouse_in : Bool,
 		cursor : I64,

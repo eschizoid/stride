@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Every TEXT column decoded by `Sqlite.str` OR `Sqlite.nullable_str` must be
+# Every TEXT column decoded by `Sql.str` OR `Sql.nullable_str` must be
 # projected through `CAST(... AS TEXT)`.
 #
 # TEXT affinity converts INTEGER and REAL but NOT blobs: a blob from a hand-edit or
@@ -28,8 +28,8 @@ decodes=0
 sites=0
 for f in src/cli/*.roc; do
   # BOTH string decoders, ANY alias — a lowercase-only alias class misses
-  # `Sqlite.str("sportType")` without moving the asserted count.
-  grep -oE 'Sqlite\.(nullable_)?str\("[^"]*"\)' "$f" 2>/dev/null | sed 's/.*("//;s/")//' | sort -u > "$tmp/aliases" || true
+  # `Sql.str("sportType")` without moving the asserted count.
+  grep -oE 'Sql\.(nullable_)?str\("[^"]*"\)' "$f" 2>/dev/null | sed 's/.*("//;s/")//' | sort -u > "$tmp/aliases" || true
   [ -s "$tmp/aliases" ] || continue
   while IFS= read -r alias; do
     [ -n "$alias" ] || continue

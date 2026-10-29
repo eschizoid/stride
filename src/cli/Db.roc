@@ -1,4 +1,4 @@
-import pf.Sqlite
+import Sql
 import pf.Cmd
 import pf.Env
 import pf.Utc
@@ -35,19 +35,19 @@ Db :: [].{
         # dir is the sh -c positional $1 (double-quoted), never interpolated, so a path
         # with a quote or shell metachar can't break out — same pattern as zone_offset_now!.
         cmd = "chmod 700 \"$1\" 2>/dev/null; chmod 600 \"$1/db.sqlite\" \"$1/db.sqlite-wal\" \"$1/db.sqlite-shm\" \"$1/db.sqlite-journal\" 2>/dev/null; true"
-        _ = Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", cmd, "sh", dir], OsStr.from_str)).exec_output!()
+        _ = Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", cmd, "sh", dir], OsStr.from_str)).capture!()
         Ok({})
     }
     # ── config key-value helpers ─────────────────────────────────────────
 
     config_get! : Str, Str => Try(Str, _)
     config_get! = |path, key|
-        Sqlite.query!({
+        Sql.query!({
             path: Path.utf8(path),
             # CAST(... AS TEXT), and the reason is a real divergence rather than defensive
             # habit. `value` is declared TEXT, and TEXT affinity converts INTEGER and REAL
             # but NOT blobs — so a blob written by a hand-edit or a partial corruption
-            # survives in the column, and a bare `Sqlite.str` decode then answers
+            # survives in the column, and a bare `Sql.str` decode then answers
             # `UnexpectedType(Bytes)`, which `config get` reports as `internal_error`:
             # "this is a bug, not the data and not the invocation", about a fault that is
             # entirely the data. It also made this path disagree with bare `config`, which
@@ -55,7 +55,7 @@ Db :: [].{
             # refused. One rule, decided in one place.
             query: "SELECT COALESCE(CAST(value AS TEXT), '') AS value FROM config WHERE key = :key",
             bindings: [{ name: ":key", value: String(key) }],
-            row: Sqlite.str("value"),
+            row: Sql.str("value"),
         })
 
     # read a config key, distinguishing "genuinely absent" from "the db read failed"
@@ -101,7 +101,7 @@ Db :: [].{
     # the state a fresh install is actually in".
     config_delete! : Str, Str => Try({}, _)
     config_delete! = |path, key|
-        Sqlite.execute!({
+        Sql.execute!({
             path: Path.utf8(path),
             query: "DELETE FROM config WHERE key = :key",
             bindings: [{ name: ":key", value: String(key) }],
@@ -109,7 +109,7 @@ Db :: [].{
 
     config_set! : Str, Str, Str => Try({}, _)
     config_set! = |path, key, value|
-        Sqlite.execute!({
+        Sql.execute!({
             path: Path.utf8(path),
             query: "INSERT OR REPLACE INTO config (key, value) VALUES (:key, :value)",
             bindings: [
@@ -149,8 +149,8 @@ Db :: [].{
         # tz is passed as the positional $1 (never interpolated) so a crafted timezone
         # string can't break out of the quoting or inject shell syntax.
         cmd = "if [ -f \"/usr/share/zoneinfo/$1\" ]; then TZ=\"$1\" date +%z; else echo INVALID; fi"
-        match Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", cmd, "sh", tz], OsStr.from_str)).exec_output!() {
-            Ok(out) => Metrics.parse_utc_offset(out.stdout_utf8).map_err(|_| BadTz)
+        match Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", cmd, "sh", tz], OsStr.from_str)).capture!() {
+            Ok(out) => Metrics.parse_utc_offset(out).map_err(|_| BadTz)
             Err(_) => Err(BadTz)
 
         }
@@ -245,14 +245,14 @@ Db :: [].{
         # the rule period_ftp_sql scores by; with one, the best is that session's
         # own and the estimate reads 0, as its ftp_used does.
         cutoff = Metrics.days_to_date_str(local_today_days!(path) - 60)
-        best = Sqlite.query!({
+        best = Sql.query!({
             path: Path.utf8(path),
             # family population (#151): compare the STORED sport_family column —
             # the canonical head is computed in Roc and bound, keeping the
             # predicate sargable (same rule period_ftp_sql uses in Analyze)
             query: "SELECT CAST(COALESCE(CASE WHEN COUNT(NULLIF(m.best_20min_w, 0)) >= 2 THEN MAX(m.best_20min_w) END, 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_family = :fam AND a.start_local >= :cutoff",
             bindings: [{ name: ":fam", value: String(Sports.canonical(sport)) }, { name: ":cutoff", value: String(cutoff) }],
-            row: Sqlite.f64("b"),
+            row: Sql.f64("b"),
         })?
         Ok(Metrics.ftp_from_best_20min(best))
     }
@@ -269,30 +269,30 @@ Db :: [].{
         # medical word is gone). MUST run before the CREATEs below, or an empty
         # planned_sessions would shadow the old data.
         rename_table_if_exists!(path, "prescriptions", "planned_sessions")?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.activities, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.metrics, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.segments, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.daily_load, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.planned_sessions, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.config, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.streams, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.activities, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.metrics, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.segments, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.daily_load, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.planned_sessions, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.config, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.streams, bindings: [] })?
         # v39: per-activity count of stream fetches that would not decode
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.stream_retries, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.stream_retries, bindings: [] })?
         # ...and a retry row for every stored body that is not JSON at all. Earlier
         # versions stored any UTF-8 body, and analyze reports one only when it
         # rescores the activity, which a converged row never needs; without this a
         # body stored before v39 would never be fetched again. OR IGNORE keeps the
         # count of a row that exists, so re-running the migration re-arms nothing.
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.seed_stream_retries, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.seed_stream_retries, bindings: [] })?
         # v34 (#478): strength notes (mirror) + parsed set rows (computed) —
         # created before the views below, which read strength_sets
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.strength_notes, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.strength_sets, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.strength_notes, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.strength_sets, bindings: [] })?
         # v38: structured strength logs imported from Strava's connector (mirror)
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.strength_logs, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.ratings, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.strength_logs, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.ratings, bindings: [] })?
         # v27 (#138): event targets
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.events, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.events, bindings: [] })?
         alter_add_column!(path, "ALTER TABLE activities ADD COLUMN weighted_avg_watts REAL")?
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_20min_w REAL")?
         # v21: which signal produced decoupling_pct — provenance stored at analyze
@@ -347,7 +347,7 @@ Db :: [].{
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN pi_hard_s INTEGER")?
         # v10: FTP is now per-sport under `ftp_<sport>` (uniform, no special cycling key).
         # Move the old cycling `ftp` value to `ftp_ride` if it hasn't been set already.
-        Sqlite.execute!({ path: Path.utf8(path), query: "UPDATE config SET key = 'ftp_ride' WHERE key = 'ftp' AND (SELECT COUNT(*) FROM config WHERE key = 'ftp_ride') = 0", bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: "UPDATE config SET key = 'ftp_ride' WHERE key = 'ftp' AND (SELECT COUNT(*) FROM config WHERE key = 'ftp_ride') = 0", bindings: [] })?
         # v11: synced_at stamps each activity with the sync run that last saw it, so a
         # sync can prune activities deleted on Strava — any row in the pulled window not
         # re-stamped this run is gone upstream. Mirror tier (activities) is re-pullable.
@@ -407,11 +407,11 @@ Db :: [].{
         alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN decoupling_pct REAL")?
         # v2: index the column every date-range filter and the activities sort use
         # (queries now compare a.start_local directly — sargable — instead of substr)
-        Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })?
         # v14: period_threshold_sql, the pace-side twin of period_ftp_sql, filters on sport_type AND start_local
         # together, once per row being scored. start_local alone leaves a scan over every
         # activity of every OTHER sport on each lookup; the composite makes it a range seek.
-        Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_sport_start ON activities(sport_type, start_local)", bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_sport_start ON activities(sport_type, start_local)", bindings: [] })?
         # v15: NULL = Strava never said (pre-flag rows, CSV imports); 1 = real meter; 0 =
         # estimated. Estimated watts must not outrank honest fallbacks (#73).
         alter_add_column!(path, "ALTER TABLE activities ADD COLUMN device_watts INTEGER")?
@@ -420,7 +420,7 @@ Db :: [].{
         # surviving metrics row belongs to an activity unwritten since it was computed, so
         # its current values ARE the values it was scored from. Touches only NULL rows, so
         # the re-run (a db stuck at 17 pre-backfill) is a safe no-op.
-        Sqlite.execute!({
+        Sql.execute!({
             path: Path.utf8(path),
             query:
                 \\UPDATE activity_metrics SET
@@ -451,16 +451,16 @@ Db :: [].{
         # triggers keep future writes current — fixtures and CSV imports write activities
         # directly, so sync-side code cannot be the keeper.
         alter_add_column!(path, "ALTER TABLE activities ADD COLUMN sport_family TEXT")?
-        Sqlite.execute!({ path: Path.utf8(path), query: "UPDATE activities SET sport_family = ${Sports.sql_canonical_case("sport_type")}", bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_family_start ON activities(sport_family, start_local)", bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: "DROP TRIGGER IF EXISTS activities_family_ai", bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: "DROP TRIGGER IF EXISTS activities_family_au", bindings: [] })?
-        Sqlite.execute!({
+        Sql.execute!({ path: Path.utf8(path), query: "UPDATE activities SET sport_family = ${Sports.sql_canonical_case("sport_type")}", bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_family_start ON activities(sport_family, start_local)", bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: "DROP TRIGGER IF EXISTS activities_family_ai", bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: "DROP TRIGGER IF EXISTS activities_family_au", bindings: [] })?
+        Sql.execute!({
             path: Path.utf8(path),
             query: "CREATE TRIGGER activities_family_ai AFTER INSERT ON activities BEGIN UPDATE activities SET sport_family = ${Sports.sql_canonical_case("NEW.sport_type")} WHERE id = NEW.id; END",
             bindings: [],
         })?
-        Sqlite.execute!({
+        Sql.execute!({
             path: Path.utf8(path),
             query: "CREATE TRIGGER activities_family_au AFTER UPDATE OF sport_type ON activities BEGIN UPDATE activities SET sport_family = ${Sports.sql_canonical_case("NEW.sport_type")} WHERE id = NEW.id; END",
             bindings: [],
@@ -470,16 +470,16 @@ Db :: [].{
         # LAST in the migration, deliberately: plan_current references the
         # status column, which the ALTERs above add on databases that predate
         # it — a fresh or old db must gain the column before the view names it.
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.plan_current_drop, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.plan_current, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.plan_current_drop, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.plan_current, bindings: [] })?
         # v37: the series clock BEFORE week_bounds, which reads it
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.series_clock_drop, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.series_clock, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.week_bounds_drop, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.week_bounds, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.series_clock_drop, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.series_clock, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.week_bounds_drop, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.week_bounds, bindings: [] })?
         # v30: the per-activity intensity classification, shared with the viz
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_intensity_drop, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_intensity, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.activity_intensity_drop, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.activity_intensity, bindings: [] })?
         # v31: the power-ladder unpivot and the Monday-week ramp - one
         # definition each, aggregated differently by every consumer.
         # weekly_ramp reads week_bounds, so it stays after it. v36 put the
@@ -487,47 +487,47 @@ Db :: [].{
         # a session recorded one and a reader of the list must not lose a rung
         # nobody has ridden yet; this block runs whole on any bump, so the
         # list lands on every database that reaches 36.
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.power_ladder_rungs_drop, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.power_ladder_rungs, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_power_ladder_drop, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_power_ladder, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.weekly_ramp_drop, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.weekly_ramp, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.power_ladder_rungs_drop, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.power_ladder_rungs, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.activity_power_ladder_drop, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.activity_power_ladder, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.weekly_ramp_drop, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.weekly_ramp, bindings: [] })?
         # v32: the career trio - totals per sport and month load here; the
         # month-close FTP follows the family-month keys it joins (v37)
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.career_totals_drop, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.career_totals, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_load_drop, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_load, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.career_totals_drop, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.career_totals, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.monthly_load_drop, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.monthly_load, bindings: [] })?
         # v37: the family-month keys BEFORE every view that joins them - the
         # month-close FTP, coverage, the family load and the spine
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_family_month_drop, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.activity_family_month, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_ride_ftp_drop, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_ride_ftp, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.activity_family_month_drop, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.activity_family_month, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.monthly_ride_ftp_drop, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.monthly_ride_ftp, bindings: [] })?
         # v35 (#521): coverage BEFORE the spine view, which joins it
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.strength_coverage_drop, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.strength_coverage, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.strength_coverage_drop, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.strength_coverage, bindings: [] })?
         # v37: a family's load and sessions per month, on the shared keys
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_family_load_drop, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_family_load, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.monthly_family_load_drop, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.monthly_family_load, bindings: [] })?
         # v33: the same quantity for every family, with its kind beside it
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_threshold_drop, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: Schema.monthly_threshold, bindings: [] })?
-        Sqlite.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_planned_sessions_date_id ON planned_sessions (target_date, id)", bindings: [] })
+        Sql.execute!({ path: Path.utf8(path), query: Schema.monthly_threshold_drop, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: Schema.monthly_threshold, bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_planned_sessions_date_id ON planned_sessions (target_date, id)", bindings: [] })
     }
 
     # rename old => new when old exists and new doesn't (idempotent, data-preserving)
     rename_table_if_exists! : Str, Str, Str => Try({}, _)
     rename_table_if_exists! = |path, old, new| {
-        count = Sqlite.query!({
+        count = Sql.query!({
             path: Path.utf8(path),
             query: "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = :old",
             bindings: [{ name: ":old", value: String(old) }],
-            row: Sqlite.i64("n"),
+            row: Sql.i64("n"),
         })?
         if count > 0
-            Sqlite.execute!({ path: Path.utf8(path), query: "ALTER TABLE ${old} RENAME TO ${new}", bindings: [] })
+            Sql.execute!({ path: Path.utf8(path), query: "ALTER TABLE ${old} RENAME TO ${new}", bindings: [] })
         else
             Ok({})
     }
@@ -535,7 +535,7 @@ Db :: [].{
     # case); a locked db, disk error, etc. propagate instead of failing silently.
     alter_add_column! : Str, Str => Try({}, _)
     alter_add_column! = |path, q|
-        match Sqlite.execute!({ path: Path.utf8(path), query: q, bindings: [] }) {
+        match Sql.execute!({ path: Path.utf8(path), query: q, bindings: [] }) {
             Ok({}) => Ok({})
             Err(SqliteErr(Error, msg)) =>
                 if Str.contains(msg, "duplicate column") Ok({}) else Err(SqliteErr(Error, msg))
@@ -546,7 +546,7 @@ Db :: [].{
     # reports "no such column" — that's the converged state, not a failure.
     drop_column_if_exists! : Str, Str => Try({}, _)
     drop_column_if_exists! = |path, q|
-        match Sqlite.execute!({ path: Path.utf8(path), query: q, bindings: [] }) {
+        match Sql.execute!({ path: Path.utf8(path), query: q, bindings: [] }) {
             Ok({}) => Ok({})
             Err(SqliteErr(Error, msg)) =>
                 if Str.contains(msg, "no such column") Ok({}) else Err(SqliteErr(Error, msg))
@@ -571,11 +571,11 @@ Db :: [].{
         # which is precisely when someone runs doctor. The sentinel below is only honest if
         # the failing paths reach it, so the query error becomes "unknown" too.
         modes =
-            match Sqlite.query_many!({
+            match Sql.query_many!({
                 path: Path.utf8(path),
                 query: "PRAGMA journal_mode",
                 bindings: [],
-                rows: Sqlite.str("journal_mode"),
+                rows: Sql.str("journal_mode"),
             }) {
                 Ok(rows) => rows
                 Err(_) => []
@@ -592,11 +592,11 @@ Db :: [].{
         # write lock, so with the default timeout of 0 the very statement meant to enable
         # WAL is itself the one that fails instantly against a busy database — leaving the
         # engine in the exact rollback-journal mode it was trying to escape.
-        _ = Sqlite.query_many!({
+        _ = Sql.query_many!({
             path: Path.utf8(path),
             query: "PRAGMA busy_timeout = 5000",
             bindings: [],
-            rows: Sqlite.i64("timeout"),
+            rows: Sql.i64("timeout"),
         })?
         # Read before assigning: setting journal_mode wants a write lock, and every command
         # opens through here, so an unconditional assignment would have each short read
@@ -605,11 +605,11 @@ Db :: [].{
         if journal_mode!(path)? == "wal" {
             Ok({})
         } else {
-            _ = Sqlite.query_many!({
+            _ = Sql.query_many!({
                 path: Path.utf8(path),
                 query: "PRAGMA journal_mode = WAL",
                 bindings: [],
-                rows: Sqlite.str("journal_mode"),
+                rows: Sql.str("journal_mode"),
             })?
             Ok({})
         }
@@ -620,17 +620,17 @@ Db :: [].{
     ensure_schema! : Str => Try({}, _)
     ensure_schema! = |path| {
         configure_concurrency!(path)?
-        v = (Sqlite.query!({
+        v = (Sql.query!({
                 path: Path.utf8(path),
                 query: "SELECT user_version AS v FROM pragma_user_version()",
                 bindings: [],
-                row: Sqlite.i64("v"),
+                row: Sql.i64("v"),
             })).ok_or(0)
         if v >= schema_version {
             Ok({})
         } else {
             run_migrations!(path)?
-            Sqlite.execute!({ path: Path.utf8(path), query: "PRAGMA user_version = ${(schema_version).to_str()}", bindings: [] })
+            Sql.execute!({ path: Path.utf8(path), query: "PRAGMA user_version = ${(schema_version).to_str()}", bindings: [] })
         }
     }
     # db path + guaranteed-current schema. Every command opens through this.

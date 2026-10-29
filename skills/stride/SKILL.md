@@ -391,5 +391,5 @@ itself on any command, so upgrading the binary is safe.
 CI (`.github/workflows/build.yml`) runs more: `just e2e-sync` and the gate scripts under
 `tools/`, among them `skill-shapes.sh` and `command-claims.sh`, which read this file. A
 change to SKILL.md must pass `just skill-shapes` and `just command-claims`. The engine
-builds with Roc's new compiler on basic-cli 0.23; contributor rules live in AGENTS.md and
+builds with Roc's new compiler on basic-cli 0.26; contributor rules live in AGENTS.md and
 compiler notes in `docs/roc-new-compiler-notes.md`.

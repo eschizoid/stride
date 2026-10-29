@@ -3,9 +3,9 @@
 # the window's coverage is pinned at. Every other subcommand is a pass-through
 # carrying roc's own exit code.
 #
-# Nothing here forgives a warning. roc-ray declares the compiler the app header
-# pins, so a viz build has no version-skew notice to tolerate, and roc exits
-# non-zero on any warning that does appear.
+# Nothing here forgives a warning. roc-ray names no compiler, so a viz build
+# has no version-skew notice to tolerate, and roc exits non-zero on any
+# warning that does appear.
 set -eu
 
 rc=0
@@ -36,8 +36,8 @@ printf '%s\n' "$out"
 # pins for a one-off, never disable them. Adding or removing an assertion means
 # updating the matching pin ON PURPOSE.
 case "${1:-}" in test)
-  want="${EXPECT_TESTS:-227}"
-  want_viz="${EXPECT_VIZ_ASSERTS:-279}"
+  want="${EXPECT_TESTS:-230}"
+  want_viz="${EXPECT_VIZ_ASSERTS:-282}"
   have_viz=$(grep -ch '^[[:space:]]*\(expect\|and \)' src/viz/*.roc 2>/dev/null | awk '{s+=$1} END {print s+0}')
   if [ "$have_viz" != "$want_viz" ]; then
     echo "roc-viz: src/viz declares $have_viz assertion lines (expect + and), the pin says $want_viz - update the pin ON PURPOSE or restore the assertion" >&2

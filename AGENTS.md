@@ -44,10 +44,9 @@ just build     # the binary, --opt=dev (see below); STRIDE_LINKER= is an escape 
 just install   # build + symlink to ~/.local/bin/stride
 ```
 
-`tests/e2e.roc` rides basic-webserver 0.17.0, the first release whose platform source
-carries no `..` on a return-position union, so the harness builds at zero warnings on
-this pin and `just e2e`, `just test` and `just e2e-sync` pass; docs/roc-new-compiler-notes.md
-has the account of the wait.
+`tests/e2e.roc` rides basic-webserver 0.19.0, which builds at zero warnings on the
+pinned nightly, so `just e2e`, `just test` and `just e2e-sync` pass;
+docs/roc-new-compiler-notes.md says why the pin is the newest nightly it compiles on.
 
 CI runs more than `just test`, and a green `just test` is not a green build. These are the
 rest of it, all runnable locally — run them before pushing. Every one is network-free
@@ -61,7 +60,7 @@ sh tools/blob-safety.sh    # every TEXT decode is projected through CAST(... AS 
 sh tools/adapter-fixtures.sh # every strength-set adapter is registered, in pinned order, with its sample (ADR 0018)
 sh tools/command-claims.sh # commands the docs name vs the binary's own table (needs ./stride)
 just layer-check           # every engine import points down the layer table (ADR 0016)
-just pin-check             # every workflow nightly-tag site agrees with the two compiler pins
+just pin-check             # one compiler pin: no workflow override, the justfile agrees, the viz header names none
 just viz-check             # type-check the window on the viz nightly, through the count-pinning wrapper
 just viz-test              # the window's expects + assertion-count pins, on the viz nightly
 just issue-claims          # issue-state claims in comments (needs `gh` auth)
@@ -84,9 +83,9 @@ expect — `tools/adapter-fixtures.sh` refuses any of the three without the othe
 the package names it by path, so nothing about that name is compiler-imposed.
 
 Prerequisites for everything above: `just`, `jq`, `sqlite3`, `gh`, and the Roc
-nightlies: the ENGINE pin is the default in `.github/actions/setup-roc/action.yml`
-(one place); the VIZ pin lives in `src/viz/main.roc`'s app header and
-`tools/pin-check.sh` holds every workflow site to it.
+nightly: the one pin is the default in `.github/actions/setup-roc/action.yml`, both
+binaries build on it, and `tools/pin-check.sh` holds the justfile's local viz default
+to it and refuses a per-job override.
 
 - **Always `just test` in one command, read the result, commit in a separate command.**
   Never chain `test && commit` — a mid-chain failure commits red.
@@ -190,7 +189,7 @@ nightlies: the ENGINE pin is the default in `.github/actions/setup-roc/action.ym
 - **SQL queries stay next to their row decoders** in whichever module owns the
   query (`Db.roc`, `Report.roc`, …). Only decoder-free SQL (DDL) lives in
   Schema.roc.
-- **Every TEXT column read by `Sqlite.str` / `Sqlite.nullable_str` is projected through
+- **Every TEXT column read by `Sql.str` / `Sql.nullable_str` is projected through
   `CAST(... AS TEXT)`** — SQLite's dynamic typing lets a BLOB or a number sit in a TEXT
   column, and the decoder meets whatever is actually stored. `sh tools/blob-safety.sh`
   gates this on three OSes in CI and names the (file, alias) pair it cannot prove.
@@ -209,19 +208,18 @@ nightlies: the ENGINE pin is the default in `.github/actions/setup-roc/action.ym
 - **A bare `True`/`False` serializes as the STRING `"True"`** in an encode-only
   payload. Annotate the field `: Bool`; that is why `Report.roc` carries the
   annotations it does.
-- **Compiler pins have one definition each, and a gate holds the copies.** The engine
-  pin is the `setup-roc` action's default; the viz pin is the app header, and
-  `tools/pin-check.sh` (in CI) fails naming any workflow `nightly-tag:` site that
-  disagrees — a prose count of the sites is exactly what the gate exists to replace.
+- **The compiler pin has one definition, and a gate holds the copies.** The pin is
+  the `setup-roc` action's default; `tools/pin-check.sh` (in CI) fails on any
+  workflow `nightly-tag:` override, on a `roc:` field in the viz app header, and on a
+  justfile `viz_pin` that names another tag.
 - **Mermaid diagrams in the README**: `<br>` and commas only; other punctuation breaks
   the render.
 
 ## The window (src/viz)
 
 A second Roc app shares the database: the roc-ray window (`src/viz/main.roc`;
-`just viz` opens it). It pins ITS OWN compiler in its app header —
-`tools/pin-check.sh` holds every workflow `nightly-tag:` site to that pin; set
-`ROC_VIZ` to a matching nightly locally. **The window declares what it may
+`just viz` opens it). It builds on the repo's one compiler pin, since roc-ray
+names no compiler of its own; set `ROC_VIZ` to that nightly locally. **The window declares what it may
 touch, in its own source.** roc-ray decides a filesystem grant from the TEXT
 of a path, and `~/.stride` sits under a home known only at run time, so the
 launcher resolves it and passes it as the first argument and the startup
@@ -317,12 +315,15 @@ These are measured toolchain behaviors, not style opinions.
 
 ### Platform APIs
 
-- **Verify against the docs before writing** (basic-cli 0.23 docs, or package source in
+- **Verify against the docs before writing** (basic-cli 0.26 docs, or package source in
   `~/.cache/roc/packages/`) — alpha APIs drift.
-- **`Sqlite.query!` on a row that may not exist fails the command.** Use `query_many!`
+- **The engine reaches SQLite only through `src/cli/Sql.roc`.** Each call opens its own
+  connection, so statements that must share one (BEGIN … COMMIT) go through
+  `Sql.transaction!`; a BEGIN sent through `Sql.execute!` ends with its connection.
+- **`Sql.query!` on a row that may not exist fails the command.** Use `query_many!`
   and match the empty list — this is how config loading must read any possibly-absent
   key (a zero-row `query!` returns `Err(NoRowsReturned)`, so an unhandled `?` exits 1).
-- **SQLite type affinity bites**: INTEGER columns reject `Sqlite.f64` decoders — `CAST(…
+- **SQLite type affinity bites**: INTEGER columns reject `Sql.f64` decoders — `CAST(…
   AS REAL)` in the SELECT when unsure.
 - **Bind values; never splice text into SQL.** (The platform double-free that once
   forced a splice workaround is fixed in basic-cli ≥ 0.22; #105/#130/#131 hold the

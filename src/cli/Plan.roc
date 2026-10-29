@@ -2,7 +2,7 @@ import Db
 import Output
 import Strava
 import Report
-import pf.Sqlite
+import Sql
 import pf.Stdout
 import pf.Path
 import Analyze
@@ -48,7 +48,7 @@ Plan :: [].{
                         if !(Report.row_exists!(path, "activities", activity_id)?) {
                             Output.err_out!("activity_not_found", "no activity ${I64.to_str(activity_id)} in the db — `stride sync` first?")
                         } else {
-                            Sqlite.execute!({
+                            Sql.execute!({
                                 path: Path.utf8(path),
                                 query: "INSERT OR REPLACE INTO ratings (activity_id, rpe, rated_at) VALUES (:id, :rpe, :at)",
                                 bindings: [
@@ -98,7 +98,7 @@ Plan :: [].{
                 AllTime => -1
                 ThisWeek => 100
             }
-        rows = Sqlite.query_many!({
+        rows = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT id AS id, COALESCE(CAST(created_at AS TEXT),'') AS created_at, COALESCE(CAST(target_date AS TEXT),'') AS target_date,
@@ -116,20 +116,20 @@ Plan :: [].{
             ,
             bindings: [{ name: ":all", value: Integer(scope_all) }, { name: ":lim", value: Integer(row_limit) }, { name: ":mon", value: String(Metrics.days_to_date_str(mon)) }, { name: ":sun", value: String(Metrics.days_to_date_str(mon + 6)) }],
             rows: |cols| |stmt| {
-                id = Sqlite.i64("id")(cols)(stmt)?
-                created_at = Sqlite.str("created_at")(cols)(stmt)?
-                target_date = Sqlite.str("target_date")(cols)(stmt)?
-                session_type = Sqlite.str("session_type")(cols)(stmt)?
-                detail = Sqlite.str("detail")(cols)(stmt)?
-                rationale = Sqlite.str("rationale")(cols)(stmt)?
-                completed_activity_id = Sqlite.i64("completed_activity_id")(cols)(stmt)?
-                superseded_activity_id = Sqlite.i64("superseded_activity_id")(cols)(stmt)?
-                status = Sqlite.str("status")(cols)(stmt)?
-                skipped_reason = Sqlite.str("skipped_reason")(cols)(stmt)?
-                substitute_activity_id = Sqlite.i64("substitute_activity_id")(cols)(stmt)?
-                done_date = Sqlite.str("done_date")(cols)(stmt)?
-                day_tss = Sqlite.f64("day_tss")(cols)(stmt)?
-                day_load_known = Sqlite.i64("day_load_known")(cols)(stmt)?
+                id = Sql.i64("id")(cols)(stmt)?
+                created_at = Sql.str("created_at")(cols)(stmt)?
+                target_date = Sql.str("target_date")(cols)(stmt)?
+                session_type = Sql.str("session_type")(cols)(stmt)?
+                detail = Sql.str("detail")(cols)(stmt)?
+                rationale = Sql.str("rationale")(cols)(stmt)?
+                completed_activity_id = Sql.i64("completed_activity_id")(cols)(stmt)?
+                superseded_activity_id = Sql.i64("superseded_activity_id")(cols)(stmt)?
+                status = Sql.str("status")(cols)(stmt)?
+                skipped_reason = Sql.str("skipped_reason")(cols)(stmt)?
+                substitute_activity_id = Sql.i64("substitute_activity_id")(cols)(stmt)?
+                done_date = Sql.str("done_date")(cols)(stmt)?
+                day_tss = Sql.f64("day_tss")(cols)(stmt)?
+                day_load_known = Sql.i64("day_load_known")(cols)(stmt)?
                 Ok({ id, created_at, target_date, session_type, detail, rationale, completed_activity_id, superseded_activity_id, status, skipped_reason, substitute_activity_id, done_date, day_tss, day_load_known })
             },
         })?
@@ -211,7 +211,7 @@ Plan :: [].{
         # Claims are not week-relative, so this exclusion carries no week-window
         # clause: with one, a substitute linked from another week would show here as
         # unclaimed and still be refused.
-        unplanned = Sqlite.query_many!({
+        unplanned = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT a.id AS aid, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS adate, COALESCE(CAST(a.sport_type AS TEXT),'') AS sport,
@@ -235,12 +235,12 @@ Plan :: [].{
             ,
             bindings: [{ name: ":all", value: Integer(scope_all) }],
             rows: |cols| |stmt| {
-                aid = Sqlite.i64("aid")(cols)(stmt)?
-                adate = Sqlite.str("adate")(cols)(stmt)?
-                sport = Sqlite.str("sport")(cols)(stmt)?
-                aname = Sqlite.str("aname")(cols)(stmt)?
-                mt = Sqlite.i64("mt")(cols)(stmt)?
-                tss = Sqlite.f64("tss")(cols)(stmt)?
+                aid = Sql.i64("aid")(cols)(stmt)?
+                adate = Sql.str("adate")(cols)(stmt)?
+                sport = Sql.str("sport")(cols)(stmt)?
+                aname = Sql.str("aname")(cols)(stmt)?
+                mt = Sql.i64("mt")(cols)(stmt)?
+                tss = Sql.f64("tss")(cols)(stmt)?
                 Ok({ aid, adate, sport, aname, mt, tss })
             },
         })?
@@ -440,11 +440,11 @@ Plan :: [].{
     plan_add_checked! = |target_date, session_type, detail, rationale, pt| {
         path = Db.open_db!({})?
         # guard: one open planned session per date — skip or complete the old one first
-        existing = Sqlite.query!({
+        existing = Sql.query!({
             path: Path.utf8(path),
             query: "SELECT COALESCE(MAX(id), 0) AS id FROM planned_sessions WHERE target_date = :date AND COALESCE(status, 'open') = 'open'",
             bindings: [{ name: ":date", value: String(target_date) }],
-            row: Sqlite.i64("id"),
+            row: Sql.i64("id"),
         })?
         if existing > 0
             # re-planning a date REVISES its open session in place. Editing a future plan
@@ -460,7 +460,7 @@ Plan :: [].{
     # keeping numbers the new prose no longer describes (ADR 0014 §5)
     revise_planned_session! : Str, I64, Str, Str, Str, Str, [NoT, T({ reps : I64, dur_s : I64, watts : F64 })] => Try({}, _)
     revise_planned_session! = |path, id, target_date, session_type, detail, rationale, pt| {
-        Sqlite.execute!({
+        Sql.execute!({
             path: Path.utf8(path),
             query: "UPDATE planned_sessions SET session_type = :type, detail = :detail, rationale = :rationale, created_at = :at, target_reps = :treps, target_dur_s = :tdur, target_watts = :twatts WHERE id = :id",
             bindings: [
@@ -486,7 +486,7 @@ Plan :: [].{
         }
     insert_planned_session! : Str, Str, Str, Str, Str, [NoT, T({ reps : I64, dur_s : I64, watts : F64 })] => Try({}, _)
     insert_planned_session! = |path, target_date, session_type, detail, rationale, pt| {
-        Sqlite.execute!({
+        Sql.execute!({
             path: Path.utf8(path),
             query:
                 \\INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status, target_reps, target_dur_s, target_watts)
@@ -503,11 +503,11 @@ Plan :: [].{
                 { name: ":twatts", value: match pt { T(t) => Real(t.watts) NoT => Null } },
             ],
         })?
-        new_id = Sqlite.query!({
+        new_id = Sql.query!({
             path: Path.utf8(path),
             query: "SELECT MAX(id) AS id FROM planned_sessions",
             bindings: [],
-            row: Sqlite.i64("id"),
+            row: Sql.i64("id"),
         })?
         Output.out!(plan_echo(new_id, target_date, session_type, pt), |p| "planned #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}${Render.target_note(pt)}")
     }
@@ -524,7 +524,7 @@ Plan :: [].{
     # are measurements (reps_delta, watts_pct); no verdict words (ADR 0012).
     target_match! : Str, I64, I64 => Try({ target_known : Bool, target_reps : I64, target_dur_s : I64, target_watts : F64, detected_known : Bool, detected_reps : I64, detected_mean_dur_s : I64, detected_mean_watts : F64, reps_delta : I64, watts_pct : F64 }, _)
     target_match! = |path, session_id, activity_id| {
-        tgt = Sqlite.query!({
+        tgt = Sql.query!({
             path: Path.utf8(path),
             # `tgd`, not `td`: relabel! reads a TEXT `td` in this same file, and
             # blob-safety joins (file, alias) — a shared name would put this INTEGER
@@ -532,20 +532,20 @@ Plan :: [].{
             query: "SELECT COALESCE(target_reps, 0) AS tgr, COALESCE(target_dur_s, 0) AS tgd, CAST(COALESCE(target_watts, 0) AS REAL) AS tgw FROM planned_sessions WHERE id = :id",
             bindings: [{ name: ":id", value: Integer(session_id) }],
             row: |cols| |stmt| {
-                tr = Sqlite.i64("tgr")(cols)(stmt)?
-                td = Sqlite.i64("tgd")(cols)(stmt)?
-                tw = Sqlite.f64("tgw")(cols)(stmt)?
+                tr = Sql.i64("tgr")(cols)(stmt)?
+                td = Sql.i64("tgd")(cols)(stmt)?
+                tw = Sql.f64("tgw")(cols)(stmt)?
                 Ok({ tr, td, tw })
             },
         })?
-        det = Sqlite.query!({
+        det = Sql.query!({
             path: Path.utf8(path),
             query: "SELECT COUNT(*) AS dr, CAST(COALESCE(AVG(dur_s), 0) AS INTEGER) AS dd, CAST(COALESCE(AVG(avg_signal), 0) AS REAL) AS dw FROM activity_segments WHERE activity_id = :aid AND kind = 'work' AND signal = 'power'",
             bindings: [{ name: ":aid", value: Integer(activity_id) }],
             row: |cols| |stmt| {
-                dr = Sqlite.i64("dr")(cols)(stmt)?
-                dd = Sqlite.i64("dd")(cols)(stmt)?
-                dw = Sqlite.f64("dw")(cols)(stmt)?
+                dr = Sql.i64("dr")(cols)(stmt)?
+                dd = Sql.i64("dd")(cols)(stmt)?
+                dw = Sql.f64("dw")(cols)(stmt)?
                 Ok({ dr, dd, dw })
             },
         })?
@@ -584,11 +584,11 @@ Plan :: [].{
                 # MAX(id) is the tie-break for a hand-edited database holding more
                 # than one open session on the day - the same one `week add` uses.
                 # plan_add_checked! is the only INSERT path and it refuses the second.
-                open_id = Sqlite.query!({
+                open_id = Sql.query!({
                     path: Path.utf8(path),
                     query: "SELECT COALESCE(MAX(id), 0) AS id FROM planned_sessions WHERE target_date = :date AND COALESCE(status, 'open') = 'open'",
                     bindings: [{ name: ":date", value: String(latest.day) }],
-                    row: Sqlite.i64("id"),
+                    row: Sql.i64("id"),
                 })?
                 if open_id == 0
                     Output.err_out!("no_open_session", "no open planned session on ${latest.day}, the day of activity ${I64.to_str(latest.id)} — `stride week` lists what is open, or complete it by id")
@@ -631,20 +631,20 @@ Plan :: [].{
                             # `completed_activity_id` answered `replaced_activity: 0` — an affirmative
                             # "nothing was replaced" — on a call that had just erased the record that the
                             # athlete substituted this activity for the session.
-                            prior = Sqlite.query!({
+                            prior = Sql.query!({
                                 path: Path.utf8(path),
                                 query: "SELECT COALESCE(completed_activity_id, 0) AS prior, COALESCE(substitute_activity_id, 0) AS sub FROM planned_sessions WHERE id = :pid",
                                 bindings: [{ name: ":pid", value: Integer(session_id) }],
                                 row: |cols| |stmt| {
-                                    p = Sqlite.i64("prior")(cols)(stmt)?
-                                    s = Sqlite.i64("sub")(cols)(stmt)?
+                                    p = Sql.i64("prior")(cols)(stmt)?
+                                    s = Sql.i64("sub")(cols)(stmt)?
                                     Ok({ p, s })
                                 },
                             })?
                             # write first, steal second: a failure between the two
                             # leaves only a dead tombstone link (self-healing), never
                             # a released link with nothing written in its place
-                            _ = Sqlite.execute!({
+                            _ = Sql.execute!({
                                 path: Path.utf8(path),
                                 # `superseded_activity_id` is written in the SAME statement, from the column's
                                 # own prior value, so it can never disagree with what was erased — computing it
@@ -729,7 +729,7 @@ Plan :: [].{
     # Analyze.roc, where getting it wrong dropped every activity on the cutoff day.)
     candidate_activities! : Str, I64 => Try(List({ id : I64, start : Str, sport : Str, name : Str }), _)
     candidate_activities! = |path, session_id|
-        Sqlite.query_many!({
+        Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT a.id AS id, COALESCE(CAST(a.start_local AS TEXT), '') AS start,
@@ -743,10 +743,10 @@ Plan :: [].{
             ,
             bindings: [{ name: ":pid", value: Integer(session_id) }],
             rows: |cols| |stmt| {
-                id = Sqlite.i64("id")(cols)(stmt)?
-                start = Sqlite.str("start")(cols)(stmt)?
-                sport = Sqlite.str("sport")(cols)(stmt)?
-                name = Sqlite.str("name")(cols)(stmt)?
+                id = Sql.i64("id")(cols)(stmt)?
+                start = Sql.str("start")(cols)(stmt)?
+                sport = Sql.str("sport")(cols)(stmt)?
+                name = Sql.str("name")(cols)(stmt)?
                 Ok({ id, start, sport, name })
             },
         })
@@ -762,11 +762,11 @@ Plan :: [].{
                 if !(Report.row_exists!(path, "planned_sessions", session_id)?)
                     session_not_found!(session_id)
                 else {
-                    session_type = Sqlite.query!({
+                    session_type = Sql.query!({
                         path: Path.utf8(path),
                         query: "SELECT COALESCE(CAST(session_type AS TEXT), '') AS t FROM planned_sessions WHERE id = :pid",
                         bindings: [{ name: ":pid", value: Integer(session_id) }],
-                        row: Sqlite.str("t"),
+                        row: Sql.str("t"),
                     })?
                     if session_type != "rest" {
                         # Naming the rule is not enough: the id lives in the database and
@@ -797,13 +797,13 @@ Plan :: [].{
                         # `0.I64`, not a bare `0`: Roc infers an unconstrained record literal as
                         # fractional, and the builtin JSON renders `0.0` — a float under an integer key,
                         # and both gates were blind (the validator's integer test is floor($v) == $v).
-                        released = Sqlite.query!({
+                        released = Sql.query!({
                             path: Path.utf8(path),
                             query: "SELECT COALESCE(substitute_activity_id, 0) AS sub FROM planned_sessions WHERE id = :pid",
                             bindings: [{ name: ":pid", value: Integer(session_id) }],
-                            row: Sqlite.i64("sub"),
+                            row: Sql.i64("sub"),
                         })?
-                        Sqlite.execute!({
+                        Sql.execute!({
                             path: Path.utf8(path),
                             query: "UPDATE planned_sessions SET status = 'done', substitute_activity_id = NULL WHERE id = :pid",
                             bindings: [{ name: ":pid", value: Integer(session_id) }],
@@ -828,7 +828,7 @@ Plan :: [].{
     # unplanned query and the sessions query — the three MUST agree (see the
     # NOTE above the unplanned query).
     live_claimant! = |path, activity_id, session_id| {
-        rows = Sqlite.query_many!({
+        rows = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT id AS id, CASE WHEN ps.completed_activity_id = :aid THEN 1 ELSE 0 END AS is_completion
@@ -844,8 +844,8 @@ Plan :: [].{
             ,
             bindings: [{ name: ":aid", value: Integer(activity_id) }, { name: ":sid", value: Integer(session_id) }],
             rows: |cols| |stmt| {
-                cid = Sqlite.i64("id")(cols)(stmt)?
-                isc = Sqlite.i64("is_completion")(cols)(stmt)?
+                cid = Sql.i64("id")(cols)(stmt)?
+                isc = Sql.i64("is_completion")(cols)(stmt)?
                 Ok({ cid, isc })
             },
         })?
@@ -861,16 +861,16 @@ Plan :: [].{
     # cleared link with nothing written in its place. Reports what it released
     # so the steal is never silent.
     steal_dead_links! = |path, activity_id, session_id| {
-        holders = Sqlite.query_many!({
+        holders = Sql.query_many!({
             path: Path.utf8(path),
             query: "SELECT id AS id FROM planned_sessions WHERE substitute_activity_id = :aid AND id <> :sid LIMIT 1",
             bindings: [{ name: ":aid", value: Integer(activity_id) }, { name: ":sid", value: Integer(session_id) }],
-            rows: Sqlite.i64("id"),
+            rows: Sql.i64("id"),
         })?
         match List.first(holders) {
             Err(_) => Ok(NothingReleased)
             Ok(holder) => {
-                _ = Sqlite.execute!({
+                _ = Sql.execute!({
                     path: Path.utf8(path),
                     query: "UPDATE planned_sessions SET substitute_activity_id = NULL WHERE substitute_activity_id = :aid AND id <> :sid",
                     bindings: [{ name: ":aid", value: Integer(activity_id) }, { name: ":sid", value: Integer(session_id) }],
@@ -898,11 +898,11 @@ Plan :: [].{
                     # visible status. Completions are permanent evidence; if a
                     # mis-link ever needs undoing, that will be an explicit retract
                     # verb clearing status AND link together, never a skip side effect.
-                    done_by = Sqlite.query_many!({
+                    done_by = Sql.query_many!({
                         path: Path.utf8(path),
                         query: "SELECT COALESCE(completed_activity_id, 0) AS a FROM planned_sessions WHERE id = :pid AND COALESCE(status,'open') = 'done'",
                         bindings: [{ name: ":pid", value: Integer(session_id) }],
-                        rows: Sqlite.i64("a"),
+                        rows: Sql.i64("a"),
                     })?
                     match List.first(done_by) {
                         Ok(aid) =>
@@ -919,7 +919,7 @@ Plan :: [].{
                                 # judgment-tier data is never silently destroyed by a
                                 # wording fix. The kept link is surfaced, and passing a
                                 # new activity id is the way to change it.
-                                _ = Sqlite.execute!({
+                                _ = Sql.execute!({
                                     path: Path.utf8(path),
                                     query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why WHERE id = :pid",
                                     bindings: [
@@ -927,11 +927,11 @@ Plan :: [].{
                                         { name: ":pid", value: Integer(session_id) },
                                     ],
                                 })?
-                                kept = Sqlite.query_many!({
+                                kept = Sql.query_many!({
                                     path: Path.utf8(path),
                                     query: "SELECT substitute_activity_id AS s FROM planned_sessions WHERE id = :pid AND substitute_activity_id IS NOT NULL",
                                     bindings: [{ name: ":pid", value: Integer(session_id) }],
-                                    rows: Sqlite.i64("s"),
+                                    rows: Sql.i64("s"),
                                 })?
                                 match List.first(kept) {
                                     Ok(sub_id) =>
@@ -947,13 +947,13 @@ Plan :: [].{
                                 # id (an integer, mirroring kept_substitute — never a bare
                                 # True tag, which the builtin JSON stringifies) and stays
                                 # silent when there was nothing to release.
-                                had = Sqlite.query_many!({
+                                had = Sql.query_many!({
                                     path: Path.utf8(path),
                                     query: "SELECT substitute_activity_id AS s FROM planned_sessions WHERE id = :pid AND substitute_activity_id IS NOT NULL",
                                     bindings: [{ name: ":pid", value: Integer(session_id) }],
-                                    rows: Sqlite.i64("s"),
+                                    rows: Sql.i64("s"),
                                 })?
-                                _ = Sqlite.execute!({
+                                _ = Sql.execute!({
                                     path: Path.utf8(path),
                                     query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why, substitute_activity_id = NULL WHERE id = :pid",
                                     bindings: [
@@ -981,7 +981,7 @@ Plan :: [].{
                                                     Output.err_out!("activity_already_linked", "activity ${activity_id_str} substitutes session #${I64.to_str(cid)} — release it first: stride skip ${I64.to_str(cid)} \"<reason>\" none")
                                                 Free => {
                                                     # write first, steal second (see complete!)
-                                                    _ = Sqlite.execute!({
+                                                    _ = Sql.execute!({
                                                         path: Path.utf8(path),
                                                         query: "UPDATE planned_sessions SET status = 'skipped', skipped_reason = :why, substitute_activity_id = :aid WHERE id = :pid",
                                                         bindings: [
@@ -1031,7 +1031,7 @@ Plan :: [].{
                     # a Null binding keeps the stored rationale via COALESCE — one UPDATE
                     # either way, and the keep path provably writes nothing new to it
                     rat_val = match rat { SetRationale(r) => String(r) KeepRationale => Null }
-                    Sqlite.execute!({
+                    Sql.execute!({
                         path: Path.utf8(path),
                         query: "UPDATE planned_sessions SET session_type = :type, detail = :detail, rationale = COALESCE(:rationale, rationale) WHERE id = :id",
                         bindings: [
@@ -1041,27 +1041,27 @@ Plan :: [].{
                             { name: ":id", value: Integer(session_id) },
                         ],
                     })?
-                    target_date = Sqlite.query!({
+                    target_date = Sql.query!({
                         path: Path.utf8(path),
                         query: "SELECT CAST(target_date AS TEXT) AS td FROM planned_sessions WHERE id = :id",
                         bindings: [{ name: ":id", value: Integer(session_id) }],
-                        row: Sqlite.str("td"),
+                        row: Sql.str("td"),
                     })?
                     # the echoed type is READ BACK, never the input argument: an echo of
                     # the input would print "threshold" while the row still held
                     # "endurance" if the UPDATE failed — the payload claiming
                     # the write it is meant to be evidence for
-                    stored_type = Sqlite.query!({
+                    stored_type = Sql.query!({
                         path: Path.utf8(path),
                         query: "SELECT CAST(session_type AS TEXT) AS ty FROM planned_sessions WHERE id = :id",
                         bindings: [{ name: ":id", value: Integer(session_id) }],
-                        row: Sqlite.str("ty"),
+                        row: Sql.str("ty"),
                     })?
-                    status = Sqlite.query!({
+                    status = Sql.query!({
                         path: Path.utf8(path),
                         query: "SELECT CAST(COALESCE(status, 'open') AS TEXT) AS st FROM planned_sessions WHERE id = :id",
                         bindings: [{ name: ":id", value: Integer(session_id) }],
-                        row: Sqlite.str("st"),
+                        row: Sql.str("st"),
                     })?
                     Output.out!({ id: session_id, session_type: stored_type, target_date, status }, |p| "relabeled #${(p.id).to_str()}: ${p.session_type} on ${p.target_date} (${p.status})")
                 }
@@ -1091,7 +1091,7 @@ Plan :: [].{
                     # already-past would be recording a target that never was one
                     Output.err_out!("bad_date", "'${event_date}' is not in the future — an event target is a date still ahead")
                 } else {
-                    Sqlite.execute!({
+                    Sql.execute!({
                         path: Path.utf8(path),
                         query: "INSERT INTO events (created_at, event_date, name) VALUES (:at, :date, :name)",
                         bindings: [
@@ -1100,11 +1100,11 @@ Plan :: [].{
                             { name: ":name", value: String(name) },
                         ],
                     })?
-                    new_id = Sqlite.query!({
+                    new_id = Sql.query!({
                         path: Path.utf8(path),
                         query: "SELECT MAX(id) AS id FROM events",
                         bindings: [],
-                        row: Sqlite.i64("id"),
+                        row: Sql.i64("id"),
                     })?
                     Output.out!({ id: new_id, event_date, name, days_away: ev_days - today }, |p| "event #${(p.id).to_str()}: ${p.name} on ${p.event_date} (in ${(p.days_away).to_str()} days)")
                 }
@@ -1119,7 +1119,7 @@ Plan :: [].{
                 if !(Report.row_exists!(path, "events", event_id)?) {
                     Output.err_out!("event_not_found", "no event #${(event_id).to_str()} — `stride events` lists them")
                 } else {
-                    Sqlite.execute!({
+                    Sql.execute!({
                         path: Path.utf8(path),
                         query: "DELETE FROM events WHERE id = :id",
                         bindings: [{ name: ":id", value: Integer(event_id) }],
@@ -1134,14 +1134,14 @@ Plan :: [].{
         today = Db.local_today_days!(path)
         # the projection's floor: the last COMPUTED day. Everything at or before it is
         # measured history; everything after is the recurrence over planned targets.
-        base_rows = Sqlite.query_many!({
+        base_rows = Sql.query_many!({
             path: Path.utf8(path),
             query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, CAST(COALESCE(ctl, 0) AS REAL) AS ctl, CAST(COALESCE(atl, 0) AS REAL) AS atl FROM daily_load ORDER BY day DESC LIMIT 1",
             bindings: [],
             rows: |cols| |stmt| {
-                day = Sqlite.str("day")(cols)(stmt)?
-                ctl = Sqlite.f64("ctl")(cols)(stmt)?
-                atl = Sqlite.f64("atl")(cols)(stmt)?
+                day = Sql.str("day")(cols)(stmt)?
+                ctl = Sql.f64("ctl")(cols)(stmt)?
+                atl = Sql.f64("atl")(cols)(stmt)?
                 Ok({ day, ctl, atl })
             },
         })?
@@ -1159,18 +1159,18 @@ Plan :: [].{
         ftp = Db.derive_sport_ftp!(path, "Ride")?
         ftp_known : Bool
         ftp_known = ftp > 0.0
-        evs = Sqlite.query_many!({
+        evs = Sql.query_many!({
             path: Path.utf8(path),
             query: "SELECT id AS id, COALESCE(CAST(event_date AS TEXT), '') AS event_date, COALESCE(CAST(name AS TEXT), '') AS name FROM events ORDER BY event_date, id",
             bindings: [],
             rows: |cols| |stmt| {
-                id = Sqlite.i64("id")(cols)(stmt)?
-                event_date = Sqlite.str("event_date")(cols)(stmt)?
-                name = Sqlite.str("name")(cols)(stmt)?
+                id = Sql.i64("id")(cols)(stmt)?
+                event_date = Sql.str("event_date")(cols)(stmt)?
+                name = Sql.str("name")(cols)(stmt)?
                 Ok({ id, event_date, name })
             },
         })?
-        opens = Sqlite.query_many!({
+        opens = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT COALESCE(CAST(target_date AS TEXT), '') AS target_date,
@@ -1180,10 +1180,10 @@ Plan :: [].{
             ,
             bindings: [],
             rows: |cols| |stmt| {
-                target_date = Sqlite.str("target_date")(cols)(stmt)?
-                treps = Sqlite.i64("treps")(cols)(stmt)?
-                tdur = Sqlite.i64("tdur")(cols)(stmt)?
-                twatts = Sqlite.f64("twatts")(cols)(stmt)?
+                target_date = Sql.str("target_date")(cols)(stmt)?
+                treps = Sql.i64("treps")(cols)(stmt)?
+                tdur = Sql.i64("tdur")(cols)(stmt)?
+                twatts = Sql.f64("twatts")(cols)(stmt)?
                 Ok({ target_date, treps, tdur, twatts })
             },
         })?
@@ -1233,14 +1233,14 @@ Plan :: [].{
                         Err(BadDatePart(bad)) => Output.err_out!("bad_date", "each hypothetical session is <YYYY-MM-DD>=<target> — the date half of '${bad}' does not parse")
                         Err(BadTargetPart(bad)) => Output.err_out!("bad_target", "each hypothetical session is <YYYY-MM-DD>=<reps>x<mm:ss>@<watts>W — the target half '${bad}' does not parse")
                         Ok(plan_mode) => {
-                            base_rows = Sqlite.query_many!({
+                            base_rows = Sql.query_many!({
                                 path: Path.utf8(path),
                                 query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, CAST(COALESCE(ctl, 0) AS REAL) AS ctl, CAST(COALESCE(atl, 0) AS REAL) AS atl FROM daily_load ORDER BY day DESC LIMIT 1",
                                 bindings: [],
                                 rows: |cols| |stmt| {
-                                    day = Sqlite.str("day")(cols)(stmt)?
-                                    ctl = Sqlite.f64("ctl")(cols)(stmt)?
-                                    atl = Sqlite.f64("atl")(cols)(stmt)?
+                                    day = Sql.str("day")(cols)(stmt)?
+                                    ctl = Sql.f64("ctl")(cols)(stmt)?
+                                    atl = Sql.f64("atl")(cols)(stmt)?
                                     Ok({ day, ctl, atl })
                                 },
                             })?
@@ -1254,7 +1254,7 @@ Plan :: [].{
                             ftp_known = ftp > 0.0
                             source = match plan_mode {
                                 Recorded => {
-                                    opens = Sqlite.query_many!({
+                                    opens = Sql.query_many!({
                                         path: Path.utf8(path),
                                         query:
                                             \\SELECT COALESCE(CAST(target_date AS TEXT), '') AS target_date,
@@ -1264,10 +1264,10 @@ Plan :: [].{
                                         ,
                                         bindings: [],
                                         rows: |cols| |stmt| {
-                                            target_date = Sqlite.str("target_date")(cols)(stmt)?
-                                            treps = Sqlite.i64("treps")(cols)(stmt)?
-                                            tdur = Sqlite.i64("tdur")(cols)(stmt)?
-                                            twatts = Sqlite.f64("twatts")(cols)(stmt)?
+                                            target_date = Sql.str("target_date")(cols)(stmt)?
+                                            treps = Sql.i64("treps")(cols)(stmt)?
+                                            tdur = Sql.i64("tdur")(cols)(stmt)?
+                                            twatts = Sql.f64("twatts")(cols)(stmt)?
                                             Ok({ target_date, treps, tdur, twatts })
                                         },
                                     })?
@@ -1329,7 +1329,7 @@ Plan :: [].{
                 # name honest — the alternative, relabelling to 15, would have meant
                 # renaming the JSON field and breaking its consumers over a fencepost.
                 cutoff14 = Metrics.days_to_date_str(anchor - 13)
-                recent = Sqlite.query_many!({
+                recent = Sql.query_many!({
                     path: Path.utf8(path),
                     query:
                         \\SELECT a.id AS id, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date, COALESCE(CAST(a.sport_type AS TEXT), '') AS sport, COALESCE(CAST(a.name AS TEXT), '') AS name,
@@ -1354,35 +1354,35 @@ Plan :: [].{
                     ,
                     bindings: [{ name: ":cutoff", value: String(cutoff14) }],
                     rows: |cols| |stmt| {
-                        id = Sqlite.i64("id")(cols)(stmt)?
-                        date = Sqlite.str("date")(cols)(stmt)?
-                        sport = Sqlite.str("sport")(cols)(stmt)?
-                        name = Sqlite.str("name")(cols)(stmt)?
-                        moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
-                        tss = Sqlite.f64("tss")(cols)(stmt)?
-                        intensity = Sqlite.f64("intensity")(cols)(stmt)?
-                        z1_s = Sqlite.i64("z1_s")(cols)(stmt)?
-                        z2_s = Sqlite.i64("z2_s")(cols)(stmt)?
-                        z3_s = Sqlite.i64("z3_s")(cols)(stmt)?
-                        z4_s = Sqlite.i64("z4_s")(cols)(stmt)?
-                        z5_s = Sqlite.i64("z5_s")(cols)(stmt)?
-                        hard_s = Sqlite.i64("hard_s")(cols)(stmt)?
-                        distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
+                        id = Sql.i64("id")(cols)(stmt)?
+                        date = Sql.str("date")(cols)(stmt)?
+                        sport = Sql.str("sport")(cols)(stmt)?
+                        name = Sql.str("name")(cols)(stmt)?
+                        moving_time = Sql.i64("moving_time")(cols)(stmt)?
+                        tss = Sql.f64("tss")(cols)(stmt)?
+                        intensity = Sql.f64("intensity")(cols)(stmt)?
+                        z1_s = Sql.i64("z1_s")(cols)(stmt)?
+                        z2_s = Sql.i64("z2_s")(cols)(stmt)?
+                        z3_s = Sql.i64("z3_s")(cols)(stmt)?
+                        z4_s = Sql.i64("z4_s")(cols)(stmt)?
+                        z5_s = Sql.i64("z5_s")(cols)(stmt)?
+                        hard_s = Sql.i64("hard_s")(cols)(stmt)?
+                        distance_m = Sql.f64("distance_m")(cols)(stmt)?
 
-                        np_w = Sqlite.f64("np_w")(cols)(stmt)?
+                        np_w = Sql.f64("np_w")(cols)(stmt)?
 
-                        relative_effort = Sqlite.f64("relative_effort")(cols)(stmt)?
+                        relative_effort = Sql.f64("relative_effort")(cols)(stmt)?
 
-                        avg_hr = Sqlite.f64("avg_hr")(cols)(stmt)?
-                        power_known = Sqlite.i64("power_known")(cols)(stmt)?
-                        intensity_known = Sqlite.i64("intensity_known")(cols)(stmt)?
-                        hr_known = Sqlite.i64("hr_known")(cols)(stmt)?
-                        zones_known = Sqlite.i64("zones_known")(cols)(stmt)?
-                        load_model = Sqlite.str("load_model")(cols)(stmt)?
+                        avg_hr = Sql.f64("avg_hr")(cols)(stmt)?
+                        power_known = Sql.i64("power_known")(cols)(stmt)?
+                        intensity_known = Sql.i64("intensity_known")(cols)(stmt)?
+                        hr_known = Sql.i64("hr_known")(cols)(stmt)?
+                        zones_known = Sql.i64("zones_known")(cols)(stmt)?
+                        load_model = Sql.str("load_model")(cols)(stmt)?
                         Ok({ id, date, sport, name, moving_time, tss, load_model, intensity, intensity_known: intensity_known != 0, z1_s, z2_s, z3_s, z4_s, z5_s, zones_known: zones_known != 0, hard_s, distance_m, np_w, power_known: power_known != 0, relative_effort, avg_hr, hr_known: hr_known != 0 })
                     },
                 })?
-                open_p = Sqlite.query_many!({
+                open_p = Sql.query_many!({
                     path: Path.utf8(path),
                     query:
                         \\SELECT id AS id, COALESCE(CAST(target_date AS TEXT),'') AS target_date, COALESCE(CAST(session_type AS TEXT),'') AS session_type,
@@ -1395,15 +1395,15 @@ Plan :: [].{
                     ,
                     bindings: [],
                     rows: |cols| |stmt| {
-                        id = Sqlite.i64("id")(cols)(stmt)?
-                        target_date = Sqlite.str("target_date")(cols)(stmt)?
-                        session_type = Sqlite.str("session_type")(cols)(stmt)?
-                        detail = Sqlite.str("detail")(cols)(stmt)?
-                        rationale = Sqlite.str("rationale")(cols)(stmt)?
-                        target_reps = Sqlite.i64("target_reps")(cols)(stmt)?
-                        target_dur_s = Sqlite.i64("target_dur_s")(cols)(stmt)?
-                        target_watts = Sqlite.f64("target_watts")(cols)(stmt)?
-                        tk = Sqlite.i64("tk")(cols)(stmt)?
+                        id = Sql.i64("id")(cols)(stmt)?
+                        target_date = Sql.str("target_date")(cols)(stmt)?
+                        session_type = Sql.str("session_type")(cols)(stmt)?
+                        detail = Sql.str("detail")(cols)(stmt)?
+                        rationale = Sql.str("rationale")(cols)(stmt)?
+                        target_reps = Sql.i64("target_reps")(cols)(stmt)?
+                        target_dur_s = Sql.i64("target_dur_s")(cols)(stmt)?
+                        target_watts = Sql.f64("target_watts")(cols)(stmt)?
+                        tk = Sql.i64("tk")(cols)(stmt)?
                         target_known : Bool
                         target_known = tk == 1
                         Ok({ id, target_date, session_type, detail, rationale, target_reps, target_dur_s, target_watts, target_known })
@@ -1417,7 +1417,7 @@ Plan :: [].{
                 # LINKED ACTIVITY — the fact of when the work happened — not a status-
                 # change timestamp stride does not store.
                 cutoff28p = Metrics.days_to_date_str(anchor - 27)
-                history = Sqlite.query_many!({
+                history = Sql.query_many!({
                     path: Path.utf8(path),
                     query:
                         \\SELECT p.id AS id, COALESCE(CAST(p.target_date AS TEXT),'') AS target_date,
@@ -1436,16 +1436,16 @@ Plan :: [].{
                     ,
                     bindings: [{ name: ":cutoff", value: String(cutoff28p) }, { name: ":today", value: String(s.as_of) }],
                     rows: |cols| |stmt| {
-                        id = Sqlite.i64("id")(cols)(stmt)?
-                        target_date = Sqlite.str("target_date")(cols)(stmt)?
-                        session_type = Sqlite.str("session_type")(cols)(stmt)?
-                        detail = Sqlite.str("detail")(cols)(stmt)?
-                        status = Sqlite.str("status")(cols)(stmt)?
-                        skipped_reason = Sqlite.str("skipped_reason")(cols)(stmt)?
-                        completed_activity_id = Sqlite.i64("completed_activity_id")(cols)(stmt)?
-                        superseded_activity_id = Sqlite.i64("superseded_activity_id")(cols)(stmt)?
-                        substitute_activity_id = Sqlite.i64("substitute_activity_id")(cols)(stmt)?
-                        completed_on = Sqlite.str("completed_on")(cols)(stmt)?
+                        id = Sql.i64("id")(cols)(stmt)?
+                        target_date = Sql.str("target_date")(cols)(stmt)?
+                        session_type = Sql.str("session_type")(cols)(stmt)?
+                        detail = Sql.str("detail")(cols)(stmt)?
+                        status = Sql.str("status")(cols)(stmt)?
+                        skipped_reason = Sql.str("skipped_reason")(cols)(stmt)?
+                        completed_activity_id = Sql.i64("completed_activity_id")(cols)(stmt)?
+                        superseded_activity_id = Sql.i64("superseded_activity_id")(cols)(stmt)?
+                        substitute_activity_id = Sql.i64("substitute_activity_id")(cols)(stmt)?
+                        completed_on = Sql.str("completed_on")(cols)(stmt)?
                         Ok({ id, target_date, session_type, detail, status, skipped_reason, completed_activity_id, superseded_activity_id, substitute_activity_id, completed_on })
                     },
                 })?
@@ -1475,7 +1475,7 @@ Plan :: [].{
                 # load series covers, so every date the window admits has a row —
                 # but the predicate should not owe its soundness to that alignment.
                 rested_sql = "COALESCE(status,'open') = 'open' AND session_type = 'rest' AND target_date < :today AND EXISTS (SELECT 1 FROM daily_load dl WHERE dl.day = planned_sessions.target_date) AND COALESCE((SELECT dl.tss FROM daily_load dl WHERE dl.day = planned_sessions.target_date), 0) < 1.0"
-                adh = Sqlite.query!({
+                adh = Sql.query!({
                     path: Path.utf8(path),
                     query:
                         \\SELECT COALESCE(SUM(1),0) AS planned,
@@ -1489,16 +1489,16 @@ Plan :: [].{
                     ,
                     bindings: [{ name: ":cutoff", value: String(cutoff28p) }, { name: ":today", value: String(s.as_of) }],
                     row: |cols| |stmt| {
-                        planned = Sqlite.i64("planned")(cols)(stmt)?
-                        completed = Sqlite.i64("completed")(cols)(stmt)?
-                        skipped = Sqlite.i64("skipped")(cols)(stmt)?
-                        substituted = Sqlite.i64("substituted")(cols)(stmt)?
-                        still_open = Sqlite.i64("still_open")(cols)(stmt)?
-                        rested = Sqlite.i64("rested")(cols)(stmt)?
+                        planned = Sql.i64("planned")(cols)(stmt)?
+                        completed = Sql.i64("completed")(cols)(stmt)?
+                        skipped = Sql.i64("skipped")(cols)(stmt)?
+                        substituted = Sql.i64("substituted")(cols)(stmt)?
+                        still_open = Sql.i64("still_open")(cols)(stmt)?
+                        rested = Sql.i64("rested")(cols)(stmt)?
                         Ok({ planned, completed, skipped, substituted, still_open, rested })
                     },
                 })?
-                unplanned_n = Sqlite.query!({
+                unplanned_n = Sql.query!({
                     path: Path.utf8(path),
                     query:
                         \\SELECT COUNT(*) AS n FROM activities a
@@ -1507,7 +1507,7 @@ Plan :: [].{
                         \\  AND a.id NOT IN (SELECT substitute_activity_id FROM planned_sessions WHERE substitute_activity_id IS NOT NULL)
                     ,
                     bindings: [{ name: ":cutoff", value: String(cutoff28p) }, { name: ":today", value: String(s.as_of) }],
-                    row: Sqlite.i64("n"),
+                    row: Sql.i64("n"),
                 })?
                 # denominator excludes rested: a rest day that passed with no load
                 # required no action and got none, so it is neutral to adherence —
@@ -1545,11 +1545,11 @@ Plan :: [].{
                 # growing on a stale install (measured: a week-stale install froze at 3), so
                 # last_sync against the real clock is the primary signal and this the secondary.
                 # "" when there are no activities.
-                newest_activity = Sqlite.query!({
+                newest_activity = Sql.query!({
                     path: Path.utf8(path),
                     query: "SELECT COALESCE(MAX(substr(CAST(start_local AS TEXT), 1, 10)), '') AS d FROM activities",
                     bindings: [],
-                    row: Sqlite.str("d"),
+                    row: Sql.str("d"),
                 })?
                 # UTC ISO rather than the raw epoch it is stored as. Note this is the
                 # payload's only full timestamp and its only UTC value — every other date

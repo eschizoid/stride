@@ -590,7 +590,7 @@ just install   # build + symlink into ~/.local/bin
 ```
 
 - **Toolchain:** Roc's new (Zig) compiler, pinned by exact nightly tag in the workflow
-  files · [basic-cli 0.23](https://github.com/roc-lang/basic-cli) · builtin JSON. `roc
+  files · [basic-cli 0.26](https://github.com/roc-lang/basic-cli) · builtin JSON. `roc
 check`, `roc test` and a full `roc build` all work. Install the pinned compiler the way
   CI does, via the `roc-lang/setup-roc` Action with the `nightly-tag` from
   `.github/actions/setup-roc/action.yml`; locally, download that tag from `roc-lang/nightlies`. **`AGENTS.md` is the maintained source
@@ -622,10 +622,10 @@ check`, `roc test` and a full `roc build` all work. Install the pinned compiler 
   stop outcomes — all network-free; read the recipe for the current set.
 - **CI:** on every push, `roc check` plus every pure module's expects on Linux, macOS and
   Windows; then a macOS job that builds the binary (`--opt=dev`) and runs the e2e suite.
-  The compiler is installed by the repo's `setup-roc` action — the engine pin is its
-  default, the viz pin lives in `src/viz/main.roc`'s app header, and
-  `tools/pin-check.sh` fails CI on any workflow site that disagrees, so a bump
-  cannot miss one silently.
+  The compiler is installed by the repo's `setup-roc` action — its default is the one
+  pin both binaries build on, and `tools/pin-check.sh` fails CI on a workflow override,
+  a compiler named in the viz app header, or a justfile default that disagrees, so a
+  bump cannot miss one silently.
 
 ## What's next, and what never ships
 

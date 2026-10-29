@@ -209,3 +209,7 @@ mismatch warning. The tolerance in `tools/roc-viz.sh` is gone; the script now
 runs roc, returns its exit code, and exists for the assertion-count pins a
 test run is held to. The convergence this section recorded is now a property
 of the three headers rather than something a wrapper has to absorb.
+
+## Update, 2026-10-29. One pin, not three headers
+
+roc-ray 0.11 names no compiler and the viz app header carries none, so the convergence the 2026-09-29 update describes is now a single pin, the `setup-roc` action's default, which both binaries build on.
