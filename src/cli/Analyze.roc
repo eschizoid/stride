@@ -887,11 +887,11 @@ Analyze :: [].{
         # Power detects when real watts exist; pace only for pace-routed sports
         # (runs/swims) — a meter-less RIDE must not get run-tuned pace detection of its
         # terrain speed. Segments are detected before the transaction opens, so its
-        # write lock covers only the writes. The segment rewrite and the metrics row
-        # commit as one transaction on one connection: a failure leaves the activity's
-        # previous segments and metrics row untouched for the next analyze to redo,
-        # and a full rescore pays one connection and one commit per activity rather
-        # than one per statement.
+        # write lock covers the writes and the per-rep HR enrichment that walks them.
+        # The segment rewrite and the metrics row commit as one transaction on one
+        # connection: a failure leaves the activity's previous segments and metrics
+        # row untouched for the next analyze to redo, and a full rescore pays one
+        # connection and one commit per activity rather than one per statement.
         hr_1s_pairs = Metrics.resample_1s_pairs(hr_pairs, Hold)
         detected =
             if !(List.is_empty(watts_1s_pairs)) {

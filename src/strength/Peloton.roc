@@ -340,9 +340,9 @@ expect {
 # `/side` and the weight unit read in any case: capitalised per-side work
 # doubles its reps and keeps one side's mass, as lowercase does
 expect {
-    rows = Peloton.parse("Curl\n3 × 8 Reps/Side • 20 LBS/Side")
+    rows = Peloton.parse("Curl\n3 × 8 Reps/Side • 20 LBS/Side\nRow\n3 × 8 • 20 LBS/Side")
     match rows {
-        [a] => a.reps == 16 and (a.weight_kg - 9.0718474).abs() < 0.001
+        [a, b] => a.reps == 16 and (a.weight_kg - 9.0718474).abs() < 0.001 and b.reps == 8 and (b.weight_kg - 18.1436948).abs() < 0.001
         _ => False
     }
 }
