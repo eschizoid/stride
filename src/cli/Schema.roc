@@ -231,8 +231,9 @@ Schema :: [].{
     # SHARE. An 80/20 verdict is about endurance work, and wrist HR during
     # lifting reads as easy time that would inflate it, so a type in
     # Sports.never_polarized is always out, and any other strength-like type
-    # (Sports.class) is out when it has recorded sets: with none, a workout or
-    # HIIT session is most often a class worked by heart rate. Hard-session
+    # (Sports.class) is out when it has recorded sets: with none, a workout is
+    # most often a class worked by heart rate. Only the WeightTraining family
+    # (weight training and workout) can have sets today. Hard-session
     # predicates read hard_s for every activity, polarized or not, so a hard
     # lifting session still counts as a hard day.
     strength_like_sql : Str

@@ -1162,7 +1162,9 @@ Analyze :: [].{
     # story: the next analyze IS the recompute. Runs unconditionally, like
     # rebuild_daily_load! beside it, so a deleted or stale row cannot outlive
     # one analyze; `stride strength import` runs it too, so an import is
-    # visible without an analyze.
+    # visible without an analyze. The delete and the inserts are one
+    # transaction, so a reader (the activity_intensity view's `polarized`
+    # reads this table) never sees it half rebuilt.
     rebuild_strength_sets! : Str => Try({}, _)
     rebuild_strength_sets! = |path| {
         notes = Sql.query_many!({
@@ -1185,31 +1187,31 @@ Analyze :: [].{
                 Ok({ aid, d })
             },
         })?
-        Sql.execute!({ path: Path.utf8(path), query: "DELETE FROM strength_sets", bindings: [] })?
-        insert_note_sets!(path, notes)
+        Sql.transaction!(Path.utf8(path), |run!| {
+            _ = run!("DELETE FROM strength_sets", [])?
+            insert_note_sets!(run!, notes)
+        })
     }
-    insert_note_sets! : Str, List({ aid : I64, d : Str }) => Try({}, _)
-    insert_note_sets! = |path, notes|
+    # `run!` is the statement runner of the caller's transaction
+    insert_note_sets! = |run!, notes|
         match notes {
             [] => Ok({})
             [n, .. as rest] => {
                 parsed = Strength.parse(n.d)
-                _ = insert_set_rows!(path, n.aid, parsed.source, parsed.rows, 0)?
-                insert_note_sets!(path, rest)
+                _ = insert_set_rows!(run!, n.aid, parsed.source, parsed.rows, 0)?
+                insert_note_sets!(run!, rest)
             }
         }
-    insert_set_rows! : Str, I64, Str, List(Strength.SetRow), I64 => Try({}, _)
-    insert_set_rows! = |path, aid, source, rows, ord|
+    insert_set_rows! = |run!, aid, source, rows, ord|
         match rows {
             [] => Ok({})
             [r, .. as rest] => {
                 # provenance is the ADAPTER that read the text ('strava', 'peloton', ...),
                 # so a career of mixed apps stays distinguishable and a reader
                 # can qualify a tonnage trend built on unequal sources
-                Sql.execute!({
-                    path: Path.utf8(path),
-                    query: "INSERT OR REPLACE INTO strength_sets (activity_id, ordinal, exercise, sets, reps, weight_kg, source) VALUES (:aid, :ord, :ex, :sets, :reps, :w, :src)",
-                    bindings: [
+                run!(
+                    "INSERT OR REPLACE INTO strength_sets (activity_id, ordinal, exercise, sets, reps, weight_kg, source) VALUES (:aid, :ord, :ex, :sets, :reps, :w, :src)",
+                    [
                         { name: ":aid", value: Integer(aid) },
                         { name: ":ord", value: Integer(ord) },
                         { name: ":ex", value: String(r.exercise) },
@@ -1218,8 +1220,8 @@ Analyze :: [].{
                         { name: ":w", value: Real(r.weight_kg) },
                         { name: ":src", value: String(source) },
                     ],
-                })?
-                insert_set_rows!(path, aid, source, rest, ord + 1)
+                )?
+                insert_set_rows!(run!, aid, source, rest, ord + 1)
             }
         }
 

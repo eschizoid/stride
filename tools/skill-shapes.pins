@@ -9,7 +9,7 @@ activity.json	baseline_median,current,delta_pct,known,percentile,sample_count	ba
 activity.json	cp_used,end_j,fit_family,fit_points,fit_r2,known,min_j,model_exceeded,w_prime_used	cp_used,end_j,fit_family,fit_points,fit_r2,known,min_j,model_exceeded,w_prime_used	doc	properties.w_prime_balance
 activity.json	easy_s,hard_s,moderate_s	easy_s,hard_s,moderate_s	-	properties.power_intensity
 activity.json	w1200,w180,w300,w60	w1200,w180,w300,w60	-	properties.power_bests
-analyze.json	computed,converged,form_delta_7d,form_delta_known,form_state,form_tsb,form_tsb_known,stream_errors,stream_errors_capped	computed,converged,form_delta_7d,form_delta_known,form_state,form_tsb,form_tsb_known,stream_errors,stream_errors_capped	-	$
+analyze.json	computed,converged,form_delta_7d,form_delta_known,form_state,form_tsb,form_tsb_known,stream_errors,stream_errors_capped	computed,converged,form_delta_7d,form_delta_known,form_state,form_tsb,form_tsb_known,stream_errors,stream_errors_capped	doc	$
 auth.json	authorized,expires_at	authorized,expires_at	-	$
 commands.json	args,error_codes,interactive,mutates,name,network,schema	args,error_codes,interactive,mutates,name,network,schema	-	properties.commands.items
 commands.json	commands,flags,universal_error_codes	commands,flags,universal_error_codes	-	$
@@ -17,7 +17,7 @@ commands.json	example,name,required	example,name,required	-	properties.commands.
 compare.json	ctl,easy_pct,hard_min,has_data,polarization_known,sessions,tss	ctl,easy_pct,hard_min,has_data,polarization_known,sessions,tss	doc	properties.current
 compare.json	ctl,easy_pct,hard_min,has_data,polarization_known,sessions,tss	ctl,easy_pct,hard_min,has_data,polarization_known,sessions,tss	doc	properties.prior
 compare.json	current,period,prior,window_label	current,period,prior,window_label	doc	$
-complete.json	activity,completed_session,detected_known,detected_mean_dur_s,detected_mean_watts,detected_reps,dropped_substitute,released_substitute_of,replaced_activity,reps_delta,rest,target_dur_s,target_known,target_reps,target_watts,watts_pct	completed_session,dropped_substitute,replaced_activity	-	$
+complete.json	activity,completed_session,detected_known,detected_mean_dur_s,detected_mean_watts,detected_reps,dropped_substitute,released_substitute_of,replaced_activity,reps_delta,rest,target_dur_s,target_known,target_reps,target_watts,watts_pct	completed_session,dropped_substitute,replaced_activity	doc	$
 config.json	key,redacted,value	key,value	doc	$
 config_list.json	key,redacted,status	key,redacted,status	-	properties.keys.items
 config_list.json	keys	keys	-	$
@@ -30,7 +30,7 @@ event_add.json	days_away,event_date,id,name	days_away,event_date,id,name	doc	$
 event_remove.json	removed	removed	-	$
 events.json	atl,ctl,days_away,event_date,id,name,planned_in_window,sessions_projected,tsb	atl,ctl,days_away,event_date,id,name,planned_in_window,sessions_projected,tsb	doc	properties.events.items
 events.json	baseline_known,events,ftp_known,projected_from	baseline_known,events,ftp_known,projected_from	doc	$
-import.json	imported,skipped	imported,skipped	-	$
+import.json	imported,skipped	imported,skipped	doc	$
 init.json	initialized	initialized	-	$
 load.json	atl,ctl,day,tsb,tss	atl,ctl,day,tsb,tss	-	items
 pace_curve.json	available_sports,cs,d_prime,fit_points,fit_r2,points,sport,window_days	available_sports,cs,d_prime,fit_points,fit_r2,points,sport,window_days	doc	$
@@ -72,12 +72,12 @@ strength.json	date,kg_reps,top_kg,top_reps,total_reps	date,kg_reps,top_kg,top_re
 strength.json	exercise,measure,points	exercise,measure,points	doc	properties.exercises.items
 strength.json	exercises,monthly,sessions	exercises,monthly,sessions	doc	$
 strength.json	pasted_unparsed,total,with_sets	pasted_unparsed,total,with_sets	doc	properties.sessions
-summary.json	as_of,ctl_warming_up,fatigue_atl,fitness_ctl,form_band_days,form_band_days_capped,form_coverage_90d,form_delta_7d,form_delta_known,form_state,form_tsb,ftp,hard_days,hr_zones,last_28d,last_7d,last_hard_session_date,load_days,load_windows,pending_sessions,ramp_28d_avg,ramp_7d,sports_28d	as_of,ctl_warming_up,fatigue_atl,fitness_ctl,form_band_days,form_band_days_capped,form_coverage_90d,form_delta_7d,form_delta_known,form_state,form_tsb,ftp,hard_days,hr_zones,last_28d,last_7d,last_hard_session_date,load_days,load_windows,pending_sessions,ramp_28d_avg,ramp_7d,sports_28d	-	$
+summary.json	as_of,ctl_warming_up,fatigue_atl,fitness_ctl,form_band_days,form_band_days_capped,form_coverage_90d,form_delta_7d,form_delta_known,form_state,form_tsb,ftp,hard_days,hr_zones,last_28d,last_7d,last_hard_session_date,load_days,load_windows,pending_sessions,ramp_28d_avg,ramp_7d,sports_28d	as_of,ctl_warming_up,fatigue_atl,fitness_ctl,form_band_days,form_band_days_capped,form_coverage_90d,form_delta_7d,form_delta_known,form_state,form_tsb,ftp,hard_days,hr_zones,last_28d,last_7d,last_hard_session_date,load_days,load_windows,pending_sessions,ramp_28d_avg,ramp_7d,sports_28d	doc	$
 summary.json	best_20min_w_60d,estimated_ftp_w,prior_60d_best_20min_w,prior_60d_known	best_20min_w_60d,estimated_ftp_w,prior_60d_best_20min_w,prior_60d_known	doc	properties.ftp
 summary.json	d14,d28,days_since_known,days_since_last,spacing_known,spacing_median_days_28d	d14,d28,days_since_known,days_since_last,spacing_known,spacing_median_days_28d	doc	properties.hard_days
 summary.json	d28,d7,d90,delta_28d,delta_7d,prior_d28,prior_d7	d28,d7,d90,delta_28d,delta_7d,prior_d28,prior_d7	doc	properties.load_windows
-summary.json	distance_m,easy_pct,hard_pct,hr_streams,intensity_streams,load_coverage,measured_pct,moderate_pct,moving_time,sessions,tss,z1_s,z2_s,z3_s,z4_s,z5_s	distance_m,easy_pct,hard_pct,hr_streams,intensity_streams,load_coverage,measured_pct,moderate_pct,moving_time,sessions,tss	-	properties.last_28d
-summary.json	distance_m,easy_pct,hard_pct,hr_streams,intensity_streams,load_coverage,measured_pct,moderate_pct,moving_time,sessions,tss,z1_s,z2_s,z3_s,z4_s,z5_s	distance_m,easy_pct,hard_pct,hr_streams,intensity_streams,load_coverage,moderate_pct,moving_time,sessions,tss	-	properties.last_7d
+summary.json	distance_m,easy_pct,hard_pct,hr_streams,intensity_streams,load_coverage,measured_pct,moderate_pct,moving_time,polarization_known,sessions,tss,z1_s,z2_s,z3_s,z4_s,z5_s	distance_m,easy_pct,hard_pct,hr_streams,intensity_streams,load_coverage,measured_pct,moderate_pct,moving_time,polarization_known,sessions,tss	-	properties.last_28d
+summary.json	distance_m,easy_pct,hard_pct,hr_streams,intensity_streams,load_coverage,measured_pct,moderate_pct,moving_time,polarization_known,sessions,tss,z1_s,z2_s,z3_s,z4_s,z5_s	distance_m,easy_pct,hard_pct,hr_streams,intensity_streams,load_coverage,moderate_pct,moving_time,polarization_known,sessions,tss	-	properties.last_7d
 summary.json	distance_m,last_date,moving_time,sessions,sport,tss	distance_m,last_date,moving_time,sessions,sport,tss	doc	properties.sports_28d.items
 summary.json	high_pct,known,low_pct,medium_pct	high_pct,known,low_pct,medium_pct	doc	properties.form_coverage_90d
 summary.json	high_pct,known,low_pct,medium_pct	high_pct,known,low_pct,medium_pct	doc	properties.last_28d.properties.load_coverage

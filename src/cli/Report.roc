@@ -668,7 +668,9 @@ Report :: [].{
         # polarization is intensity-aware and covers the activities the view marks
         # `polarized`: easy/moderate/hard come from the pi_* split where one exists
         # (power-derived with watts, pace-derived for a distance sport without), HR
-        # zones otherwise
+        # zones otherwise. polarization_known is the ambiguous-zero discriminator
+        # (ADR 0009) for the three shares: a window whose sessions are all lifting
+        # has a zero total, and its shares are absent rather than 0%.
         total = zsum.easy + zsum.moderate + zsum.hard
         easy = zsum.easy
         hard = zsum.hard
@@ -804,6 +806,7 @@ Report :: [].{
             pending_sessions: pending,
             last_7d: {
                 tss: zsum7.tss,
+                polarization_known: total7 > 0,
                 z1_s: zsum7.z1,
                 z2_s: zsum7.z2,
                 z3_s: zsum7.z3,
@@ -821,6 +824,7 @@ Report :: [].{
             },
             last_28d: {
                 tss: zsum.tss,
+                polarization_known: total > 0,
                 z1_s: zsum.z1,
                 z2_s: zsum.z2,
                 z3_s: zsum.z3,
