@@ -884,91 +884,91 @@ Analyze :: [].{
             }
         # ADR 0008: detected interval structure — same lifecycle as the metrics row
         # (invalidate paths DELETE it; it recomputes here whenever the row recomputes).
-        # Segments are written BEFORE the metrics row on purpose: the metrics row is
-        # the commit marker for this activity, so a failure mid-segment-write leaves
-        # the row absent and the next analyze redoes the whole activity — no frozen
-        # partial rep set can survive. Power detects when real watts exist; pace only
-        # for pace-routed sports (runs/swims) — a meter-less RIDE must not get
-        # run-tuned pace detection of its terrain speed.
-        _ = Sql.execute!({ path: Path.utf8(path), query: "DELETE FROM activity_segments WHERE activity_id = :id", bindings: [{ name: ":id", value: Integer(row.id) }] })?
+        # Power detects when real watts exist; pace only for pace-routed sports
+        # (runs/swims) — a meter-less RIDE must not get run-tuned pace detection of its
+        # terrain speed. The segment rewrite and the metrics row commit as one
+        # transaction on one connection, so a failure leaves neither and the next
+        # analyze redoes the whole activity, and a full rescore pays one connection and
+        # one commit per activity rather than one per statement.
         hr_1s_pairs = Metrics.resample_1s_pairs(hr_pairs, Hold)
-        _ =
-            if !(List.is_empty(watts_1s_pairs)) {
-                insert_segments!(path, row.id, "power", Metrics.detect_segments(watts_1s_pairs, Metrics.detect_power_params), hr_1s_pairs)?
-            } else if Sports.pace_routed(row.sport) and !(List.is_empty(gas_1s_pairs)) {
-                insert_segments!(path, row.id, "pace", Metrics.detect_segments(gas_1s_pairs, Metrics.detect_pace_params), hr_1s_pairs)?
-            } else {
-                {}
-            }
-        Sql.execute!({
-            path: Path.utf8(path),
-            query:
-                \\INSERT OR REPLACE INTO activity_metrics
-                \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, best_300s_speed, best_600s_speed, threshold_pace_used, hr_samples_total, hr_samples_dropped, watts_samples_total, watts_samples_dropped, mt_used, dist_used, elev_used, aw_used, ahr_used, waw_used, re_used, dw_used, sport_used, start_used, stream_len_used, decoupling_pct, decoupling_signal, avg_hr_stream)
-                \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :b300s, :b600s, :thru, :hrt, :hrd, :wt, :wd, :umt, :udist, :uelev, :uaw, :uahr, :uwaw, :ure, :udw, :usport, :ustart, :uslen, :decoup, :dsig, :ahrs)
-            ,
-            bindings: [
-                { name: ":umt", value: Integer(row.s_mt) },
-                { name: ":udist", value: Integer(row.s_dist) },
-                { name: ":uelev", value: Integer(row.s_elev) },
-                { name: ":uaw", value: Integer(row.s_aw) },
-                { name: ":uahr", value: Integer(row.s_ahr) },
-                { name: ":uwaw", value: Integer(row.s_waw) },
-                { name: ":ure", value: Integer(row.s_re) },
-                { name: ":udw", value: Integer(row.s_dw) },
-                { name: ":usport", value: String(row.sport) },
-                { name: ":ustart", value: String(row.start) },
-                { name: ":uslen", value: Integer(row.s_slen) },
-                # NULL, not 0, when there is nothing to measure — 0.0 is a real result
-                # here (a perfectly steady session) and the two must stay distinguishable
-                { name: ":decoup", value: match decoupling { Known(d) => Real(d)  Unknown => Null } },
-                { name: ":dsig", value: decoupling_signal_val },
-                { name: ":ahrs", value: avg_hr_stream_binding },
-                { name: ":hrt", value: Integer((hr_total).to_i64_wrap()) },
-                { name: ":hrd", value: Integer((hr_dropped).to_i64_wrap()) },
-                { name: ":wt", value: Integer((watts_total).to_i64_wrap()) },
-                { name: ":wd", value: Integer((watts_dropped).to_i64_wrap()) },
-                { name: ":pie", value: Integer(pintensity.easy_s) },
-                { name: ":pim", value: Integer(pintensity.moderate_s) },
-                { name: ":pih", value: Integer(pintensity.hard_s) },
-                { name: ":ftpu", value: Real(pi_ftp) },
-                { name: ":zused", value: String(zones_sig(row_zb)) },
-                { name: ":rev", value: Integer(metrics_rev) },
-                { name: ":model", value: String(ladder.model) },
-                { name: ":id", value: Integer(row.id) },
-                { name: ":tss", value: Real(tss) },
-                { name: ":np", value: np_binding },
-                { name: ":if", value: if_binding },
-                { name: ":z1", value: Integer(zones.z1) },
-                { name: ":z2", value: Integer(zones.z2) },
-                { name: ":z3", value: Integer(zones.z3) },
-                { name: ":z4", value: Integer(zones.z4) },
-                { name: ":z5", value: Integer(zones.z5) },
-                { name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
-                { name: ":b20", value: best20_binding },
-                { name: ":bc5", value: cw(0) },
-                { name: ":bc15", value: cw(1) },
-                { name: ":bc30", value: cw(2) },
-                { name: ":bc60", value: cw(3) },
-                { name: ":bc300", value: cw(4) },
-                { name: ":bc600", value: cw(5) },
-                { name: ":bc3600", value: cw(6) },
-                { name: ":b20s", value: best20_speed_binding },
-                { name: ":b300s", value: best300_speed_binding },
-                { name: ":b600s", value: best600_speed_binding },
-                # store the threshold the row was scored against — the pace twin of ftp_used,
-                # so a later threshold change invalidates via the recompute WHERE
-                { name: ":thru", value: Real(threshold_speed) },
-            ],
-        })?
-        Ok(decoded.failed)
+        Sql.transaction!(Path.utf8(path), |run!| {
+            _ = run!("DELETE FROM activity_segments WHERE activity_id = :id", [{ name: ":id", value: Integer(row.id) }])?
+            _ =
+                if !(List.is_empty(watts_1s_pairs)) {
+                    insert_segments!(run!, row.id, "power", Metrics.detect_segments(watts_1s_pairs, Metrics.detect_power_params), hr_1s_pairs)?
+                } else if Sports.pace_routed(row.sport) and !(List.is_empty(gas_1s_pairs)) {
+                    insert_segments!(run!, row.id, "pace", Metrics.detect_segments(gas_1s_pairs, Metrics.detect_pace_params), hr_1s_pairs)?
+                } else {
+                    {}
+                }
+            _ = run!(
+                    \\INSERT OR REPLACE INTO activity_metrics
+                    \\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, best_300s_speed, best_600s_speed, threshold_pace_used, hr_samples_total, hr_samples_dropped, watts_samples_total, watts_samples_dropped, mt_used, dist_used, elev_used, aw_used, ahr_used, waw_used, re_used, dw_used, sport_used, start_used, stream_len_used, decoupling_pct, decoupling_signal, avg_hr_stream)
+                    \\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :b300s, :b600s, :thru, :hrt, :hrd, :wt, :wd, :umt, :udist, :uelev, :uaw, :uahr, :uwaw, :ure, :udw, :usport, :ustart, :uslen, :decoup, :dsig, :ahrs)
+                ,
+                [
+                    { name: ":umt", value: Integer(row.s_mt) },
+                    { name: ":udist", value: Integer(row.s_dist) },
+                    { name: ":uelev", value: Integer(row.s_elev) },
+                    { name: ":uaw", value: Integer(row.s_aw) },
+                    { name: ":uahr", value: Integer(row.s_ahr) },
+                    { name: ":uwaw", value: Integer(row.s_waw) },
+                    { name: ":ure", value: Integer(row.s_re) },
+                    { name: ":udw", value: Integer(row.s_dw) },
+                    { name: ":usport", value: String(row.sport) },
+                    { name: ":ustart", value: String(row.start) },
+                    { name: ":uslen", value: Integer(row.s_slen) },
+                    # NULL, not 0, when there is nothing to measure — 0.0 is a real result
+                    # here (a perfectly steady session) and the two must stay distinguishable
+                    { name: ":decoup", value: match decoupling { Known(d) => Real(d)  Unknown => Null } },
+                    { name: ":dsig", value: decoupling_signal_val },
+                    { name: ":ahrs", value: avg_hr_stream_binding },
+                    { name: ":hrt", value: Integer((hr_total).to_i64_wrap()) },
+                    { name: ":hrd", value: Integer((hr_dropped).to_i64_wrap()) },
+                    { name: ":wt", value: Integer((watts_total).to_i64_wrap()) },
+                    { name: ":wd", value: Integer((watts_dropped).to_i64_wrap()) },
+                    { name: ":pie", value: Integer(pintensity.easy_s) },
+                    { name: ":pim", value: Integer(pintensity.moderate_s) },
+                    { name: ":pih", value: Integer(pintensity.hard_s) },
+                    { name: ":ftpu", value: Real(pi_ftp) },
+                    { name: ":zused", value: String(zones_sig(row_zb)) },
+                    { name: ":rev", value: Integer(metrics_rev) },
+                    { name: ":model", value: String(ladder.model) },
+                    { name: ":id", value: Integer(row.id) },
+                    { name: ":tss", value: Real(tss) },
+                    { name: ":np", value: np_binding },
+                    { name: ":if", value: if_binding },
+                    { name: ":z1", value: Integer(zones.z1) },
+                    { name: ":z2", value: Integer(zones.z2) },
+                    { name: ":z3", value: Integer(zones.z3) },
+                    { name: ":z4", value: Integer(zones.z4) },
+                    { name: ":z5", value: Integer(zones.z5) },
+                    { name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
+                    { name: ":b20", value: best20_binding },
+                    { name: ":bc5", value: cw(0) },
+                    { name: ":bc15", value: cw(1) },
+                    { name: ":bc30", value: cw(2) },
+                    { name: ":bc60", value: cw(3) },
+                    { name: ":bc300", value: cw(4) },
+                    { name: ":bc600", value: cw(5) },
+                    { name: ":bc3600", value: cw(6) },
+                    { name: ":b20s", value: best20_speed_binding },
+                    { name: ":b300s", value: best300_speed_binding },
+                    { name: ":b600s", value: best600_speed_binding },
+                    # store the threshold the row was scored against — the pace twin of ftp_used,
+                    # so a later threshold change invalidates via the recompute WHERE
+                    { name: ":thru", value: Real(threshold_speed) },
+                ],
+            )?
+            Ok(decoded.failed)
+        })
     }
 
     # write detected segments with per-WORK-rep HR enrichment; NULL HR columns are
     # honest absence (no HR samples inside the rep), never zeros
-    insert_segments! : Str, I64, Str, List(Metrics.Segment), List({ t : I64, v : F64 }) => Try({}, _)
-    insert_segments! = |path, id, signal_name, segs, hr_pairs|
-        walk_segments!(path, id, signal_name, segs, hr_pairs, 0)
+    # `run!` is the statement runner of the caller's transaction
+    insert_segments! = |run!, id, signal_name, segs, hr_pairs|
+        walk_segments!(run!, id, signal_name, segs, hr_pairs, 0)
 
     # first WORK segment strictly after index ix — the rec-drop window guard needs it
     next_work_after : List(Metrics.Segment), U64 -> [NextWorkAt(I64), NoNextWork]
@@ -979,8 +979,7 @@ Analyze :: [].{
                 NoNextWork => if s2.kind == Work NextWorkAt(s2.start_s) else NoNextWork
             })
 
-    walk_segments! : Str, I64, Str, List(Metrics.Segment), List({ t : I64, v : F64 }), U64 => Try({}, _)
-    walk_segments! = |path, id, signal_name, segs, hr_pairs, ix|
+    walk_segments! = |run!, id, signal_name, segs, hr_pairs, ix|
         match List.get(segs, ix) {
             Err(_) => Ok({})
             Ok(seg) => {
@@ -1003,14 +1002,12 @@ Analyze :: [].{
                         }
                     NoHr => Null
                 }
-                Sql.execute!({
-                    path: Path.utf8(path),
-                    query:
+                run!(
                         \\INSERT OR REPLACE INTO activity_segments
                         \\  (activity_id, ordinal, kind, start_s, dur_s, avg_signal, signal, peak_hr, avg_hr, rec_drop_60s)
                         \\VALUES (:id, :ord, :kind, :ss, :ds, :avg, :sig, :phr, :ahr, :drop)
                     ,
-                    bindings: [
+                    [
                         { name: ":id", value: Integer(id) },
                         { name: ":ord", value: Integer((ix).to_i64_wrap()) },
                         { name: ":kind", value: String(kind_str) },
@@ -1022,8 +1019,8 @@ Analyze :: [].{
                         { name: ":ahr", value: hr_bind(|r| r.avg_hr) },
                         { name: ":drop", value: drop_bind },
                     ],
-                })?
-                walk_segments!(path, id, signal_name, segs, hr_pairs, ix + 1)
+                )?
+                walk_segments!(run!, id, signal_name, segs, hr_pairs, ix + 1)
             }
         }
     # ── daily load (CTL/ATL/TSB) ────────────────────────────────────────
