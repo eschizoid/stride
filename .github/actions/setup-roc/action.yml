@@ -14,10 +14,8 @@ runs:
   using: composite
   steps:
     # The nightlies host intermittently serves a bad cert chain, which fails the
-    # download with `curl: (60)` on every runner before a line is compiled. The
-    # failure is transient and one retry absorbs it. Caching the toolchain would
-    # also work, but setup-roc owns the extraction layout and it differs per OS,
-    # so guessing at those paths trades a known flake for an unknown one.
+    # download with `curl: (60)`. The failure is transient, so the next step retries
+    # once. nightly-new-compiler is the only channel that ships a Windows roc binary.
     - name: Install Roc (new compiler)
       id: roc
       uses: roc-lang/setup-roc@v0.3.0

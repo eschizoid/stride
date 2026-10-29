@@ -4,26 +4,19 @@ name: build
 on:
   push:
   pull_request:
-  # lets a run be retriggered without an empty commit — during the 2026-08-06 Actions
-  # outage the only way to get a fresh run was to resurrect a dead one, which is
-  # unreliable for runs that ended `cancelled`
+  # lets someone start a fresh run by hand, without pushing an empty commit
   workflow_dispatch:
 
-# One run per ref. A second push supersedes the first instead of queueing behind it:
-# without this, four runs stacked up on two branches during an Actions outage and every
-# one of them still had to be scheduled before the newest could start. `main` is exempt —
-# cancelling a merge-commit build would leave the default branch with no result.
+# Keeps one run per ref, so a new push cancels the older run instead of queueing
+# behind it. Runs on main are never cancelled, so every merge commit keeps a result.
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  # Type-check the whole app + run every pure module's expect suite, on all three
-  # OSes INCLUDING Windows. This is the new (Zig) compiler — both `roc check` and
-  # `roc test` stop before native codegen, so they are fast and deterministic and
-  # make a good first gate. (The `e2e` job below does build the real binary, with
-  # --opt=dev, which is now a BUILD-TIME choice: #32's SIGABRT was fixed by the
-  # 2026-08-17 compiler pin, and --opt=speed costs ~2min against ~14s.)
+  # Type-checks the whole app and runs every pure module's expects on every OS,
+  # Windows included. `roc check` and `roc test` stop before native code
+  # generation, so they are fast and make a good first gate.
   check-and-test:
     strategy:
       fail-fast: false
@@ -33,59 +26,35 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Official cross-platform installer. `nightly-new-compiler` is the only
-      # channel that ships a Windows roc binary. The current tag is pinned because it
-      # clears the compiler segfault that some nightlies after 08-04 introduced -- the pin
-      # is itself later than that and is green, so the bound is not simply a date (see
-      # docs/roc-new-compiler-notes.md); the SpecConstr build fix (roc#10531) that
-      # motivated the PREVIOUS pin is long since carried by every nightly in range.
-      # The nightlies host intermittently serves a bad cert chain: four runs in one
-      # day died on `curl: (60)` here, on all three runners, before compiling a
-      # line. A manual re-run always succeeded immediately, so the failure is
-      # transient and one retry absorbs it. Caching the toolchain instead would
-      # also work, but setup-roc owns the extraction layout and it differs per
-      # OS — guessing at those paths trades a known flake for an unknown one.
       - name: Install Roc (new compiler)
         uses: ./.github/actions/setup-roc
 
-      # One check covers the whole codebase: `roc check` follows every import, so
-      # this type-checks main.roc plus every module against basic-cli + http.
+      # `roc check` follows every import, so one check covers main.roc and every
+      # module it reaches.
       - name: Type-check (main + all modules)
         shell: bash
         run: roc check src/cli/main.roc
 
-      # Here rather than in the `claims` job, and rather than only in the justfile.
-      #
-      # Only-in-the-justfile was the first cut, and it does not change anything: a recipe a
-      # human must remember to type is how the two drifts this guards were found in the
-      # first place, which was a person reading a diff. `command-claims` resolves command
-      # NAMES; this resolves payload KEYS.
-      #
-      # And in THIS job because it reads source, schemas and Markdown — never the binary,
-      # never a database. `command-claims` sits in the `claims` job because its oracle is
-      # the built binary, which that job builds; this one's is not, so it runs here, with
-      # no build step between the checkout and a docs check.
+      # Checks the payload keys SKILL.md names against the schemas. It reads only
+      # source, schemas and Markdown, never the binary, so no build step runs first.
       - name: Check SKILL.md payload shapes against the schemas
         shell: bash
         run: sh tools/skill-shapes.sh
 
-      # Same job and the same reason: reads source only, so it must not sit behind a build.
-      # It also belongs on every OS — the SKILL.md gate was green on macOS and Linux while
-      # broken on Windows three separate ways, and only the matrix ever showed it.
+      # Reads source only, so it needs no build. The source gates run on every OS
+      # because a shell script can pass on macOS and Linux and fail under Git Bash.
       - name: Check every TEXT decode is CAST to TEXT
         shell: bash
         run: sh tools/blob-safety.sh
 
-      # Same job, same reason: source only. Every strength-notes adapter is a row
-      # in the ordered table and ships a real sample of its app's share text
-      # (ADR 0018) — the one promise in that ADR nothing else enforces.
+      # Reads source only. Every strength adapter must be a row in the ordered table
+      # and ship a real sample of its app's text (ADR 0018), and only this gate checks it.
       - name: Check every strength adapter is registered and ships its sample
         shell: bash
         run: sh tools/adapter-fixtures.sh
 
-      # The pure modules carry the logic and the tests. main.roc
-      # has no expects (its effectful ones can't run under the test runner), so it
-      # is validated by `check` above.
+      # main.roc has no expects, because effectful expects can't run under the test
+      # runner, so the type-check above is what covers it.
       - name: Run pure-module tests
         shell: bash
         run: |
@@ -94,8 +63,8 @@ jobs:
             echo "--- roc test src/core/$m.roc (the package both binaries import) ---"
             roc test "src/core/$m.roc"
           done
-          # --main on every engine module: core is imported transitively, and a
-          # bare module run carries no package map
+          # engine modules import the core package, and a bare module run has no
+          # package map, so each run names the app with --main
           for m in Metrics Render Drain Csv Command Config Streams Strength; do
             echo "--- roc test --main=src/cli/main.roc src/cli/$m.roc ---"
             roc test --main=src/cli/main.roc "src/cli/$m.roc"
@@ -103,18 +72,9 @@ jobs:
           echo "--- roc check src/cli/Schema.roc (DDL-only, no expects) ---"
           roc check src/cli/Schema.roc
 
-  # End-to-end: build the real binary and run the native offline e2e suite (
-  # sandboxed HOME, no network). Built with --opt=dev for build time; #32's SIGABRT in the
-  # optimized backend was fixed by the 2026-08-17 pin, so RELEASE binaries
-  # are built with it too — the suite passes deterministically either way.
-  #
-  # Runs on macOS, NOT linux. The original reason was a memory-layout-dependent codegen
-  # bug (a constant "" in a str op corrupting the heap) that hit the linux build even
-  # where macOS was clean. That bug is roc#10595, fixed upstream on 2026-08-04, and the
-  # current pin carries the fix — so the reason is spent and the placement is now just
-  # untested. macOS is the dev platform and the suite is green there; the cross-platform
-  # gate is `check` + pure `test` above (all three OSes). Moving e2e to linux now needs a
-  # trial run, not a comment change. e2e-sync also runs here now — it needs no network.
+  # Builds the real binary and runs the e2e suites against it with a sandboxed
+  # HOME and no network. It runs on macOS only, so the cross-platform gate is
+  # check-and-test, which runs on every OS in its matrix.
   e2e:
     needs: check-and-test
     runs-on: macos-latest
@@ -129,19 +89,15 @@ jobs:
         run: roc build src/cli/main.roc --output=stride --opt=dev   # new compiler uses --output=
       - name: Run offline e2e suite
         run: ROC=roc just e2e
-      # Runs in CI despite the "sync" name: it needs no network and no credential.
-      # The mocks bind loopback, STRIDE_API_BASE points stride at them (Config
-      # .api_base_allowed permits http to loopback for exactly this), and the token is a
-      # fake row written into a sandboxed HOME. This was left out on the belief that it
-      # "needs a token and a live API" — it does not, and that belief cost the stream drain
-      # its only payload-vs-schema check in CI.
+      # `just e2e-sync` needs no network or credential. Its mocks listen on loopback,
+      # STRIDE_API_BASE points stride at them (Config.api_base_allowed permits http to
+      # loopback), and the token is a fake row written into a sandboxed HOME.
       - name: Run mock-backed e2e suite
         run: ROC=roc just e2e-sync
 
-  # The three checks that need neither a window nor the e2e harness: the docs'
-  # command names against the binary's table, the compiler pins, and the
-  # issue-state claims. Their own job, so a red harness build (the e2e job
-  # stops at its first failing step) cannot take them down with it.
+  # Checks the docs' command names, the compiler pin and the issue-state claims.
+  # They need neither a window nor the e2e harness, and their own job keeps a
+  # failing e2e step from skipping them.
   claims:
     needs: check-and-test
     runs-on: ubuntu-latest
@@ -151,47 +107,34 @@ jobs:
         uses: ./.github/actions/setup-roc
       - name: Install just
         run: |
-          # apt-get update fails if ANY configured source serves bad metadata,
-          # and the runner image ships third-party repos (Chrome et al) that
-          # do exactly that intermittently. Ubuntu's own sources live in
-          # ubuntu.sources on current runner images; everything else goes.
+          # apt-get update fails if any configured source serves bad metadata, and
+          # the runner image ships third-party sources that sometimes do. Ubuntu's
+          # own sources live in ubuntu.sources, so every other file is deleted.
           sudo find /etc/apt/sources.list.d -type f ! -name 'ubuntu.sources' -delete
           sudo apt-get update -qq || sudo apt-get update -qq
           sudo apt-get install -y -qq just
       - name: Build stride (the command table is the oracle below)
         run: roc build src/cli/main.roc --output=stride --opt=dev
-      # Deterministic and network-free, so it runs BEFORE issue-claims: that one needs the
-      # tracker, and a GitHub outage there would otherwise mean this check — which can
-      # always run — never does.
-      #
-      # The oracle is the binary's own command table, which this job built one step up.
-      # The SCRIPT, not `just command-claims`, and the difference is not cosmetic: the
-      # recipe depends on `build` for local use, `just` has no up-to-date check, and
-      # `roc build` is 16 of the recipe's 18 seconds — so through the recipe this step
-      # recompiles the binary "Build stride" already produced, and a compiler flake turns a
-      # DOCS check red under a message about docs. The rebuild bought nothing here: the
-      # script exits 6 naming the missing binary, and the job cannot reach this step without
-      # a successful build anyway.
+      # Needs no network, so it runs before issue-claims, which reads the tracker and
+      # can fail on a GitHub outage. It calls the script and not `just command-claims`,
+      # because that recipe rebuilds the binary the step above already built.
       - name: Check the commands the docs name against the command table
         run: sh tools/command-claims.sh
-      # Both binaries build on one compiler, so every job takes the setup-roc
-      # action's default and no workflow repeats the tag. This holds the app
-      # header to that default - the only two copies left (#443, #458).
+      # Every job takes the setup-roc default, so the compiler tag has one copy.
+      # This fails if a workflow overrides it, if the viz app header names a
+      # compiler, or if the justfile's viz_pin names a different tag.
       - name: Check the viz roc pin agrees across every workflow site
         run: sh tools/pin-check.sh
-      # Cheap, and it guards a class that has rotted twice: a comment asserting an issue
-      # is still open when the tracker says closed (#165 found `#105 remains open` sitting
-      # 560 lines above the same file saying it was fixed). GITHUB_TOKEN is enough — it
-      # only reads issue state.
+      # Fails when a comment or doc says an issue is still open and the tracker says
+      # it is closed. GITHUB_TOKEN is enough because the script only reads issue state.
       - name: Check issue-state claims in source comments
         run: just issue-claims
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # The app window (src/viz/main.roc) rides a different platform (roc-ray) on
-  # the same compiler as the engine. Nothing above imports it, so without this
-  # job it would land unchecked. It goes through tools/roc-viz.sh because that
-  # wrapper is where the window's assertion-count pins live.
+  # The app window (src/viz/main.roc) uses the roc-ray platform on the engine's
+  # compiler, and nothing in check-and-test imports it. This job checks it through
+  # tools/roc-viz.sh, the wrapper that holds the window's assertion-count pins.
   viz-check:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -204,17 +147,14 @@ jobs:
       - name: Type-check the app window
         run: sh tools/roc-viz.sh check src/viz/main.roc
 
-      # the window's pure expects: `just test` enumerates engine modules by
-      # name with no viz module among them, so these run only through the
-      # roc-viz.sh wrapper - this step and the local viz-test recipe. The
-      # wrapper itself carries the expected-count pin both invocations share.
+      # `just test` names engine modules only, so the window's expects run only
+      # through roc-viz.sh, here and in the local viz-test recipe.
       - name: Run the app window's pure expects
         run: sh tools/roc-viz.sh test src/viz/main.roc
 
-  # roc-ray ships an x64glibc host, so the window can LINK on linux - which is
-  # a different question from type-checking it. This job answers it on every
-  # PR, because the release job that packages a linux app must not be the
-  # place that discovers raylib's link deps are missing.
+  # roc-ray ships an x64glibc host, so the window can link on linux, and a
+  # type-check does not prove that. Linking on every PR keeps the release job
+  # from being the first place a missing raylib link dependency shows up.
   viz-link-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -227,10 +167,9 @@ jobs:
       - name: raylib's link dependencies
         run: |
           set -euo pipefail
-          # apt-get update fails if ANY configured source serves bad metadata,
-          # and the runner image ships third-party repos (Chrome et al) that
-          # do exactly that intermittently. Ubuntu's own sources live in
-          # ubuntu.sources on current runner images; everything else goes
+          # apt-get update fails if any configured source serves bad metadata, and
+          # the runner image ships third-party sources that sometimes do. Ubuntu's
+          # own sources live in ubuntu.sources, so every other file is deleted.
           sudo find /etc/apt/sources.list.d -type f ! -name 'ubuntu.sources' -delete
           sudo apt-get update -qq || sudo apt-get update -qq
           sudo apt-get install -y -qq libgl1-mesa-dev libx11-dev libxrandr-dev \
@@ -243,13 +182,9 @@ jobs:
           test -s stride-viz-linux
           file stride-viz-linux
 
-  # The one Windows-shaped viz failure so far was resolution, not linking
-  # (#442: the window could not find the home directory, so every view
-  # rendered its empty state). The window no longer resolves it at all - the
-  # launcher passes the directory, and that argument is also the app's
-  # read-write grant - so what needs holding is the WINDOWS launcher passing
-  # it. Linking here proves the roc-ray x64win host stays viable; the window
-  # itself cannot run headless on a runner.
+  # The window cannot run headless on a runner, so linking it proves the roc-ray
+  # x64win host still works. The grep checks that the Windows launcher passes a
+  # %USERPROFILE% path as the window's first argument, its read-write grant.
   viz-link-windows:
     runs-on: windows-2025
     timeout-minutes: 20
@@ -263,14 +198,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # rem lines stripped first: the claim must live in the launcher the
-          # release writes, not in a comment describing it
+          # rem and # lines are stripped first, so the match must come from the
+          # launcher the release writes and not from a comment describing it
           sed -e 's/^ *rem .*//' -e 's/^ *#.*//' .github/workflows/release-please.yml | grep -q 'stride-viz.exe" "%USERPROFILE%'
           sh tools/roc-viz.sh build src/viz/main.roc --output=stride-viz.exe --opt=dev
           test -s stride-viz.exe
 
-  # ADR 0016's gate is pure shell over source text — no toolchain, no OS
-  # variance to cover, so one dedicated job states exactly what it enforces.
+  # ADR 0016's gate is plain shell over source text. It needs no toolchain and
+  # does not vary by OS, so one small job runs it.
   layer-check:
     runs-on: ubuntu-latest
     timeout-minutes: 5

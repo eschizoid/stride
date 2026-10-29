@@ -1,9 +1,8 @@
 name: manual-release
 
-# Manual, dispatch-only release cut — independent of release-please (which drives
-# 0.1.1+ automatically). Reads the version from main.roc, tags it, builds the five
-# binaries, and publishes with notes from CHANGELOG.md. Use to (re-)cut a baseline
-# like v0.1.0. Do NOT dispatch while release-please has a pending release PR.
+# A release cut by hand, separate from release-please. It tags the version in
+# main.roc, builds the CLI binaries and publishes them with notes from CHANGELOG.md.
+# Do not dispatch it while release-please has a release PR open.
 on:
   workflow_dispatch: {}
 
@@ -38,9 +37,8 @@ jobs:
   build:
     name: build ${{ matrix.target }}
     needs: prepare
-    # ENABLED on the new (Zig) compiler, pinned nightly, --opt=dev — mirrors
-    # release-please.yml's build job. Use this to (re)build the five binaries for the current
-    # main.roc version on demand (e.g. attach binaries to an already-cut release).
+    # Mirrors the build job in release-please.yml. When the tag already exists,
+    # this rebuilds the binaries for that release.
     runs-on: ${{ matrix.runs-on }}
     defaults:
       run:
@@ -53,11 +51,8 @@ jobs:
             runs-on: ubuntu-latest
           - target: linux-arm64
             runs-on: ubuntu-24.04-arm
-            # VERIFIED — v0.4.0 onward ship the linux-arm64 CLI. (verify-arm64.yml is a
-            # dispatch-only re-check, not an automatic gate.)
-            # Left to itself the compiler auto-detects arm64v1musl on ubuntu-24.04-arm,
-            # which does not resolve to a usable host; naming the target explicitly is the
-            # fix, which is what roc_target below does. Do not drop it.
+            # Left to itself the compiler detects arm64v1musl on this runner, which
+            # resolves to no usable host. verify-arm64.yml re-checks this flag on demand.
             roc_target: arm64musl
           - target: macos-arm64
             runs-on: macos-latest
@@ -96,7 +91,7 @@ jobs:
 
   publish:
     needs: [prepare, build]
-    # ENABLED (2026-08-04): always() so it attaches whatever DID build even if a target failed.
+    # always() so it attaches whatever did build even when a target fails
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -113,11 +108,9 @@ jobs:
           set -euo pipefail
           ls stride-cli-* >/dev/null 2>&1 || { echo "::error::no binaries built"; exit 1; }
           sha256sum stride-* > SHA256SUMS.txt
-      # This workflow builds only the CLI binaries, but the tag it re-cuts may
-      # already carry app zips whose sums live in the release's SHA256SUMS.txt.
-      # A plain clobber replaced the whole file with the CLI-only rows, leaving
-      # the app zips attached but unverifiable (#444) - so rows for files this
-      # run did NOT rebuild are carried over before the upload below.
+      # The release may already carry app zips whose sums are in its SHA256SUMS.txt.
+      # This run builds only the CLI, so rows for files it did not rebuild are carried
+      # over before the upload below replaces that file.
       - name: Merge existing checksums
         env:
           GH_TOKEN: ${{ github.token }}

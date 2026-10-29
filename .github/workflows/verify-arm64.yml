@@ -1,9 +1,6 @@
-# Dispatch-only verification for the linux-arm64 release target (#141).
-# The release workflow's arm64 entry (roc_target: arm64musl) DOES produce an asset --
-# v0.4.0 onward ship stride-cli-linux-arm64. This is dispatch-only and
-# gates nothing automatically; it proves the exact same build command yields a RUNNING
-# binary on the same runner class, without cutting a release. Keep it — it is the cheap
-# re-verification tool for any future toolchain/platform bump.
+# Dispatch-only check that the release's linux-arm64 build command produces a
+# binary that runs and initializes its database on the same runner class, without
+# cutting a release. Run it after a toolchain or runner change.
 name: verify-arm64
 on:
   workflow_dispatch:

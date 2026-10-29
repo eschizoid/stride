@@ -1,8 +1,6 @@
-# GitHub Actions only. Dependabot has no Roc ecosystem, so it cannot see the platform and
-# package tarballs in src/cli/main.roc (their version AND content hash are baked into the URL),
-# and it cannot see the compiler pin either — `nightly-tag:` is an INPUT to setup-roc, not
-# an action version. Bumping the nightly stays a manual, tested decision; see
-# docs/roc-new-compiler-notes.md for why that matters right now.
+# GitHub Actions only. Dependabot has no Roc ecosystem, so it cannot see the package
+# URLs in src/cli/main.roc or the compiler pin, which is an input to setup-roc and not
+# an action version. The nightly is bumped by hand, after a test run on the new tag.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -12,22 +10,18 @@ updates:
       day: monday
     open-pull-requests-limit: 3
     commit-message:
-      # Yields `ci(deps): bump ...` — the form GitHub documents, so it is a valid
-      # Conventional Commit whether or not Dependabot appends the colon itself. Type `ci`
-      # produces no release: a routine action bump must never move the version.
+      # Gives `ci(deps): bump ...`, a valid Conventional Commit. The ci type
+      # produces no release, so an action bump never moves the version.
       prefix: ci
       include: scope
     groups:
-      # Routine first-party actions travel together — one PR, one review.
+      # Routine first-party action bumps share one PR.
       github-official:
         patterns:
           - actions/*
           - github/*
     ignore:
-      # setup-roc decides HOW the compiler is resolved. A bump could change the default
-      # channel or the meaning of nightly-tag and silently move us off the pinned nightly —
-      # onto an unvetted one. (This used to say every nightly after 2026-08-04 segfaults;
-      # the current pin IS an after-08-04 nightly and builds, tests and e2es clean.) CI
-      # would catch a bad bump, but this is not a change to review
-      # in a batch with a checkout bump. Update it deliberately, with the pin re-verified.
+      # setup-roc decides how the compiler is resolved, so a bump could change the
+      # default channel or the meaning of the nightly-tag input and move the build off
+      # the pinned nightly. It is updated by hand, with the pin checked again.
       - dependency-name: roc-lang/setup-roc
