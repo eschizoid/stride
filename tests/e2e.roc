@@ -362,7 +362,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1311)?
+    checks_ran_exactly!(1314)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -4798,6 +4798,14 @@ b_invalidation! = |ctx| {
     check!("metrics_rev change recomputes all", strjq!(ctx, ["analyze"], ".data.computed") == "3")?
     rev = Str.trim(sql!(ctx.db, "SELECT DISTINCT metrics_rev FROM activity_metrics;"))
     check!("recomputed rows carry one nonzero rev", rev != "" and rev != "0" and !(Str.contains(rev, "\n")))?
+    # a statement SQLite answers by ending the transaction itself leaves the
+    # explicit ROLLBACK nothing to end; the error analyze reports must still
+    # name the cause, and the rows it could not rewrite keep their values
+    _ = sql!(ctx.db, "UPDATE activity_metrics SET metrics_rev = 0; CREATE TRIGGER boom BEFORE INSERT ON activity_metrics BEGIN SELECT RAISE(ROLLBACK, 'boom: the original error'); END;")
+    check!("an error that ended the transaction itself is the one analyze reports", Str.contains(strjq!(ctx, ["analyze"], ".error.message"), "boom: the original error"))?
+    check!("...and the rows it could not rewrite keep their previous values", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_metrics WHERE metrics_rev = 0;")) == "3")?
+    _ = sql!(ctx.db, "DROP TRIGGER boom;")
+    check!("...until an analyze that can write recomputes them", strjq!(ctx, ["analyze"], ".data.computed") == "3")?
     Ok({})
 }
 
