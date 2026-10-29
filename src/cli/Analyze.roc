@@ -886,20 +886,27 @@ Analyze :: [].{
         # (invalidate paths DELETE it; it recomputes here whenever the row recomputes).
         # Power detects when real watts exist; pace only for pace-routed sports
         # (runs/swims) — a meter-less RIDE must not get run-tuned pace detection of its
-        # terrain speed. The segment rewrite and the metrics row commit as one
-        # transaction on one connection, so a failure leaves neither and the next
-        # analyze redoes the whole activity, and a full rescore pays one connection and
-        # one commit per activity rather than one per statement.
+        # terrain speed. Segments are detected before the transaction opens, so its
+        # write lock covers only the writes. The segment rewrite and the metrics row
+        # commit as one transaction on one connection: a failure leaves the activity's
+        # previous segments and metrics row untouched for the next analyze to redo,
+        # and a full rescore pays one connection and one commit per activity rather
+        # than one per statement.
         hr_1s_pairs = Metrics.resample_1s_pairs(hr_pairs, Hold)
+        detected =
+            if !(List.is_empty(watts_1s_pairs)) {
+                Detected("power", Metrics.detect_segments(watts_1s_pairs, Metrics.detect_power_params))
+            } else if Sports.pace_routed(row.sport) and !(List.is_empty(gas_1s_pairs)) {
+                Detected("pace", Metrics.detect_segments(gas_1s_pairs, Metrics.detect_pace_params))
+            } else {
+                NoSegments
+            }
         Sql.transaction!(Path.utf8(path), |run!| {
             _ = run!("DELETE FROM activity_segments WHERE activity_id = :id", [{ name: ":id", value: Integer(row.id) }])?
             _ =
-                if !(List.is_empty(watts_1s_pairs)) {
-                    insert_segments!(run!, row.id, "power", Metrics.detect_segments(watts_1s_pairs, Metrics.detect_power_params), hr_1s_pairs)?
-                } else if Sports.pace_routed(row.sport) and !(List.is_empty(gas_1s_pairs)) {
-                    insert_segments!(run!, row.id, "pace", Metrics.detect_segments(gas_1s_pairs, Metrics.detect_pace_params), hr_1s_pairs)?
-                } else {
-                    {}
+                match detected {
+                    Detected(signal_name, segs) => insert_segments!(run!, row.id, signal_name, segs, hr_1s_pairs)?
+                    NoSegments => {}
                 }
             _ = run!(
                     \\INSERT OR REPLACE INTO activity_metrics

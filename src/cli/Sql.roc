@@ -53,8 +53,11 @@ Sql :: [].{
 
     # run `body!` between BEGIN and COMMIT on one connection; `body!` gets a
     # statement runner bound to that connection. A failed body rolls back and
-    # returns its own error, unless the ROLLBACK fails too: that failure (a
-    # lock, corruption) is the more actionable one, so it wins
+    # returns its own error whether or not the ROLLBACK succeeds: SQLite ends
+    # the transaction itself after some errors (a full disk, an I/O error,
+    # RAISE(ROLLBACK)), and the ROLLBACK then fails with "no transaction is
+    # active", which names nothing. A transaction the ROLLBACK could not end
+    # ends when the connection closes, which rolls it back.
     transaction! = |path, body!| {
         db = open!(path)?
         run! = |query, bindings| on_db!(db, query, bindings)
@@ -64,11 +67,10 @@ Sql :: [].{
                 run!("COMMIT", [])?
                 Ok(v)
             }
-            Err(e) =>
-                match run!("ROLLBACK", []) {
-                    Ok(_) => Err(e)
-                    Err(re) => Err(re)
-                }
+            Err(e) => {
+                _ = run!("ROLLBACK", [])
+                Err(e)
+            }
         }
     }
 

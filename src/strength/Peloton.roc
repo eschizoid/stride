@@ -166,19 +166,19 @@ Peloton :: [].{
                     [_, unit, ..] => List.contains(time_units, unit_word(unit))
                     _ => False
                 }
-            Ok({ sets, reps, per_side: Str.contains(reps_part, "/side"), timed })
+            Ok({ sets, reps, per_side: Str.contains(Str.with_ascii_lowercased(reps_part), "/side"), timed })
         }
     }
 
-    # `30 lbs/side`, `25 lbs`, `12.5 kg` — a right side with no recognised
-    # unit, or a weight of zero or less, is not a set line
+    # `30 lbs/side`, `25 lbs`, `12.5 kg`, in any case — a right side with no
+    # recognised unit, or a weight of zero or less, is not a set line
     parse_weight : Str -> Try({ kg : F64, per_side : Bool }, [NotASetLine])
     parse_weight = |right| {
         tokens = Str.split_on(Str.trim(right), " ")
         match tokens {
             [num_s, unit, ..] => {
                 n = F64.from_str(num_s).map_err(|_| NotASetLine)?
-                base = Str.replace_each(unit, "/side", "")
+                base = Str.replace_each(Str.with_ascii_lowercased(unit), "/side", "")
                 kg =
                     match base {
                         "lbs" | "lb" => Ok(n * Units.lb_kg)
@@ -188,7 +188,7 @@ Peloton :: [].{
                 if n <= 0.0 {
                     Err(NotASetLine)
                 } else {
-                    Ok({ kg, per_side: Str.contains(right, "/side") })
+                    Ok({ kg, per_side: Str.contains(Str.with_ascii_lowercased(right), "/side") })
                 }
             }
             _ => Err(NotASetLine)
@@ -333,6 +333,16 @@ expect {
     rows = Peloton.parse("Suitcase Hold\n3 × 30 sec/side • 20 lbs\n3 × 30 Sec/Side\n3 × 8 reps/side • 20 lbs/side")
     match rows {
         [a] => a.exercise == "Suitcase Hold" and a.reps == 16 and (a.weight_kg - 9.0718474).abs() < 0.001
+        _ => False
+    }
+}
+
+# `/side` and the weight unit read in any case: capitalised per-side work
+# doubles its reps and keeps one side's mass, as lowercase does
+expect {
+    rows = Peloton.parse("Curl\n3 × 8 Reps/Side • 20 LBS/Side")
+    match rows {
+        [a] => a.reps == 16 and (a.weight_kg - 9.0718474).abs() < 0.001
         _ => False
     }
 }
