@@ -35,8 +35,8 @@ Peloton :: [].{
     # reps at 0 kg when its set line names a weight, which can be the
     # athlete's own mass. A set line with no weight carries no bullet, so it
     # yields no row. A line that is only a set count (`S × R`, optionally
-    # `reps` or `reps/side`, with or without a refused weight) is never an
-    # exercise name, so the name above it stays current.
+    # followed by one word from `count_units`, with or without a refused
+    # weight) is never an exercise name, so the name above it stays current.
     #
     # Pure, expects below; the effectful skin (storing rows at analyze) lives
     # in Analyze.roc.
@@ -72,15 +72,16 @@ Peloton :: [].{
         walk.rows
     }
 
-    # the text before any bullet is exactly `S × R`, `S × R reps` or
-    # `S × R reps/side`; a name that merely starts that way ("5 x 5 Back
-    # Squat") is not
+    # the text before any bullet is exactly `S × R`, or `S × R` and one word
+    # from `count_units` in any case, however many spaces separate the parts;
+    # a name that merely starts that way ("5 x 5 Back Squat") is not
     is_set_shaped : Str -> Bool
     is_set_shaped = |line| {
         left = Str.trim(List.first(Str.split_on(line, " • ")).ok_or(line))
         bare =
-            match Str.split_on(left, " ") {
-                [_, _, _] | [_, _, _, "reps"] | [_, _, _, "reps/side"] => True
+            match List.keep_if(Str.split_on(left, " "), |t| t != "") {
+                [_, _, _] => True
+                [_, _, _, unit] => List.contains(count_units, Str.with_ascii_lowercased(unit))
                 _ => False
             }
         match parse_sets_reps(left) {
@@ -88,6 +89,10 @@ Peloton :: [].{
             Err(_) => False
         }
     }
+
+    # the words a bare set count may name after its rep figure
+    count_units : List(Str)
+    count_units = ["reps", "reps/side", "s", "sec", "secs", "seconds", "min", "mins", "minutes"]
 
     # one set line, or Err for anything else. The bullet is the discriminator:
     # no prose line in the share format carries ` • `.
@@ -266,6 +271,19 @@ expect {
             a.exercise == "Chin Up" and a.weight_kg == 0.0
                 and b.exercise == "5 x 5 Back Squat" and b.sets == 5 and (b.weight_kg - 102.0582833).abs() < 0.001
                 and c.exercise == "3 x 3 Ladder" and (c.weight_kg - 22.6796185).abs() < 0.001
+        _ => False
+    }
+}
+
+# a bare set count is skipped however it is spaced, with `reps/side` and a
+# refused unit, and with a time unit: each time the next set line belongs to
+# the name above it
+expect {
+    spaced = Peloton.parse("Push Up\n3  ×  15\n3 × 10 • 40 lbs")
+    side = Peloton.parse("Chin Up\n3 × 8 reps/side • 25 kgs/side\n3 × 6 • 175 lbs")
+    timed = Peloton.parse("Plank\n3 × 30 Sec\n3 × 6 • 20 lbs")
+    match (spaced, side, timed) {
+        ([a], [b], [c]) => a.exercise == "Push Up" and b.exercise == "Chin Up" and c.exercise == "Plank" and c.weight_kg == 0.0
         _ => False
     }
 }

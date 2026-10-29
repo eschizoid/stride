@@ -61,7 +61,7 @@ Adapter :: [].{
         "air squat", "bodyweight squat", "inverted row", "leg raise",
         "hanging leg raise", "flutter kick", "v up", "dead bug", "bird dog",
         "superman", "wall sit", "bear crawl", "inchworm", "handstand push up",
-        "pike push up", "hollow hold",
+        "pike push up", "hollow hold", "dumbbell push up", "single leg v up",
     ], name_key)
 
     # the qualifiers that leave a listed move bodyweight, as `name_key`
@@ -96,14 +96,14 @@ Adapter :: [].{
 # otherwise: a weighted variant and a lift that merely starts alike keep
 # their weight
 expect
-    List.map(["Push-Ups", "pull up", "DIPS", "Crunches", "Burpees", "Chin Up"], Adapter.is_bodyweight) == [True, True, True, True, True, True]
+    List.map(["Push-Ups", "pull up", "DIPS", "Crunches", "Burpees", "Chin Up", "Dumbbell Push-Ups", "Single Leg V-Up"], Adapter.is_bodyweight) == [True, True, True, True, True, True, True, True]
 expect
-    List.map(["Weighted Pull Up", "Push Press", "Dumbbell Bench Press", "Plankton", ""], Adapter.is_bodyweight) == [False, False, False, False, False]
+    List.map(["Weighted Pull Up", "Push Press", "Dumbbell Bench Press", "Plankton", "", "Dumbbell Pass Through to Push Up"], Adapter.is_bodyweight) == [False, False, False, False, False, False]
 
 # an assisted or negative form of a listed move is bodyweight, plural
 # included; the qualifier alone, a qualifier on an unlisted move, and a
 # qualifier anywhere but the very front are not
 expect
-    List.map(["Assisted Chin-Up", "Assisted Pull Up", "Negative Pull Up", "assisted dips", "Negative Push-Ups"], Adapter.is_bodyweight) == [True, True, True, True, True]
+    List.map(["Assisted Chin-Up", "Assisted Pull Up", "Negative Pull Up", "assisted dips", "Negative Push-Ups", "Assisted Single Leg V-Up"], Adapter.is_bodyweight) == [True, True, True, True, True, True]
 expect
     List.map(["Assisted", "Negative", "Assisted Bench Press", "Pull Up Negative", "Band Assisted Pull Up", "Pull Up (Assisted)"], Adapter.is_bodyweight) == [False, False, False, False, False, False]
