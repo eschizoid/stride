@@ -9,6 +9,10 @@ import pf.Sqlite
 # numbered `?N` marker for its position in `bindings`, longest name first so
 # `:s` cannot eat the front of `:start`. Rows decode through `|cols| |values|`
 # functions built from the leaf readers below, which read a column by name.
+# A row holding text that is not UTF-8 (a blob CAST to TEXT) is read again
+# through `lossy_rows!`, which decodes such a cell with U+FFFD in place of the
+# bad bytes, so one corrupt cell reaches the engine's content guards instead of
+# failing the whole query.
 # Failures speak the engine's vocabulary: `SqliteErr(code, message)`,
 # `NoRowsReturned`, `TooManyRowsReturned`, `RowsReturnedUseQueryInstead`,
 # `NoSuchField(name)` and `UnexpectedType(kind)`.
@@ -26,6 +30,12 @@ Sql :: [].{
         db = open!(path)?
         match db.query_one!(to_query(query, bindings), Sqlite.Decoder.row) {
             Ok(r) => row(r.column_names)(r.values)
+            Err(BadRow(_)) =>
+                match lossy_rows!(db, query, bindings)? {
+                    [r] => row(r.column_names)(r.values)
+                    [] => Err(NoRowsReturned)
+                    _ => Err(TooManyRowsReturned)
+                }
             Err(e) => Err(widen(e))
         }
     }
@@ -33,10 +43,12 @@ Sql :: [].{
     # a query returning any number of rows, decoded in order
     query_many! = |{ path, query, bindings, rows }| {
         db = open!(path)?
-        match db.query_all!(to_query(query, bindings), Sqlite.Decoder.row) {
-            Ok(all) => List.map_try(all, |r| rows(r.column_names)(r.values))
-            Err(e) => Err(widen(e))
+        all = match db.query_all!(to_query(query, bindings), Sqlite.Decoder.row) {
+            Ok(rs) => rs
+            Err(BadRow(_)) => lossy_rows!(db, query, bindings)?
+            Err(e) => return Err(widen(e))
         }
+        List.map_try(all, |r| rows(r.column_names)(r.values))
     }
 
     # run `body!` between BEGIN and COMMIT on one connection; `body!` gets a
@@ -102,6 +114,23 @@ Sql :: [].{
             Err(e) => Err(e)
         }
 
+    # a lossy row's values: each column arrives as (value, hex) and a text
+    # cell is the hex half, decoded with U+FFFD for bytes that are not UTF-8
+    from_hex_pairs : List(Sqlite.Value) -> List(Sqlite.Value)
+    from_hex_pairs = |pairs| {
+        folded = List.fold(pairs, { out: [], pending: Null, odd: False }, |st, v|
+            if st.odd {
+                cell = match v {
+                    String(h) => String(Str.from_utf8_lossy(unhex(h)))
+                    _ => st.pending
+                }
+                { out: List.append(st.out, cell), pending: Null, odd: False }
+            } else {
+                { ..st, pending: v, odd: True }
+            })
+        folded.out
+    }
+
     # `:name` parameters as numbered markers, in the order of `bindings`
     numbered : Str, List(Str) -> Str
     numbered = |sql, names| {
@@ -109,6 +138,27 @@ Sql :: [].{
         longest_first = List.sort_with(indexed, |a, b| Str.count_utf8_bytes(b.n).order_relative_to(Str.count_utf8_bytes(a.n)))
         List.fold(longest_first, sql, |s, p| Str.replace_each(s, p.n, "?${(p.i + 1).to_str()}"))
     }
+}
+
+# The query's rows copied into a temporary table, then read back with every
+# text cell as hex, which is always valid text, and decoded here lossily.
+# Row order is the copy's insertion order, which is the query's own.
+lossy_rows! : Sqlite.Db, Str, List(Sql.Binding) => Try(List(Sqlite.Row), _)
+lossy_rows! = |db, query, bindings| {
+    copy = "temp.stride_lossy"
+    _ = db.execute_script!("DROP TABLE IF EXISTS ${copy}")
+    db.execute!(Sqlite.Query.new("CREATE TEMP TABLE stride_lossy AS ${Sql.numbered(query, List.map(bindings, |b| b.name))}", List.map(bindings, |b| b.value))).map_err(widen)?
+    names = db.query_all!("PRAGMA temp.table_info(stride_lossy)", Sqlite.Decoder.str("name")).map_err(widen)?
+    cells = Str.join_with(
+        List.map(names, |n| {
+            q = "\"${Str.replace_each(n, "\"", "\"\"")}\""
+            "CASE WHEN typeof(${q}) = 'text' THEN NULL ELSE ${q} END, CASE WHEN typeof(${q}) = 'text' THEN hex(${q}) END"
+        }),
+        ", ",
+    )
+    read = db.query_all!(Sqlite.Query.new("SELECT ${cells} FROM ${copy} ORDER BY rowid", []), Sqlite.Decoder.row).map_err(widen)
+    _ = db.execute_script!("DROP TABLE IF EXISTS ${copy}")
+    Ok(List.map(read?, |r| { column_names: names, values: Sql.from_hex_pairs(r.values) }))
 }
 
 open! = |path|
@@ -192,6 +242,19 @@ old_code = |code|
         Unknown(n) => Unknown(n)
     }
 
+unhex : Str -> List(U8)
+unhex = |h| {
+    nibble = |c| if c >= 48 and c <= 57 (c - 48) else if c >= 65 and c <= 70 (c - 55) else if c >= 97 and c <= 102 (c - 87) else 0
+    folded = List.fold(Str.to_utf8(h), { out: [], hi: 0, odd: False }, |st, c|
+        if st.odd {
+            { out: List.append(st.out, st.hi * 16 + nibble(c)), hi: 0, odd: False }
+        } else {
+            { ..st, hi: nibble(c), odd: True }
+        })
+    folded.out
+}
+
+expect Sql.from_hex_pairs([Integer(7), Null, Null, String("6869"), Null, String("fffe")]) == [Integer(7), String("hi"), String(Str.from_utf8_lossy([255, 254]))]
 expect Sql.numbered("SELECT * FROM t WHERE a = :s AND b >= :start", [":s", ":start"]) == "SELECT * FROM t WHERE a = ?1 AND b >= ?2"
 expect Sql.numbered("UPDATE t SET x = :id WHERE y = :id", [":id"]) == "UPDATE t SET x = ?1 WHERE y = ?1"
 expect Sql.numbered("SELECT 1", []) == "SELECT 1"
