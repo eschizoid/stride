@@ -47,10 +47,18 @@ Sports :: [].{
     # Load-model class: strength-like sports rank the athlete's RPE above HR
     # (a strap lies about lifting); endurance ranks measured signals first.
     class : Str -> [Endurance, StrengthLike]
-    class = |sport_type| {
-        strengthish = ["WeightTraining", "Workout", "Crossfit", "HighIntensityIntervalTraining", "Yoga", "Pilates"]
-        if List.contains(strengthish, sport_type) StrengthLike else Endurance
-    }
+    class = |sport_type| if List.contains(strength_like, sport_type) StrengthLike else Endurance
+
+    # the sport types `class` calls StrengthLike, as a list so SQL can be built
+    # from it (the activity_intensity view's `polarized` column) rather than
+    # copying it
+    strength_like : List(Str)
+    strength_like = ["WeightTraining", "Workout", "Crossfit", "HighIntensityIntervalTraining", "Yoga", "Pilates"]
+
+    # the strength-like types that are never endurance work, whether or not
+    # their sets were recorded: lifting, and the mobility practices
+    never_polarized : List(Str)
+    never_polarized = ["WeightTraining", "Yoga", "Pilates"]
 
     # Sports where speed IS the effort signal — runs and swims per ADR 0008.
     # LOAD-BEARING FOR TWO POLICIES: interval detection's pace routing AND
@@ -209,3 +217,6 @@ expect {
     and Str.ends_with(c, "ELSE x END")
     and !(Str.contains(c, "WHEN 'Ride' THEN"))
 }
+
+# every never-polarized type is strength-like, so the view's two lists nest
+expect List.all(Sports.never_polarized, |t| Sports.class(t) == StrengthLike)

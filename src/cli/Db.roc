@@ -261,7 +261,7 @@ Db :: [].{
     # bump when the schema changes; ensure_schema! re-runs migrations when the db's
     # PRAGMA user_version is behind this. (The additive ALTERs below are the columns
     # that post-date the original CREATE statements in Schema.roc.)
-    schema_version = 39
+    schema_version = 40
 
     run_migrations! : Str => Try({}, _)
     run_migrations! = |path| {
@@ -477,7 +477,8 @@ Db :: [].{
         Sql.execute!({ path: Path.utf8(path), query: Schema.series_clock, bindings: [] })?
         Sql.execute!({ path: Path.utf8(path), query: Schema.week_bounds_drop, bindings: [] })?
         Sql.execute!({ path: Path.utf8(path), query: Schema.week_bounds, bindings: [] })?
-        # v30: the per-activity intensity classification, shared with the viz
+        # v30: the per-activity intensity classification, shared with the viz;
+        # v40 added its `polarized` column, which every share reader selects
         Sql.execute!({ path: Path.utf8(path), query: Schema.activity_intensity_drop, bindings: [] })?
         Sql.execute!({ path: Path.utf8(path), query: Schema.activity_intensity, bindings: [] })?
         # v31: the power-ladder unpivot and the Monday-week ramp - one

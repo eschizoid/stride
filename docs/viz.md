@@ -81,7 +81,9 @@ no second panel is needed to plot it. The card names the latest week that
 carried training. The intensity classification comes from the
 `activity_intensity` view, which carries the same per-activity split
 `stride summary` computes, so the window and the CLI share one definition
-of easy and hard. A directive with view 6 opens it.
+of easy and hard. A bar holds every session's zone time, while its cap counts
+only the sessions polarization counts: a lifting session adds to the bar and
+not to the cap. A directive with view 6 opens it.
 
 ![The zones view](img/zones.png)
 

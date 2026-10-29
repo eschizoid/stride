@@ -82,12 +82,12 @@ Report :: [].{
                 \\       -- load from a MEASURED source — a power meter or distance-measured pace
                 \\       -- (high-confidence rungs) — vs estimated from HR/RPE/relative-effort
                 \\       CAST(COALESCE(SUM(CASE WHEN m.load_model IN (${high_models_sql}) THEN m.tss ELSE 0 END),0) AS REAL) AS measured,
-                \\       -- the per-activity intensity split (pi_* when present, HR zones
-                \\       -- otherwise) is the activity_intensity view's definition - the
-                \\       -- same one the viz reads, so the two surfaces cannot disagree
-                \\       COALESCE(SUM(ai.easy_s),0) AS easy,
-                \\       COALESCE(SUM(ai.moderate_s),0) AS moderate,
-                \\       COALESCE(SUM(ai.hard_s),0) AS hard,
+                \\       -- the per-activity intensity split and which activities count
+                \\       -- toward a share are the activity_intensity view's, the same
+                \\       -- definition the viz reads
+                \\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.easy_s ELSE 0 END),0) AS easy,
+                \\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.moderate_s ELSE 0 END),0) AS moderate,
+                \\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.hard_s ELSE 0 END),0) AS hard,
                 \\       COUNT(*) AS sessions, COALESCE(SUM(a.moving_time),0) AS moving_time,
                 \\       CAST(COALESCE(SUM(a.distance),0) AS REAL) AS distance_m,
                 \\       COALESCE(SUM(CASE WHEN s.raw_json LIKE '%"heartrate"%' THEN 1 ELSE 0 END),0) AS hr_streams,
@@ -120,16 +120,22 @@ Report :: [].{
         })
 
     # activity stats within a half-open [from, to) date window (both are date strings
-    # compared against start_local; ISO makes the lexical compare correct)
-    window_stats! : Str, Str, Str => Try({ z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, sessions : I64 }, _)
+    # compared against start_local; ISO makes the lexical compare correct). The p*
+    # zone sums cover only the activities the activity_intensity view marks
+    # `polarized`, the population every polarization share reads.
+    window_stats! : Str, Str, Str => Try({ z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, p_easy : I64, p_hard : I64, p_total : I64, tss : F64, sessions : I64 }, _)
     window_stats! = |path, from_str, to_str|
         Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT COALESCE(SUM(m.z1_s),0) AS z1, COALESCE(SUM(m.z2_s),0) AS z2, COALESCE(SUM(m.z3_s),0) AS z3,
                 \\       COALESCE(SUM(m.z4_s),0) AS z4, COALESCE(SUM(m.z5_s),0) AS z5,
+                \\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.z1_s + ai.z2_s ELSE 0 END),0) AS p_easy,
+                \\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.z4_s + ai.z5_s ELSE 0 END),0) AS p_hard,
+                \\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.z1_s + ai.z2_s + ai.z3_s + ai.z4_s + ai.z5_s ELSE 0 END),0) AS p_total,
                 \\       CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss, COUNT(*) AS sessions
                 \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
+                \\LEFT JOIN activity_intensity ai ON ai.activity_id = a.id
                 \\WHERE a.start_local >= :from AND a.start_local < :to
             ,
             bindings: [{ name: ":from", value: String(from_str) }, { name: ":to", value: String(to_str) }],
@@ -139,9 +145,12 @@ Report :: [].{
                 z3 = Sql.i64("z3")(cols)(stmt)?
                 z4 = Sql.i64("z4")(cols)(stmt)?
                 z5 = Sql.i64("z5")(cols)(stmt)?
+                p_easy = Sql.i64("p_easy")(cols)(stmt)?
+                p_hard = Sql.i64("p_hard")(cols)(stmt)?
+                p_total = Sql.i64("p_total")(cols)(stmt)?
                 tss = Sql.f64("tss")(cols)(stmt)?
                 sessions = Sql.i64("sessions")(cols)(stmt)?
-                Ok({ z1, z2, z3, z4, z5, tss, sessions })
+                Ok({ z1, z2, z3, z4, z5, p_easy, p_hard, p_total, tss, sessions })
             },
         })
 
@@ -192,26 +201,22 @@ Report :: [].{
                     pri = window_stats!(path, pri_from, cur_from)?
                     cur_ctl = ctl_at!(path, Metrics.days_to_date_str(anchor))?
                     pri_ctl = ctl_at!(path, Metrics.days_to_date_str(anchor - days))?
-                    # has_data distinguishes a genuinely-empty window (no activities AND no
-                    # accrued fitness) from a real all-easy/zero week. Without it the prior
-                    # block reads as "0 TSS, 0% easy, 0 ctl" — indistinguishable from a rest
-                    # week — and the current-vs-prior delta looks like a phantom spike.
-                    # polarization_known is the ambiguous-zero discriminator
-                    # (ADR 0009) for the two intensity rows: an all-zero zone
-                    # sum cannot distinguish "no zone data" from "a week whose
-                    # sessions produced none", so hard_min and easy_pct are
-                    # measurements only when the window holds some zone second.
-                    # Same name and same split-sum-over-zero predicate class as
-                    # season's block-level polarization_known - and deliberately
-                    # NOT zones_known, which on every payload carrying it tests
-                    # hr_samples_total and means "an HR stream existed", the
-                    # opposite reading of an all-zero sum.
+                    # has_data tells a genuinely empty window (no activities and no accrued
+                    # fitness) from a real all-easy or zero week, so an empty prior block
+                    # does not read as a rest week and the delta as a spike.
+                    # polarization_known is the ambiguous-zero discriminator (ADR 0009) for
+                    # the two intensity rows, which cover only the activities the
+                    # activity_intensity view marks `polarized`: an all-zero sum cannot tell
+                    # "no zone data" from "no polarized session", so hard_min and easy_pct
+                    # are measurements only when a polarized activity holds a zone second.
+                    # It is not zones_known, which tests hr_samples_total and means "an HR
+                    # stream existed".
                     block = |w, ctl| {
                         tss: w.tss,
                         sessions: w.sessions,
-                        hard_min: (w.z4 + w.z5) // 60,
-                        easy_pct: pct_num(w.z1 + w.z2, w.z1 + w.z2 + w.z3 + w.z4 + w.z5),
-                        polarization_known: (w.z1 + w.z2 + w.z3 + w.z4 + w.z5) > 0,
+                        hard_min: w.p_hard // 60,
+                        easy_pct: pct_num(w.p_easy, w.p_total),
+                        polarization_known: w.p_total > 0,
                         ctl,
                         has_data: w.sessions > 0 or ctl > 0.0,
                     }
@@ -660,9 +665,10 @@ Report :: [].{
         prior_b20_known_b : Bool
         prior_b20_known_b = prior_best20.bk != 0
 
-        # polarization is intensity-aware: easy/moderate/hard come from the pi_* split for
-        # activities that have one (power-derived with watts, pace-derived for a distance
-        # sport without), HR zones otherwise (zone_sum! per-activity)
+        # polarization is intensity-aware and covers the activities the view marks
+        # `polarized`: easy/moderate/hard come from the pi_* split where one exists
+        # (power-derived with watts, pace-derived for a distance sport without), HR
+        # zones otherwise
         total = zsum.easy + zsum.moderate + zsum.hard
         easy = zsum.easy
         hard = zsum.hard

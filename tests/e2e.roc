@@ -362,7 +362,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1314)?
+    checks_ran_exactly!(1318)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7378,6 +7378,23 @@ b_strength_import! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO strength_logs (activity_id, payload, imported_at) VALUES (9999917, '{\"activity_id\":\"9999917\",\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"reps\":{\"value\":\"3\"}}]}', '2026-01-01T00:00:00Z'); INSERT INTO strength_notes (activity_id, description) VALUES (9999918, '${paste}');")
     check!("an orphaned log or description does not fail analyze, and yields no rows", strjq!(ctx, ["analyze"], "(.data.computed | type) + \":\" + (.error.code // \"none\")") == "number:none" and Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM strength_sets WHERE activity_id IN (9999917, 9999918);")) == "0")?
     _ = sql!(ctx.db, "DELETE FROM strength_logs WHERE activity_id = 9999917; DELETE FROM strength_notes WHERE activity_id = 9999918;")
+    # polarization leaves out lifting always and another strength-like type
+    # when it has recorded sets: the view marks each activity, and summary's
+    # shares follow it while its zone mix keeps every session. In summary's
+    # 7-day window: 9730 a Workout with sets, 9731 a Workout without, 9732 a
+    # WeightTraining without, and 9733 a Ride.
+    today = Str.trim(sql!(ctx.db, "SELECT today FROM series_clock;"))
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance) VALUES (9730, 'logged workout', 'Workout', '${today}T12:00:00Z', 3600, 0), (9731, 'unlogged class', 'Workout', '${today}T13:00:00Z', 3600, 0), (9732, 'unlogged lift', 'WeightTraining', '${today}T14:00:00Z', 3600, 0), (9733, 'easy spin', 'Ride', '${today}T15:00:00Z', 3600, 20000); INSERT INTO strength_sets (activity_id, ordinal, exercise, sets, reps, weight_kg, source) VALUES (9730, 0, 'Curl', 3, 8, 10.0, 'strava');")
+    check!("a workout with sets and any lift are out of polarization, a workout without sets and a ride are in", Str.trim(sql!(ctx.db, "SELECT group_concat(activity_id || ':' || polarized, '|') FROM (SELECT activity_id, polarized FROM activity_intensity WHERE activity_id IN (9730, 9731, 9732, 9733) ORDER BY activity_id);")) == "9730:0|9731:1|9732:0|9733:1")?
+    before = strjq!(ctx, ["summary"], ".data.last_7d | \"\\(.moderate_pct)|\\(.z3_s)\"")
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activity_metrics (activity_id, tss, z1_s, z2_s, z3_s, z4_s, z5_s) VALUES (9730, 10, 0, 0, 100000, 0, 0);")
+    with_sets = strjq!(ctx, ["summary"], ".data.last_7d | \"\\(.moderate_pct)|\\(.z3_s)\"")
+    field = |pair, ix| List.get(Str.split_on(pair, "|"), ix).ok_or("")
+    check!("...its zone time still reaches summary's zone mix", (sfloat(field(with_sets, 1)) - sfloat(field(before, 1)) - 100000.0).abs() < 0.5)?
+    check!("...while summary's moderate share ignores it", field(with_sets, 0) == field(before, 0))?
+    _ = sql!(ctx.db, "DELETE FROM strength_sets WHERE activity_id = 9730;")
+    check!("...and once it has no sets the same time moves the share", sfloat(strjq!(ctx, ["summary"], ".data.last_7d.moderate_pct")) > sfloat(field(before, 0)))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (9730, 9731, 9732, 9733); DELETE FROM activities WHERE id IN (9730, 9731, 9732, 9733);")
     Ok({})
 }
 

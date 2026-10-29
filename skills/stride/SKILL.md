@@ -116,9 +116,10 @@ reason `--json` and still answers in JSON).
    `plan_history_28d` and `adherence_28d` record what was targeted and what happened, so
    a plan is never a fresh guess. Check `data_freshness.last_sync` against today first.
    `stride summary --json` alone suits quick check-ins.
-4. **Reason**: polarization, zone gaps, form (TSB), FTP trajectory, sport balance. Then
-   reconcile open sessions against recent activities (match by date and type) and
-   `stride complete <session_id> <activity_id> --json` each match.
+4. **Reason**: polarization, zone gaps, form (TSB), FTP trajectory, sport balance. Every
+   easy/moderate/hard share leaves out weight training, yoga, pilates, and workouts with
+   recorded sets; a workout with no sets counts. Then reconcile open sessions against recent activities (match by
+   date and type) and `stride complete <session_id> <activity_id> --json` each match.
    `stride complete latest --json` closes the open session on the newest activity's day
    with that activity (`no_open_session` when that day has none).
 5. **Plan** with `stride week add <YYYY-MM-DD> <type> "<detail>" "<rationale>" ["<target>"] --json`.
