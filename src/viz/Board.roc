@@ -13,6 +13,26 @@ Board :: [].{
 	hi_of : List(Db.Point) -> F32
 	hi_of = |pts| List.fold(pts, 1.0, |acc, p| F32.max(acc, F32.max(p.ctl, p.atl))) + 8.0
 
+	# the line-end labels' top edges: each wants its own height; taken top
+	# to bottom, one starting less than `gap` below the label above it
+	# starts `gap` below instead, so labels `gap` tall never overlap. The
+	# result keeps the input's order
+	end_tops : List(F32), F32 -> List(F32)
+	end_tops = |wants, gap| {
+		by_y = List.sort_with(List.map_with_index(wants, |y, i| { i, y }), |a, b| if a.y < b.y Before else if a.y > b.y After else if a.i < b.i Before else After)
+		placed = List.fold(by_y, [], |acc, w| {
+			y = match List.last(acc) {
+				Ok(p) => F32.max(w.y, p.y + gap)
+				Err(_) => w.y
+			}
+			List.append(acc, { i: w.i, y })
+		})
+		List.map_with_index(wants, |y, i| match List.find_first(placed, |p| p.i == i) {
+			Ok(p) => p.y
+			Err(_) => y
+		})
+	}
+
 	# the KPI tile row: four cards on a fixed grid from the left edge, each
 	# card tile_w wide and its text drawn 12px inside it. The event tile's
 	# text sits in the fourth card by the same rule as the three numbers.
@@ -239,10 +259,11 @@ Board :: [].{
 				Err(_) => { ctl: 0.0, atl: 0.0, tsb: 0.0, tss: 0.0 }
 			}
 			ex2 = win_w - pad_r + 8.0
-			List.for_each!(model.ends, |e| {
-				v = if e.sel == 0 last.ctl else if e.sel == 1 last.atl else last.tsb
-				col = if e.sel == 0 ctl_c else if e.sel == 1 atl_c else tsb_c
-				e.p.draw!(frame, { pos: { x: ex2, y: yf(v) - 7.0 }, color: col, align: (Top, Left) })
+			end_v = |sel| if sel == 0 last.ctl else if sel == 1 last.atl else last.tsb
+			tops = end_tops(List.map(model.ends, |e| yf(end_v(e.sel)) - 7.0), 15.0)
+			List.for_each!(List.map2(model.ends, tops, |e, top| { e, top }), |x| {
+				col = if x.e.sel == 0 ctl_c else if x.e.sel == 1 atl_c else tsb_c
+				x.e.p.draw!(frame, { pos: { x: ex2, y: x.top }, color: col, align: (Top, Left) })
 			})
 
 			# hover OR arrow-cursor: the selected day gets a crosshair + dots, and
@@ -328,3 +349,10 @@ expect {
 	word = Board.ev_line(Text.font_stub, "Supercalifragilisticexpialidocious", "", 10.0)
 	Str.ends_with(word, "...") and Text.font_stub.measure({ text: word, size: 10.0, spacing: Text.default_spacing }).width <= Board.ev_room
 }
+
+# end labels: two that want nearly the same height are pushed apart by the
+# gap, the upper one keeping its place; labels already apart stay put; the
+# answer keeps the order the labels came in
+expect Board.end_tops([100.0, 98.0, 200.0], 15.0) == [113.0, 98.0, 200.0]
+expect Board.end_tops([50.0, 100.0, 150.0], 15.0) == [50.0, 100.0, 150.0]
+expect Board.end_tops([100.0, 100.0, 100.0], 15.0) == [100.0, 115.0, 130.0]
