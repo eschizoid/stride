@@ -45,10 +45,13 @@ general path is the primary path.
 
 The structured log carries a weight on bodyweight moves too, often the
 athlete's own mass, which would make push-ups outweigh the session's lifts.
-A bodyweight exercise, matched by name against a fixed list, keeps its sets
-and reps and counts 0 kg toward tonnage. Only the derived set rows read 0 kg;
-the stored log keeps the recorded weight, so the list can change without a
-re-import, and the import names every set it zeroed.
+A bodyweight exercise, matched by name against a fixed list (an assisted or
+negative form included), keeps its sets and reps and counts 0 kg toward
+tonnage, from a pasted description as well as a log. Only the derived set
+rows read 0 kg; the stored text keeps the recorded weight, so the list can
+change without a re-import. The import names every logged set it zeroed. A
+zeroed pasted line has no such report; `stride strength` shows the exercise
+in reps.
 
 Second, description adapters. When an activity has no stored log, its
 description is tried against an ordered table of parsers in

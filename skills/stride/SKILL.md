@@ -180,9 +180,10 @@ two sources and parses both into the same per-set rows:
 1. **The activity description.** The athlete pastes a Peloton-style share summary
    (an exercise line, then `3 × 8 • 30 lbs/side`; `/side` variants resolved to the mass
    actually moved); no other paste format is read. A bodyweight line is kept only when
-   it names a weight, stored as written. Sync fetches strength-family descriptions after
-   the stream queue empties and re-reads them inside the 30-day window, so a paste the
-   same evening lands on the next sync. Unrecognised text yields nothing and is never an
+   it names a weight above zero in lb or kg, and then counts 0 kg like an imported
+   one, with no `zeroed` report. Sync fetches strength-family descriptions after the
+   stream queue empties and re-reads them inside the 30-day window, so a paste the same
+   evening lands on the next sync. Unrecognised text yields nothing and is never an
    error.
 2. **The Strava log, via `stride strength import <file|-> --json`.** Fetch it with the
    Strava MCP connector's `get_strength_workout_details` (it takes `activity_ids`), then
@@ -195,10 +196,10 @@ two sources and parses both into the same per-set rows:
      **Tell the athlete about every dropped set**: tonnage does not include it. A set
      with no weight at all is kept at 0 kg.
    - `zeroed` lists bodyweight sets (push up, pull up, chin up, dip, plank, sit up and
-     similar, matched by exact normalised name, so `Weighted Pull Up` is not one) that
-     the log recorded with a weight, often the athlete's own body mass. They keep their
-     sets and reps but count 0 kg; the stored log keeps `recorded`. Say so when you
-     report tonnage.
+     similar, matched by normalised name alone or with `Assisted`/`Negative` in front,
+     so `Assisted Chin-Up` is one and `Weighted Pull Up` is not) that the log recorded
+     with a weight, often the athlete's own body mass. They keep their sets and reps
+     but count 0 kg; the stored log keeps `recorded`. Say so when you report tonnage.
    - A skipped workout's `reason`: `undecodable_workout`, `bad_activity_id`,
      `duplicate_activity` (an earlier workout in the input was already stored for that
      activity; only a stored workout claims an id), `unknown_activity` (sync first),

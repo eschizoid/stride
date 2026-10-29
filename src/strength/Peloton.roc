@@ -31,6 +31,13 @@ Peloton :: [].{
     #   neither                  → the stated numbers are already totals.
     # Units: lbs (Peloton's default) converted through Units.lb_kg; kg as-is.
     #
+    # A bodyweight exercise (`Adapter.is_bodyweight`) keeps its sets and
+    # reps at 0 kg when its set line names a weight, which can be the
+    # athlete's own mass. A set line with no weight carries no bullet, so it
+    # yields no row. A line that is only a set count (`S × R`, optionally
+    # `reps` or `reps/side`, with or without a refused weight) is never an
+    # exercise name, so the name above it stays current.
+    #
     # Pure, expects below; the effectful skin (storing rows at analyze) lives
     # in Analyze.roc.
 
@@ -48,13 +55,14 @@ Peloton :: [].{
                     if acc.exercise == "" {
                         acc
                     } else {
-                        { exercise: acc.exercise, rows: List.append(acc.rows, { exercise: acc.exercise, sets: s.sets, reps: s.reps, weight_kg: s.weight_kg }) }
+                        { exercise: acc.exercise, rows: List.append(acc.rows, { exercise: acc.exercise, sets: s.sets, reps: s.reps, weight_kg: if Adapter.is_bodyweight(acc.exercise) 0.0 else s.weight_kg }) }
                     }
                 Err(_) =>
-                    if line == "" or Str.starts_with(line, "Block ") {
-                        # a blank line or section header ends nothing — the next set
-                        # line still belongs to the last named exercise, matching how
-                        # the share format lays out supersets
+                    if line == "" or Str.starts_with(line, "Block ") or is_set_shaped(line) {
+                        # a blank line, a section header or a set count that is not a
+                        # whole set line ends nothing — the next set line still belongs
+                        # to the last named exercise, matching how the share format
+                        # lays out supersets
                         acc
                     } else {
                         { ..acc, exercise: line }
@@ -62,6 +70,23 @@ Peloton :: [].{
             }
         })
         walk.rows
+    }
+
+    # the text before any bullet is exactly `S × R`, `S × R reps` or
+    # `S × R reps/side`; a name that merely starts that way ("5 x 5 Back
+    # Squat") is not
+    is_set_shaped : Str -> Bool
+    is_set_shaped = |line| {
+        left = Str.trim(List.first(Str.split_on(line, " • ")).ok_or(line))
+        bare =
+            match Str.split_on(left, " ") {
+                [_, _, _] | [_, _, _, "reps"] | [_, _, _, "reps/side"] => True
+                _ => False
+            }
+        match parse_sets_reps(left) {
+            Ok(_) => bare
+            Err(_) => False
+        }
     }
 
     # one set line, or Err for anything else. The bullet is the discriminator:
@@ -113,8 +138,7 @@ Peloton :: [].{
     }
 
     # `30 lbs/side`, `25 lbs`, `12.5 kg` — a right side with no recognised
-    # unit is not a set line (bodyweight rows carry no bullet at all in the
-    # share format, so this arm mostly guards against prose with a bullet)
+    # unit, or a weight of zero or less, is not a set line
     parse_weight : Str -> Try({ kg : F64, per_side : Bool }, [NotASetLine])
     parse_weight = |right| {
         tokens = Str.split_on(Str.trim(right), " ")
@@ -208,3 +232,40 @@ expect List.is_empty(Peloton.parse("Curl\n3 × 12 • -15 lbs"))
 
 # an unrecognised unit is not a set line — prose with a bullet stays prose
 expect List.is_empty(Peloton.parse("Curl\n3 × 12 • 15 stone"))
+
+# a bodyweight line that names a weight keeps its sets and reps at 0 kg,
+# its assisted form too, while a loaded lift beside it keeps its weight
+expect {
+    rows = Peloton.parse("Chin Up\n3 × 6 • 175 lbs\nAssisted Pull Up\n3 × 8 • 185 lbs\nDumbbell Row\n3 × 10 • 40 lbs")
+    match rows {
+        [a, b, c] =>
+            a.exercise == "Chin Up" and a.sets == 3 and a.reps == 6 and a.weight_kg == 0.0
+                and b.exercise == "Assisted Pull Up" and b.sets == 3 and b.reps == 8 and b.weight_kg == 0.0
+                and (c.weight_kg - 18.1436948).abs() < 0.001
+        _ => False
+    }
+}
+
+# a line that opens with `S × R` but is not a whole set line never becomes
+# an exercise name: the next set line still belongs to the name above it
+expect {
+    zero = Peloton.parse("Chin Up\n3 × 6 • 0 lbs\n3 × 6 • 175 lbs")
+    bare = Peloton.parse("Push Up\n3 × 15\n3 × 10 • 40 lbs")
+    match (zero, bare) {
+        ([a], [b]) => a.exercise == "Chin Up" and a.weight_kg == 0.0 and b.exercise == "Push Up" and b.sets == 3 and b.reps == 10
+        _ => False
+    }
+}
+
+# a name that merely starts like a set count is still a name: its sets are
+# its own, loaded, and not filed under the bodyweight move above it
+expect {
+    rows = Peloton.parse("Chin Up\n3 × 6 • 175 lbs\n5 x 5 Back Squat\n5 × 5 • 225 lbs\n3 x 3 Ladder\n3 × 3 • 50 lbs")
+    match rows {
+        [a, b, c] =>
+            a.exercise == "Chin Up" and a.weight_kg == 0.0
+                and b.exercise == "5 x 5 Back Squat" and b.sets == 5 and (b.weight_kg - 102.0582833).abs() < 0.001
+                and c.exercise == "3 x 3 Ladder" and (c.weight_kg - 22.6796185).abs() < 0.001
+        _ => False
+    }
+}

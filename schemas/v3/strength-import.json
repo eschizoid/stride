@@ -66,7 +66,7 @@
           },
           "zeroed": {
             "type": "array",
-            "description": "Bodyweight sets (push up, pull up, dip, plank, ... matched by exercise name, case, spacing, hyphens and a trailing plural ignored) kept with their sets and reps at 0 kg although the log recorded a nonzero weight (the connector's log can carry the athlete's own mass on a bodyweight move). The stored log keeps the recorded weight; only the derived set rows read 0 kg.",
+            "description": "Bodyweight sets (push up, pull up, dip, plank, ... matched by exercise name, case, spacing, hyphens and a trailing plural ignored, alone or after an assisted or negative qualifier) kept with their sets and reps at 0 kg although the log recorded a nonzero weight (the connector's log can carry the athlete's own mass on a bodyweight move). The stored log keeps the recorded weight; only the derived set rows read 0 kg.",
             "items": {
               "type": "object",
               "additionalKeys": false,

@@ -1,17 +1,8 @@
 name: release-please
 
-# Automated releases. release-please watches Conventional Commits on main
-# (feat:/fix:/…), maintains CHANGELOG.md and the version in main.roc, and opens a
-# "release PR". Merging that PR tags vX.Y.Z + creates the GitHub release.
-#
-# NOTE: binary build/upload jobs are ENABLED on the new (Zig) compiler, pinned nightly,
-# --opt=dev (chosen for build time; #32's SIGABRT was fixed by the 2026-08-17 pin). All FIVE
-# targets build with fail-fast
-# off + upload runs with always(), so a partial binary set attaches even if a target fails.
-# Historical caveat, resolved: bug C (sync heap corruption, #105) was a basic-cli host
-# double-free, fixed in 0.22.0. "Bug B" (linux Json.to_str) is named only in these
-# comments and has no issue behind it; roc-json was dropped for builtin JSON, so the
-# label no longer refers to anything. Neither gates this workflow.
+# release-please reads the Conventional Commits on main, keeps CHANGELOG.md and
+# the version in main.roc up to date, and opens a release PR. Merging that PR tags
+# vX.Y.Z and creates the GitHub release, and the jobs below build and attach its assets.
 on:
   push:
     branches: [main]
@@ -35,12 +26,9 @@ jobs:
   build:
     name: build ${{ matrix.target }}
     needs: release-please
-    # ENABLED on the new (Zig) compiler at the pinned nightly (bug A fixed),
-    # --opt=dev (build time, not correctness — #32 fixed on the 2026-08-17 pin). All five targets, fail-fast off — we want to SEE which
-    # platforms build + pass version-check in CI. The bugs this used to hedge against
-    # (C: sync heap corruption, #105; B: linux Json.to_str) are gone -- see the header.
-    # The version check only runs `--version` (no sync/plan), so a target failing here
-    # means the BUILD itself broke (e.g. linux codegen/linker).
+    # Builds the CLI for every target. The version check runs only `--version`: it
+    # proves each binary starts and reports the tag's version, not that any command
+    # works.
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ${{ matrix.runs-on }}
     defaults:
@@ -54,11 +42,8 @@ jobs:
             runs-on: ubuntu-latest
           - target: linux-arm64
             runs-on: ubuntu-24.04-arm
-            # VERIFIED 2026-08-14 via the dispatch-only verify-arm64 workflow (run
-            # 31832832308): this exact flag on this runner class builds a binary that
-            # runs and initializes its SQLite db. History: without the explicit target
-            # the compiler auto-detects arm64v1musl, which resolves to no usable host,
-            # and releases shipped without linux-arm64 (#141). v0.4.0 onward ship all five.
+            # Left to itself the compiler detects arm64v1musl on this runner, which
+            # resolves to no usable host. verify-arm64.yml re-checks this flag on demand.
             roc_target: arm64musl
           - target: macos-arm64
             runs-on: macos-latest # Apple Silicon
@@ -107,7 +92,8 @@ jobs:
     # upload waits on these; the 360-minute default would hold a release's
     # assets for six hours
     timeout-minutes: 25
-    # macOS only: linux needs a verified recipe for raylib's X11/GL link deps
+    # Builds the macOS .app bundle. Linux and Windows package the app
+    # differently, so they have their own jobs below.
     strategy:
       fail-fast: false # one arch failing shouldn't cost the other
       matrix:
@@ -201,9 +187,9 @@ jobs:
   build-viz-linux:
     name: build the app (linux-x86_64)
     needs: release-please
-    # roc-ray ships an x64glibc host only, so linux-arm64 has no app. There is
-    # no bundle format here: the tarball carries the binary, the brand fonts
-    # and a launcher that seeds ~/.stride/fonts, which is what the window reads.
+    # roc-ray's only linux host is x64glibc, so linux-arm64 gets no app. Linux has no
+    # bundle format, so the tarball carries the binary, the brand fonts and a
+    # launcher that seeds ~/.stride/fonts, where the window reads its fonts.
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -218,10 +204,9 @@ jobs:
       - name: raylib's link dependencies
         run: |
           set -euo pipefail
-          # apt-get update fails if ANY configured source serves bad metadata,
-          # and the runner image ships third-party repos (Chrome et al) that
-          # do exactly that intermittently. Ubuntu's own sources live in
-          # ubuntu.sources on current runner images; everything else goes
+          # apt-get update fails if any configured source serves bad metadata, and
+          # the runner image ships third-party sources that sometimes do. Ubuntu's
+          # own sources live in ubuntu.sources, so every other file is deleted.
           sudo find /etc/apt/sources.list.d -type f ! -name 'ubuntu.sources' -delete
           sudo apt-get update -qq || sudo apt-get update -qq
           sudo apt-get install -y -qq libgl1-mesa-dev libx11-dev libxrandr-dev \
@@ -297,11 +282,9 @@ jobs:
   build-viz-windows:
     name: build the app (windows-x86_64)
     needs: release-please
-    # No bundle format here either: the zip carries the exe, the brand fonts
-    # and a .bat launcher that seeds %USERPROFILE%\.stride\fonts - the same
-    # directory the window reads, resolved by the USERPROFILE fallback #442
-    # added. The .bat is generated with CRLF endings on purpose: cmd's
-    # label/goto machinery misparses LF-only batch files.
+    # Windows has no bundle format either, so the zip carries the exe, the brand
+    # fonts and a .bat launcher that seeds %USERPROFILE%\.stride\fonts. The .bat
+    # gets CRLF line endings because cmd misparses labels and goto with LF only.
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: windows-2025
     timeout-minutes: 25
@@ -352,9 +335,8 @@ jobs:
             test -s "stage/stride-app/fonts/$f"
           done
           7z a -bso0 stride-app-windows-x86_64.zip ./stage/stride-app
-          # the archive must root at stride-app/ like the linux tarball; this
-          # job's first-ever execution is a real release, so the layout is
-          # asserted here rather than trusted
+          # The archive must have stride-app/ at its root, like the linux tarball.
+          # This job runs only on a real release, so the layout is checked here.
           7z l stride-app-windows-x86_64.zip | grep -q 'stride-app.stride-app.bat'
 
       - name: Prove the launcher seeds a fresh home
@@ -385,10 +367,8 @@ jobs:
   upload:
     name: attach binaries to the release
     needs: [release-please, build, build-viz, build-viz-linux, build-viz-windows]
-    # ENABLED with `build` above. `always()` so it still attaches whatever DID build even if some
-    # target failed (fail-fast is off) — a partial binary set beats none.
-    # always() fires on cancellation too; !cancelled() keeps a partial set
-    # attaching on FAILURE without attaching one to a cancelled run
+    # !cancelled() lets the upload run when a build job fails, so whatever did
+    # build still attaches, but skips it when the run is cancelled.
     if: ${{ !cancelled() && needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:

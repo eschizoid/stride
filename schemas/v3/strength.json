@@ -63,7 +63,7 @@
               "kg",
               "reps"
             ],
-            "description": "what the exercise progresses in. \"reps\" when every point moved 0 kg, as a bodyweight exercise from an imported Strava log does (push ups and the like count 0 kg toward tonnage) and as an imported set logged with no weight does: its top_kg and kg_reps are then 0, so top_reps and total_reps are its progression. \"kg\" when any point moved weight, including a weight written on a pasted bodyweight line, which is kept as written."
+            "description": "what the exercise progresses in. \"reps\" when every point moved 0 kg, as a bodyweight exercise does (push ups, assisted chin ups and the like count 0 kg toward tonnage, imported or pasted) and as an imported set logged with no weight does: its top_kg and kg_reps are then 0, so top_reps and total_reps are its progression. \"kg\" when any point moved weight."
           }
         }
       }
