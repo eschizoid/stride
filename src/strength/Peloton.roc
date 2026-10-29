@@ -31,6 +31,11 @@ Peloton :: [].{
     #   neither                  → the stated numbers are already totals.
     # Units: lbs (Peloton's default) converted through Units.lb_kg; kg as-is.
     #
+    # A bodyweight exercise (`Adapter.is_bodyweight`) keeps its sets and
+    # reps at 0 kg: the app writes the athlete's own mass on those lines, and
+    # a bodyweight line with no weight at all carries no bullet, so it is
+    # not a set line and yields no row.
+    #
     # Pure, expects below; the effectful skin (storing rows at analyze) lives
     # in Analyze.roc.
 
@@ -48,7 +53,7 @@ Peloton :: [].{
                     if acc.exercise == "" {
                         acc
                     } else {
-                        { exercise: acc.exercise, rows: List.append(acc.rows, { exercise: acc.exercise, sets: s.sets, reps: s.reps, weight_kg: s.weight_kg }) }
+                        { exercise: acc.exercise, rows: List.append(acc.rows, { exercise: acc.exercise, sets: s.sets, reps: s.reps, weight_kg: if Adapter.is_bodyweight(acc.exercise) 0.0 else s.weight_kg }) }
                     }
                 Err(_) =>
                     if line == "" or Str.starts_with(line, "Block ") {
@@ -208,3 +213,16 @@ expect List.is_empty(Peloton.parse("Curl\n3 × 12 • -15 lbs"))
 
 # an unrecognised unit is not a set line — prose with a bullet stays prose
 expect List.is_empty(Peloton.parse("Curl\n3 × 12 • 15 stone"))
+
+# a bodyweight line that names a weight keeps its sets and reps at 0 kg,
+# its assisted form too, while a loaded lift beside it keeps its weight
+expect {
+    rows = Peloton.parse("Chin Up\n3 × 6 • 175 lbs\nAssisted Pull Up\n3 × 8 • 185 lbs\nDumbbell Row\n3 × 10 • 40 lbs")
+    match rows {
+        [a, b, c] =>
+            a.exercise == "Chin Up" and a.sets == 3 and a.reps == 6 and a.weight_kg == 0.0
+                and b.exercise == "Assisted Pull Up" and b.sets == 3 and b.reps == 8 and b.weight_kg == 0.0
+                and (c.weight_kg - 18.1436948).abs() < 0.001
+        _ => False
+    }
+}

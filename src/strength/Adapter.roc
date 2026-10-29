@@ -31,4 +31,77 @@ Adapter :: [].{
     # a row is what one exercise line prescribes: `sets` × `reps` at
     # `weight_kg` per rep, so tonnage is their product
     SetRow : { exercise : Str, sets : I64, reps : I64, weight_kg : F64 }
+
+    # ── bodyweight: a move done against the body's own mass adds no load ──
+    # Every adapter counts a bodyweight exercise at 0 kg per rep and keeps
+    # its sets and reps, whatever weight its source wrote. Strength apps
+    # record the athlete's own mass on these moves, and counting it would
+    # make a set of chin ups outweigh the session's lifts; tonnage counts the
+    # mass a rep moves on top of the body. An exercise is bodyweight when its
+    # name, compared by `name_key` with a trailing plural ignored, is on
+    # `bodyweight_names`, either alone or after an "assisted" or "negative"
+    # qualifier: an assisted rep lifts less than the body and a negative is
+    # the lowering half of one, so neither adds load. Any other qualifier
+    # names a different exercise, so "Weighted Pull Up" keeps its weight. A
+    # list rather than a comparison with the athlete's mass, because stride
+    # stores no body weight to compare against.
+    is_bodyweight : Str -> Bool
+    is_bodyweight = |name| {
+        k = name_key(name)
+        listed(k) or List.any(bodyweight_qualifiers, |q| Str.starts_with(k, q) and listed(drop_bytes(k, q)))
+    }
+
+    # exercises done against the body's own mass, written as the comparison
+    # key `name_key` makes of a name
+    bodyweight_names : List(Str)
+    bodyweight_names = List.map([
+        "push up", "pull up", "chin up", "dip", "plank", "side plank", "sit up",
+        "crunch", "bicycle crunch", "burpee", "mountain climber", "jumping jack",
+        "air squat", "bodyweight squat", "inverted row", "leg raise",
+        "hanging leg raise", "flutter kick", "v up", "dead bug", "bird dog",
+        "superman", "wall sit", "bear crawl", "inchworm", "handstand push up",
+        "pike push up", "hollow hold",
+    ], name_key)
+
+    # the qualifiers that leave a listed move bodyweight, as `name_key`
+    # writes them
+    bodyweight_qualifiers : List(Str)
+    bodyweight_qualifiers = ["assisted", "negative"]
+
+    # a name with case, spaces, hyphens and every other non-alphanumeric
+    # removed: "Push-Ups" and "push ups" are one key
+    name_key : Str -> Str
+    name_key = |name|
+        Str.from_utf8(List.keep_if(Str.to_utf8(Str.with_ascii_lowercased(name)), |b| (b >= 97 and b <= 122) or (b >= 48 and b <= 57))).ok_or("")
+
+    # a key on the list as written, or as a plural of a listed name ("dips",
+    # "crunches")
+    listed : Str -> Bool
+    listed = |k| {
+        on = |key| key != "" and List.contains(bodyweight_names, key)
+        on(k)
+            or (Str.ends_with(k, "s") and on(Str.from_utf8(List.drop_last(Str.to_utf8(k), 1)).ok_or("")))
+            or (Str.ends_with(k, "es") and on(Str.from_utf8(List.drop_last(Str.to_utf8(k), 2)).ok_or("")))
+    }
+
+    # `k` without its leading `prefix`; the caller has checked it starts so
+    drop_bytes : Str, Str -> Str
+    drop_bytes = |k, prefix|
+        Str.from_utf8(List.drop_first(Str.to_utf8(k), List.len(Str.to_utf8(prefix)))).ok_or("")
 }
+
+# the match is blind to case, spacing, hyphens and a plural, and exact
+# otherwise: a weighted variant and a lift that merely starts alike keep
+# their weight
+expect
+    List.map(["Push-Ups", "pull up", "DIPS", "Crunches", "Burpees", "Chin Up"], Adapter.is_bodyweight) == [True, True, True, True, True, True]
+expect
+    List.map(["Weighted Pull Up", "Push Press", "Dumbbell Bench Press", "Plankton", ""], Adapter.is_bodyweight) == [False, False, False, False, False]
+
+# an assisted or negative form of a listed move is bodyweight, plural
+# included; the qualifier alone, a qualifier on an unlisted move, and a
+# qualifier anywhere but the front are not
+expect
+    List.map(["Assisted Chin-Up", "Assisted Pull Up", "Negative Pull Up", "assisted dips", "Negative Push-Ups"], Adapter.is_bodyweight) == [True, True, True, True, True]
+expect
+    List.map(["Assisted", "Negative", "Assisted Bench Press", "Pull Up Negative", "Weighted Negative Pull Up"], Adapter.is_bodyweight) == [False, False, False, False, False]

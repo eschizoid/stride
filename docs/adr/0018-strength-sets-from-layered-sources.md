@@ -45,8 +45,9 @@ general path is the primary path.
 
 The structured log carries a weight on bodyweight moves too, often the
 athlete's own mass, which would make push-ups outweigh the session's lifts.
-A bodyweight exercise, matched by name against a fixed list, keeps its sets
-and reps and counts 0 kg toward tonnage. Only the derived set rows read 0 kg;
+A bodyweight exercise, matched by name against a fixed list (an assisted or
+negative form included), keeps its sets and reps and counts 0 kg toward
+tonnage, from a pasted description as well as a log. Only the derived set rows read 0 kg;
 the stored log keeps the recorded weight, so the list can change without a
 re-import, and the import names every set it zeroed.
 
