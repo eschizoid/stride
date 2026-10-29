@@ -181,10 +181,10 @@ two sources and parses both into the same per-set rows:
    (an exercise line, then `3 × 8 • 30 lbs/side`; `/side` variants resolved to the mass
    actually moved); no other paste format is read. A bodyweight line is kept only when
    it names a weight above zero in lb or kg, and then counts 0 kg like an imported
-   one, with no `zeroed` report. Sync fetches strength-family descriptions after the
-   stream queue empties and re-reads them inside the 30-day window, so a paste the same
-   evening lands on the next sync. Unrecognised text yields nothing and is never an
-   error.
+   one, with no `zeroed` report. A timed line (`3 × 30 sec • 20 lbs`) yields no row.
+   Sync fetches strength-family descriptions after the stream queue empties and
+   re-reads them inside the 30-day window, so a paste the same evening lands on the
+   next sync. Unrecognised text yields nothing and is never an error.
 2. **The Strava log, via `stride strength import <file|-> --json`.** Fetch it with the
    Strava MCP connector's `get_strength_workout_details` (it takes `activity_ids`), then
    pass the returned JSON unchanged (a list of workouts or one; a bare-number

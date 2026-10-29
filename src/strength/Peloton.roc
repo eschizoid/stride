@@ -34,9 +34,12 @@ Peloton :: [].{
     # A bodyweight exercise (`Adapter.is_bodyweight`) keeps its sets and
     # reps at 0 kg when its set line names a weight, which can be the
     # athlete's own mass. A set line with no weight carries no bullet, so it
-    # yields no row. A line that is only a set count (`S × R`, optionally
-    # followed by one word from `count_units`, with or without a refused
-    # weight) is never an exercise name, so the name above it stays current.
+    # yields no row. A timed set line (`3 × 30 sec • 20 lbs`) yields no row
+    # either: its R is a duration, and a duration times a weight is not
+    # tonnage. A line that is only a set count (`S × R`, optionally followed
+    # by one word from `count_units`, with or without a refused weight or a
+    # timed one) is never an exercise name, so the name above it stays
+    # current.
     #
     # Pure, expects below; the effectful skin (storing rows at analyze) lives
     # in Analyze.roc.
@@ -92,7 +95,11 @@ Peloton :: [].{
 
     # the words a bare set count may name after its rep figure
     count_units : List(Str)
-    count_units = ["reps", "reps/side", "s", "sec", "secs", "seconds", "min", "mins", "minutes"]
+    count_units = List.concat(["reps", "reps/side"], time_units)
+
+    # the words that make R a duration rather than a rep count
+    time_units : List(Str)
+    time_units = ["s", "sec", "secs", "seconds", "min", "mins", "minutes"]
 
     # one set line, or Err for anything else. The bullet is the discriminator:
     # no prose line in the share format carries ` • `.
@@ -101,6 +108,10 @@ Peloton :: [].{
         match Str.split_on(line, " • ") {
             [left, right] => {
                 lr = parse_sets_reps(left)?
+                # a held duration is not reps, and seconds × weight is not tonnage
+                if lr.timed {
+                    return Err(NotASetLine)
+                }
                 w = parse_weight(right)?
                 # weight/side with per-side reps is single-side work: one side's
                 # mass per rep, reps doubled. weight/side with total reps is both
@@ -117,9 +128,11 @@ Peloton :: [].{
             _ => Err(NotASetLine)
         }
 
-    # `3 × 8`, `3 × 8 reps`, `3 × 8 reps/side` — ASCII `x` tolerated, since a
-    # re-typed paste is one keyboard away from the multiplication sign
-    parse_sets_reps : Str -> Try({ sets : I64, reps : I64, per_side : Bool }, [NotASetLine])
+    # `3 × 8`, `3 × 8 reps`, `3 × 8 reps/side`, `3 × 30 sec` — ASCII `x`
+    # tolerated, since a re-typed paste is one keyboard away from the
+    # multiplication sign. `timed` says the word after R is one of
+    # `time_units`, so R counts seconds or minutes, not reps.
+    parse_sets_reps : Str -> Try({ sets : I64, reps : I64, per_side : Bool, timed : Bool }, [NotASetLine])
     parse_sets_reps = |left| {
         parts =
             match Str.split_on(left, " × ") {
@@ -138,7 +151,12 @@ Peloton :: [].{
         if sets <= 0 or reps <= 0 {
             Err(NotASetLine)
         } else {
-            Ok({ sets, reps, per_side: Str.contains(reps_part, "/side") })
+            timed =
+                match List.keep_if(reps_tokens, |t| t != "") {
+                    [_, unit, ..] => List.contains(time_units, Str.with_ascii_lowercased(unit))
+                    _ => False
+                }
+            Ok({ sets, reps, per_side: Str.contains(reps_part, "/side"), timed })
         }
     }
 
@@ -284,6 +302,17 @@ expect {
     timed = Peloton.parse("Plank\n3 × 30 Sec\n3 × 6 • 20 lbs")
     match (spaced, side, timed) {
         ([a], [b], [c]) => a.exercise == "Push Up" and b.exercise == "Chin Up" and c.exercise == "Plank" and c.weight_kg == 0.0
+        _ => False
+    }
+}
+
+# a timed set line with a weight yields no row, in any case of its unit, and
+# does not take over the name: the next set line still belongs to the move
+# above it, while a rep-counted line beside it keeps its tonnage
+expect {
+    rows = Peloton.parse("Weighted Plank\n3 × 30 sec • 20 lbs\n3 × 1 Min • 20 lbs\n3 × 6 • 20 lbs\nCurl\n3 × 10 • 20 lbs")
+    match rows {
+        [a, b] => a.exercise == "Weighted Plank" and a.reps == 6 and b.exercise == "Curl" and b.sets == 3 and b.reps == 10 and (b.weight_kg - 9.0718474).abs() < 0.001
         _ => False
     }
 }
