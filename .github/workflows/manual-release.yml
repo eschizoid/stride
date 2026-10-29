@@ -1,7 +1,8 @@
 name: manual-release
 
 # A release cut by hand, separate from release-please. It tags the version in
-# main.roc, builds the CLI binaries and publishes them with notes from CHANGELOG.md.
+# main.roc when that tag is absent, builds the CLI binaries, and attaches them to
+# the release, creating it with notes from CHANGELOG.md when it does not exist.
 # Do not dispatch it while release-please has a release PR open.
 on:
   workflow_dispatch: {}

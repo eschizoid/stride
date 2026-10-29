@@ -8,7 +8,8 @@ on:
   workflow_dispatch:
 
 # Keeps one run per ref, so a new push cancels the older run instead of queueing
-# behind it. Runs on main are never cancelled, so every merge commit keeps a result.
+# behind it. On main a run in progress is never cancelled: a newer push waits
+# behind it, and replaces any run that is still waiting.
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -35,20 +36,19 @@ jobs:
         shell: bash
         run: roc check src/cli/main.roc
 
-      # Checks the payload keys SKILL.md names against the schemas. It reads only
-      # source, schemas and Markdown, never the binary, so no build step runs first.
+      # The source gates below read only source, schemas and Markdown, never the
+      # binary, so no build runs first. They run on every OS because a shell script
+      # can pass on macOS and Linux and fail under Git Bash.
       - name: Check SKILL.md payload shapes against the schemas
         shell: bash
         run: sh tools/skill-shapes.sh
 
-      # Reads source only, so it needs no build. The source gates run on every OS
-      # because a shell script can pass on macOS and Linux and fail under Git Bash.
       - name: Check every TEXT decode is CAST to TEXT
         shell: bash
         run: sh tools/blob-safety.sh
 
-      # Reads source only. Every strength adapter must be a row in the ordered table
-      # and ship a real sample of its app's text (ADR 0018), and only this gate checks it.
+      # Every strength adapter must be a row in the ordered table and ship a real
+      # sample of its app's text (ADR 0018), and only this gate checks it.
       - name: Check every strength adapter is registered and ships its sample
         shell: bash
         run: sh tools/adapter-fixtures.sh
@@ -63,8 +63,8 @@ jobs:
             echo "--- roc test src/core/$m.roc (the package both binaries import) ---"
             roc test "src/core/$m.roc"
           done
-          # engine modules import the core package, and a bare module run has no
-          # package map, so each run names the app with --main
+          # a module that imports a package resolves only through an app, so each
+          # run names it with --main, which runs every expect the app reaches
           for m in Metrics Render Drain Csv Command Config Streams Strength; do
             echo "--- roc test --main=src/cli/main.roc src/cli/$m.roc ---"
             roc test --main=src/cli/main.roc "src/cli/$m.roc"
@@ -73,8 +73,9 @@ jobs:
           roc check src/cli/Schema.roc
 
   # Builds the real binary and runs the e2e suites against it with a sandboxed
-  # HOME and no network. It runs on macOS only, so the cross-platform gate is
-  # check-and-test, which runs on every OS in its matrix.
+  # HOME and no network. It runs on macOS, where the suite is known green; no
+  # known bug pins it there, so moving it needs a trial run. No job here builds
+  # the engine on Windows, so Windows coverage is check-and-test alone.
   e2e:
     needs: check-and-test
     runs-on: macos-latest
@@ -89,9 +90,10 @@ jobs:
         run: roc build src/cli/main.roc --output=stride --opt=dev   # new compiler uses --output=
       - name: Run offline e2e suite
         run: ROC=roc just e2e
-      # `just e2e-sync` needs no network or credential. Its mocks listen on loopback,
-      # STRIDE_API_BASE points stride at them (Config.api_base_allowed permits http to
-      # loopback), and the token is a fake row written into a sandboxed HOME.
+      # CI's only check of sync's payload, stream drain included, against
+      # schemas/v3/sync.json. It needs no network or credential: its mocks listen on
+      # loopback, STRIDE_API_BASE points stride at them (Config.api_base_allowed
+      # permits http to loopback), and the token is a fake row in a sandboxed HOME.
       - name: Run mock-backed e2e suite
         run: ROC=roc just e2e-sync
 
@@ -120,9 +122,9 @@ jobs:
       # because that recipe rebuilds the binary the step above already built.
       - name: Check the commands the docs name against the command table
         run: sh tools/command-claims.sh
-      # Every job takes the setup-roc default, so the compiler tag has one copy.
-      # This fails if a workflow overrides it, if the viz app header names a
-      # compiler, or if the justfile's viz_pin names a different tag.
+      # Every job takes the setup-roc default, so no workflow holds a copy of the
+      # compiler tag. This fails if a workflow overrides it, if the viz app header
+      # names a compiler, or if the justfile's viz_pin, the one other copy, differs.
       - name: Check the viz roc pin agrees across every workflow site
         run: sh tools/pin-check.sh
       # Fails when a comment or doc says an issue is still open and the tracker says
@@ -152,7 +154,7 @@ jobs:
       - name: Run the app window's pure expects
         run: sh tools/roc-viz.sh test src/viz/main.roc
 
-  # roc-ray ships an x64glibc host, so the window can link on linux, and a
+  # roc-ray's linux host is x64glibc, so the window can link on linux, and a
   # type-check does not prove that. Linking on every PR keeps the release job
   # from being the first place a missing raylib link dependency shows up.
   viz-link-linux:
@@ -182,8 +184,8 @@ jobs:
           test -s stride-viz-linux
           file stride-viz-linux
 
-  # The window cannot run headless on a runner, so linking it proves the roc-ray
-  # x64win host still works. The grep checks that the Windows launcher passes a
+  # The window cannot run headless on a runner, so CI links it, which proves the
+  # roc-ray x64win host still works. The grep checks that the Windows launcher passes a
   # %USERPROFILE% path as the window's first argument, its read-write grant.
   viz-link-windows:
     runs-on: windows-2025
@@ -204,8 +206,8 @@ jobs:
           sh tools/roc-viz.sh build src/viz/main.roc --output=stride-viz.exe --opt=dev
           test -s stride-viz.exe
 
-  # ADR 0016's gate is plain shell over source text. It needs no toolchain and
-  # does not vary by OS, so one small job runs it.
+  # ADR 0016's gate is plain shell over source text and needs no toolchain, so
+  # one small job runs it, on linux only.
   layer-check:
     runs-on: ubuntu-latest
     timeout-minutes: 5
