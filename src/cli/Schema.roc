@@ -1,3 +1,5 @@
+import core.Sports
+
 Schema :: [].{
 
     # ── database schema (DDL only — pure strings, no decoders to drift from) ──
@@ -222,8 +224,29 @@ Schema :: [].{
     # one row per activity: its day, seconds by zone, and seconds by intensity
     # class. easy/moderate/hard prefer the pi_* split (power-derived with
     # watts, pace-derived for a distance sport without) and fall back to HR
-    # zones (z1+z2 / z3 / z4+z5) when no split exists -- the same per-activity
-    # CASE `stride summary` aggregates, so viz and CLI polarization agree.
+    # zones (z1+z2 / z3 / z4+z5) when no split exists. Every polarization
+    # share reads it, so viz and CLI agree.
+    #
+    # `polarized` is 1 when the activity counts toward an easy/moderate/hard
+    # SHARE. An 80/20 verdict is about endurance work, and wrist HR during
+    # lifting reads as easy time that would inflate it, so a type in
+    # Sports.never_polarized is always out, and any other strength-like type
+    # (Sports.class) is out when it has recorded sets: with none, a workout is
+    # most often a class worked by heart rate. Only the WeightTraining family
+    # (weight training and workout) can have sets today. Hard-session
+    # predicates read hard_s for every activity, polarized or not, so a hard
+    # lifting session still counts as a hard day.
+    strength_like_sql : Str
+    strength_like_sql = sql_list(Sports.strength_like)
+
+    never_polarized_sql : Str
+    never_polarized_sql = sql_list(Sports.never_polarized)
+
+    # sport type names as a quoted SQL list; the names are stride's own
+    # constants, so no value from outside reaches the SQL
+    sql_list : List(Str) -> Str
+    sql_list = |types| Str.join_with(List.map(types, |t| "'${t}'"), ", ")
+
     activity_intensity_drop =
         \\DROP VIEW IF EXISTS activity_intensity
     activity_intensity =
@@ -238,7 +261,10 @@ Schema :: [].{
         \\       CASE WHEN COALESCE(m.pi_easy_s, 0) + COALESCE(m.pi_moderate_s, 0) + COALESCE(m.pi_hard_s, 0) > 0
         \\            THEN COALESCE(m.pi_moderate_s, 0) ELSE COALESCE(m.z3_s, 0) END AS moderate_s,
         \\       CASE WHEN COALESCE(m.pi_easy_s, 0) + COALESCE(m.pi_moderate_s, 0) + COALESCE(m.pi_hard_s, 0) > 0
-        \\            THEN COALESCE(m.pi_hard_s, 0) ELSE COALESCE(m.z4_s, 0) + COALESCE(m.z5_s, 0) END AS hard_s
+        \\            THEN COALESCE(m.pi_hard_s, 0) ELSE COALESCE(m.z4_s, 0) + COALESCE(m.z5_s, 0) END AS hard_s,
+        \\       CASE WHEN a.sport_type IN (${never_polarized_sql}) THEN 0
+        \\            WHEN a.sport_type IN (${strength_like_sql}) AND EXISTS (SELECT 1 FROM strength_sets ss WHERE ss.activity_id = a.id) THEN 0
+        \\            ELSE 1 END AS polarized
         \\FROM activities a
         \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
 

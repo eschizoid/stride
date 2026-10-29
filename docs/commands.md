@@ -68,7 +68,7 @@ Each answers a different question.
 
 ### `stride summary`
 
-_Where do I stand today?_ Form (with verdict), 7-day and 28-day zone mix + polarization, your derived FTP and the 20-min best behind it, date of your last hard session, per-sport breakdown.
+_Where do I stand today?_ Form (with verdict), 7-day and 28-day zone mix + polarization, your derived FTP and the 20-min best behind it, date of your last hard session, per-sport breakdown. Polarization (the easy/moderate/hard shares here, in `compare`, `season` and the window's zones caps) leaves out weight training, yoga and pilates, and a workout that has recorded sets, because wrist HR during lifting reads as easy time; a workout with no sets, such as a class worked by heart rate, counts. A window of lifting alone reports no shares (`polarization_known: false`) rather than 0%. The zone mix and the hard-session date still include every session; `compare`'s hard minutes sit beside its easy share and cover the same sessions.
 
 ### `stride activities [n] [sport]`
 

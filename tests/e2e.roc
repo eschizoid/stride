@@ -362,7 +362,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1314)?
+    checks_ran_exactly!(1322)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7378,6 +7378,32 @@ b_strength_import! = |ctx| {
     _ = sql!(ctx.db, "INSERT INTO strength_logs (activity_id, payload, imported_at) VALUES (9999917, '{\"activity_id\":\"9999917\",\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"reps\":{\"value\":\"3\"}}]}', '2026-01-01T00:00:00Z'); INSERT INTO strength_notes (activity_id, description) VALUES (9999918, '${paste}');")
     check!("an orphaned log or description does not fail analyze, and yields no rows", strjq!(ctx, ["analyze"], "(.data.computed | type) + \":\" + (.error.code // \"none\")") == "number:none" and Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM strength_sets WHERE activity_id IN (9999917, 9999918);")) == "0")?
     _ = sql!(ctx.db, "DELETE FROM strength_logs WHERE activity_id = 9999917; DELETE FROM strength_notes WHERE activity_id = 9999918;")
+    # polarization leaves out lifting always and another strength-like type
+    # when it has recorded sets, in every share reader, while zone time and
+    # hard-day predicates keep every session. In today's window: 9730 a
+    # Workout with sets, 9731 a Workout without, 9732 a WeightTraining
+    # without, and 9733 a Ride.
+    today = Str.trim(sql!(ctx.db, "SELECT today FROM series_clock;"))
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance) VALUES (9730, 'logged workout', 'Workout', '${today}T12:00:00Z', 3600, 0), (9731, 'unlogged class', 'Workout', '${today}T13:00:00Z', 3600, 0), (9732, 'unlogged lift', 'WeightTraining', '${today}T14:00:00Z', 3600, 0), (9733, 'easy spin', 'Ride', '${today}T15:00:00Z', 3600, 20000); INSERT INTO strength_sets (activity_id, ordinal, exercise, sets, reps, weight_kg, source) VALUES (9730, 0, 'Curl', 3, 8, 10.0, 'strava');")
+    check!("a workout with sets and any lift are out of polarization, a workout without sets and a ride are in", Str.trim(sql!(ctx.db, "SELECT group_concat(activity_id || ':' || polarized, '|') FROM (SELECT activity_id, polarized FROM activity_intensity WHERE activity_id IN (9730, 9731, 9732, 9733) ORDER BY activity_id);")) == "9730:0|9731:1|9732:0|9733:1")?
+    check!("...and nothing in the fixture is a hard session today yet", strjq!(ctx, ["summary"], ".data.last_hard_session_date") != today)?
+    # the lift alone: an hour of easy time and ten hard minutes
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activity_metrics (activity_id, tss, z1_s, z2_s, z3_s, z4_s, z5_s) VALUES (9730, 10, 100000, 0, 0, 600, 0);")
+    check!("the lift's zone time still reaches summary's zone mix", sfloat(strjq!(ctx, ["summary"], ".data.last_7d.z1_s")) >= 100000.0)?
+    check!("...and its hard minutes still make today a hard day", strjq!(ctx, ["summary"], ".data.last_hard_session_date") == today)?
+    # a moderate ride beside it: every share reader must read the ride alone
+    # while the lift has sets, and the lift's easy time once it has none
+    _ = sql!(ctx.db, "INSERT OR REPLACE INTO activity_metrics (activity_id, tss, z1_s, z2_s, z3_s, z4_s, z5_s) VALUES (9733, 20, 0, 0, 1000, 0, 0);")
+    shares! = |_| [strjq!(ctx, ["summary"], ".data.last_7d.easy_pct"), strjq!(ctx, ["compare", "week"], ".data.current.easy_pct"), strjq!(ctx, ["season"], ".data.blocks | max_by(.end_date) | .easy_pct")]
+    check!("summary's polarization_known is a boolean, true with a ride in the window", strjq!(ctx, ["summary"], ".data.last_7d.polarization_known | tostring") == "true")?
+    with_sets = shares!({})
+    _ = sql!(ctx.db, "DELETE FROM strength_sets WHERE activity_id = 9730;")
+    without_sets = shares!({})
+    rose = |ix| sfloat(List.get(without_sets, ix).ok_or("")) > sfloat(List.get(with_sets, ix).ok_or(""))
+    check!("summary's easy share counts the workout's easy time only once it has no sets", rose(0))?
+    check!("...and so does compare's", rose(1))?
+    check!("...and so does season's", rose(2))?
+    _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (9730, 9731, 9732, 9733); DELETE FROM activities WHERE id IN (9730, 9731, 9732, 9733);")
     Ok({})
 }
 

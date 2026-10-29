@@ -1278,12 +1278,14 @@ Render :: [].{
             else
                 ["    time in HR zones: unavailable (no detailed HR stream in this window)"]
         polarization_lines =
-            if z.intensity_streams > 0
+            if z.intensity_streams > 0 and !(z.polarization_known)
+                ["    polarization: unavailable (no endurance time; lifting is left out)"]
+            else if z.intensity_streams > 0
                 ["    polarization: ${I64.to_str(z.easy_pct)}% easy (Z1-2) / ${I64.to_str(z.moderate_pct)}% moderate (Z3) / ${I64.to_str(z.hard_pct)}% hard (Z4-5)"]
             else
                 ["    polarization: unavailable (requires HR, power, or distance streams)"]
         last7_line =
-            if s.last_7d.intensity_streams > 0
+            if s.last_7d.intensity_streams > 0 and s.last_7d.polarization_known
                 "  last 7 days: ${I64.to_str(s.last_7d.sessions)} sessions · ${fmt1(s.last_7d.moving_time.to_f64() / 3600.0)}h · ${fmt1(dist_value(units, s.last_7d.distance_m))} ${dist_unit(units)} · ${fmt0(s.last_7d.tss)} load — ${I64.to_str(s.last_7d.easy_pct)}% easy / ${I64.to_str(s.last_7d.moderate_pct)}% moderate / ${I64.to_str(s.last_7d.hard_pct)}% hard"
             else
                 "  last 7 days: ${I64.to_str(s.last_7d.sessions)} sessions · ${fmt1(s.last_7d.moving_time.to_f64() / 3600.0)}h · ${fmt1(dist_value(units, s.last_7d.distance_m))} ${dist_unit(units)} · ${fmt0(s.last_7d.tss)} load — intensity unavailable"
@@ -2063,8 +2065,8 @@ expect {
         ramp_28d_avg: -1.0,
         load_days: 400,
         ctl_warming_up: False,
-        last_28d: { tss: 100.0, z1_s: 600.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 100.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 4.I64, intensity_streams: 4.I64, load_coverage: { high_pct: 100.I64, medium_pct: 0.I64, low_pct: 0.I64, known: True } },
-        last_7d: { tss: 50.0, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 2.I64, intensity_streams: 2.I64 },
+        last_28d: { polarization_known: Bool.True, tss: 100.0, z1_s: 600.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 100.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 4.I64, intensity_streams: 4.I64, load_coverage: { high_pct: 100.I64, medium_pct: 0.I64, low_pct: 0.I64, known: True } },
+        last_7d: { polarization_known: Bool.True, tss: 50.0, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 2.I64, intensity_streams: 2.I64 },
         ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
         last_hard_session_date: "",
         hard_days: { d14: 1.I64, d28: 2.I64, spacing_median_days_28d: 3.I64, spacing_known: True, days_since_last: 0.I64, days_since_known: True },
@@ -2101,8 +2103,8 @@ expect {
         ramp_28d_avg: -1.0,
         load_days: 400,
         ctl_warming_up: False,
-        last_28d: { tss: 100.0, z1_s: 600.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 100.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 4.I64, intensity_streams: 4.I64, load_coverage: { high_pct: 100.I64, medium_pct: 0.I64, low_pct: 0.I64, known: True } },
-        last_7d: { tss: 50.0, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 2.I64, intensity_streams: 2.I64 },
+        last_28d: { polarization_known: Bool.True, tss: 100.0, z1_s: 600.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 100.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 4.I64, intensity_streams: 4.I64, load_coverage: { high_pct: 100.I64, medium_pct: 0.I64, low_pct: 0.I64, known: True } },
+        last_7d: { polarization_known: Bool.True, tss: 50.0, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 2.I64, intensity_streams: 2.I64 },
         ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
         last_hard_session_date: "",
         hard_days: { d14: 1.I64, d28: 2.I64, spacing_median_days_28d: 3.I64, spacing_known: True, days_since_last: 0.I64, days_since_known: True },
@@ -2120,14 +2122,32 @@ expect {
         form_delta_7d: 0.0, form_delta_known: False, form_band_days: 0, form_band_days_capped: False,
         ramp_7d: 0.0, ramp_28d_avg: 0.0,
         load_days: 400, ctl_warming_up: False,
-        last_28d: { tss: 100.0, z1_s: 0.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 0.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 0.I64, intensity_streams: 0.I64, load_coverage: { high_pct: 0.I64, medium_pct: 0.I64, low_pct: 0.I64, known: False } },
-        last_7d: { tss: 50.0, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 0.I64, intensity_streams: 0.I64 },
+        last_28d: { polarization_known: Bool.False, tss: 100.0, z1_s: 0.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 0.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 0.I64, intensity_streams: 0.I64, load_coverage: { high_pct: 0.I64, medium_pct: 0.I64, low_pct: 0.I64, known: False } },
+        last_7d: { polarization_known: Bool.False, tss: 50.0, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 0.I64, intensity_streams: 0.I64 },
         ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
         last_hard_session_date: "", hard_days: { d14: 0.I64, d28: 0.I64, spacing_median_days_28d: 0.I64, spacing_known: False, days_since_last: 0.I64, days_since_known: False }, pending_sessions: 0.I64,
         sports_28d: [{ sport: "Run", sessions: 4.I64, tss: 100.0, moving_time: 7200.I64, distance_m: 30000.0 }],
     }
     out = Render.summary_screen(Metric, s)
     Str.contains(out, "time in HR zones: unavailable") and Str.contains(out, "intensity unavailable") and !(Str.contains(out, "zone gap"))
+}
+
+# a window of lifting alone has intensity streams but no polarized time: its
+# shares are absent, never printed as 0%
+expect {
+    s = {
+        as_of: "2025-01-01", fitness_ctl: 20.0, fatigue_atl: 10.0, form_tsb: 10.0,
+        form_delta_7d: 0.0, form_delta_known: False, form_band_days: 0, form_band_days_capped: False,
+        ramp_7d: 0.0, ramp_28d_avg: 0.0,
+        load_days: 400, ctl_warming_up: False,
+        last_28d: { polarization_known: Bool.False, tss: 100.0, z1_s: 0.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 0.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 0.I64, intensity_streams: 2.I64, load_coverage: { high_pct: 0.I64, medium_pct: 0.I64, low_pct: 0.I64, known: False } },
+        last_7d: { polarization_known: Bool.False, tss: 50.0, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 0.I64, intensity_streams: 2.I64 },
+        ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
+        last_hard_session_date: "", hard_days: { d14: 0.I64, d28: 0.I64, spacing_median_days_28d: 0.I64, spacing_known: False, days_since_last: 0.I64, days_since_known: False }, pending_sessions: 0.I64,
+        sports_28d: [{ sport: "Run", sessions: 4.I64, tss: 100.0, moving_time: 7200.I64, distance_m: 30000.0 }],
+    }
+    out = Render.summary_screen(Metric, s)
+    Str.contains(out, "polarization: unavailable (no endurance time; lifting is left out)") and Str.contains(out, "intensity unavailable") and !(Str.contains(out, "0% easy"))
 }
 
 # pace: 10km in 3000s = 5:00/km; padded seconds; no distance -> "-"

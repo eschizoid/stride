@@ -109,27 +109,21 @@ ReportSeason :: [].{
                     \\SELECT COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS date,
                     \\       COALESCE(CAST(a.sport_family AS TEXT), CAST(a.sport_type AS TEXT), '') AS fam,
                     \\       COUNT(*) AS n,
-                    \\       -- the per-activity intensity split is the activity_intensity
-                    \\       -- view's definition (pi_* when present, else HR zones), shared
-                    \\       -- with `summary` and the viz so no surface can disagree
-                    \\       CAST(COALESCE(SUM(ai.easy_s), 0) AS REAL) AS easy_s,
-                    \\       CAST(COALESCE(SUM(ai.moderate_s), 0) AS REAL) AS mod_s,
-                    \\       CAST(COALESCE(SUM(ai.hard_s), 0) AS REAL) AS hard_s,
+                    \\       -- the per-activity intensity split and which activities count
+                    \\       -- toward a share are the activity_intensity view's, shared with
+                    \\       -- `summary` and the viz
+                    \\       CAST(COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.easy_s ELSE 0 END), 0) AS REAL) AS easy_s,
+                    \\       CAST(COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.moderate_s ELSE 0 END), 0) AS REAL) AS mod_s,
+                    \\       CAST(COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.hard_s ELSE 0 END), 0) AS REAL) AS hard_s,
                     \\       CAST(COALESCE(MIN(NULLIF(m.ftp_used, 0)), 0) AS REAL) AS ftp_lo,
                     \\       CAST(COALESCE(MAX(m.ftp_used), 0) AS REAL) AS ftp_hi,
-                    \\       -- an id from the group, carried ONLY so a refused date can name a row
-                    \\       -- the user can act on. The envelope used to carry the date alone, and a
-                    \\       -- date is not something you can delete or re-fetch (#243).
-                    \\       -- MIN, and `fam` in the ORDER BY, because neither gives alone what it
-                    \\       -- looks like it gives. The grouping is (date, fam), NOT date alone: one
-                    \\       -- unreadable date shared by a Run and a Ride is TWO groups, so MIN picks
-                    \\       -- the lowest id WITHIN the group the walk reaches first — which is not
-                    \\       -- the lowest id for that date. Review measured it: 900 (Run) and 901
-                    \\       -- (Ride) on one bad date named 901.
-                    \\       -- What `fam` in the ORDER BY buys is that "first" is OUR statement and
-                    \\       -- not SQLite's. The property is that one database names one row every
-                    \\       -- time, so a bug report reproduces; it is NOT that the id is globally
-                    \\       -- smallest, and two bad rows still take two repairs.
+                    \\       -- an id from the group, carried only so a refused date can name a row
+                    \\       -- the user can act on, since a date alone cannot be deleted or
+                    \\       -- re-fetched. Groups are (date, fam), so one bad date shared by two
+                    \\       -- families is two groups and MIN names the lowest id of the group the
+                    \\       -- walk reaches first, not the lowest for the date. `fam` in the ORDER
+                    \\       -- BY makes that choice stride's rather than SQLite's, so one database
+                    \\       -- names the same row every time.
                     \\       MIN(a.id) AS example_id
                     \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
                     \\LEFT JOIN activity_intensity ai ON ai.activity_id = a.id
