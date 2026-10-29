@@ -32,9 +32,10 @@ Peloton :: [].{
     # Units: lbs (Peloton's default) converted through Units.lb_kg; kg as-is.
     #
     # A bodyweight exercise (`Adapter.is_bodyweight`) keeps its sets and
-    # reps at 0 kg: the app writes the athlete's own mass on those lines, and
-    # a bodyweight line with no weight at all carries no bullet, so it is
-    # not a set line and yields no row.
+    # reps at 0 kg when its set line names a weight, which can be the
+    # athlete's own mass. A set line with no weight carries no bullet, so it
+    # yields no row. A line that opens with `S × R` but is not a whole set
+    # line is never an exercise name, so the name above it stays current.
     #
     # Pure, expects below; the effectful skin (storing rows at analyze) lives
     # in Analyze.roc.
@@ -56,7 +57,7 @@ Peloton :: [].{
                         { exercise: acc.exercise, rows: List.append(acc.rows, { exercise: acc.exercise, sets: s.sets, reps: s.reps, weight_kg: if Adapter.is_bodyweight(acc.exercise) 0.0 else s.weight_kg }) }
                     }
                 Err(_) =>
-                    if line == "" or Str.starts_with(line, "Block ") {
+                    if line == "" or Str.starts_with(line, "Block ") or is_set_shaped(line) {
                         # a blank line or section header ends nothing — the next set
                         # line still belongs to the last named exercise, matching how
                         # the share format lays out supersets
@@ -68,6 +69,14 @@ Peloton :: [].{
         })
         walk.rows
     }
+
+    # opens with `S × R`, whatever follows the bullet
+    is_set_shaped : Str -> Bool
+    is_set_shaped = |line|
+        match parse_sets_reps(List.first(Str.split_on(line, " • ")).ok_or(line)) {
+            Ok(_) => True
+            Err(_) => False
+        }
 
     # one set line, or Err for anything else. The bullet is the discriminator:
     # no prose line in the share format carries ` • `.
@@ -118,8 +127,7 @@ Peloton :: [].{
     }
 
     # `30 lbs/side`, `25 lbs`, `12.5 kg` — a right side with no recognised
-    # unit is not a set line (bodyweight rows carry no bullet at all in the
-    # share format, so this arm mostly guards against prose with a bullet)
+    # unit, or a weight of zero or less, is not a set line
     parse_weight : Str -> Try({ kg : F64, per_side : Bool }, [NotASetLine])
     parse_weight = |right| {
         tokens = Str.split_on(Str.trim(right), " ")
@@ -223,6 +231,17 @@ expect {
             a.exercise == "Chin Up" and a.sets == 3 and a.reps == 6 and a.weight_kg == 0.0
                 and b.exercise == "Assisted Pull Up" and b.sets == 3 and b.reps == 8 and b.weight_kg == 0.0
                 and (c.weight_kg - 18.1436948).abs() < 0.001
+        _ => False
+    }
+}
+
+# a line that opens with `S × R` but is not a whole set line never becomes
+# an exercise name: the next set line still belongs to the name above it
+expect {
+    zero = Peloton.parse("Chin Up\n3 × 6 • 0 lbs\n3 × 6 • 175 lbs")
+    bare = Peloton.parse("Push Up\n3 × 15\n3 × 10 • 40 lbs")
+    match (zero, bare) {
+        ([a], [b]) => a.exercise == "Chin Up" and a.weight_kg == 0.0 and b.exercise == "Push Up" and b.sets == 3 and b.reps == 10
         _ => False
     }
 }

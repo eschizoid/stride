@@ -40,11 +40,12 @@ Adapter :: [].{
     # mass a rep moves on top of the body. An exercise is bodyweight when its
     # name, compared by `name_key` with a trailing plural ignored, is on
     # `bodyweight_names`, either alone or after an "assisted" or "negative"
-    # qualifier: an assisted rep lifts less than the body and a negative is
-    # the lowering half of one, so neither adds load. Any other qualifier
-    # names a different exercise, so "Weighted Pull Up" keeps its weight. A
-    # list rather than a comparison with the athlete's mass, because stride
-    # stores no body weight to compare against.
+    # qualifier at the very front: an assisted rep lifts less than the body
+    # and a negative is the lowering half of one, so neither adds load.
+    # Nothing else is matched, so "Weighted Pull Up" keeps its weight, and so
+    # do "Band Assisted Pull Up" and "Pull Up (Assisted)". A list rather than
+    # a comparison with the athlete's mass, because stride stores no body
+    # weight to compare against.
     is_bodyweight : Str -> Bool
     is_bodyweight = |name| {
         k = name_key(name)
@@ -68,8 +69,9 @@ Adapter :: [].{
     bodyweight_qualifiers : List(Str)
     bodyweight_qualifiers = ["assisted", "negative"]
 
-    # a name with case, spaces, hyphens and every other non-alphanumeric
-    # removed: "Push-Ups" and "push ups" are one key
+    # a name lowercased with every byte but an ASCII letter or digit
+    # removed, non-ASCII letters included: "Push-Ups" and "push ups" are one
+    # key
     name_key : Str -> Str
     name_key = |name|
         Str.from_utf8(List.keep_if(Str.to_utf8(Str.with_ascii_lowercased(name)), |b| (b >= 97 and b <= 122) or (b >= 48 and b <= 57))).ok_or("")
@@ -78,7 +80,7 @@ Adapter :: [].{
     # "crunches")
     listed : Str -> Bool
     listed = |k| {
-        on = |key| key != "" and List.contains(bodyweight_names, key)
+        on = |key| List.contains(bodyweight_names, key)
         on(k)
             or (Str.ends_with(k, "s") and on(Str.from_utf8(List.drop_last(Str.to_utf8(k), 1)).ok_or("")))
             or (Str.ends_with(k, "es") and on(Str.from_utf8(List.drop_last(Str.to_utf8(k), 2)).ok_or("")))
@@ -100,8 +102,8 @@ expect
 
 # an assisted or negative form of a listed move is bodyweight, plural
 # included; the qualifier alone, a qualifier on an unlisted move, and a
-# qualifier anywhere but the front are not
+# qualifier anywhere but the very front are not
 expect
     List.map(["Assisted Chin-Up", "Assisted Pull Up", "Negative Pull Up", "assisted dips", "Negative Push-Ups"], Adapter.is_bodyweight) == [True, True, True, True, True]
 expect
-    List.map(["Assisted", "Negative", "Assisted Bench Press", "Pull Up Negative", "Weighted Negative Pull Up"], Adapter.is_bodyweight) == [False, False, False, False, False]
+    List.map(["Assisted", "Negative", "Assisted Bench Press", "Pull Up Negative", "Band Assisted Pull Up", "Pull Up (Assisted)"], Adapter.is_bodyweight) == [False, False, False, False, False, False]
