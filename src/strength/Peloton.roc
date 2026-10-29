@@ -35,9 +35,8 @@ Peloton :: [].{
     # reps at 0 kg when its set line names a weight, which can be the
     # athlete's own mass. A set line with no weight carries no bullet, so it
     # yields no row. A line that is only a set count (`S × R`, optionally
-    # followed by `reps`, `reps/side` or a time unit, with or without a
-    # refused weight) is never an exercise name, so the name above it stays
-    # current.
+    # followed by one word from `count_units`, with or without a refused
+    # weight) is never an exercise name, so the name above it stays current.
     #
     # Pure, expects below; the effectful skin (storing rows at analyze) lives
     # in Analyze.roc.
@@ -73,17 +72,16 @@ Peloton :: [].{
         walk.rows
     }
 
-    # the text before any bullet is exactly `S × R`, or `S × R` and one
-    # word naming what R counts (`reps`, `reps/side`, or a time unit such as
-    # `sec` or `min`), however many spaces separate the parts; a name that
-    # merely starts that way ("5 x 5 Back Squat") is not
+    # the text before any bullet is exactly `S × R`, or `S × R` and one word
+    # from `count_units` in any case, however many spaces separate the parts;
+    # a name that merely starts that way ("5 x 5 Back Squat") is not
     is_set_shaped : Str -> Bool
     is_set_shaped = |line| {
         left = Str.trim(List.first(Str.split_on(line, " • ")).ok_or(line))
         bare =
             match List.keep_if(Str.split_on(left, " "), |t| t != "") {
                 [_, _, _] => True
-                [_, _, _, unit] => List.contains(count_units, unit)
+                [_, _, _, unit] => List.contains(count_units, Str.with_ascii_lowercased(unit))
                 _ => False
             }
         match parse_sets_reps(left) {
@@ -283,7 +281,7 @@ expect {
 expect {
     spaced = Peloton.parse("Push Up\n3  ×  15\n3 × 10 • 40 lbs")
     side = Peloton.parse("Chin Up\n3 × 8 reps/side • 25 kgs/side\n3 × 6 • 175 lbs")
-    timed = Peloton.parse("Plank\n3 × 30 sec\n3 × 6 • 20 lbs")
+    timed = Peloton.parse("Plank\n3 × 30 Sec\n3 × 6 • 20 lbs")
     match (spaced, side, timed) {
         ([a], [b], [c]) => a.exercise == "Push Up" and b.exercise == "Chin Up" and c.exercise == "Plank" and c.weight_kg == 0.0
         _ => False
