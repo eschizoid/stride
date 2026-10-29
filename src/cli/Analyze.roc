@@ -1,7 +1,7 @@
 import Db
 import Output
 import Strava
-import pf.Sqlite
+import Sql
 import pf.Stdout
 import pf.Path
 import Metrics
@@ -53,13 +53,13 @@ Analyze :: [].{
                 # delta (#111), which needs the value 7 days back. query_many rather than
                 # query! because an empty daily_load is a normal state (nothing analyzed
                 # yet), and the empty list says so without an error to translate.
-                form_rows = Sqlite.query_many!({
+                form_rows = Sql.query_many!({
                     path: Path.utf8(path),
                     query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, CAST(tsb AS REAL) AS tsb FROM daily_load ORDER BY day DESC LIMIT 10",
                     bindings: [],
                     rows: |cols| |stmt| {
-                        day = Sqlite.str("day")(cols)(stmt)?
-                        tsb = Sqlite.f64("tsb")(cols)(stmt)?
+                        day = Sql.str("day")(cols)(stmt)?
+                        tsb = Sql.f64("tsb")(cols)(stmt)?
                         Ok({ day, tsb })
                     },
                 })?
@@ -268,7 +268,7 @@ Analyze :: [].{
         cfg = load_config!(path)?
         zone_sigs = sport_zone_sigs!(path, cfg, zb)?
         zones_case = zones_case_from_sigs(zone_sigs, zb)
-        rows = Sqlite.query_many!({
+        rows = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\-- COALESCE and NOT a guard, which is the opposite of what this file does
@@ -307,28 +307,28 @@ Analyze :: [].{
                 { name: ":rev", value: Integer(metrics_rev) },
             ],
             rows: |cols| |stmt| {
-                id = Sqlite.i64("id")(cols)(stmt)?
-                start = Sqlite.str("start")(cols)(stmt)?
-                mt = Sqlite.i64("mt")(cols)(stmt)?
-                sport = Sqlite.str("sport")(cols)(stmt)?
-                re = Sqlite.nullable_f64("re")(cols)(stmt)?
-                aw = Sqlite.nullable_f64("aw")(cols)(stmt)?
-                ahr = Sqlite.nullable_f64("ahr")(cols)(stmt)?
-                waw = Sqlite.nullable_f64("waw")(cols)(stmt)?
-                rpe = Sqlite.nullable_f64("rpe")(cols)(stmt)?
-                raw = Sqlite.nullable_str("raw")(cols)(stmt)?
-                pftp = Sqlite.f64("pftp")(cols)(stmt)?
-                pthr = Sqlite.f64("pthr")(cols)(stmt)?
-                dw = Sqlite.i64("dw")(cols)(stmt)?
-                s_mt = Sqlite.i64("s_mt")(cols)(stmt)?
-                s_dist = Sqlite.i64("s_dist")(cols)(stmt)?
-                s_elev = Sqlite.i64("s_elev")(cols)(stmt)?
-                s_aw = Sqlite.i64("s_aw")(cols)(stmt)?
-                s_ahr = Sqlite.i64("s_ahr")(cols)(stmt)?
-                s_waw = Sqlite.i64("s_waw")(cols)(stmt)?
-                s_re = Sqlite.i64("s_re")(cols)(stmt)?
-                s_dw = Sqlite.i64("s_dw")(cols)(stmt)?
-                s_slen = Sqlite.i64("s_slen")(cols)(stmt)?
+                id = Sql.i64("id")(cols)(stmt)?
+                start = Sql.str("start")(cols)(stmt)?
+                mt = Sql.i64("mt")(cols)(stmt)?
+                sport = Sql.str("sport")(cols)(stmt)?
+                re = Sql.nullable_f64("re")(cols)(stmt)?
+                aw = Sql.nullable_f64("aw")(cols)(stmt)?
+                ahr = Sql.nullable_f64("ahr")(cols)(stmt)?
+                waw = Sql.nullable_f64("waw")(cols)(stmt)?
+                rpe = Sql.nullable_f64("rpe")(cols)(stmt)?
+                raw = Sql.nullable_str("raw")(cols)(stmt)?
+                pftp = Sql.f64("pftp")(cols)(stmt)?
+                pthr = Sql.f64("pthr")(cols)(stmt)?
+                dw = Sql.i64("dw")(cols)(stmt)?
+                s_mt = Sql.i64("s_mt")(cols)(stmt)?
+                s_dist = Sql.i64("s_dist")(cols)(stmt)?
+                s_elev = Sql.i64("s_elev")(cols)(stmt)?
+                s_aw = Sql.i64("s_aw")(cols)(stmt)?
+                s_ahr = Sql.i64("s_ahr")(cols)(stmt)?
+                s_waw = Sql.i64("s_waw")(cols)(stmt)?
+                s_re = Sql.i64("s_re")(cols)(stmt)?
+                s_dw = Sql.i64("s_dw")(cols)(stmt)?
+                s_slen = Sql.i64("s_slen")(cols)(stmt)?
                 Ok({ id, start, mt, sport, re, aw, ahr, waw, rpe, raw, pftp, pthr, dw: dw != 0, s_mt, s_dist, s_elev, s_aw, s_ahr, s_waw, s_re, s_dw, s_slen })
             },
         })?
@@ -514,7 +514,7 @@ Analyze :: [].{
         cfg = load_config!(path)?
         zone_sigs = sport_zone_sigs!(path, cfg, zb)?
         zones_case = zones_case_from_sigs(zone_sigs, zb)
-        n = Sqlite.query!({
+        n = Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT COUNT(*) AS n FROM activities a
@@ -523,14 +523,14 @@ Analyze :: [].{
                 \\${pending_where(zones_case)}
             ,
             bindings: [{ name: ":rev", value: Integer(metrics_rev) }],
-            row: Sqlite.i64("n"),
+            row: Sql.i64("n"),
         })?
         Ok(if n < 0 0 else (n).to_u64_wrap())
     }
     # ── per-sport HR zones ───────────────────────────────────────────────
     # HR zones default to one global set (hr_z*_max) with per-sport overrides
     # (hr_z*_max_<sport>). The whole config table is read ONCE and resolution is then
-    # PURE — a per-key Sqlite.query! on the many usually-absent per-sport keys returns
+    # PURE — a per-key Sql.query! on the many usually-absent per-sport keys returns
     # Err(NoRowsReturned) and would fail the command on the first missing override.
     # Each sport's zone SIGNATURE is frozen for the invalidation CASE; per-row scoring
     # re-resolves bounds from the same in-memory config.
@@ -552,13 +552,13 @@ Analyze :: [].{
     }
     load_config_raw! : Str => Try(List((Str, Str)), _)
     load_config_raw! = |path|
-        Sqlite.query_many!({
+        Sql.query_many!({
             path: Path.utf8(path),
             query: "SELECT COALESCE(CAST(key AS TEXT), '') AS k, COALESCE(CAST(value AS TEXT), '') AS v FROM config",
             bindings: [],
             rows: |cols| |stmt| {
-                k = Sqlite.str("k")(cols)(stmt)?
-                v = Sqlite.str("v")(cols)(stmt)?
+                k = Sql.str("k")(cols)(stmt)?
+                v = Sql.str("v")(cols)(stmt)?
                 Ok((k, v))
             },
         })
@@ -596,11 +596,11 @@ Analyze :: [].{
     # each distinct sport's frozen (sport, zone-signature) pair for the invalidation CASE
     sport_zone_sigs! : Str, List((Str, Str)), Metrics.ZoneBounds => Try(List((Str, Str)), _)
     sport_zone_sigs! = |path, cfg, g| {
-        sports = Sqlite.query_many!({
+        sports = Sql.query_many!({
             path: Path.utf8(path),
             query: "SELECT DISTINCT COALESCE(CAST(sport_type AS TEXT), '') AS s FROM activities WHERE sport_type IS NOT NULL AND sport_type <> ''",
             bindings: [],
-            rows: Sqlite.str("s"),
+            rows: Sql.str("s"),
         })?
         Ok(List.map(sports, |s| (s, zones_sig(resolve_zones_pure(cfg, s, g)))))
     }
@@ -890,7 +890,7 @@ Analyze :: [].{
         # partial rep set can survive. Power detects when real watts exist; pace only
         # for pace-routed sports (runs/swims) — a meter-less RIDE must not get
         # run-tuned pace detection of its terrain speed.
-        _ = Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM activity_segments WHERE activity_id = :id", bindings: [{ name: ":id", value: Integer(row.id) }] })?
+        _ = Sql.execute!({ path: Path.utf8(path), query: "DELETE FROM activity_segments WHERE activity_id = :id", bindings: [{ name: ":id", value: Integer(row.id) }] })?
         hr_1s_pairs = Metrics.resample_1s_pairs(hr_pairs, Hold)
         _ =
             if !(List.is_empty(watts_1s_pairs)) {
@@ -900,7 +900,7 @@ Analyze :: [].{
             } else {
                 {}
             }
-        Sqlite.execute!({
+        Sql.execute!({
             path: Path.utf8(path),
             query:
                 \\INSERT OR REPLACE INTO activity_metrics
@@ -1003,7 +1003,7 @@ Analyze :: [].{
                         }
                     NoHr => Null
                 }
-                Sqlite.execute!({
+                Sql.execute!({
                     path: Path.utf8(path),
                     query:
                         \\INSERT OR REPLACE INTO activity_segments
@@ -1030,7 +1030,7 @@ Analyze :: [].{
 
     rebuild_daily_load! : Str => Try({}, _)
     rebuild_daily_load! = |path| {
-        day_rows = Sqlite.query_many!({
+        day_rows = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS day, SUM(m.tss) AS t,
@@ -1046,9 +1046,9 @@ Analyze :: [].{
             ,
             bindings: [],
             rows: |cols| |stmt| {
-                day = Sqlite.str("day")(cols)(stmt)?
-                t = Sqlite.f64("t")(cols)(stmt)?
-                example_id = Sqlite.i64("example_id")(cols)(stmt)?
+                day = Sql.str("day")(cols)(stmt)?
+                t = Sql.f64("t")(cols)(stmt)?
+                example_id = Sql.i64("example_id")(cols)(stmt)?
                 Ok({ day, t, example_id })
             },
         })?
@@ -1087,7 +1087,7 @@ Analyze :: [].{
             # activities, and answering `converged: true` would tell the athlete "no scored
             # training days yet" while `stats` reports their sessions in the same breath — so
             # it names the row instead.
-            Err(_) => Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM daily_load", bindings: [] })
+            Err(_) => Sql.execute!({ path: Path.utf8(path), query: "DELETE FROM daily_load", bindings: [] })
             Ok(seed) => {
                 bounds = List.fold(valid_days, { lo: seed, hi: seed }, |b, d| { lo: (b.lo).min(d), hi: (b.hi).max(d) })
                 # extend through today so rest days decay ATL/CTL and TSB is true as-of-now
@@ -1096,19 +1096,9 @@ Analyze :: [].{
                 # atomic rebuild: DELETE + the whole day-walk run in ONE transaction. A crash
                 # mid-walk would otherwise leave daily_load truncated (missing the tail day) and
                 # the next `summary` would read it as valid → silently stale CTL/ATL/TSB. On any
-                # error we ROLLBACK and surface it rather than commit a partial series.
-                _ = Sqlite.execute!({ path: Path.utf8(path), query: "BEGIN", bindings: [] })?
-                match rebuild_txn!(path, by_day, bounds.lo, last_day) {
-                    Ok(_) => Sqlite.execute!({ path: Path.utf8(path), query: "COMMIT", bindings: [] })
-                    Err(e) =>
-                        # roll back the partial rebuild. If the ROLLBACK itself fails (lock,
-                        # corruption) that's the more actionable signal — surface it; otherwise
-                        # return the original error that aborted the rebuild.
-                        match Sqlite.execute!({ path: Path.utf8(path), query: "ROLLBACK", bindings: [] }) {
-                            Ok(_) => Err(e)
-                            Err(re) => Err(re)
-                        }
-                }
+                # error the transaction rolls back and the error surfaces rather than a partial
+                # series being committed.
+                Sql.transaction!(Path.utf8(path), |run!| rebuild_txn!(run!, by_day, bounds.lo, last_day))
             }
         }
         walked?
@@ -1121,31 +1111,28 @@ Analyze :: [].{
             Err(_) => Ok({})
         }
     }
-    rebuild_txn! : Str, Dict(I64, F64), I64, I64 => Try({}, _)
-    rebuild_txn! = |path, by_day, lo, last_day| {
-        Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM daily_load", bindings: [] })?
-        walk_days!(path, by_day, lo, last_day, 0.0, 0.0)
+    rebuild_txn! = |run!, by_day, lo, last_day| {
+        run!("DELETE FROM daily_load", [])?
+        walk_days!(run!, by_day, lo, last_day, 0.0, 0.0)
     }
-    walk_days! : Str, Dict(I64, F64), I64, I64, F64, F64 => Try({}, _)
-    walk_days! = |path, by_day, day, last_day, ctl_prev, atl_prev|
+    walk_days! = |run!, by_day, day, last_day, ctl_prev, atl_prev|
         if day > last_day
             Ok({})
         else {
             tss = (Dict.get(by_day, day)).ok_or(0.0)
             # the CTL/ATL/TSB recurrence lives in Metrics.load_step (pure, expect-tested)
             step = Metrics.load_step({ ctl_prev, atl_prev, tss })
-            Sqlite.execute!({
-                path: Path.utf8(path),
-                query: "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES (:day, :tss, :ctl, :atl, :tsb)",
-                bindings: [
+            run!(
+                "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES (:day, :tss, :ctl, :atl, :tsb)",
+                [
                     { name: ":day", value: String(Metrics.days_to_date_str(day)) },
                     { name: ":tss", value: Real(tss) },
                     { name: ":ctl", value: Real(step.ctl) },
                     { name: ":atl", value: Real(step.atl) },
                     { name: ":tsb", value: Real(step.tsb) },
                 ],
-            })?
-            walk_days!(path, by_day, day + 1, last_day, step.ctl, step.atl)
+            )?
+            walk_days!(run!, by_day, day + 1, last_day, step.ctl, step.atl)
         }
 
     # ── the tonnage spine's computed half (#478) ────────────────────────
@@ -1174,7 +1161,7 @@ Analyze :: [].{
     # visible without an analyze.
     rebuild_strength_sets! : Str => Try({}, _)
     rebuild_strength_sets! = |path| {
-        notes = Sqlite.query_many!({
+        notes = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT n.activity_id AS aid, COALESCE(CAST(l.payload AS TEXT), CAST(n.description AS TEXT), '') AS d
@@ -1189,12 +1176,12 @@ Analyze :: [].{
             ,
             bindings: [],
             rows: |cols| |stmt| {
-                aid = Sqlite.i64("aid")(cols)(stmt)?
-                d = Sqlite.str("d")(cols)(stmt)?
+                aid = Sql.i64("aid")(cols)(stmt)?
+                d = Sql.str("d")(cols)(stmt)?
                 Ok({ aid, d })
             },
         })?
-        Sqlite.execute!({ path: Path.utf8(path), query: "DELETE FROM strength_sets", bindings: [] })?
+        Sql.execute!({ path: Path.utf8(path), query: "DELETE FROM strength_sets", bindings: [] })?
         insert_note_sets!(path, notes)
     }
     insert_note_sets! : Str, List({ aid : I64, d : Str }) => Try({}, _)
@@ -1215,7 +1202,7 @@ Analyze :: [].{
                 # provenance is the ADAPTER that read the text ('strava', 'peloton', ...),
                 # so a career of mixed apps stays distinguishable and a reader
                 # can qualify a tonnage trend built on unequal sources
-                Sqlite.execute!({
+                Sql.execute!({
                     path: Path.utf8(path),
                     query: "INSERT OR REPLACE INTO strength_sets (activity_id, ordinal, exercise, sets, reps, weight_kg, source) VALUES (:aid, :ord, :ex, :sets, :reps, :w, :src)",
                     bindings: [

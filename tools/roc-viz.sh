@@ -3,9 +3,9 @@
 # the window's coverage is pinned at. Every other subcommand is a pass-through
 # carrying roc's own exit code.
 #
-# Nothing here forgives a warning. roc-ray declares the compiler the app header
-# pins, so a viz build has no version-skew notice to tolerate, and roc exits
-# non-zero on any warning that does appear.
+# Nothing here forgives a warning. roc-ray names no compiler, so a viz build
+# has no version-skew notice to tolerate, and roc exits non-zero on any
+# warning that does appear.
 set -eu
 
 rc=0

@@ -2,7 +2,7 @@ import Db
 import Output
 import Render
 import core.Units
-import pf.Sqlite
+import Sql
 import pf.Path
 
 ReportStrength :: [].{
@@ -36,7 +36,7 @@ ReportStrength :: [].{
         # most reps in one set and the day's total reps ride beside them: a
         # bodyweight exercise is stored at 0 kg, so both kg figures read 0
         # however its reps move, and reps are the only progression it has.
-        points = Sqlite.query_many!({
+        points = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT CAST(s.exercise AS TEXT) AS ex,
@@ -51,12 +51,12 @@ ReportStrength :: [].{
             ,
             bindings: [],
             rows: |cols| |stmt| {
-                ex = Sqlite.str("ex")(cols)(stmt)?
-                day = Sqlite.str("day")(cols)(stmt)?
-                top_kg = Sqlite.f64("top_kg")(cols)(stmt)?
-                kg_reps = Sqlite.f64("kg_reps")(cols)(stmt)?
-                top_reps = Sqlite.i64("top_reps")(cols)(stmt)?
-                total_reps = Sqlite.i64("total_reps")(cols)(stmt)?
+                ex = Sql.str("ex")(cols)(stmt)?
+                day = Sql.str("day")(cols)(stmt)?
+                top_kg = Sql.f64("top_kg")(cols)(stmt)?
+                kg_reps = Sql.f64("kg_reps")(cols)(stmt)?
+                top_reps = Sql.i64("top_reps")(cols)(stmt)?
+                total_reps = Sql.i64("total_reps")(cols)(stmt)?
                 Ok({ ex, day, top_kg, kg_reps, top_reps, total_reps })
             },
         })?
@@ -78,7 +78,7 @@ ReportStrength :: [].{
         # every strength month, from the COVERAGE view — not the spine view,
         # which refuses thin months. The LEFT JOIN's NULL is the refusal,
         # published as tonnage_known false (a both-possible field, ADR 0009).
-        monthly = Sqlite.query_many!({
+        monthly = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT CAST(c.month AS TEXT) AS month,
@@ -92,17 +92,17 @@ ReportStrength :: [].{
             ,
             bindings: [],
             rows: |cols| |stmt| {
-                month = Sqlite.str("month")(cols)(stmt)?
-                kg = Sqlite.f64("kg")(cols)(stmt)?
-                known = Sqlite.i64("known")(cols)(stmt)?
-                covered = Sqlite.i64("covered")(cols)(stmt)?
-                total = Sqlite.i64("total")(cols)(stmt)?
+                month = Sql.str("month")(cols)(stmt)?
+                kg = Sql.f64("kg")(cols)(stmt)?
+                known = Sql.i64("known")(cols)(stmt)?
+                covered = Sql.i64("covered")(cols)(stmt)?
+                total = Sql.i64("total")(cols)(stmt)?
                 # Bool at the boundary, like every _known in the payload family —
                 # a bare tag would serialize as the STRING "True"
                 Ok({ month, kg, tonnage_known: known != 0, covered, total })
             },
         })?
-        counts = Sqlite.query!({
+        counts = Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT COUNT(*) AS total,
@@ -113,9 +113,9 @@ ReportStrength :: [].{
             ,
             bindings: [],
             row: |cols| |stmt| {
-                total = Sqlite.i64("total")(cols)(stmt)?
-                with_sets = Sqlite.i64("with_sets")(cols)(stmt)?
-                pasted_unparsed = Sqlite.i64("pasted_unparsed")(cols)(stmt)?
+                total = Sql.i64("total")(cols)(stmt)?
+                with_sets = Sql.i64("with_sets")(cols)(stmt)?
+                pasted_unparsed = Sql.i64("pasted_unparsed")(cols)(stmt)?
                 Ok({ total, with_sets, pasted_unparsed })
             },
         })?

@@ -25,7 +25,7 @@ import Metrics
 import Render
 import core.Bus
 import core.Sports
-import pf.Sqlite
+import Sql
 import pf.Stdout
 import pf.Path
 
@@ -51,15 +51,15 @@ ReportHealth :: [].{
         # all-time reads the career_totals view - the one definition the
         # window's career view draws from; ytd keeps the cutoff query below
         # because a view cannot take a parameter
-        all_time = Sqlite.query_many!({
+        all_time = Sql.query_many!({
             path: Path.utf8(path),
             query: "SELECT CAST(sport AS TEXT) AS sport, sessions, CAST(secs / 3600.0 AS REAL) AS hours, CAST(meters / 1000.0 AS REAL) AS km FROM career_totals ORDER BY sessions DESC, sport",
             bindings: [],
             rows: |cols| |stmt| {
-                sport = Sqlite.str("sport")(cols)(stmt)?
-                sessions = Sqlite.i64("sessions")(cols)(stmt)?
-                hours = Sqlite.f64("hours")(cols)(stmt)?
-                km = Sqlite.f64("km")(cols)(stmt)?
+                sport = Sql.str("sport")(cols)(stmt)?
+                sessions = Sql.i64("sessions")(cols)(stmt)?
+                hours = Sql.f64("hours")(cols)(stmt)?
+                km = Sql.f64("km")(cols)(stmt)?
                 Ok({ sport, sessions, hours, km })
             },
         })?
@@ -86,7 +86,7 @@ ReportHealth :: [].{
     }
     stats_rows! : Str, Str => Try(List({ sport : Str, sessions : I64, hours : F64, km : F64 }), _)
     stats_rows! = |path, cutoff|
-        Sqlite.query_many!({
+        Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT COALESCE(CAST(sport_type AS TEXT), '') AS sport, COUNT(*) AS sessions,
@@ -97,10 +97,10 @@ ReportHealth :: [].{
             ,
             bindings: [{ name: ":cutoff", value: String(cutoff) }],
             rows: |cols| |stmt| {
-                sport = Sqlite.str("sport")(cols)(stmt)?
-                sessions = Sqlite.i64("sessions")(cols)(stmt)?
-                hours = Sqlite.f64("hours")(cols)(stmt)?
-                km = Sqlite.f64("km")(cols)(stmt)?
+                sport = Sql.str("sport")(cols)(stmt)?
+                sessions = Sql.i64("sessions")(cols)(stmt)?
+                hours = Sql.f64("hours")(cols)(stmt)?
+                km = Sql.f64("km")(cols)(stmt)?
                 Ok({ sport, sessions, hours, km })
             },
         })
@@ -111,7 +111,7 @@ ReportHealth :: [].{
     doctor! : {} => Try({}, _)
     doctor! = |{}| {
         path = Db.open_db!({})?
-        cov = Sqlite.query!({
+        cov = Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT COUNT(*) AS total,
@@ -169,28 +169,28 @@ ReportHealth :: [].{
             ,
             bindings: [],
             row: |cols| |stmt| {
-                total = Sqlite.i64("total")(cols)(stmt)?
-                with_hr = Sqlite.i64("with_hr")(cols)(stmt)?
-                with_power = Sqlite.i64("with_power")(cols)(stmt)?
-                with_streams = Sqlite.i64("with_streams")(cols)(stmt)?
-                unanalyzed = Sqlite.i64("unanalyzed")(cols)(stmt)?
-                zero_load = Sqlite.i64("zero_load")(cols)(stmt)?
-                undateable = Sqlite.i64("undateable")(cols)(stmt)?
-                unrankable = Sqlite.i64("unrankable")(cols)(stmt)?
+                total = Sql.i64("total")(cols)(stmt)?
+                with_hr = Sql.i64("with_hr")(cols)(stmt)?
+                with_power = Sql.i64("with_power")(cols)(stmt)?
+                with_streams = Sql.i64("with_streams")(cols)(stmt)?
+                unanalyzed = Sql.i64("unanalyzed")(cols)(stmt)?
+                zero_load = Sql.i64("zero_load")(cols)(stmt)?
+                undateable = Sql.i64("undateable")(cols)(stmt)?
+                unrankable = Sql.i64("unrankable")(cols)(stmt)?
                 Ok({ total, with_hr, with_power, with_streams, unanalyzed, zero_load, undateable, unrankable })
             },
         })?
-        models = Sqlite.query_many!({
+        models = Sql.query_many!({
             path: Path.utf8(path),
             query: "SELECT COALESCE(CAST(load_model AS TEXT), 'unknown (pre-provenance)') AS model, COUNT(*) AS n FROM activity_metrics GROUP BY load_model ORDER BY n DESC, load_model",
             bindings: [],
             rows: |cols| |stmt| {
-                model = Sqlite.str("model")(cols)(stmt)?
-                n = Sqlite.i64("n")(cols)(stmt)?
+                model = Sql.str("model")(cols)(stmt)?
+                n = Sql.i64("n")(cols)(stmt)?
                 Ok({ model, n })
             },
         })?
-        conf = Sqlite.query!({
+        conf = Sql.query!({
             path: Path.utf8(path),
             query:
                 \\-- confidence tiers derived from load_model at read time (not stored): high =
@@ -216,16 +216,16 @@ ReportHealth :: [].{
             ,
             bindings: [],
             row: |cols| |stmt| {
-                hi = Sqlite.i64("hi")(cols)(stmt)?
-                med = Sqlite.i64("med")(cols)(stmt)?
-                lo = Sqlite.i64("lo")(cols)(stmt)?
-                non = Sqlite.i64("non")(cols)(stmt)?
+                hi = Sql.i64("hi")(cols)(stmt)?
+                med = Sql.i64("med")(cols)(stmt)?
+                lo = Sql.i64("lo")(cols)(stmt)?
+                non = Sql.i64("non")(cols)(stmt)?
                 Ok({ hi, med, lo, non })
             },
         })?
         pending = Strava.pending_streams!(path)?
         capped = Strava.capped_streams!(path)?
-        cfg = Sqlite.query!({
+        cfg = Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT (SELECT COUNT(DISTINCT a.sport_family) FROM activity_metrics m
@@ -236,21 +236,21 @@ ReportHealth :: [].{
             ,
             bindings: [],
             row: |cols| |stmt| {
-                derived_ftp_sports = Sqlite.i64("derived_ftp_sports")(cols)(stmt)?
-                zones_set = Sqlite.i64("zones_set")(cols)(stmt)?
-                sport_zone_overrides = Sqlite.i64("sport_zone_overrides")(cols)(stmt)?
+                derived_ftp_sports = Sql.i64("derived_ftp_sports")(cols)(stmt)?
+                zones_set = Sql.i64("zones_set")(cols)(stmt)?
+                sport_zone_overrides = Sql.i64("sport_zone_overrides")(cols)(stmt)?
                 Ok({ derived_ftp_sports, zones_set, sport_zone_overrides })
             },
         })?
         # strength-class sessions without a rating: aggregate in Roc so the sport
         # list can't drift from Sports.class
-        sports = Sqlite.query_many!({
+        sports = Sql.query_many!({
             path: Path.utf8(path),
             query: "SELECT COALESCE(CAST(a.sport_type AS TEXT), '') AS sport, CASE WHEN r.activity_id IS NULL THEN 0 ELSE 1 END AS rated FROM activities a LEFT JOIN ratings r ON r.activity_id = a.id",
             bindings: [],
             rows: |cols| |stmt| {
-                sport = Sqlite.str("sport")(cols)(stmt)?
-                rated = Sqlite.i64("rated")(cols)(stmt)?
+                sport = Sql.str("sport")(cols)(stmt)?
+                rated = Sql.i64("rated")(cols)(stmt)?
                 Ok({ sport, rated })
             },
         })?
@@ -262,7 +262,7 @@ ReportHealth :: [].{
         cutoff30 = Metrics.days_to_date_str(Db.local_today_days!(path) - 30)
         # newest-first, and bounded: a streak only needs enough rows to find the session
         # that DID record HR. 200 is far past any plausible strapless run.
-        recent_hr = Sqlite.query_many!({
+        recent_hr = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT COALESCE(CAST(a.sport_type AS TEXT), '') AS sport,
@@ -276,8 +276,8 @@ ReportHealth :: [].{
             ,
             bindings: [],
             rows: |cols| |stmt| {
-                sport = Sqlite.str("sport")(cols)(stmt)?
-                has_hr = Sqlite.i64("has_hr")(cols)(stmt)?
+                sport = Sql.str("sport")(cols)(stmt)?
+                has_hr = Sql.i64("has_hr")(cols)(stmt)?
                 Ok({ sport, has_hr: has_hr == 1 })
             },
         })?
@@ -285,7 +285,7 @@ ReportHealth :: [].{
         # device_watts = 0 is Strava saying the watts were ESTIMATED, not measured. NULL
         # (pre-flag syncs, CSV imports) coalesces to 1: unknown is not evidence of
         # estimation, matching how the scoring ladder reads the same column.
-        est_power_30d = Sqlite.query!({
+        est_power_30d = Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT COUNT(*) AS n FROM activities
@@ -294,7 +294,7 @@ ReportHealth :: [].{
                 \\  AND COALESCE(avg_watts, weighted_avg_watts, 0) > 0
             ,
             bindings: [{ name: ":cutoff", value: String(cutoff30) }],
-            row: Sqlite.i64("n"),
+            row: Sql.i64("n"),
         })?
         # Pooled share over the window AND the worst single session, because they answer
         # different questions: pooled is the trend ("is my strap degrading"), worst is the
@@ -303,7 +303,7 @@ ReportHealth :: [].{
         # every week with a lot of short sessions. Both, or neither is trustworthy.
         # NULLIF guards the divide: an activity with no samples contributes nothing rather
         # than a division by zero.
-        junk = Sqlite.query!({
+        junk = Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT COALESCE(
@@ -317,8 +317,8 @@ ReportHealth :: [].{
             ,
             bindings: [{ name: ":cutoff", value: String(cutoff30) }],
             row: |cols| |stmt| {
-                pooled = Sqlite.f64("pooled")(cols)(stmt)?
-                worst = Sqlite.f64("worst")(cols)(stmt)?
+                pooled = Sql.f64("pooled")(cols)(stmt)?
+                worst = Sql.f64("worst")(cols)(stmt)?
                 Ok({ pooled, worst })
             },
         })?
@@ -522,7 +522,7 @@ ReportHealth :: [].{
     viz_caps! : {} => Try({}, _)
     viz_caps! = |{}| {
         path = Db.open_db!({})?
-        scalars = Sqlite.query!({
+        scalars = Sql.query!({
             path: Path.utf8(path),
             # COALESCE to 0/'' so a publish with missing scalars decodes and
             # lands in the same refusal as a missing table, instead of a decode
@@ -532,10 +532,10 @@ ReportHealth :: [].{
             query: "SELECT CAST(COALESCE((SELECT CAST(value AS INTEGER) FROM viz_capabilities WHERE key = 'protocol'), 0) AS INTEGER) AS protocol, CAST(COALESCE((SELECT CAST(value AS INTEGER) FROM viz_capabilities WHERE key = 'staleness_seconds'), 0) AS INTEGER) AS staleness, CAST(COALESCE((SELECT CAST(value AS INTEGER) FROM viz_capabilities WHERE key = 'focus_staleness_seconds'), 0) AS INTEGER) AS fstale, CAST(COALESCE((SELECT value FROM viz_capabilities WHERE key = 'published_at'), '') AS TEXT) AS published",
             bindings: [],
             row: |cols| |stmt| {
-                protocol = Sqlite.i64("protocol")(cols)(stmt)?
-                staleness = Sqlite.i64("staleness")(cols)(stmt)?
-                fstale = Sqlite.i64("fstale")(cols)(stmt)?
-                published = Sqlite.str("published")(cols)(stmt)?
+                protocol = Sql.i64("protocol")(cols)(stmt)?
+                staleness = Sql.i64("staleness")(cols)(stmt)?
+                fstale = Sql.i64("fstale")(cols)(stmt)?
+                published = Sql.str("published")(cols)(stmt)?
                 Ok({ protocol, staleness, fstale, published })
             },
         })
@@ -546,24 +546,24 @@ ReportHealth :: [].{
         if s.protocol == 0
             Output.err_out!("no_viz_capabilities", "the window has not published capabilities to this database — launch the Stride app once, then ask again")
         else {
-            views = Sqlite.query_many!({
+            views = Sql.query_many!({
                 path: Path.utf8(path),
                 query: "SELECT id, CAST(name AS TEXT) AS name FROM viz_views ORDER BY id",
                 bindings: [],
                 rows: |cols| |stmt| {
-                    id = Sqlite.i64("id")(cols)(stmt)?
-                    name = Sqlite.str("name")(cols)(stmt)?
+                    id = Sql.i64("id")(cols)(stmt)?
+                    name = Sql.str("name")(cols)(stmt)?
                     Ok({ id, name })
                 },
             })?
-            fields = Sqlite.query_many!({
+            fields = Sql.query_many!({
                 path: Path.utf8(path),
                 query: "SELECT CAST(field AS TEXT) AS name, CAST(kind AS TEXT) AS kind, CAST(accepts AS TEXT) AS accepts FROM viz_fields ORDER BY field",
                 bindings: [],
                 rows: |cols| |stmt| {
-                    name = Sqlite.str("name")(cols)(stmt)?
-                    kind = Sqlite.str("kind")(cols)(stmt)?
-                    accepts = Sqlite.str("accepts")(cols)(stmt)?
+                    name = Sql.str("name")(cols)(stmt)?
+                    kind = Sql.str("kind")(cols)(stmt)?
+                    accepts = Sql.str("accepts")(cols)(stmt)?
                     Ok({ name, kind, accepts })
                 },
             })?
@@ -580,28 +580,28 @@ ReportHealth :: [].{
             # -1, never as absent, and the identity columns come third by the
             # same rule. A corrupt timestamp reports present with
             # live false and age -1: the age is COALESCEd, the row still reads.
-            focus_rows = Sqlite.query_many!({
+            focus_rows = Sql.query_many!({
                 path: Path.utf8(path),
                 query: "SELECT view AS v, range AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd, CAST(COALESCE(trace_day, '') AS TEXT) AS td, CAST(COALESCE(ghost_day, '') AS TEXT) AS gd, CAST(updated_at AS TEXT) AS ua, CAST(COALESCE(strftime('%s', 'now') - strftime('%s', updated_at), -1) AS INTEGER) AS age FROM viz_focus WHERE id = 1",
                 bindings: [],
                 rows: |cols| |stmt| {
-                    view = Sqlite.i64("v")(cols)(stmt)?
-                    range = Sqlite.i64("rg")(cols)(stmt)?
-                    cd = Sqlite.str("cd")(cols)(stmt)?
-                    td = Sqlite.str("td")(cols)(stmt)?
-                    gd = Sqlite.str("gd")(cols)(stmt)?
-                    ua = Sqlite.str("ua")(cols)(stmt)?
-                    age = Sqlite.i64("age")(cols)(stmt)?
+                    view = Sql.i64("v")(cols)(stmt)?
+                    range = Sql.i64("rg")(cols)(stmt)?
+                    cd = Sql.str("cd")(cols)(stmt)?
+                    td = Sql.str("td")(cols)(stmt)?
+                    gd = Sql.str("gd")(cols)(stmt)?
+                    ua = Sql.str("ua")(cols)(stmt)?
+                    age = Sql.i64("age")(cols)(stmt)?
                     Ok({ view, range, cd, td, gd, ua, age })
                 },
             })
-            id_rows = Sqlite.query_many!({
+            id_rows = Sql.query_many!({
                 path: Path.utf8(path),
                 query: "SELECT CAST(COALESCE(trace_id, -1) AS INTEGER) AS ti, CAST(COALESCE(ghost_id, -1) AS INTEGER) AS gi FROM viz_focus WHERE id = 1",
                 bindings: [],
                 rows: |cols| |stmt| {
-                    ti = Sqlite.i64("ti")(cols)(stmt)?
-                    gi = Sqlite.i64("gi")(cols)(stmt)?
+                    ti = Sql.i64("ti")(cols)(stmt)?
+                    gi = Sql.i64("gi")(cols)(stmt)?
                     Ok({ ti, gi })
                 },
             })
@@ -615,14 +615,14 @@ ReportHealth :: [].{
             # a third read for what the athlete looks at beyond the session: the
             # table's open panel day, the trace's sport filter, the career
             # family; a table from before these columns reports them empty
-            ext_rows = Sqlite.query_many!({
+            ext_rows = Sql.query_many!({
                 path: Path.utf8(path),
                 query: "SELECT CAST(COALESCE(detail_day, '') AS TEXT) AS fdd, CAST(COALESCE(sport, '') AS TEXT) AS fsp, CAST(COALESCE(family, '') AS TEXT) AS ffm FROM viz_focus WHERE id = 1",
                 bindings: [],
                 rows: |cols| |stmt| {
-                    fdd = Sqlite.str("fdd")(cols)(stmt)?
-                    fsp = Sqlite.str("fsp")(cols)(stmt)?
-                    ffm = Sqlite.str("ffm")(cols)(stmt)?
+                    fdd = Sql.str("fdd")(cols)(stmt)?
+                    fsp = Sql.str("fsp")(cols)(stmt)?
+                    ffm = Sql.str("ffm")(cols)(stmt)?
                     Ok({ fdd, fsp, ffm })
                 },
             })
@@ -658,25 +658,25 @@ ReportHealth :: [].{
             h_str = |r| match r { Ok(x) => x
                 Err(_) => "" }
             hist_rows! = |q|
-                Sqlite.query_many!({
+                Sql.query_many!({
                     path: Path.utf8(path),
                     query: q,
                     bindings: [],
                     rows: |cols| |stmt| {
-                        id = Sqlite.i64("id")(cols)(stmt)?
-                        created_at = h_str(Sqlite.str("hca")(cols)(stmt))
-                        status = h_str(Sqlite.str("hst")(cols)(stmt))
-                        error = h_str(Sqlite.str("her")(cols)(stmt))
-                        applied_at = h_str(Sqlite.str("haa")(cols)(stmt))
-                        view = h_int(Sqlite.i64("hv")(cols)(stmt), -1)
-                        range = h_int(Sqlite.i64("hrg")(cols)(stmt), -1)
-                        cursor_day = h_str(Sqlite.str("hcd")(cols)(stmt))
-                        trace_day = h_str(Sqlite.str("htd")(cols)(stmt))
-                        ghost_day = h_str(Sqlite.str("hgd")(cols)(stmt))
-                        trace_id = h_int(Sqlite.i64("hti")(cols)(stmt), -1)
-                        ghost_id = h_int(Sqlite.i64("hgi")(cols)(stmt), -1)
-                        capture = h_str(Sqlite.str("hcp")(cols)(stmt))
-                        result = h_str(Sqlite.str("hrs")(cols)(stmt))
+                        id = Sql.i64("id")(cols)(stmt)?
+                        created_at = h_str(Sql.str("hca")(cols)(stmt))
+                        status = h_str(Sql.str("hst")(cols)(stmt))
+                        error = h_str(Sql.str("her")(cols)(stmt))
+                        applied_at = h_str(Sql.str("haa")(cols)(stmt))
+                        view = h_int(Sql.i64("hv")(cols)(stmt), -1)
+                        range = h_int(Sql.i64("hrg")(cols)(stmt), -1)
+                        cursor_day = h_str(Sql.str("hcd")(cols)(stmt))
+                        trace_day = h_str(Sql.str("htd")(cols)(stmt))
+                        ghost_day = h_str(Sql.str("hgd")(cols)(stmt))
+                        trace_id = h_int(Sql.i64("hti")(cols)(stmt), -1)
+                        ghost_id = h_int(Sql.i64("hgi")(cols)(stmt), -1)
+                        capture = h_str(Sql.str("hcp")(cols)(stmt))
+                        result = h_str(Sql.str("hrs")(cols)(stmt))
                         Ok({ id, created_at, status, error, applied_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id, capture, result })
                     },
                 })
@@ -748,8 +748,8 @@ ReportHealth :: [].{
     viz_tick! : { ack : Bool } => Try({}, _)
     viz_tick! = |t| {
         path = Db.open_db!({})?
-        exec! = |q, bindings| Sqlite.execute!({ path: Path.utf8(path), query: q, bindings })
-        present = match Sqlite.query_many!({ path: Path.utf8(path), query: Bus.sentinel_sql, bindings: [], rows: Sqlite.i64("c") }) {
+        exec! = |q, bindings| Sql.execute!({ path: Path.utf8(path), query: q, bindings })
+        present = match Sql.query_many!({ path: Path.utf8(path), query: Bus.sentinel_sql, bindings: [], rows: Sql.i64("c") }) {
             Ok(rows) => match List.first(rows) { Ok(c) => c
                 Err(_) => 0 }
             Err(_) => 0
@@ -757,7 +757,7 @@ ReportHealth :: [].{
         if present != Bus.sentinel_present {
             List.for_each!(Bus.ddl, |q| { _ = exec!(q, []) })
         }
-        pending_rows = Sqlite.query_many!({ path: Path.utf8(path), query: Bus.has_pending_sql, bindings: [], rows: Sqlite.i64("e") })?
+        pending_rows = Sql.query_many!({ path: Path.utf8(path), query: Bus.has_pending_sql, bindings: [], rows: Sql.i64("e") })?
         pending = match List.first(pending_rows) { Ok(e) => e == 1
             Err(_) => Bool.False }
         none = { found: Bool.False, acked: Bool.False, id: -1, status: "none", view: -1, range: -1, cursor_day: "", trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1, capture: "", error: "" }
@@ -769,20 +769,20 @@ ReportHealth :: [].{
             if !pending none
             else {
                 exec!(Bus.stale_sweep_sql, [])?
-                winners = Sqlite.query_many!({
+                winners = Sql.query_many!({
                     path: Path.utf8(path),
                     query: Bus.winner_sql,
                     bindings: [],
                     rows: |cols| |stmt| {
-                        id = Sqlite.i64("id")(cols)(stmt)?
-                        v = or_int(Sqlite.i64("v")(cols)(stmt), -1)
-                        rg = or_int(Sqlite.i64("rg")(cols)(stmt), -1)
-                        cd = or_str(Sqlite.str("cd")(cols)(stmt))
-                        td = or_str(Sqlite.str("td")(cols)(stmt))
-                        gd = or_str(Sqlite.str("gd")(cols)(stmt))
-                        ti = or_int(Sqlite.i64("ti")(cols)(stmt), -1)
-                        gi = or_int(Sqlite.i64("gi")(cols)(stmt), -1)
-                        cp = or_str(Sqlite.str("cp")(cols)(stmt))
+                        id = Sql.i64("id")(cols)(stmt)?
+                        v = or_int(Sql.i64("v")(cols)(stmt), -1)
+                        rg = or_int(Sql.i64("rg")(cols)(stmt), -1)
+                        cd = or_str(Sql.str("cd")(cols)(stmt))
+                        td = or_str(Sql.str("td")(cols)(stmt))
+                        gd = or_str(Sql.str("gd")(cols)(stmt))
+                        ti = or_int(Sql.i64("ti")(cols)(stmt), -1)
+                        gi = or_int(Sql.i64("gi")(cols)(stmt), -1)
+                        cp = or_str(Sql.str("cp")(cols)(stmt))
                         Ok({ id, v, rg, cd, td, gd, ti, gi, cp })
                     },
                 })?
@@ -808,7 +808,7 @@ ReportHealth :: [].{
                         # older row - and reports nothing.
                         marked =
                             if t.ack
-                                Sqlite.query_many!({ path: Path.utf8(path), query: Bus.mark_returning_sql, bindings: [{ name: ":st", value: String(Bus.mark_status(cap_ref)) }, { name: ":e", value: String(cap_ref) }, { name: ":r", value: String("") }, { name: ":id", value: Integer(w.id) }], rows: Sqlite.i64("id") })?
+                                Sql.query_many!({ path: Path.utf8(path), query: Bus.mark_returning_sql, bindings: [{ name: ":st", value: String(Bus.mark_status(cap_ref)) }, { name: ":e", value: String(cap_ref) }, { name: ":r", value: String("") }, { name: ":id", value: Integer(w.id) }], rows: Sql.i64("id") })?
                             else []
                         status =
                             if !t.ack "pending"
@@ -933,7 +933,7 @@ ReportHealth :: [].{
         path = Db.open_db!({})?
         sf = Report.sport_filter_sql(sport)
         cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - (days).to_i64_wrap())
-        r = Sqlite.query!({
+        r = Sql.query!({
             path: Path.utf8(path),
             query:
                 \\-- the ladder unpivot (columns, family, 0-means-unrecorded) is the
@@ -954,14 +954,14 @@ ReportHealth :: [].{
             ,
             bindings: List.concat([{ name: ":cutoff", value: String(cutoff) }], sf.binds),
             row: |cols| |stmt| {
-                d5 = Sqlite.f64("d5")(cols)(stmt)?
-                d15 = Sqlite.f64("d15")(cols)(stmt)?
-                d30 = Sqlite.f64("d30")(cols)(stmt)?
-                d60 = Sqlite.f64("d60")(cols)(stmt)?
-                d300 = Sqlite.f64("d300")(cols)(stmt)?
-                d600 = Sqlite.f64("d600")(cols)(stmt)?
-                d1200 = Sqlite.f64("d1200")(cols)(stmt)?
-                d3600 = Sqlite.f64("d3600")(cols)(stmt)?
+                d5 = Sql.f64("d5")(cols)(stmt)?
+                d15 = Sql.f64("d15")(cols)(stmt)?
+                d30 = Sql.f64("d30")(cols)(stmt)?
+                d60 = Sql.f64("d60")(cols)(stmt)?
+                d300 = Sql.f64("d300")(cols)(stmt)?
+                d600 = Sql.f64("d600")(cols)(stmt)?
+                d1200 = Sql.f64("d1200")(cols)(stmt)?
+                d3600 = Sql.f64("d3600")(cols)(stmt)?
                 Ok({ d5, d15, d30, d60, d300, d600, d1200, d3600 })
             },
         })?
@@ -1036,7 +1036,7 @@ ReportHealth :: [].{
                 []
             } else {
                 cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - (days).to_i64_wrap())
-                r = Sqlite.query!({
+                r = Sql.query!({
                     path: Path.utf8(path),
                     query:
                         \\SELECT
@@ -1048,9 +1048,9 @@ ReportHealth :: [].{
                     ,
                     bindings: List.concat([{ name: ":cutoff", value: String(cutoff) }], sx.binds),
                     row: |cols| |stmt| {
-                        d300 = Sqlite.f64("d300")(cols)(stmt)?
-                        d600 = Sqlite.f64("d600")(cols)(stmt)?
-                        d1200 = Sqlite.f64("d1200")(cols)(stmt)?
+                        d300 = Sql.f64("d300")(cols)(stmt)?
+                        d600 = Sql.f64("d600")(cols)(stmt)?
+                        d1200 = Sql.f64("d1200")(cols)(stmt)?
                         Ok({ d300, d600, d1200 })
                     },
                 })?

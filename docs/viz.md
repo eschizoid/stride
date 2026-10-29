@@ -187,11 +187,11 @@ copies are logged to `~/.stride/fonts-seed.log`; if the directory itself
 cannot be created, the window falls back to its default font.
 
 Both binaries build on **one compiler** — the tag is the `setup-roc` action's
-default, mirrored in `src/viz/main.roc`'s app header, and `tools/pin-check.sh`
-holds those two copies together while refusing any per-job override. roc-ray
-declares that same compiler in its own header, so a viz build carries no
-mismatch warning and `tools/roc-viz.sh` forgives none: it runs roc, passes the
-exit code through, and holds a test run to its two assertion counts.
+default, and `tools/pin-check.sh` holds the justfile's local viz default to it,
+refuses any per-job override, and refuses a compiler named in the app header.
+roc-ray names no compiler, so a viz build carries no mismatch warning and
+`tools/roc-viz.sh` forgives none: it runs roc, passes the exit code through,
+and holds a test run to its two assertion counts.
 
 ## Typography
 

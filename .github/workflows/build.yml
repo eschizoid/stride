@@ -49,7 +49,7 @@ jobs:
         uses: ./.github/actions/setup-roc
 
       # One check covers the whole codebase: `roc check` follows every import, so
-      # this type-checks main.roc plus all 16 modules against basic-cli 0.22 + http.
+      # this type-checks main.roc plus every module against basic-cli + http.
       - name: Type-check (main + all modules)
         shell: bash
         run: roc check src/cli/main.roc

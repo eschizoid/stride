@@ -459,3 +459,7 @@ window reads the same database and the coach still reads JSON rather than pixels
 ## Update, 2026-09-28
 
 §3 is left as written, three rows, and this update adds the fourth tier beside it rather than inside it. The window's bus tables — `viz_directives`, `viz_focus`, `viz_capabilities`, `viz_views`, `viz_fields` — are UI coordination: disposable, never read by an analytics command, and with a recovery story of "nothing to recover". The two lifecycle tables are recreated by the window's next poll and their rows expire on their own (a directive after 600 s, the focus row after 90 s) or, for the focus row, are deleted at once on an ESC quit; the three capability tables are rewritten at every launch. ADR 0015 records why its own text once called two of these tables judgment-tier and why that word was wrong. AGENTS.md carries the four-tier version of §3's rule.
+
+## Update, 2026-10-29
+
+§9's "basic-cli 0.23" is now basic-cli 0.26, on `nightly-2026-10-26-3c0fffe`. 0.26 replaced the SQLite API with a connection value and typed decoders; the engine reaches it through one module, `src/cli/Sql.roc`, which keeps the named-binding calls every other module makes. The compiler notes record the rest of the migration.

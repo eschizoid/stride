@@ -4,7 +4,7 @@ import Strava
 import Streams
 import Analyze
 import Csv
-import pf.Sqlite
+import Sql
 import pf.Stdout
 import pf.Path
 import Metrics
@@ -53,7 +53,7 @@ Report :: [].{
     # TSS-weighted tier sums for one window: {high, medium, low} as F64 TSS
     coverage_sums! : Str, Str => Try({ high : F64, medium : F64, low : F64 }, _)
     coverage_sums! = |path, cutoff|
-        Sqlite.query!({
+        Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT CAST(COALESCE(SUM(CASE WHEN m.load_model IN (${high_models_sql}) THEN m.tss ELSE 0 END),0) AS REAL) AS hi,
@@ -64,9 +64,9 @@ Report :: [].{
             ,
             bindings: [{ name: ":cutoff", value: String(cutoff) }],
             row: |cols| |stmt| {
-                hi = Sqlite.f64("hi")(cols)(stmt)?
-                med = Sqlite.f64("med")(cols)(stmt)?
-                lo = Sqlite.f64("lo")(cols)(stmt)?
+                hi = Sql.f64("hi")(cols)(stmt)?
+                med = Sql.f64("med")(cols)(stmt)?
+                lo = Sql.f64("lo")(cols)(stmt)?
                 Ok({ high: hi, medium: med, low: lo })
             },
         })
@@ -74,7 +74,7 @@ Report :: [].{
     # zone + TSS totals for activities on/after a cutoff date
     zone_sum! : Str, Str => Try({ z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, measured : F64, easy : I64, moderate : I64, hard : I64, sessions : I64, moving_time : I64, distance_m : F64, hr_streams : I64, intensity_streams : I64 }, _)
     zone_sum! = |path, cutoff|
-        Sqlite.query!({
+        Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT COALESCE(SUM(m.z1_s),0) AS z1, COALESCE(SUM(m.z2_s),0) AS z2, COALESCE(SUM(m.z3_s),0) AS z3,
@@ -100,21 +100,21 @@ Report :: [].{
             ,
             bindings: [{ name: ":cutoff", value: String(cutoff) }],
             row: |cols| |stmt| {
-                z1 = Sqlite.i64("z1")(cols)(stmt)?
-                z2 = Sqlite.i64("z2")(cols)(stmt)?
-                z3 = Sqlite.i64("z3")(cols)(stmt)?
-                z4 = Sqlite.i64("z4")(cols)(stmt)?
-                z5 = Sqlite.i64("z5")(cols)(stmt)?
-                tss = Sqlite.f64("tss")(cols)(stmt)?
-                measured = Sqlite.f64("measured")(cols)(stmt)?
-                easy = Sqlite.i64("easy")(cols)(stmt)?
-                moderate = Sqlite.i64("moderate")(cols)(stmt)?
-                hard = Sqlite.i64("hard")(cols)(stmt)?
-                sessions = Sqlite.i64("sessions")(cols)(stmt)?
-                moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
-                distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
-                hr_streams = Sqlite.i64("hr_streams")(cols)(stmt)?
-                intensity_streams = Sqlite.i64("intensity_streams")(cols)(stmt)?
+                z1 = Sql.i64("z1")(cols)(stmt)?
+                z2 = Sql.i64("z2")(cols)(stmt)?
+                z3 = Sql.i64("z3")(cols)(stmt)?
+                z4 = Sql.i64("z4")(cols)(stmt)?
+                z5 = Sql.i64("z5")(cols)(stmt)?
+                tss = Sql.f64("tss")(cols)(stmt)?
+                measured = Sql.f64("measured")(cols)(stmt)?
+                easy = Sql.i64("easy")(cols)(stmt)?
+                moderate = Sql.i64("moderate")(cols)(stmt)?
+                hard = Sql.i64("hard")(cols)(stmt)?
+                sessions = Sql.i64("sessions")(cols)(stmt)?
+                moving_time = Sql.i64("moving_time")(cols)(stmt)?
+                distance_m = Sql.f64("distance_m")(cols)(stmt)?
+                hr_streams = Sql.i64("hr_streams")(cols)(stmt)?
+                intensity_streams = Sql.i64("intensity_streams")(cols)(stmt)?
                 Ok({ z1, z2, z3, z4, z5, tss, measured, easy, moderate, hard, sessions, moving_time, distance_m, hr_streams, intensity_streams })
             },
         })
@@ -123,7 +123,7 @@ Report :: [].{
     # compared against start_local; ISO makes the lexical compare correct)
     window_stats! : Str, Str, Str => Try({ z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, sessions : I64 }, _)
     window_stats! = |path, from_str, to_str|
-        Sqlite.query!({
+        Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT COALESCE(SUM(m.z1_s),0) AS z1, COALESCE(SUM(m.z2_s),0) AS z2, COALESCE(SUM(m.z3_s),0) AS z3,
@@ -134,13 +134,13 @@ Report :: [].{
             ,
             bindings: [{ name: ":from", value: String(from_str) }, { name: ":to", value: String(to_str) }],
             row: |cols| |stmt| {
-                z1 = Sqlite.i64("z1")(cols)(stmt)?
-                z2 = Sqlite.i64("z2")(cols)(stmt)?
-                z3 = Sqlite.i64("z3")(cols)(stmt)?
-                z4 = Sqlite.i64("z4")(cols)(stmt)?
-                z5 = Sqlite.i64("z5")(cols)(stmt)?
-                tss = Sqlite.f64("tss")(cols)(stmt)?
-                sessions = Sqlite.i64("sessions")(cols)(stmt)?
+                z1 = Sql.i64("z1")(cols)(stmt)?
+                z2 = Sql.i64("z2")(cols)(stmt)?
+                z3 = Sql.i64("z3")(cols)(stmt)?
+                z4 = Sql.i64("z4")(cols)(stmt)?
+                z5 = Sql.i64("z5")(cols)(stmt)?
+                tss = Sql.f64("tss")(cols)(stmt)?
+                sessions = Sql.i64("sessions")(cols)(stmt)?
                 Ok({ z1, z2, z3, z4, z5, tss, sessions })
             },
         })
@@ -148,11 +148,11 @@ Report :: [].{
     # CTL as of a given day (most recent daily_load row on or before it); 0 if none
     ctl_at! : Str, Str => Try(F64, _)
     ctl_at! = |path, day_str|
-        match Sqlite.query!({
+        match Sql.query!({
             path: Path.utf8(path),
             query: "SELECT ctl AS ctl FROM daily_load WHERE day <= :d ORDER BY day DESC LIMIT 1",
             bindings: [{ name: ":d", value: String(day_str) }],
-            row: Sqlite.f64("ctl"),
+            row: Sql.f64("ctl"),
         }) {
             Ok(v) => Ok(v)
             Err(NoRowsReturned) => Ok(0.0)
@@ -168,7 +168,7 @@ Report :: [].{
         } else {
             days = if period == "month" 28 else 7
             label = if period == "month" "28d" else "7d"
-            match Sqlite.query!({ path: Path.utf8(path), query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day FROM daily_load ORDER BY day DESC LIMIT 1", bindings: [], row: Sqlite.str("day") }) {
+            match Sql.query!({ path: Path.utf8(path), query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day FROM daily_load ORDER BY day DESC LIMIT 1", bindings: [], row: Sql.str("day") }) {
                 Err(NoRowsReturned) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
                 Err(e) => Err(e)
                 Ok(latest_day) => {
@@ -224,11 +224,11 @@ Report :: [].{
     # does a row with this id exist? (table is an internal literal, never user input)
     row_exists! : Str, Str, I64 => Try(Bool, _)
     row_exists! = |path, table, id| {
-        n = Sqlite.query!({
+        n = Sql.query!({
             path: Path.utf8(path),
             query: "SELECT COUNT(*) AS n FROM ${table} WHERE id = :id",
             bindings: [{ name: ":id", value: Integer(id) }],
-            row: Sqlite.i64("n"),
+            row: Sql.i64("n"),
         })?
         Ok(n > 0)
     }
@@ -301,7 +301,7 @@ Report :: [].{
         # fail — a guard that cannot fail is worse than none. The ORDERING is therefore
         # load-bearing: the date sweep must run before this, or a NULL reaches the
         # decoder as UnexpectedType(Null) — internal_error on a write path.
-        bad_time = Sqlite.query_many!({
+        bad_time = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT id AS id, COALESCE(substr(CAST(start_local AS TEXT), 11, 9), '') AS t
@@ -322,8 +322,8 @@ Report :: [].{
             ,
             bindings: [],
             rows: |cols| |stmt| {
-                id = Sqlite.i64("id")(cols)(stmt)?
-                t = Sqlite.str("t")(cols)(stmt)?
+                id = Sql.i64("id")(cols)(stmt)?
+                t = Sql.str("t")(cols)(stmt)?
                 Ok({ id, t })
             },
         })?
@@ -336,26 +336,26 @@ Report :: [].{
             Ok(r) => Err(BadActivityTime(r.t, r.id))
             Err(_) => Ok({})
         }?
-        top = Sqlite.query!({
+        top = Sql.query!({
             path: Path.utf8(path),
             query: "SELECT COALESCE(MAX(id), 0) AS id FROM activities WHERE substr(start_local, 1, 19) = (SELECT MAX(substr(start_local, 1, 19)) FROM activities)",
             bindings: [],
-            row: Sqlite.i64("id"),
+            row: Sql.i64("id"),
         })?
         id = if top == 0 (Err(NoActivities)?) else top
 
-        day = Sqlite.query!({
+        day = Sql.query!({
             path: Path.utf8(path),
             query: "SELECT CAST(substr(start_local, 1, 10) AS TEXT) AS d FROM activities WHERE id = :id",
             bindings: [{ name: ":id", value: Integer(id) }],
-            row: Sqlite.str("d"),
+            row: Sql.str("d"),
         })?
         Ok({ id, day })
     }
 
     guard_activity_dates! : Str => Try({}, _)
     guard_activity_dates! = |path| {
-        act_days = Sqlite.query_many!({
+        act_days = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT COALESCE(substr(CAST(start_local AS TEXT), 1, 10), '') AS d, MIN(id) AS example_id
@@ -363,8 +363,8 @@ Report :: [].{
             ,
             bindings: [],
             rows: |cols| |stmt| {
-                d = Sqlite.str("d")(cols)(stmt)?
-                example_id = Sqlite.i64("example_id")(cols)(stmt)?
+                d = Sql.str("d")(cols)(stmt)?
+                example_id = Sql.i64("example_id")(cols)(stmt)?
                 Ok({ d, example_id })
             },
         })?
@@ -412,7 +412,7 @@ Report :: [].{
         # so a malformed start_local shipped verbatim into a date field — covered by the
         # all-time sweep below, NOT by anything in this query (this one has no cutoff).
         hard_expr = "COALESCE(ai.hard_s, 0) >= 300"
-        last_hard = Sqlite.query!({
+        last_hard = Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT COALESCE(MAX(substr(CAST(a.start_local AS TEXT), 1, 10)), '') AS d
@@ -421,7 +421,7 @@ Report :: [].{
                 \\WHERE ${hard_expr}
             ,
             bindings: [],
-            row: Sqlite.str("d"),
+            row: Sql.str("d"),
         })?
         # stimulus features (#159): counts, spacing and windowed loads the coach would
         # otherwise re-derive — measurements only, never judgments (#154).
@@ -432,7 +432,7 @@ Report :: [].{
         # a cutoff-scoped guard cannot see a malformed hard session older than the
         # window, and `sports_28d.last_date` has no hard_expr at all.
         _ = guard_activity_dates!(path)?
-        hard_days = Sqlite.query_many!({
+        hard_days = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS d,
@@ -448,8 +448,8 @@ Report :: [].{
             ,
             bindings: [{ name: ":cutoff", value: String(cutoff28) }],
             rows: |cols| |stmt| {
-                d = Sqlite.str("d")(cols)(stmt)?
-                example_id = Sqlite.i64("example_id")(cols)(stmt)?
+                d = Sql.str("d")(cols)(stmt)?
+                example_id = Sql.i64("example_id")(cols)(stmt)?
                 Ok({ d, example_id })
             },
         })?
@@ -482,15 +482,15 @@ Report :: [].{
         # error to blow up on — map NoRowsReturned to a tag the callers turn into a
         # friendly message instead of leaking a raw SQLite error to the user.
         latest =
-            match Sqlite.query!({
+            match Sql.query!({
                 path: Path.utf8(path),
                 query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
                 bindings: [],
                 row: |cols| |stmt| {
-                    day = Sqlite.str("day")(cols)(stmt)?
-                    ctl = Sqlite.f64("ctl")(cols)(stmt)?
-                    atl = Sqlite.f64("atl")(cols)(stmt)?
-                    tsb = Sqlite.f64("tsb")(cols)(stmt)?
+                    day = Sql.str("day")(cols)(stmt)?
+                    ctl = Sql.f64("ctl")(cols)(stmt)?
+                    atl = Sql.f64("atl")(cols)(stmt)?
+                    tsb = Sql.f64("tsb")(cols)(stmt)?
                     Ok({ day, ctl, atl, tsb })
                 },
             }) {
@@ -520,7 +520,7 @@ Report :: [].{
         # the RIDE family's population, same as pz — a global cross-sport MAX
         # equals the ride max only while no other family out-rows it (#151, the
         # exact bug one level up)
-        best20_row = Sqlite.query!({
+        best20_row = Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT CAST(COALESCE(MAX(m.best_20min_w),0) AS REAL) AS b FROM activity_metrics m
@@ -528,13 +528,13 @@ Report :: [].{
                 \\WHERE a.sport_family = :fam AND a.start_local >= :cutoff
             ,
             bindings: [{ name: ":fam", value: String(Sports.canonical("Ride")) }, { name: ":cutoff", value: String(cutoff60) }],
-            row: Sqlite.f64("b"),
+            row: Sql.f64("b"),
         })?
 
         # the best the ESTIMATE stands on: the same window, but only once two
         # sessions of the family carry a best there (#574, the rule scoring uses),
         # so a lone ride reports its measured best and an estimate of 0
-        ftp_best_row = Sqlite.query!({
+        ftp_best_row = Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT CAST(COALESCE(CASE WHEN COUNT(NULLIF(m.best_20min_w, 0)) >= 2 THEN MAX(m.best_20min_w) END, 0) AS REAL) AS b FROM activity_metrics m
@@ -542,10 +542,10 @@ Report :: [].{
                 \\WHERE a.sport_family = :fam AND a.start_local >= :cutoff
             ,
             bindings: [{ name: ":fam", value: String(Sports.canonical("Ride")) }, { name: ":cutoff", value: String(cutoff_ftp) }],
-            row: Sqlite.f64("b"),
+            row: Sql.f64("b"),
         })?
 
-        sports = Sqlite.query_many!({
+        sports = Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT COALESCE(CAST(a.sport_type AS TEXT), '') AS sport, COUNT(*) AS sessions, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
@@ -557,14 +557,14 @@ Report :: [].{
             ,
             bindings: [{ name: ":cutoff", value: String(cutoff28) }],
             rows: |cols| |stmt| {
-                sport = Sqlite.str("sport")(cols)(stmt)?
-                sessions = Sqlite.i64("sessions")(cols)(stmt)?
-                tss = Sqlite.f64("tss")(cols)(stmt)?
-                moving_time = Sqlite.i64("moving_time")(cols)(stmt)?
-                distance_m = Sqlite.f64("distance_m")(cols)(stmt)?
+                sport = Sql.str("sport")(cols)(stmt)?
+                sessions = Sql.i64("sessions")(cols)(stmt)?
+                tss = Sql.f64("tss")(cols)(stmt)?
+                moving_time = Sql.i64("moving_time")(cols)(stmt)?
+                distance_m = Sql.f64("distance_m")(cols)(stmt)?
                 # when this sport was last seen (#159) — '' can't happen inside the
                 # window filter, but COALESCE keeps the decoder total
-                last_date = Sqlite.str("last_date")(cols)(stmt)?
+                last_date = Sql.str("last_date")(cols)(stmt)?
                 Ok({ sport, sessions, tss, moving_time, distance_m, last_date })
             },
         })?
@@ -591,11 +591,11 @@ Report :: [].{
         cov28 = cov_block(cov28_raw)
         cov90 = cov_block(cov90_raw)
 
-        pending = Sqlite.query!({
+        pending = Sql.query!({
             path: Path.utf8(path),
             query: "SELECT COUNT(*) AS n FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'",
             bindings: [],
-            row: Sqlite.i64("n"),
+            row: Sql.i64("n"),
         })?
 
         hd = hard_day_stats!(path, anchor, cutoff28)?
@@ -610,7 +610,7 @@ Report :: [].{
         # windowed loads + prior windows of the SAME length, deltas raw. The
         # prior-7d window is [-13..-7] and prior-28d is [-55..-28]: adjacent,
         # non-overlapping, same width — the delta compares like with like.
-        loadw = Sqlite.query!({
+        loadw = Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT CAST(COALESCE(SUM(CASE WHEN a.start_local >= :c90 THEN m.tss ELSE 0 END),0) AS REAL) AS d90,
@@ -626,9 +626,9 @@ Report :: [].{
                 { name: ":c28", value: String(cutoff28) },
             ],
             row: |cols| |stmt| {
-                d90 = Sqlite.f64("d90")(cols)(stmt)?
-                p7 = Sqlite.f64("p7")(cols)(stmt)?
-                p28 = Sqlite.f64("p28")(cols)(stmt)?
+                d90 = Sql.f64("d90")(cols)(stmt)?
+                p7 = Sql.f64("p7")(cols)(stmt)?
+                p28 = Sql.f64("p28")(cols)(stmt)?
                 Ok({ d90, p7, p28 })
             },
         })?
@@ -636,7 +636,7 @@ Report :: [].{
         # window ([-119..-60]) beside the current one — the delta says which way
         # the demonstrated ceiling moved; known=false when the prior window has
         # no power (a delta against nothing is not 0, ADR 0009)
-        prior_best20 = Sqlite.query!({
+        prior_best20 = Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT CAST(COALESCE(MAX(m.best_20min_w),0) AS REAL) AS b,
@@ -651,8 +651,8 @@ Report :: [].{
                 { name: ":hi", value: String(cutoff60) },
             ],
             row: |cols| |stmt| {
-                b = Sqlite.f64("b")(cols)(stmt)?
-                bk = Sqlite.i64("bk")(cols)(stmt)?
+                b = Sql.f64("b")(cols)(stmt)?
+                bk = Sql.i64("bk")(cols)(stmt)?
                 Ok({ b, bk })
             },
         })?
@@ -680,11 +680,11 @@ Report :: [].{
         # threshold is two constants (~90 d, ~88% converged), past which the form bands —
         # absolute numbers — start meaning something. COUNT(*) always returns a row, so this
         # query cannot hit the absent-key crash.
-        load_days = Sqlite.query!({
+        load_days = Sql.query!({
             path: Path.utf8(path),
             query: "SELECT COUNT(*) AS n FROM daily_load",
             bindings: [],
-            row: Sqlite.i64("n"),
+            row: Sql.i64("n"),
         })?
 
         # #93 ramp: reuses the `anchor` this function already computed, rather than
@@ -694,17 +694,17 @@ Report :: [].{
         # also bounds days_in_band, which has NO natural upper limit. That is why the streak
         # returns AtLeast when it fills this window rather than a bare number: widening the
         # window moves the truncation point, it does not remove it.
-        ramp_rows = Sqlite.query_many!({
+        ramp_rows = Sql.query_many!({
             path: Path.utf8(path),
             query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, CAST(ctl AS REAL) AS ctl, CAST(tsb AS REAL) AS tsb FROM daily_load WHERE day >= :cutoff ORDER BY day DESC",
             bindings: [{ name: ":cutoff", value: String(Metrics.days_to_date_str(anchor - 30)) }],
             rows: |cols| |stmt| {
-                d = Sqlite.str("day")(cols)(stmt)?
-                c = Sqlite.f64("ctl")(cols)(stmt)?
+                d = Sql.str("day")(cols)(stmt)?
+                c = Sql.f64("ctl")(cols)(stmt)?
                 # tsb rides along on the ramp query rather than getting its own: the two
                 # lookbacks want the same rows over the same window, and a second query
                 # could disagree with this one about which days exist (#111).
-                t = Sqlite.f64("tsb")(cols)(stmt)?
+                t = Sql.f64("tsb")(cols)(stmt)?
                 Ok({ d, ctl: c, tsb: t })
             },
         })?
@@ -890,7 +890,7 @@ Report :: [].{
     sports_with_speed! : Str, U64 => Try(List(Str), _)
     sports_with_speed! = |path, days| {
         cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - (days).to_i64_wrap())
-        Sqlite.query_many!({
+        Sql.query_many!({
             path: Path.utf8(path),
             query:
                 \\SELECT COALESCE(CAST(a.sport_type AS TEXT), '') AS s
@@ -902,22 +902,22 @@ Report :: [].{
                 \\ORDER BY COUNT(*) DESC
             ,
             bindings: [{ name: ":cutoff", value: String(cutoff) }],
-            rows: Sqlite.str("s"),
+            rows: Sql.str("s"),
         })
     }
     load_series! : U64 => Try({}, _)
     load_series! = |days| {
         path = Db.open_db!({})?
-        rows = Sqlite.query_many!({
+        rows = Sql.query_many!({
             path: Path.utf8(path),
             query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, tss AS tss, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT ${(days).to_str()}",
             bindings: [],
             rows: |cols| |stmt| {
-                day = Sqlite.str("day")(cols)(stmt)?
-                tss = Sqlite.f64("tss")(cols)(stmt)?
-                ctl = Sqlite.f64("ctl")(cols)(stmt)?
-                atl = Sqlite.f64("atl")(cols)(stmt)?
-                tsb = Sqlite.f64("tsb")(cols)(stmt)?
+                day = Sql.str("day")(cols)(stmt)?
+                tss = Sql.f64("tss")(cols)(stmt)?
+                ctl = Sql.f64("ctl")(cols)(stmt)?
+                atl = Sql.f64("atl")(cols)(stmt)?
+                tsb = Sql.f64("tsb")(cols)(stmt)?
                 Ok({ day, tss, ctl, atl, tsb })
             },
         })?
@@ -951,7 +951,7 @@ Report :: [].{
     # being scored against a cyclist's CP and flagged known, which is worse than
     # having no number at all.
     cp_fit_as_of! = |path, family, on_date, days| {
-        row = Sqlite.query!({
+        row = Sql.query!({
             path: Path.utf8(path),
             query:
                 \\SELECT CAST(COALESCE(MAX(m.best_300s_w), 0) AS REAL) AS d300,
@@ -968,9 +968,9 @@ Report :: [].{
                 { name: ":days", value: String((days).to_str()) },
             ],
             row: |cols| |stmt| {
-                d300 = Sqlite.f64("d300")(cols)(stmt)?
-                d600 = Sqlite.f64("d600")(cols)(stmt)?
-                d1200 = Sqlite.f64("d1200")(cols)(stmt)?
+                d300 = Sql.f64("d300")(cols)(stmt)?
+                d600 = Sql.f64("d600")(cols)(stmt)?
+                d1200 = Sql.f64("d1200")(cols)(stmt)?
                 Ok({ d300, d600, d1200 })
             },
         })?
