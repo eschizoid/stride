@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.19.1](https://github.com/eschizoid/stride/compare/v0.19.0...v0.19.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* commit each analyzed activity once, and stop counting timed Peloton sets as reps ([1f35485](https://github.com/eschizoid/stride/commit/1f354858333d5862478c6983dda037cb63194d30))
+* **polarization:** leave lifting out of the 80/20 easy share ([7bf6dd9](https://github.com/eschizoid/stride/commit/7bf6dd93b2377caf14dbb2f09d62e18b0971fab7))
+* **sql:** keep the error that caused a rollback ([20fce5d](https://github.com/eschizoid/stride/commit/20fce5def9e990b54ac3be4757a120d0885b8f15))
+* **strength:** count assisted and negative bodyweight moves at 0 kg ([a39d9b3](https://github.com/eschizoid/stride/commit/a39d9b3c84fc408a7b7169d471f706f00d9b2ddb))
+* **strength:** count dumbbell push ups and single leg v ups at 0 kg ([99e582e](https://github.com/eschizoid/stride/commit/99e582ea630ba3583b7fa43fc017ca5a9065f3b3))
+* **viz:** keep form board end labels apart, on Roc nightly 2026-10-26 ([3542848](https://github.com/eschizoid/stride/commit/3542848c018ffad2b099059988764ca59eb3469d))
+
 ## [0.19.0](https://github.com/eschizoid/stride/compare/v0.18.0...v0.19.0) (2026-10-22)
 
 
