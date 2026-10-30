@@ -12,979 +12,992 @@ import core.Sports
 import Render
 
 Report :: [].{
-    # ── shared queries ──────────────────────────────────────────────────
+	# ── shared queries ──────────────────────────────────────────────────
 
-    # ONE home for the load_model -> confidence-tier mapping (#157): doctor's
-    # session counts and summary's TSS-weighted coverage read these same lists,
-    # so the ladder cannot drift between surfaces. high = measured power (and
-    # rtss: pace threshold derives from measured speed), medium = HR/RPE-scaled,
-    # low = relative_effort (Strava's opaque estimate).
-    high_models_sql = "'power_stream','weighted_watts','avg_watts','rtss'"
+	# ONE home for the load_model -> confidence-tier mapping (#157): doctor's
+	# session counts and summary's TSS-weighted coverage read these same lists,
+	# so the ladder cannot drift between surfaces. high = measured power (and
+	# rtss: pace threshold derives from measured speed), medium = HR/RPE-scaled,
+	# low = relative_effort (Strava's opaque estimate).
+	high_models_sql = "'power_stream','weighted_watts','avg_watts','rtss'"
 
-    # "is this activity's stored date readable", in SQL, for the sites that need the
-    # answer inside a query — `date_known` on `activities` and `top`, and
-    # `doctor`'s undateable count. ONE constant because they were
-    # byte-identical copies, and only one was value-pinned: collapsing them makes the
-    # '1000-02-30' fixture hold every site by construction.
-    # The rule itself lives in Metrics.usable_date_days / date_known_sql_for, beside
-    # its Roc twin (`Analyze` and `Strava` cannot import Report); this stays as the
-    # name they already share. The SQL round-trips through SQLite's own date(),
-    # which is version-dependent — 3.43.2 returns '2026-02-30' verbatim, the linked
-    # 3.49.1 rejects it — so the e2e fixture is what holds SQL to the Roc rule
-    # across a platform upgrade.
-    date_known_sql = Metrics.date_known_sql_for("a.start_local")
-    # ...and the row's RANKABILITY, published beside it. After #255 the engine's
-    # notion of "usable timestamp" grew a time half and the published flag did not:
-    # `2026-08-23T37:00:00Z` was hoisted to the top of `activities` as needing repair
-    # while publishing `date_known: true` (#281).
-    #
-    # `rankable`, NOT a `time_known` sibling: every `_known` flag names a value
-    # published NEXT TO IT whose magnitude it licenses, and `top` publishes
-    # `moving_time` on the same row — a `time_known` there reads as licensing it, so
-    # a coach applying the documented rule would discard a good duration (measured:
-    # moving_time=999999 under time_known=False). A `time_known` conjunct also
-    # conflates causes (false for a bad date with a fine clock, true for two shapes
-    # date_known rejects). This is the whole predicate, in the word the engine
-    # already uses.
-    rankable_sql = Metrics.rankable_sql("a.start_local")
-    medium_models_sql = "'hr_zones','hr_avg','session_rpe'"
-    low_models_sql = "'relative_effort'"
+	# "is this activity's stored date readable", in SQL, for the sites that need the
+	# answer inside a query — `date_known` on `activities` and `top`, and
+	# `doctor`'s undateable count. ONE constant because they were
+	# byte-identical copies, and only one was value-pinned: collapsing them makes the
+	# '1000-02-30' fixture hold every site by construction.
+	# The rule itself lives in Metrics.usable_date_days / date_known_sql_for, beside
+	# its Roc twin (`Analyze` and `Strava` cannot import Report); this stays as the
+	# name they already share. The SQL round-trips through SQLite's own date(),
+	# which is version-dependent — 3.43.2 returns '2026-02-30' verbatim, the linked
+	# 3.49.1 rejects it — so the e2e fixture is what holds SQL to the Roc rule
+	# across a platform upgrade.
+	date_known_sql = Metrics.date_known_sql_for("a.start_local")
+	# ...and the row's RANKABILITY, published beside it. After #255 the engine's
+	# notion of "usable timestamp" grew a time half and the published flag did not:
+	# `2026-08-23T37:00:00Z` was hoisted to the top of `activities` as needing repair
+	# while publishing `date_known: true` (#281).
+	#
+	# `rankable`, NOT a `time_known` sibling: every `_known` flag names a value
+	# published NEXT TO IT whose magnitude it licenses, and `top` publishes
+	# `moving_time` on the same row — a `time_known` there reads as licensing it, so
+	# a coach applying the documented rule would discard a good duration (measured:
+	# moving_time=999999 under time_known=False). A `time_known` conjunct also
+	# conflates causes (false for a bad date with a fine clock, true for two shapes
+	# date_known rejects). This is the whole predicate, in the word the engine
+	# already uses.
+	rankable_sql = Metrics.rankable_sql("a.start_local")
+	medium_models_sql = "'hr_zones','hr_avg','session_rpe'"
+	low_models_sql = "'relative_effort'"
 
-    # TSS-weighted tier sums for one window: {high, medium, low} as F64 TSS
-    coverage_sums! : Str, Str => Try({ high : F64, medium : F64, low : F64 }, _)
-    coverage_sums! = |path, cutoff|
-        Sql.query!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT CAST(COALESCE(SUM(CASE WHEN m.load_model IN (${high_models_sql}) THEN m.tss ELSE 0 END),0) AS REAL) AS hi,
-                \\       CAST(COALESCE(SUM(CASE WHEN m.load_model IN (${medium_models_sql}) THEN m.tss ELSE 0 END),0) AS REAL) AS med,
-                \\       CAST(COALESCE(SUM(CASE WHEN m.load_model IN (${low_models_sql}) THEN m.tss ELSE 0 END),0) AS REAL) AS lo
-                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
-                \\WHERE a.start_local >= :cutoff
-            ,
-            bindings: [{ name: ":cutoff", value: String(cutoff) }],
-            row: |cols| |stmt| {
-                hi = Sql.f64("hi")(cols)(stmt)?
-                med = Sql.f64("med")(cols)(stmt)?
-                lo = Sql.f64("lo")(cols)(stmt)?
-                Ok({ high: hi, medium: med, low: lo })
-            },
-        })
+	# TSS-weighted tier sums for one window: {high, medium, low} as F64 TSS
+	coverage_sums! : Str, Str => Try({ high : F64, medium : F64, low : F64 }, _)
+	coverage_sums! = |path, cutoff|
+		Sql.query!({
+			path: Path.utf8(path),
+			query: \\SELECT CAST(COALESCE(SUM(CASE WHEN m.load_model IN (${high_models_sql}) THEN m.tss ELSE 0 END),0) AS REAL) AS hi,
+				\\       CAST(COALESCE(SUM(CASE WHEN m.load_model IN (${medium_models_sql}) THEN m.tss ELSE 0 END),0) AS REAL) AS med,
+				\\       CAST(COALESCE(SUM(CASE WHEN m.load_model IN (${low_models_sql}) THEN m.tss ELSE 0 END),0) AS REAL) AS lo
+				\\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+				\\WHERE a.start_local >= :cutoff
+			,
+			bindings: [{ name: ":cutoff", value: String(cutoff) }],
+			row: |cols| |stmt| {
+				hi = Sql.f64("hi")(cols)(stmt)?
+				med = Sql.f64("med")(cols)(stmt)?
+				lo = Sql.f64("lo")(cols)(stmt)?
+				Ok({ high: hi, medium: med, low: lo })
+			},
+		})
 
-    # zone + TSS totals for activities on/after a cutoff date
-    zone_sum! : Str, Str => Try({ z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, measured : F64, easy : I64, moderate : I64, hard : I64, sessions : I64, moving_time : I64, distance_m : F64, hr_streams : I64, intensity_streams : I64 }, _)
-    zone_sum! = |path, cutoff|
-        Sql.query!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT COALESCE(SUM(m.z1_s),0) AS z1, COALESCE(SUM(m.z2_s),0) AS z2, COALESCE(SUM(m.z3_s),0) AS z3,
-                \\       COALESCE(SUM(m.z4_s),0) AS z4, COALESCE(SUM(m.z5_s),0) AS z5, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
-                \\       -- load from a MEASURED source — a power meter or distance-measured pace
-                \\       -- (high-confidence rungs) — vs estimated from HR/RPE/relative-effort
-                \\       CAST(COALESCE(SUM(CASE WHEN m.load_model IN (${high_models_sql}) THEN m.tss ELSE 0 END),0) AS REAL) AS measured,
-                \\       -- the per-activity intensity split and which activities count
-                \\       -- toward a share are the activity_intensity view's, the same
-                \\       -- definition the viz reads
-                \\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.easy_s ELSE 0 END),0) AS easy,
-                \\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.moderate_s ELSE 0 END),0) AS moderate,
-                \\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.hard_s ELSE 0 END),0) AS hard,
-                \\       COUNT(*) AS sessions, COALESCE(SUM(a.moving_time),0) AS moving_time,
-                \\       CAST(COALESCE(SUM(a.distance),0) AS REAL) AS distance_m,
-                \\       COALESCE(SUM(CASE WHEN s.raw_json LIKE '%"heartrate"%' THEN 1 ELSE 0 END),0) AS hr_streams,
-                \\       COALESCE(SUM(CASE WHEN s.raw_json LIKE '%"heartrate"%' OR s.raw_json LIKE '%"watts"%' OR s.raw_json LIKE '%"distance"%' THEN 1 ELSE 0 END),0) AS intensity_streams
-                \\FROM activities a
-                \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
-                \\LEFT JOIN activity_intensity ai ON ai.activity_id = a.id
-                \\LEFT JOIN streams s ON s.activity_id = a.id
-                \\WHERE a.start_local >= :cutoff
-            ,
-            bindings: [{ name: ":cutoff", value: String(cutoff) }],
-            row: |cols| |stmt| {
-                z1 = Sql.i64("z1")(cols)(stmt)?
-                z2 = Sql.i64("z2")(cols)(stmt)?
-                z3 = Sql.i64("z3")(cols)(stmt)?
-                z4 = Sql.i64("z4")(cols)(stmt)?
-                z5 = Sql.i64("z5")(cols)(stmt)?
-                tss = Sql.f64("tss")(cols)(stmt)?
-                measured = Sql.f64("measured")(cols)(stmt)?
-                easy = Sql.i64("easy")(cols)(stmt)?
-                moderate = Sql.i64("moderate")(cols)(stmt)?
-                hard = Sql.i64("hard")(cols)(stmt)?
-                sessions = Sql.i64("sessions")(cols)(stmt)?
-                moving_time = Sql.i64("moving_time")(cols)(stmt)?
-                distance_m = Sql.f64("distance_m")(cols)(stmt)?
-                hr_streams = Sql.i64("hr_streams")(cols)(stmt)?
-                intensity_streams = Sql.i64("intensity_streams")(cols)(stmt)?
-                Ok({ z1, z2, z3, z4, z5, tss, measured, easy, moderate, hard, sessions, moving_time, distance_m, hr_streams, intensity_streams })
-            },
-        })
+	# zone + TSS totals for activities on/after a cutoff date
+	zone_sum! : Str, Str => Try({ z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, tss : F64, measured : F64, easy : I64, moderate : I64, hard : I64, sessions : I64, moving_time : I64, distance_m : F64, hr_streams : I64, intensity_streams : I64 }, _)
+	zone_sum! = |path, cutoff|
+		Sql.query!({
+			path: Path.utf8(path),
+			query: \\SELECT COALESCE(SUM(m.z1_s),0) AS z1, COALESCE(SUM(m.z2_s),0) AS z2, COALESCE(SUM(m.z3_s),0) AS z3,
+				\\       COALESCE(SUM(m.z4_s),0) AS z4, COALESCE(SUM(m.z5_s),0) AS z5, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
+				\\       -- load from a MEASURED source — a power meter or distance-measured pace
+				\\       -- (high-confidence rungs) — vs estimated from HR/RPE/relative-effort
+				\\       CAST(COALESCE(SUM(CASE WHEN m.load_model IN (${high_models_sql}) THEN m.tss ELSE 0 END),0) AS REAL) AS measured,
+				\\       -- the per-activity intensity split and which activities count
+				\\       -- toward a share are the activity_intensity view's, the same
+				\\       -- definition the viz reads
+				\\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.easy_s ELSE 0 END),0) AS easy,
+				\\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.moderate_s ELSE 0 END),0) AS moderate,
+				\\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.hard_s ELSE 0 END),0) AS hard,
+				\\       COUNT(*) AS sessions, COALESCE(SUM(a.moving_time),0) AS moving_time,
+				\\       CAST(COALESCE(SUM(a.distance),0) AS REAL) AS distance_m,
+				\\       COALESCE(SUM(CASE WHEN s.raw_json LIKE '%"heartrate"%' THEN 1 ELSE 0 END),0) AS hr_streams,
+				\\       COALESCE(SUM(CASE WHEN s.raw_json LIKE '%"heartrate"%' OR s.raw_json LIKE '%"watts"%' OR s.raw_json LIKE '%"distance"%' THEN 1 ELSE 0 END),0) AS intensity_streams
+				\\FROM activities a
+				\\LEFT JOIN activity_metrics m ON m.activity_id = a.id
+				\\LEFT JOIN activity_intensity ai ON ai.activity_id = a.id
+				\\LEFT JOIN streams s ON s.activity_id = a.id
+				\\WHERE a.start_local >= :cutoff
+			,
+			bindings: [{ name: ":cutoff", value: String(cutoff) }],
+			row: |cols| |stmt| {
+				z1 = Sql.i64("z1")(cols)(stmt)?
+				z2 = Sql.i64("z2")(cols)(stmt)?
+				z3 = Sql.i64("z3")(cols)(stmt)?
+				z4 = Sql.i64("z4")(cols)(stmt)?
+				z5 = Sql.i64("z5")(cols)(stmt)?
+				tss = Sql.f64("tss")(cols)(stmt)?
+				measured = Sql.f64("measured")(cols)(stmt)?
+				easy = Sql.i64("easy")(cols)(stmt)?
+				moderate = Sql.i64("moderate")(cols)(stmt)?
+				hard = Sql.i64("hard")(cols)(stmt)?
+				sessions = Sql.i64("sessions")(cols)(stmt)?
+				moving_time = Sql.i64("moving_time")(cols)(stmt)?
+				distance_m = Sql.f64("distance_m")(cols)(stmt)?
+				hr_streams = Sql.i64("hr_streams")(cols)(stmt)?
+				intensity_streams = Sql.i64("intensity_streams")(cols)(stmt)?
+				Ok({ z1, z2, z3, z4, z5, tss, measured, easy, moderate, hard, sessions, moving_time, distance_m, hr_streams, intensity_streams })
+			},
+		})
 
-    # activity stats within a half-open [from, to) date window (both are date strings
-    # compared against start_local; ISO makes the lexical compare correct). The
-    # p_* zone sums cover only the activities the activity_intensity view marks
-    # `polarized`, the population every polarization share reads.
-    window_stats! : Str, Str, Str => Try({ p_easy : I64, p_hard : I64, p_total : I64, tss : F64, sessions : I64 }, _)
-    window_stats! = |path, from_str, to_str|
-        Sql.query!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.z1_s + ai.z2_s ELSE 0 END),0) AS p_easy,
-                \\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.z4_s + ai.z5_s ELSE 0 END),0) AS p_hard,
-                \\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.z1_s + ai.z2_s + ai.z3_s + ai.z4_s + ai.z5_s ELSE 0 END),0) AS p_total,
-                \\       CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss, COUNT(*) AS sessions
-                \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
-                \\LEFT JOIN activity_intensity ai ON ai.activity_id = a.id
-                \\WHERE a.start_local >= :from AND a.start_local < :to
-            ,
-            bindings: [{ name: ":from", value: String(from_str) }, { name: ":to", value: String(to_str) }],
-            row: |cols| |stmt| {
-                p_easy = Sql.i64("p_easy")(cols)(stmt)?
-                p_hard = Sql.i64("p_hard")(cols)(stmt)?
-                p_total = Sql.i64("p_total")(cols)(stmt)?
-                tss = Sql.f64("tss")(cols)(stmt)?
-                sessions = Sql.i64("sessions")(cols)(stmt)?
-                Ok({ p_easy, p_hard, p_total, tss, sessions })
-            },
-        })
+	# activity stats within a half-open [from, to) date window (both are date strings
+	# compared against start_local; ISO makes the lexical compare correct). The
+	# p_* zone sums cover only the activities the activity_intensity view marks
+	# `polarized`, the population every polarization share reads.
+	window_stats! : Str, Str, Str => Try({ p_easy : I64, p_hard : I64, p_total : I64, tss : F64, sessions : I64 }, _)
+	window_stats! = |path, from_str, to_str|
+		Sql.query!({
+			path: Path.utf8(path),
+			query: \\SELECT COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.z1_s + ai.z2_s ELSE 0 END),0) AS p_easy,
+				\\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.z4_s + ai.z5_s ELSE 0 END),0) AS p_hard,
+				\\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.z1_s + ai.z2_s + ai.z3_s + ai.z4_s + ai.z5_s ELSE 0 END),0) AS p_total,
+				\\       CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss, COUNT(*) AS sessions
+				\\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
+				\\LEFT JOIN activity_intensity ai ON ai.activity_id = a.id
+				\\WHERE a.start_local >= :from AND a.start_local < :to
+			,
+			bindings: [{ name: ":from", value: String(from_str) }, { name: ":to", value: String(to_str) }],
+			row: |cols| |stmt| {
+				p_easy = Sql.i64("p_easy")(cols)(stmt)?
+				p_hard = Sql.i64("p_hard")(cols)(stmt)?
+				p_total = Sql.i64("p_total")(cols)(stmt)?
+				tss = Sql.f64("tss")(cols)(stmt)?
+				sessions = Sql.i64("sessions")(cols)(stmt)?
+				Ok({ p_easy, p_hard, p_total, tss, sessions })
+			},
+		})
 
-    # CTL as of a given day (most recent daily_load row on or before it); 0 if none
-    ctl_at! : Str, Str => Try(F64, _)
-    ctl_at! = |path, day_str|
-        match Sql.query!({
-            path: Path.utf8(path),
-            query: "SELECT ctl AS ctl FROM daily_load WHERE day <= :d ORDER BY day DESC LIMIT 1",
-            bindings: [{ name: ":d", value: String(day_str) }],
-            row: Sql.f64("ctl"),
-        }) {
-            Ok(v) => Ok(v)
-            Err(NoRowsReturned) => Ok(0.0)
-            Err(e) => Err(e)
-        }
+	# CTL as of a given day (most recent daily_load row on or before it); 0 if none
+	ctl_at! : Str, Str => Try(F64, _)
+	ctl_at! = |path, day_str|
+		match Sql.query!({
+			path: Path.utf8(path),
+			query: "SELECT ctl AS ctl FROM daily_load WHERE day <= :d ORDER BY day DESC LIMIT 1",
+			bindings: [{ name: ":d", value: String(day_str) }],
+			row: Sql.f64("ctl"),
+		}) {
+			Ok(v) => Ok(v)
+			Err(NoRowsReturned) => Ok(0.0)
+			Err(e) => Err(e)
+		}
 
-    # period-over-period: this rolling window vs the one immediately before it
-    compare! : Str => Try({}, _)
-    compare! = |period| {
-        path = Db.open_db!({})?
-        if period != "week" and period != "month" {
-            Output.err_out!("bad_period", "compare week | compare month (got '${period}')")
-        } else {
-            days = if period == "month" 28 else 7
-            label = if period == "month" "28d" else "7d"
-            match Sql.query!({ path: Path.utf8(path), query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day FROM daily_load ORDER BY day DESC LIMIT 1", bindings: [], row: Sql.str("day") }) {
-                Err(NoRowsReturned) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
-                Err(e) => Err(e)
-                Ok(latest_day) => {
-                    # PROPAGATE, through the same helper summary_payload! uses on the same anchor
-                    # (same semantics, not the same statement). Collapsing to epoch day 0 does not
-                    # fail loudly — it answers: a real 28-day block came back `has_data: false`,
-                    # every figure 0, "fitness holding", while `summary` refused on the same
-                    # database in the same run.
-                    anchor = canonical_day(latest_day)?
-                    # AFTER the daily_load anchor, before the windows. After, because `summary` reads
-                    # its anchor first too, and the two commands must meet the same fault first on
-                    # the same database (e2e pins the agreement). Before the windows, because an
-                    # unreadable date removes the row from BOTH windows and the DELTA is what
-                    # `compare` publishes — measured, one NULLed date moved the verdict from "load
-                    # steady (4%)" to "load backed off (-16%)" at exit 0.
-                    _ = guard_activity_dates!(path)?
-                    cur_from = Metrics.days_to_date_str(anchor - (days - 1))
-                    cur_to = Metrics.days_to_date_str(anchor + 1)
-                    pri_from = Metrics.days_to_date_str(anchor - (2 * days - 1))
-                    cur = window_stats!(path, cur_from, cur_to)?
-                    pri = window_stats!(path, pri_from, cur_from)?
-                    cur_ctl = ctl_at!(path, Metrics.days_to_date_str(anchor))?
-                    pri_ctl = ctl_at!(path, Metrics.days_to_date_str(anchor - days))?
-                    # has_data tells a genuinely empty window (no activities and no accrued
-                    # fitness) from a real all-easy or zero week, so an empty prior block
-                    # does not read as a rest week and the delta as a spike.
-                    # polarization_known is the ambiguous-zero discriminator (ADR 0009) for
-                    # the two intensity rows, which cover only the activities the
-                    # activity_intensity view marks `polarized`: an all-zero sum cannot tell
-                    # "no zone data" from "no polarized session", so hard_min and easy_pct
-                    # are measurements only when a polarized activity holds a zone second.
-                    # It is not zones_known, which tests hr_samples_total and means "an HR
-                    # stream existed".
-                    block = |w, ctl| {
-                        tss: w.tss,
-                        sessions: w.sessions,
-                        hard_min: w.p_hard // 60,
-                        easy_pct: pct_num(w.p_easy, w.p_total),
-                        polarization_known: w.p_total > 0,
-                        ctl,
-                        has_data: w.sessions > 0 or ctl > 0.0,
-                    }
-                    Output.out!({ period, window_label: label, current: block(cur, cur_ctl), prior: block(pri, pri_ctl) }, Render.compare_screen)
-                }
-            }
-        }
-    }
+	# period-over-period: this rolling window vs the one immediately before it
+	compare! : Str => Try({}, _)
+	compare! = |period| {
+		path = Db.open_db!({})?
+		if period != "week" and period != "month" {
+			Output.err_out!("bad_period", "compare week | compare month (got '${period}')")
+		} else {
+			days = if (period == "month") 28 else 7
+			label = if (period == "month") "28d" else "7d"
+			match Sql.query!({ path: Path.utf8(path), query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day FROM daily_load ORDER BY day DESC LIMIT 1", bindings: [], row: Sql.str("day") }) {
+				Err(NoRowsReturned) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
+				Err(e) => Err(e)
+				Ok(latest_day) => {
+					# PROPAGATE, through the same helper summary_payload! uses on the same anchor
+					# (same semantics, not the same statement). Collapsing to epoch day 0 does not
+					# fail loudly — it answers: a real 28-day block came back `has_data: false`,
+					# every figure 0, "fitness holding", while `summary` refused on the same
+					# database in the same run.
+					anchor = canonical_day(latest_day)?
+					# AFTER the daily_load anchor, before the windows. After, because `summary` reads
+					# its anchor first too, and the two commands must meet the same fault first on
+					# the same database (e2e pins the agreement). Before the windows, because an
+					# unreadable date removes the row from BOTH windows and the DELTA is what
+					# `compare` publishes — measured, one NULLed date moved the verdict from "load
+					# steady (4%)" to "load backed off (-16%)" at exit 0.
+					_ = guard_activity_dates!(path)?
+					cur_from = Metrics.days_to_date_str(anchor - (days - 1))
+					cur_to = Metrics.days_to_date_str(anchor + 1)
+					pri_from = Metrics.days_to_date_str(anchor - (2 * days - 1))
+					cur = window_stats!(path, cur_from, cur_to)?
+					pri = window_stats!(path, pri_from, cur_from)?
+					cur_ctl = ctl_at!(path, Metrics.days_to_date_str(anchor))?
+					pri_ctl = ctl_at!(path, Metrics.days_to_date_str(anchor - days))?
+					# has_data tells a genuinely empty window (no activities and no accrued
+					# fitness) from a real all-easy or zero week, so an empty prior block
+					# does not read as a rest week and the delta as a spike.
+					# polarization_known is the ambiguous-zero discriminator (ADR 0009) for
+					# the two intensity rows, which cover only the activities the
+					# activity_intensity view marks `polarized`: an all-zero sum cannot tell
+					# "no zone data" from "no polarized session", so hard_min and easy_pct
+					# are measurements only when a polarized activity holds a zone second.
+					# It is not zones_known, which tests hr_samples_total and means "an HR
+					# stream existed".
+					block = |w, ctl| {
+						tss: w.tss,
+						sessions: w.sessions,
+						hard_min: w.p_hard // 60,
+						easy_pct: pct_num(w.p_easy, w.p_total),
+						polarization_known: w.p_total > 0,
+						ctl,
+						has_data: w.sessions > 0 or ctl > 0.0,
+					}
+					Output.out!({ period, window_label: label, current: block(cur, cur_ctl), prior: block(pri, pri_ctl) }, Render.compare_screen)
+				}
+			}
+		}
+	}
 
-    # does a row with this id exist? (table is an internal literal, never user input)
-    row_exists! : Str, Str, I64 => Try(Bool, _)
-    row_exists! = |path, table, id| {
-        n = Sql.query!({
-            path: Path.utf8(path),
-            query: "SELECT COUNT(*) AS n FROM ${table} WHERE id = :id",
-            bindings: [{ name: ":id", value: Integer(id) }],
-            row: Sql.i64("n"),
-        })?
-        Ok(n > 0)
-    }
-    # The daily_load.day guard. BOTH halves — canonical and parseable — because the
-    # non-canonical day is the dangerous one: `ORDER BY day DESC` is a string sort,
-    # so "2026-3-05" beats every "2026-08-xx" and becomes `latest`.
-    # Used by every read of the column that must not ABSORB: the two anchors, the
-    # ramp series (a bad day need not BE the anchor — below a canonical day it still
-    # slips into the 30-day window and publishes a fabricated ramp under
-    # `form_delta_known: true`), and `load_series!`. The predicate is factored into
-    # Metrics.usable_date_days; what differs per site is which tag it raises.
-    canonical_day : Str -> Try(I64, _)
-    canonical_day = |d| (Metrics.usable_date_days(d)).map_err(|_| BadDailyLoadDay(d))
+	# does a row with this id exist? (table is an internal literal, never user input)
+	row_exists! : Str, Str, I64 => Try(Bool, _)
+	row_exists! = |path, table, id| {
+		n = Sql.query!({
+			path: Path.utf8(path),
+			query: "SELECT COUNT(*) AS n FROM ${table} WHERE id = :id",
+			bindings: [{ name: ":id", value: Integer(id) }],
+			row: Sql.i64("n"),
+		})?
+		Ok(n > 0)
+	}
+	# The daily_load.day guard. BOTH halves — canonical and parseable — because the
+	# non-canonical day is the dangerous one: `ORDER BY day DESC` is a string sort,
+	# so "2026-3-05" beats every "2026-08-xx" and becomes `latest`.
+	# Used by every read of the column that must not ABSORB: the two anchors, the
+	# ramp series (a bad day need not BE the anchor — below a canonical day it still
+	# slips into the 30-day window and publishes a fabricated ramp under
+	# `form_delta_known: true`), and `load_series!`. The predicate is factored into
+	# Metrics.usable_date_days; what differs per site is which tag it raises.
+	canonical_day : Str -> Try(I64, _)
+	canonical_day = |d| (Metrics.usable_date_days(d)).map_err(|_| BadDailyLoadDay(d))
 
-    # Same rule, different table, so a different tag: an activity date is repaired by
-    # re-fetching or deleting the ROW, a daily_load day by rebuilding the table, and the
-    # boundary picks the message from the tag. Takes the id rather than inventing one:
-    # naming the date alone is what #243 was opened about, and "activity -1" would be that
-    # defect wearing a number.
-    canonical_activity_day : Str, I64 -> Try(I64, _)
-    canonical_activity_day = |d, id| (Metrics.usable_date_days(d)).map_err(|_| BadActivityDate(d, id))
+	# Same rule, different table, so a different tag: an activity date is repaired by
+	# re-fetching or deleting the ROW, a daily_load day by rebuilding the table, and the
+	# boundary picks the message from the tag. Takes the id rather than inventing one:
+	# naming the date alone is what #243 was opened about, and "activity -1" would be that
+	# defect wearing a number.
+	canonical_activity_day : Str, I64 -> Try(I64, _)
+	canonical_activity_day = |d, id| (Metrics.usable_date_days(d)).map_err(|_| BadActivityDate(d, id))
 
-    # Every stored activity date, refused if any is unreadable, naming a row.
-    # ONE BODY, because five spellings of "canonical and parseable" had to agree and
-    # did not (#243). FIVE call sites reaching `rate`, `week`, `compare`, `summary`,
-    # `plan` and `stats`. `season` is deliberately NOT one: it guards inline over a
-    # query grouped by (date, family), so sharing this body would name a different
-    # row than its comment promises.
-    #
-    # CONTRACT FOR CALLERS: a command that reads `daily_load` must guard THAT column
-    # first. With both faults present, `analyze` — the daily_load remedy — clears the
-    # poisoned day AND surfaces the activity fault in one run; reverse the order and
-    # the user meets a second failure nobody warned them about. The fragile holder is
-    # `summary`, which holds the order ACROSS TWO FUNCTIONS; only call order and one
-    # e2e check pin it.
-    #
-    # A WHOLE-TABLE sweep rather than a per-query guard because of the failure mode:
-    # `compare` and `stats` use the date as a FILTER over an aggregate, and an
-    # unreadable date makes the comparison NULL — the row silently LEAVES THE SET.
-    # An absence, not a fabrication (compare's verdict crossed a category with one
-    # date NULLed; stats said 474 under ALL TIME while holding 475), and a guard on
-    # the filtering query cannot catch a row that is already gone.
-    # The one body of "latest" activity resolution, shared by `rate latest` and
-    # `complete latest` (#465). It returns the id AND the day, because a caller
-    # linking a session needs the date and a second query would be a second
-    # chance to disagree with this one.
-    latest_activity! : Str => Try({ id : I64, day : Str }, _)
-    latest_activity! = |path| {
-        # "latest" by PARSED day, not string max: `MAX(start_local)` is a byte
-        # comparison, so one malformed date outranks every real one — and `rate latest`
-        # then attached the rating to that row at exit 0. The worst instance of the
-        # class because it WRITES into `ratings`, one of the two tables prune refuses to
-        # touch (human judgment, unrecoverable), and the printed remedy — delete the
-        # malformed row — would destroy the rating meant for a different session.
-        # Not covered by summary's sweep: `rate!` dispatches straight from main.roc.
-        #
-        # TWO steps, and the split is the point: Roc GUARDS, SQL RANKS. The guard
-        # validates substr(start_local, 1, 19) and the ranker compares the SAME slice —
-        # not two lists that must agree. Positions 1..19 are the whole date and time;
-        # anything past them cannot reorder rows (a lowercase 'z' in position 20 once
-        # outranked an uppercase 'Z' on an identical timestamp).
-        # The date half needs Roc (round-trip + year bound), grouped by DAY — grouping
-        # by whole timestamp scaled with activities, ~870ms at 50k vs ~86ms. The time
-        # half is pure comparison and stays in SQL. This calls the shared sweep rather
-        # than restating it: a byte-identical copy once sat here, ~270 lines above a
-        # call to the helper whose comment claimed to be the one body.
-        _ = Report.guard_activity_dates!(path)?
-        # ...and the TIME half. No NULL arm, deliberately: a NULL start_local is already
-        # refused by the date sweep above, and a mutation test proved the arm could not
-        # fail — a guard that cannot fail is worse than none. The ORDERING is therefore
-        # load-bearing: the date sweep must run before this, or a NULL reaches the
-        # decoder as UnexpectedType(Null) — internal_error on a write path.
-        bad_time = Sql.query_many!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT id AS id, COALESCE(substr(CAST(start_local AS TEXT), 11, 9), '') AS t
-                \\FROM activities
-                \\WHERE NOT (
-                \\      length(start_local) >= 19
-                \\  AND substr(start_local, 11, 1) = 'T'
-                \\  AND substr(start_local, 14, 1) = ':'
-                \\  AND substr(start_local, 17, 1) = ':'
-                \\  AND substr(start_local, 12, 2) GLOB '[0-9][0-9]'
-                \\  AND substr(start_local, 15, 2) GLOB '[0-9][0-9]'
-                \\  AND substr(start_local, 18, 2) GLOB '[0-9][0-9]'
-                \\  AND CAST(substr(CAST(start_local AS TEXT), 12, 2) AS INTEGER) <= 23
-                \\  AND CAST(substr(CAST(start_local AS TEXT), 15, 2) AS INTEGER) <= 59
-                \\  AND CAST(substr(CAST(start_local AS TEXT), 18, 2) AS INTEGER) <= 59
-                \\)
-                \\ORDER BY id LIMIT 1
-            ,
-            bindings: [],
-            rows: |cols| |stmt| {
-                id = Sql.i64("id")(cols)(stmt)?
-                t = Sql.str("t")(cols)(stmt)?
-                Ok({ id, t })
-            },
-        })?
-        # names the component that FAILED, not the one that is fine: the message used to
-        # hand back the date half for a row whose time is T37. BadActivityTime's argument
-        # is the time COMPONENT — raising `('T37:00:00')` framed as a stored value
-        # matches zero rows for anyone who pastes it into a WHERE clause, so the empty
-        # case is worded rather than given a fake literal.
-        _ = match List.first(bad_time) {
-            Ok(r) => Err(BadActivityTime(r.t, r.id))
-            Err(_) => Ok({})
-        }?
-        top = Sql.query!({
-            path: Path.utf8(path),
-            query: "SELECT COALESCE(MAX(id), 0) AS id FROM activities WHERE substr(start_local, 1, 19) = (SELECT MAX(substr(start_local, 1, 19)) FROM activities)",
-            bindings: [],
-            row: Sql.i64("id"),
-        })?
-        id = if top == 0 (Err(NoActivities)?) else top
+	# Every stored activity date, refused if any is unreadable, naming a row.
+	# ONE BODY, because five spellings of "canonical and parseable" had to agree and
+	# did not (#243). FIVE call sites reaching `rate`, `week`, `compare`, `summary`,
+	# `plan` and `stats`. `season` is deliberately NOT one: it guards inline over a
+	# query grouped by (date, family), so sharing this body would name a different
+	# row than its comment promises.
+	#
+	# CONTRACT FOR CALLERS: a command that reads `daily_load` must guard THAT column
+	# first. With both faults present, `analyze` — the daily_load remedy — clears the
+	# poisoned day AND surfaces the activity fault in one run; reverse the order and
+	# the user meets a second failure nobody warned them about. The fragile holder is
+	# `summary`, which holds the order ACROSS TWO FUNCTIONS; only call order and one
+	# e2e check pin it.
+	#
+	# A WHOLE-TABLE sweep rather than a per-query guard because of the failure mode:
+	# `compare` and `stats` use the date as a FILTER over an aggregate, and an
+	# unreadable date makes the comparison NULL — the row silently LEAVES THE SET.
+	# An absence, not a fabrication (compare's verdict crossed a category with one
+	# date NULLed; stats said 474 under ALL TIME while holding 475), and a guard on
+	# the filtering query cannot catch a row that is already gone.
+	# The one body of "latest" activity resolution, shared by `rate latest` and
+	# `complete latest` (#465). It returns the id AND the day, because a caller
+	# linking a session needs the date and a second query would be a second
+	# chance to disagree with this one.
+	latest_activity! : Str => Try({ id : I64, day : Str }, _)
+	latest_activity! = |path| {
+		# "latest" by PARSED day, not string max: `MAX(start_local)` is a byte
+		# comparison, so one malformed date outranks every real one — and `rate latest`
+		# then attached the rating to that row at exit 0. The worst instance of the
+		# class because it WRITES into `ratings`, one of the two tables prune refuses to
+		# touch (human judgment, unrecoverable), and the printed remedy — delete the
+		# malformed row — would destroy the rating meant for a different session.
+		# Not covered by summary's sweep: `rate!` dispatches straight from main.roc.
+		#
+		# TWO steps, and the split is the point: Roc GUARDS, SQL RANKS. The guard
+		# validates substr(start_local, 1, 19) and the ranker compares the SAME slice —
+		# not two lists that must agree. Positions 1..19 are the whole date and time;
+		# anything past them cannot reorder rows (a lowercase 'z' in position 20 once
+		# outranked an uppercase 'Z' on an identical timestamp).
+		# The date half needs Roc (round-trip + year bound), grouped by DAY — grouping
+		# by whole timestamp scaled with activities, ~870ms at 50k vs ~86ms. The time
+		# half is pure comparison and stays in SQL. This calls the shared sweep rather
+		# than restating it: a byte-identical copy once sat here, ~270 lines above a
+		# call to the helper whose comment claimed to be the one body.
+		_ = Report.guard_activity_dates!(path)?
+		# ...and the TIME half. No NULL arm, deliberately: a NULL start_local is already
+		# refused by the date sweep above, and a mutation test proved the arm could not
+		# fail — a guard that cannot fail is worse than none. The ORDERING is therefore
+		# load-bearing: the date sweep must run before this, or a NULL reaches the
+		# decoder as UnexpectedType(Null) — internal_error on a write path.
+		bad_time = Sql.query_many!({
+			path: Path.utf8(path),
+			query: \\SELECT id AS id, COALESCE(substr(CAST(start_local AS TEXT), 11, 9), '') AS t
+				\\FROM activities
+				\\WHERE NOT (
+				\\      length(start_local) >= 19
+				\\  AND substr(start_local, 11, 1) = 'T'
+				\\  AND substr(start_local, 14, 1) = ':'
+				\\  AND substr(start_local, 17, 1) = ':'
+				\\  AND substr(start_local, 12, 2) GLOB '[0-9][0-9]'
+				\\  AND substr(start_local, 15, 2) GLOB '[0-9][0-9]'
+				\\  AND substr(start_local, 18, 2) GLOB '[0-9][0-9]'
+				\\  AND CAST(substr(CAST(start_local AS TEXT), 12, 2) AS INTEGER) <= 23
+				\\  AND CAST(substr(CAST(start_local AS TEXT), 15, 2) AS INTEGER) <= 59
+				\\  AND CAST(substr(CAST(start_local AS TEXT), 18, 2) AS INTEGER) <= 59
+				\\)
+				\\ORDER BY id LIMIT 1
+			,
+			bindings: [],
+			rows: |cols| |stmt| {
+				id = Sql.i64("id")(cols)(stmt)?
+				t = Sql.str("t")(cols)(stmt)?
+				Ok({ id, t })
+			},
+		})?
+		# names the component that FAILED, not the one that is fine: the message used to
+		# hand back the date half for a row whose time is T37. BadActivityTime's argument
+		# is the time COMPONENT — raising `('T37:00:00')` framed as a stored value
+		# matches zero rows for anyone who pastes it into a WHERE clause, so the empty
+		# case is worded rather than given a fake literal.
+		_ = match List.first(bad_time) {
+			Ok(r) => Err(BadActivityTime(r.t, r.id))
+			Err(_) => Ok({})
+		}?
+		top = Sql.query!({
+			path: Path.utf8(path),
+			query: "SELECT COALESCE(MAX(id), 0) AS id FROM activities WHERE substr(start_local, 1, 19) = (SELECT MAX(substr(start_local, 1, 19)) FROM activities)",
+			bindings: [],
+			row: Sql.i64("id"),
+		})?
+		id = if (top == 0) (Err(NoActivities)?) else top
 
-        day = Sql.query!({
-            path: Path.utf8(path),
-            query: "SELECT CAST(substr(start_local, 1, 10) AS TEXT) AS d FROM activities WHERE id = :id",
-            bindings: [{ name: ":id", value: Integer(id) }],
-            row: Sql.str("d"),
-        })?
-        Ok({ id, day })
-    }
+		day = Sql.query!({
+			path: Path.utf8(path),
+			query: "SELECT CAST(substr(start_local, 1, 10) AS TEXT) AS d FROM activities WHERE id = :id",
+			bindings: [{ name: ":id", value: Integer(id) }],
+			row: Sql.str("d"),
+		})?
+		Ok({ id, day })
+	}
 
-    guard_activity_dates! : Str => Try({}, _)
-    guard_activity_dates! = |path| {
-        act_days = Sql.query_many!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT COALESCE(substr(CAST(start_local AS TEXT), 1, 10), '') AS d, MIN(id) AS example_id
-                \\FROM activities GROUP BY d ORDER BY d, example_id
-            ,
-            bindings: [],
-            rows: |cols| |stmt| {
-                d = Sql.str("d")(cols)(stmt)?
-                example_id = Sql.i64("example_id")(cols)(stmt)?
-                Ok({ d, example_id })
-            },
-        })?
-        _ = List.map_try(act_days, |r| canonical_activity_day(r.d, r.example_id))?
-        Ok({})
-    }
+	guard_activity_dates! : Str => Try({}, _)
+	guard_activity_dates! = |path| {
+		act_days = Sql.query_many!({
+			path: Path.utf8(path),
+			query: \\SELECT COALESCE(substr(CAST(start_local AS TEXT), 1, 10), '') AS d, MIN(id) AS example_id
+				\\FROM activities GROUP BY d ORDER BY d, example_id
+			,
+			bindings: [],
+			rows: |cols| |stmt| {
+				d = Sql.str("d")(cols)(stmt)?
+				example_id = Sql.i64("example_id")(cols)(stmt)?
+				Ok({ d, example_id })
+			},
+		})?
+		_ = List.map_try(act_days, |r| canonical_activity_day(r.d, r.example_id))?
+		Ok({})
+	}
 
-    pct_num : I64, I64 -> I64
-    pct_num = |part, total|
-        if total == 0
-            0
-        else
-            ((part).to_f64() * 100.0 / (total).to_f64()).round_to_i64_try().ok_or(0)
+	pct_num : I64, I64 -> I64
+	pct_num = |part, total|
+		if (total == 0)
+			0
+		else
+			((part).to_f64() * 100.0 / (total).to_f64()).round_to_i64_try().ok_or(0)
 
-    # the whole-athlete report: form, 7d/28d zone split + polarization, derived FTP, per-sport 28d
-    summary! : {} => Try({}, _)
-    summary! = |{}| {
-        path = Db.open_db!({})?
-        # Resolved beside the payload, not inside the renderer: the JSON half of this
-        # command must stay SI whatever `units` says, so the setting is applied only to
-        # the human closure below.
-        units = Db.units!(path)?
-        match Analyze.load_zone_config!(path) {
-            Err(MissingConfig) => Output.missing_config!({})
-            Err(other) => Err(other)
-            Ok(zb) =>
-                match summary_payload!(path, zb) {
-                    Err(NoDataYet) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
-                    Err(e) => Err(e)
-                    Ok(payload) => Output.out!(payload, |p| Render.summary_screen(units, p))
-                }
-        }
-    }
-    # The hard-day block of summary_payload!, lifted whole (#196). It is the one
-    # self-contained stretch in that function -- three inputs, one record out, and
-    # nothing downstream re-reads an intermediate. `hard_expr` stays inside: it is SQL
-    # text used twice here and nowhere else, and returning it would put a query
-    # fragment in a payload record.
-    hard_day_stats! = |path, anchor, cutoff28| {
-        # most recent day with a real hard stimulus (5+ min in Z4/Z5); '' = never.
-        # ONE hard-session predicate (#159), power-aware like every other hard surface:
-        # pi_hard when the activity has an intensity split, HR Z4+Z5 otherwise. HR-only
-        # missed power rides with junk straps; consolidated, not a second definition.
-        # MAX(substr(...)) is a STRING max reaching the payload with no Roc-side parse,
-        # so a malformed start_local shipped verbatim into a date field — covered by the
-        # all-time sweep below, NOT by anything in this query (this one has no cutoff).
-        hard_expr = "COALESCE(ai.hard_s, 0) >= 300"
-        last_hard = Sql.query!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT COALESCE(MAX(substr(CAST(a.start_local AS TEXT), 1, 10)), '') AS d
-                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
-                \\JOIN activity_intensity ai ON ai.activity_id = a.id
-                \\WHERE ${hard_expr}
-            ,
-            bindings: [],
-            row: Sql.str("d"),
-        })?
-        # stimulus features (#159): counts, spacing and windowed loads the coach would
-        # otherwise re-derive — measurements only, never judgments (#154).
-        # ONE sweep over every activity date, before any read below. It replaces a
-        # per-query guard that named the wrong row (MIN(a.id) inside a GROUP BY names the
-        # lowest id IN THE GROUP, not the row whose date is the MAX), and it covers the
-        # two string MAXes with no parse to hang a guard on: `last_hard` is all-time, so
-        # a cutoff-scoped guard cannot see a malformed hard session older than the
-        # window, and `sports_28d.last_date` has no hard_expr at all.
-        _ = guard_activity_dates!(path)?
-        hard_days = Sql.query_many!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS d,
-                \\       -- carried so a refused date can name a row, as everywhere else in
-                \\       -- #243. MIN because DISTINCT on the date collapses several
-                \\       -- activities onto one day and the id has to be reproducible;
-                \\       -- ORDER BY makes "first" a stated property rather than SQLite's.
-                \\       MIN(a.id) AS example_id
-                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
-                \\JOIN activity_intensity ai ON ai.activity_id = a.id
-                \\WHERE ${hard_expr} AND a.start_local >= :cutoff
-                \\GROUP BY d ORDER BY d, example_id
-            ,
-            bindings: [{ name: ":cutoff", value: String(cutoff28) }],
-            rows: |cols| |stmt| {
-                d = Sql.str("d")(cols)(stmt)?
-                example_id = Sql.i64("example_id")(cols)(stmt)?
-                Ok({ d, example_id })
-            },
-        })?
-        # PROPAGATE, on the same rule and for the same reason as the daily_load reads
-        # above — every activity date this fold parses goes through it.
-        # `keep_oks` was doing both jobs badly: it dropped an unparseable date SILENTLY and
-        # it ACCEPTED a non-canonical one, so the fold both under-counted and mis-dated.
-        # Measured: a fabricated days_since_last shipped under days_since_known: true,
-        # which is the shape the ramp fix removed one screen up in this same file.
-        hard_day_nums = List.map_try(hard_days, |r| canonical_activity_day(r.d, r.example_id))?
-        # Str has no ordering — count on parsed day numbers, same anchor math
-        hard_d14 = List.len(List.keep_if(hard_day_nums, |d| d >= anchor - 13))
-        spacing = Metrics.median_gap_days(hard_day_nums)
-        days_since_hard =
-            match List.sort_with(hard_day_nums, |a, b| if a > b Before else if a < b After else Same) {
-                [newest_hard, ..] => Known(anchor - newest_hard)
-                [] => Unknown
-            }
-        # ANNOTATED Bools: this payload is encode-only, and a bare tag would
-        # serialize as the STRING "True" rather than a JSON bool (pinned in e2e)
-        spacing_known_b : Bool
-        spacing_known_b = match spacing { Known(_) => True  Unknown => False }
-        days_since_known_b : Bool
-        days_since_known_b = match days_since_hard { Known(_) => True  Unknown => False }
-        Ok({ last_hard, d14: hard_d14, d28: (List.len(hard_day_nums)).to_i64_wrap(), spacing, days_since: days_since_hard, spacing_known: spacing_known_b, days_since_known: days_since_known_b })
-    }
+	# the whole-athlete report: form, 7d/28d zone split + polarization, derived FTP, per-sport 28d
+	summary! : {} => Try({}, _)
+	summary! = |{}| {
+		path = Db.open_db!({})?
+		# Resolved beside the payload, not inside the renderer: the JSON half of this
+		# command must stay SI whatever `units` says, so the setting is applied only to
+		# the human closure below.
+		units = Db.units!(path)?
+		match Analyze.load_zone_config!(path) {
+			Err(MissingConfig) => Output.missing_config!({})
+			Err(other) => Err(other)
+			Ok(zb) =>
+				match summary_payload!(path, zb) {
+					Err(NoDataYet) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
+					Err(e) => Err(e)
+					Ok(payload) => Output.out!(payload, |p| Render.summary_screen(units, p))
+				}
+		}
+	}
+	# The hard-day block of summary_payload!, lifted whole (#196). It is the one
+	# self-contained stretch in that function -- three inputs, one record out, and
+	# nothing downstream re-reads an intermediate. `hard_expr` stays inside: it is SQL
+	# text used twice here and nowhere else, and returning it would put a query
+	# fragment in a payload record.
+	hard_day_stats! = |path, anchor, cutoff28| {
+		# most recent day with a real hard stimulus (5+ min in Z4/Z5); '' = never.
+		# ONE hard-session predicate (#159), power-aware like every other hard surface:
+		# pi_hard when the activity has an intensity split, HR Z4+Z5 otherwise. HR-only
+		# missed power rides with junk straps; consolidated, not a second definition.
+		# MAX(substr(...)) is a STRING max reaching the payload with no Roc-side parse,
+		# so a malformed start_local shipped verbatim into a date field — covered by the
+		# all-time sweep below, NOT by anything in this query (this one has no cutoff).
+		hard_expr = "COALESCE(ai.hard_s, 0) >= 300"
+		last_hard = Sql.query!({
+			path: Path.utf8(path),
+			query: \\SELECT COALESCE(MAX(substr(CAST(a.start_local AS TEXT), 1, 10)), '') AS d
+				\\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+				\\JOIN activity_intensity ai ON ai.activity_id = a.id
+				\\WHERE ${hard_expr}
+			,
+			bindings: [],
+			row: Sql.str("d"),
+		})?
+		# stimulus features (#159): counts, spacing and windowed loads the coach would
+		# otherwise re-derive — measurements only, never judgments (#154).
+		# ONE sweep over every activity date, before any read below. It replaces a
+		# per-query guard that named the wrong row (MIN(a.id) inside a GROUP BY names the
+		# lowest id IN THE GROUP, not the row whose date is the MAX), and it covers the
+		# two string MAXes with no parse to hang a guard on: `last_hard` is all-time, so
+		# a cutoff-scoped guard cannot see a malformed hard session older than the
+		# window, and `sports_28d.last_date` has no hard_expr at all.
+		_ = guard_activity_dates!(path)?
+		hard_days = Sql.query_many!({
+			path: Path.utf8(path),
+			query: \\SELECT COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS d,
+				\\       -- carried so a refused date can name a row, as everywhere else in
+				\\       -- #243. MIN because DISTINCT on the date collapses several
+				\\       -- activities onto one day and the id has to be reproducible;
+				\\       -- ORDER BY makes "first" a stated property rather than SQLite's.
+				\\       MIN(a.id) AS example_id
+				\\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+				\\JOIN activity_intensity ai ON ai.activity_id = a.id
+				\\WHERE ${hard_expr} AND a.start_local >= :cutoff
+				\\GROUP BY d ORDER BY d, example_id
+			,
+			bindings: [{ name: ":cutoff", value: String(cutoff28) }],
+			rows: |cols| |stmt| {
+				d = Sql.str("d")(cols)(stmt)?
+				example_id = Sql.i64("example_id")(cols)(stmt)?
+				Ok({ d, example_id })
+			},
+		})?
+		# PROPAGATE, on the same rule and for the same reason as the daily_load reads
+		# above — every activity date this fold parses goes through it.
+		# `keep_oks` was doing both jobs badly: it dropped an unparseable date SILENTLY and
+		# it ACCEPTED a non-canonical one, so the fold both under-counted and mis-dated.
+		# Measured: a fabricated days_since_last shipped under days_since_known: true,
+		# which is the shape the ramp fix removed one screen up in this same file.
+		hard_day_nums = List.map_try(hard_days, |r| canonical_activity_day(r.d, r.example_id))?
+		# Str has no ordering — count on parsed day numbers, same anchor math
+		hard_d14 = List.len(List.keep_if(hard_day_nums, |d| d >= anchor - 13))
+		spacing = Metrics.median_gap_days(hard_day_nums)
+		days_since_hard =
+			match List.sort_with(hard_day_nums, |a, b| if (a > b) Before else if (a < b) After else Same) {
+				[newest_hard, ..] => Known(anchor - newest_hard)
+				[] => Unknown
+			}
+		# ANNOTATED Bools: this payload is encode-only, and a bare tag would
+		# serialize as the STRING "True" rather than a JSON bool (pinned in e2e)
+		spacing_known_b : Bool
+		spacing_known_b = match spacing {
+			Known(_) => True
+			Unknown => False
+		}
+		days_since_known_b : Bool
+		days_since_known_b = match days_since_hard {
+			Known(_) => True
+			Unknown => False
+		}
+		Ok({ last_hard, d14: hard_d14, d28: (List.len(hard_day_nums)).to_i64_wrap(), spacing, days_since: days_since_hard, spacing_known: spacing_known_b, days_since_known: days_since_known_b })
+	}
 
-    summary_payload! = |path, zb| {
-        # empty daily_load (nothing analyzed yet) is a clean "no data" state, not an
-        # error to blow up on — map NoRowsReturned to a tag the callers turn into a
-        # friendly message instead of leaking a raw SQLite error to the user.
-        latest =
-            match Sql.query!({
-                path: Path.utf8(path),
-                query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
-                bindings: [],
-                row: |cols| |stmt| {
-                    day = Sql.str("day")(cols)(stmt)?
-                    ctl = Sql.f64("ctl")(cols)(stmt)?
-                    atl = Sql.f64("atl")(cols)(stmt)?
-                    tsb = Sql.f64("tsb")(cols)(stmt)?
-                    Ok({ day, ctl, atl, tsb })
-                },
-            }) {
-                Ok(v) => Ok(v)
-                Err(NoRowsReturned) => Err(NoDataYet)
-                Err(e) => Err(e)
-            }?
-        # PROPAGATE a bad anchor day, exactly as the ramp rows below do — the same guard,
-        # applied to the value those rows are compared AGAINST. Defaulting to epoch day 0
-        # here is worse than for a row: this one binding drives every cutoff, the ramp
-        # window, form_delta_7d and days_in_band. A junk `day` sorts to the top of
-        # `ORDER BY day DESC` (string sort), becomes `latest`, and then either lands the
-        # cutoffs in the far future (every window returns nothing, and summary prints a
-        # confident all-zero report) or in 1969 (every "last 28 days" window silently
-        # becomes all-time). Both exit 0 with nothing flagged.
-        anchor = canonical_day(latest.day)?
-        # Inclusive >= cutoffs: today plus 27/59 prior days are true 28/60-day windows.
-        cutoff28 = Metrics.days_to_date_str(anchor - 27)
-        cutoff60 = Metrics.days_to_date_str(anchor - 59)
-        # the estimate's window is the one scoring and the plan derive by: the 60
-        # days before the anchor (Db.derive_sport_ftp! and period_ftp_sql both
-        # reach back `-60 days`), one day wider than the inclusive display windows
-        cutoff_ftp = Metrics.days_to_date_str(anchor - 60)
+	summary_payload! = |path, zb| {
+		# empty daily_load (nothing analyzed yet) is a clean "no data" state, not an
+		# error to blow up on — map NoRowsReturned to a tag the callers turn into a
+		# friendly message instead of leaking a raw SQLite error to the user.
+		latest =
+			match Sql.query!({
+				path: Path.utf8(path),
+				query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT 1",
+				bindings: [],
+				row: |cols| |stmt| {
+					day = Sql.str("day")(cols)(stmt)?
+					ctl = Sql.f64("ctl")(cols)(stmt)?
+					atl = Sql.f64("atl")(cols)(stmt)?
+					tsb = Sql.f64("tsb")(cols)(stmt)?
+					Ok({ day, ctl, atl, tsb })
+				},
+			}) {
+				Ok(v) => Ok(v)
+				Err(NoRowsReturned) => Err(NoDataYet)
+				Err(e) => Err(e)
+			}?
+		# PROPAGATE a bad anchor day, exactly as the ramp rows below do — the same guard,
+		# applied to the value those rows are compared AGAINST. Defaulting to epoch day 0
+		# here is worse than for a row: this one binding drives every cutoff, the ramp
+		# window, form_delta_7d and days_in_band. A junk `day` sorts to the top of
+		# `ORDER BY day DESC` (string sort), becomes `latest`, and then either lands the
+		# cutoffs in the far future (every window returns nothing, and summary prints a
+		# confident all-zero report) or in 1969 (every "last 28 days" window silently
+		# becomes all-time). Both exit 0 with nothing flagged.
+		anchor = canonical_day(latest.day)?
+		# Inclusive >= cutoffs: today plus 27/59 prior days are true 28/60-day windows.
+		cutoff28 = Metrics.days_to_date_str(anchor - 27)
+		cutoff60 = Metrics.days_to_date_str(anchor - 59)
+		# the estimate's window is the one scoring and the plan derive by: the 60
+		# days before the anchor (Db.derive_sport_ftp! and period_ftp_sql both
+		# reach back `-60 days`), one day wider than the inclusive display windows
+		cutoff_ftp = Metrics.days_to_date_str(anchor - 60)
 
-        zsum = zone_sum!(path, cutoff28)?
+		zsum = zone_sum!(path, cutoff28)?
 
-        # the RIDE family's population, same as pz — a global cross-sport MAX
-        # equals the ride max only while no other family out-rows it (#151, the
-        # exact bug one level up)
-        best20_row = Sql.query!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT CAST(COALESCE(MAX(m.best_20min_w),0) AS REAL) AS b FROM activity_metrics m
-                \\JOIN activities a ON a.id = m.activity_id
-                \\WHERE a.sport_family = :fam AND a.start_local >= :cutoff
-            ,
-            bindings: [{ name: ":fam", value: String(Sports.canonical("Ride")) }, { name: ":cutoff", value: String(cutoff60) }],
-            row: Sql.f64("b"),
-        })?
+		# the RIDE family's population, same as pz — a global cross-sport MAX
+		# equals the ride max only while no other family out-rows it (#151, the
+		# exact bug one level up)
+		best20_row = Sql.query!({
+			path: Path.utf8(path),
+			query: \\SELECT CAST(COALESCE(MAX(m.best_20min_w),0) AS REAL) AS b FROM activity_metrics m
+				\\JOIN activities a ON a.id = m.activity_id
+				\\WHERE a.sport_family = :fam AND a.start_local >= :cutoff
+			,
+			bindings: [{ name: ":fam", value: String(Sports.canonical("Ride")) }, { name: ":cutoff", value: String(cutoff60) }],
+			row: Sql.f64("b"),
+		})?
 
-        # the best the ESTIMATE stands on: the same window, but only once two
-        # sessions of the family carry a best there (#574, the rule scoring uses),
-        # so a lone ride reports its measured best and an estimate of 0
-        ftp_best_row = Sql.query!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT CAST(COALESCE(CASE WHEN COUNT(NULLIF(m.best_20min_w, 0)) >= 2 THEN MAX(m.best_20min_w) END, 0) AS REAL) AS b FROM activity_metrics m
-                \\JOIN activities a ON a.id = m.activity_id
-                \\WHERE a.sport_family = :fam AND a.start_local >= :cutoff
-            ,
-            bindings: [{ name: ":fam", value: String(Sports.canonical("Ride")) }, { name: ":cutoff", value: String(cutoff_ftp) }],
-            row: Sql.f64("b"),
-        })?
+		# the best the ESTIMATE stands on: the same window, but only once two
+		# sessions of the family carry a best there (#574, the rule scoring uses),
+		# so a lone ride reports its measured best and an estimate of 0
+		ftp_best_row = Sql.query!({
+			path: Path.utf8(path),
+			query: \\SELECT CAST(COALESCE(CASE WHEN COUNT(NULLIF(m.best_20min_w, 0)) >= 2 THEN MAX(m.best_20min_w) END, 0) AS REAL) AS b FROM activity_metrics m
+				\\JOIN activities a ON a.id = m.activity_id
+				\\WHERE a.sport_family = :fam AND a.start_local >= :cutoff
+			,
+			bindings: [{ name: ":fam", value: String(Sports.canonical("Ride")) }, { name: ":cutoff", value: String(cutoff_ftp) }],
+			row: Sql.f64("b"),
+		})?
 
-        sports = Sql.query_many!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT COALESCE(CAST(a.sport_type AS TEXT), '') AS sport, COUNT(*) AS sessions, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
-                \\       COALESCE(SUM(a.moving_time),0) AS moving_time, CAST(COALESCE(SUM(a.distance),0) AS REAL) AS distance_m,
-                \\       COALESCE(MAX(substr(CAST(a.start_local AS TEXT), 1, 10)), '') AS last_date
-                \\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
-                \\WHERE a.start_local >= :cutoff
-                \\GROUP BY a.sport_type ORDER BY tss DESC, a.sport_type
-            ,
-            bindings: [{ name: ":cutoff", value: String(cutoff28) }],
-            rows: |cols| |stmt| {
-                sport = Sql.str("sport")(cols)(stmt)?
-                sessions = Sql.i64("sessions")(cols)(stmt)?
-                tss = Sql.f64("tss")(cols)(stmt)?
-                moving_time = Sql.i64("moving_time")(cols)(stmt)?
-                distance_m = Sql.f64("distance_m")(cols)(stmt)?
-                # when this sport was last seen (#159) — '' can't happen inside the
-                # window filter, but COALESCE keeps the decoder total
-                last_date = Sql.str("last_date")(cols)(stmt)?
-                Ok({ sport, sessions, tss, moving_time, distance_m, last_date })
-            },
-        })?
+		sports = Sql.query_many!({
+			path: Path.utf8(path),
+			query: \\SELECT COALESCE(CAST(a.sport_type AS TEXT), '') AS sport, COUNT(*) AS sessions, CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss,
+				\\       COALESCE(SUM(a.moving_time),0) AS moving_time, CAST(COALESCE(SUM(a.distance),0) AS REAL) AS distance_m,
+				\\       COALESCE(MAX(substr(CAST(a.start_local AS TEXT), 1, 10)), '') AS last_date
+				\\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
+				\\WHERE a.start_local >= :cutoff
+				\\GROUP BY a.sport_type ORDER BY tss DESC, a.sport_type
+			,
+			bindings: [{ name: ":cutoff", value: String(cutoff28) }],
+			rows: |cols| |stmt| {
+				sport = Sql.str("sport")(cols)(stmt)?
+				sessions = Sql.i64("sessions")(cols)(stmt)?
+				tss = Sql.f64("tss")(cols)(stmt)?
+				moving_time = Sql.i64("moving_time")(cols)(stmt)?
+				distance_m = Sql.f64("distance_m")(cols)(stmt)?
+				# when this sport was last seen (#159) — '' can't happen inside the
+				# window filter, but COALESCE keeps the decoder total
+				last_date = Sql.str("last_date")(cols)(stmt)?
+				Ok({ sport, sessions, tss, moving_time, distance_m, last_date })
+			},
+		})?
 
+		cutoff7 = Metrics.days_to_date_str(anchor - 6)
+		zsum7 = zone_sum!(path, cutoff7)?
+		# TSS-weighted confidence coverage per window (#157): 7d and 28d speak for
+		# the load numbers beside them; 90d spans two CTL time constants, so it is
+		# the honest provenance for CTL/ATL/TSB. Percentages sum to exactly 100
+		# (Metrics.coverage_pcts) and known=false marks an empty window — 0/0/0
+		# with known true would claim a measurement nobody took (ADR 0009).
+		cutoff90 = Metrics.days_to_date_str(anchor - 89)
+		cov7_raw = coverage_sums!(path, cutoff7)?
+		cov28_raw = coverage_sums!(path, cutoff28)?
+		cov90_raw = coverage_sums!(path, cutoff90)?
+		cov_block = |c| {
+			pcts = Metrics.coverage_pcts(c.high, c.medium, c.low)
+			known : Bool
+			known = c.high + c.medium + c.low > 0.0
+			{ high_pct: pcts.high_pct, medium_pct: pcts.medium_pct, low_pct: pcts.low_pct, known }
+		}
+		cov7 = cov_block(cov7_raw)
+		cov28 = cov_block(cov28_raw)
+		cov90 = cov_block(cov90_raw)
 
-        cutoff7 = Metrics.days_to_date_str(anchor - 6)
-        zsum7 = zone_sum!(path, cutoff7)?
-        # TSS-weighted confidence coverage per window (#157): 7d and 28d speak for
-        # the load numbers beside them; 90d spans two CTL time constants, so it is
-        # the honest provenance for CTL/ATL/TSB. Percentages sum to exactly 100
-        # (Metrics.coverage_pcts) and known=false marks an empty window — 0/0/0
-        # with known true would claim a measurement nobody took (ADR 0009).
-        cutoff90 = Metrics.days_to_date_str(anchor - 89)
-        cov7_raw = coverage_sums!(path, cutoff7)?
-        cov28_raw = coverage_sums!(path, cutoff28)?
-        cov90_raw = coverage_sums!(path, cutoff90)?
-        cov_block = |c| {
-            pcts = Metrics.coverage_pcts(c.high, c.medium, c.low)
-            known : Bool
-            known = c.high + c.medium + c.low > 0.0
-            { high_pct: pcts.high_pct, medium_pct: pcts.medium_pct, low_pct: pcts.low_pct, known }
-        }
-        cov7 = cov_block(cov7_raw)
-        cov28 = cov_block(cov28_raw)
-        cov90 = cov_block(cov90_raw)
+		pending = Sql.query!({
+			path: Path.utf8(path),
+			query: "SELECT COUNT(*) AS n FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'",
+			bindings: [],
+			row: Sql.i64("n"),
+		})?
 
-        pending = Sql.query!({
-            path: Path.utf8(path),
-            query: "SELECT COUNT(*) AS n FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'",
-            bindings: [],
-            row: Sql.i64("n"),
-        })?
+		hd = hard_day_stats!(path, anchor, cutoff28)?
+		last_hard = hd.last_hard
+		hard_d14 = hd.d14
+		spacing = hd.spacing
+		days_since_hard = hd.days_since
+		spacing_known_b : Bool
+		spacing_known_b = hd.spacing_known
+		days_since_known_b : Bool
+		days_since_known_b = hd.days_since_known
+		# windowed loads + prior windows of the SAME length, deltas raw. The
+		# prior-7d window is [-13..-7] and prior-28d is [-55..-28]: adjacent,
+		# non-overlapping, same width — the delta compares like with like.
+		loadw = Sql.query!({
+			path: Path.utf8(path),
+			query: \\SELECT CAST(COALESCE(SUM(CASE WHEN a.start_local >= :c90 THEN m.tss ELSE 0 END),0) AS REAL) AS d90,
+				\\       CAST(COALESCE(SUM(CASE WHEN a.start_local >= :p7lo AND a.start_local < :c7 THEN m.tss ELSE 0 END),0) AS REAL) AS p7,
+				\\       CAST(COALESCE(SUM(CASE WHEN a.start_local >= :p28lo AND a.start_local < :c28 THEN m.tss ELSE 0 END),0) AS REAL) AS p28
+				\\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+			,
+			bindings: [
+				{ name: ":c90", value: String(Metrics.days_to_date_str(anchor - 89)) },
+				{ name: ":p7lo", value: String(Metrics.days_to_date_str(anchor - 13)) },
+				{ name: ":c7", value: String(cutoff7) },
+				{ name: ":p28lo", value: String(Metrics.days_to_date_str(anchor - 55)) },
+				{ name: ":c28", value: String(cutoff28) },
+			],
+			row: |cols| |stmt| {
+				d90 = Sql.f64("d90")(cols)(stmt)?
+				p7 = Sql.f64("p7")(cols)(stmt)?
+				p28 = Sql.f64("p28")(cols)(stmt)?
+				Ok({ d90, p7, p28 })
+			},
+		})?
+		# threshold trajectory: the ride-family best-20-min of the PRIOR 60-day
+		# window ([-119..-60]) beside the current one — the delta says which way
+		# the demonstrated ceiling moved; known=false when the prior window has
+		# no power (a delta against nothing is not 0, ADR 0009)
+		prior_best20 = Sql.query!({
+			path: Path.utf8(path),
+			query: \\SELECT CAST(COALESCE(MAX(m.best_20min_w),0) AS REAL) AS b,
+				\\       CASE WHEN MAX(m.best_20min_w) IS NULL THEN 0 ELSE 1 END AS bk
+				\\FROM activity_metrics m
+				\\JOIN activities a ON a.id = m.activity_id
+				\\WHERE a.sport_family = :fam AND a.start_local >= :lo AND a.start_local < :hi
+			,
+			bindings: [
+				{ name: ":fam", value: String(Sports.canonical("Ride")) },
+				{ name: ":lo", value: String(Metrics.days_to_date_str(anchor - 119)) },
+				{ name: ":hi", value: String(cutoff60) },
+			],
+			row: |cols| |stmt| {
+				b = Sql.f64("b")(cols)(stmt)?
+				bk = Sql.i64("bk")(cols)(stmt)?
+				Ok({ b, bk })
+			},
+		})?
+		# flag decodes the stored NULL, never the magnitude (ADR 0009)
+		prior_b20_known_b : Bool
+		prior_b20_known_b = prior_best20.bk != 0
 
-        hd = hard_day_stats!(path, anchor, cutoff28)?
-        last_hard = hd.last_hard
-        hard_d14 = hd.d14
-        spacing = hd.spacing
-        days_since_hard = hd.days_since
-        spacing_known_b : Bool
-        spacing_known_b = hd.spacing_known
-        days_since_known_b : Bool
-        days_since_known_b = hd.days_since_known
-        # windowed loads + prior windows of the SAME length, deltas raw. The
-        # prior-7d window is [-13..-7] and prior-28d is [-55..-28]: adjacent,
-        # non-overlapping, same width — the delta compares like with like.
-        loadw = Sql.query!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT CAST(COALESCE(SUM(CASE WHEN a.start_local >= :c90 THEN m.tss ELSE 0 END),0) AS REAL) AS d90,
-                \\       CAST(COALESCE(SUM(CASE WHEN a.start_local >= :p7lo AND a.start_local < :c7 THEN m.tss ELSE 0 END),0) AS REAL) AS p7,
-                \\       CAST(COALESCE(SUM(CASE WHEN a.start_local >= :p28lo AND a.start_local < :c28 THEN m.tss ELSE 0 END),0) AS REAL) AS p28
-                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
-            ,
-            bindings: [
-                { name: ":c90", value: String(Metrics.days_to_date_str(anchor - 89)) },
-                { name: ":p7lo", value: String(Metrics.days_to_date_str(anchor - 13)) },
-                { name: ":c7", value: String(cutoff7) },
-                { name: ":p28lo", value: String(Metrics.days_to_date_str(anchor - 55)) },
-                { name: ":c28", value: String(cutoff28) },
-            ],
-            row: |cols| |stmt| {
-                d90 = Sql.f64("d90")(cols)(stmt)?
-                p7 = Sql.f64("p7")(cols)(stmt)?
-                p28 = Sql.f64("p28")(cols)(stmt)?
-                Ok({ d90, p7, p28 })
-            },
-        })?
-        # threshold trajectory: the ride-family best-20-min of the PRIOR 60-day
-        # window ([-119..-60]) beside the current one — the delta says which way
-        # the demonstrated ceiling moved; known=false when the prior window has
-        # no power (a delta against nothing is not 0, ADR 0009)
-        prior_best20 = Sql.query!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT CAST(COALESCE(MAX(m.best_20min_w),0) AS REAL) AS b,
-                \\       CASE WHEN MAX(m.best_20min_w) IS NULL THEN 0 ELSE 1 END AS bk
-                \\FROM activity_metrics m
-                \\JOIN activities a ON a.id = m.activity_id
-                \\WHERE a.sport_family = :fam AND a.start_local >= :lo AND a.start_local < :hi
-            ,
-            bindings: [
-                { name: ":fam", value: String(Sports.canonical("Ride")) },
-                { name: ":lo", value: String(Metrics.days_to_date_str(anchor - 119)) },
-                { name: ":hi", value: String(cutoff60) },
-            ],
-            row: |cols| |stmt| {
-                b = Sql.f64("b")(cols)(stmt)?
-                bk = Sql.i64("bk")(cols)(stmt)?
-                Ok({ b, bk })
-            },
-        })?
-        # flag decodes the stored NULL, never the magnitude (ADR 0009)
-        prior_b20_known_b : Bool
-        prior_b20_known_b = prior_best20.bk != 0
+		# polarization is intensity-aware and covers the activities the view marks
+		# `polarized`: easy/moderate/hard come from the pi_* split where one exists
+		# (power-derived with watts, pace-derived for a distance sport without), HR
+		# zones otherwise. polarization_known is the ambiguous-zero discriminator
+		# (ADR 0009) for the three shares: a window whose sessions are all lifting
+		# has a zero total, and its shares are absent rather than 0%.
+		total = zsum.easy + zsum.moderate + zsum.hard
+		easy = zsum.easy
+		hard = zsum.hard
+		# what fraction of the 28d load is measured (power OR distance-measured pace) vs estimated
+		# (HR/RPE/RE) —
+		# so the fitness number carries its own confidence, not just doctor's
+		measured_pct = if (zsum.tss > 0.0) ((zsum.measured / zsum.tss) * 100.0).round_to_i64_try().ok_or(0) else 0
+		total7 = zsum7.easy + zsum7.moderate + zsum7.hard
+		easy7 = zsum7.easy
+		hard7 = zsum7.hard
 
-        # polarization is intensity-aware and covers the activities the view marks
-        # `polarized`: easy/moderate/hard come from the pi_* split where one exists
-        # (power-derived with watts, pace-derived for a distance sport without), HR
-        # zones otherwise. polarization_known is the ambiguous-zero discriminator
-        # (ADR 0009) for the three shares: a window whose sessions are all lifting
-        # has a zero total, and its shares are absent rather than 0%.
-        total = zsum.easy + zsum.moderate + zsum.hard
-        easy = zsum.easy
-        hard = zsum.hard
-        # what fraction of the 28d load is measured (power OR distance-measured pace) vs estimated
-        # (HR/RPE/RE) —
-        # so the fitness number carries its own confidence, not just doctor's
-        measured_pct = if zsum.tss > 0.0 ((zsum.measured / zsum.tss) * 100.0).round_to_i64_try().ok_or(0) else 0
-        total7 = zsum7.easy + zsum7.moderate + zsum7.hard
-        easy7 = zsum7.easy
-        hard7 = zsum7.hard
+		# CTL/ATL seed at zero on the first day with any activity, so a short history reads
+		# LOW rather than unknown. One 42-day time constant only gets CTL to ~63% of its true
+		# value, so 42 days is where it is still MOST wrong, not where it becomes right; the
+		# threshold is two constants (~90 d, ~88% converged), past which the form bands —
+		# absolute numbers — start meaning something. COUNT(*) always returns a row, so this
+		# query cannot hit the absent-key crash.
+		load_days = Sql.query!({
+			path: Path.utf8(path),
+			query: "SELECT COUNT(*) AS n FROM daily_load",
+			bindings: [],
+			row: Sql.i64("n"),
+		})?
 
-        # CTL/ATL seed at zero on the first day with any activity, so a short history reads
-        # LOW rather than unknown. One 42-day time constant only gets CTL to ~63% of its true
-        # value, so 42 days is where it is still MOST wrong, not where it becomes right; the
-        # threshold is two constants (~90 d, ~88% converged), past which the form bands —
-        # absolute numbers — start meaning something. COUNT(*) always returns a row, so this
-        # query cannot hit the absent-key crash.
-        load_days = Sql.query!({
-            path: Path.utf8(path),
-            query: "SELECT COUNT(*) AS n FROM daily_load",
-            bindings: [],
-            row: Sql.i64("n"),
-        })?
+		# #93 ramp: reuses the `anchor` this function already computed, rather than
+		# deriving the same day again — two bindings for one day can drift, and then the
+		# ramp window and summary's 7d/28d windows would disagree about which day "now"
+		# is. 30 days of series covers the 28-day ramp lookback with room for gaps — and now
+		# also bounds days_in_band, which has NO natural upper limit. That is why the streak
+		# returns AtLeast when it fills this window rather than a bare number: widening the
+		# window moves the truncation point, it does not remove it.
+		ramp_rows = Sql.query_many!({
+			path: Path.utf8(path),
+			query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, CAST(ctl AS REAL) AS ctl, CAST(tsb AS REAL) AS tsb FROM daily_load WHERE day >= :cutoff ORDER BY day DESC",
+			bindings: [{ name: ":cutoff", value: String(Metrics.days_to_date_str(anchor - 30)) }],
+			rows: |cols| |stmt| {
+				d = Sql.str("day")(cols)(stmt)?
+				c = Sql.f64("ctl")(cols)(stmt)?
+				# tsb rides along on the ramp query rather than getting its own: the two
+				# lookbacks want the same rows over the same window, and a second query
+				# could disagree with this one about which days exist (#111).
+				t = Sql.f64("tsb")(cols)(stmt)?
+				Ok({ d, ctl: c, tsb: t })
+			},
+		})?
+		# Convert OUTSIDE the decoder, whose error union has no room for BadDate, and
+		# PROPAGATE rather than defaulting a bad day to epoch-day 0. That default is not
+		# harmless: a day-0 row is a valid candidate for any lookback, so where the series
+		# genuinely does not reach back far enough, ctl_as_of would return that row's ctl
+		# as Found instead of Missing — a fabricated ramp exactly where the honest answer
+		# is 0. daily_load days are engine-written and canonical, so this is a guard
+		# against corruption, and corruption should stop the command rather than quietly
+		# change the number it prints.
+		# Prepend, not append: ctl_as_of takes the max qualifying day and so does not care
+		# about order, and appending inside a fold is the quadratic trap.
+		dated_load = List.fold(
+			ramp_rows,
+			Ok([]),
+			|acc, r|
+				match acc {
+					Err(e) => Err(e)
+					Ok(xs) =>
+						match canonical_day(r.d) {
+							Ok(day) => Ok(List.prepend(xs, { day, ctl: r.ctl, tsb: r.tsb }))
+							Err(e) => Err(e)
+						}
+				},
+		)?
+		# one validated series, two views — each helper takes a closed record, so the
+		# projections keep the date validation above from being done twice
+		ramps = Metrics.ramp_rates(List.map(dated_load, |e| { day: e.day, ctl: e.ctl }), anchor)
+		form_delta = Metrics.form_delta_7d(List.map(dated_load, |e| { day: e.day, tsb: e.tsb }), anchor)
+		# how long the band has held (#123) — the thing the label itself cannot say
+		band_days = Metrics.days_in_band(List.map(dated_load, |e| { day: e.day, tsb: e.tsb }), anchor)
+		# ANNOTATED Bool, not a bare tag: the builtin JSON serializes an unconstrained
+		# tag as the STRING "True". This payload happens to escape already — it is
+		# RENDERED too, and the renderer's `if` flows Bool back through — but an
+		# encode-only payload has no such constraint, so annotate. Neighbouring Bool
+		# fields are irrelevant: record fields do not constrain one another.
+		band_capped : Bool
+		band_capped = match band_days {
+			AtLeast(_) => True
+			_ => False
+		}
+		delta_known : Bool
+		delta_known = match form_delta {
+			Known(_) => True
+			Unknown => False
+		}
 
-        # #93 ramp: reuses the `anchor` this function already computed, rather than
-        # deriving the same day again — two bindings for one day can drift, and then the
-        # ramp window and summary's 7d/28d windows would disagree about which day "now"
-        # is. 30 days of series covers the 28-day ramp lookback with room for gaps — and now
-        # also bounds days_in_band, which has NO natural upper limit. That is why the streak
-        # returns AtLeast when it fills this window rather than a bare number: widening the
-        # window moves the truncation point, it does not remove it.
-        ramp_rows = Sql.query_many!({
-            path: Path.utf8(path),
-            query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, CAST(ctl AS REAL) AS ctl, CAST(tsb AS REAL) AS tsb FROM daily_load WHERE day >= :cutoff ORDER BY day DESC",
-            bindings: [{ name: ":cutoff", value: String(Metrics.days_to_date_str(anchor - 30)) }],
-            rows: |cols| |stmt| {
-                d = Sql.str("day")(cols)(stmt)?
-                c = Sql.f64("ctl")(cols)(stmt)?
-                # tsb rides along on the ramp query rather than getting its own: the two
-                # lookbacks want the same rows over the same window, and a second query
-                # could disagree with this one about which days exist (#111).
-                t = Sql.f64("tsb")(cols)(stmt)?
-                Ok({ d, ctl: c, tsb: t })
-            },
-        })?
-        # Convert OUTSIDE the decoder, whose error union has no room for BadDate, and
-        # PROPAGATE rather than defaulting a bad day to epoch-day 0. That default is not
-        # harmless: a day-0 row is a valid candidate for any lookback, so where the series
-        # genuinely does not reach back far enough, ctl_as_of would return that row's ctl
-        # as Found instead of Missing — a fabricated ramp exactly where the honest answer
-        # is 0. daily_load days are engine-written and canonical, so this is a guard
-        # against corruption, and corruption should stop the command rather than quietly
-        # change the number it prints.
-        # Prepend, not append: ctl_as_of takes the max qualifying day and so does not care
-        # about order, and appending inside a fold is the quadratic trap.
-        dated_load = List.fold(ramp_rows, Ok([]), |acc, r|
-            match acc {
-                Err(e) => Err(e)
-                Ok(xs) =>
-                    match canonical_day(r.d) {
-                        Ok(day) => Ok(List.prepend(xs, { day, ctl: r.ctl, tsb: r.tsb }))
-                        Err(e) => Err(e)
-                    }
-            })?
-        # one validated series, two views — each helper takes a closed record, so the
-        # projections keep the date validation above from being done twice
-        ramps = Metrics.ramp_rates(List.map(dated_load, |e| { day: e.day, ctl: e.ctl }), anchor)
-        form_delta = Metrics.form_delta_7d(List.map(dated_load, |e| { day: e.day, tsb: e.tsb }), anchor)
-        # how long the band has held (#123) — the thing the label itself cannot say
-        band_days = Metrics.days_in_band(List.map(dated_load, |e| { day: e.day, tsb: e.tsb }), anchor)
-        # ANNOTATED Bool, not a bare tag: the builtin JSON serializes an unconstrained
-        # tag as the STRING "True". This payload happens to escape already — it is
-        # RENDERED too, and the renderer's `if` flows Bool back through — but an
-        # encode-only payload has no such constraint, so annotate. Neighbouring Bool
-        # fields are irrelevant: record fields do not constrain one another.
-        band_capped : Bool
-        band_capped = match band_days { AtLeast(_) => True  _ => False }
-        delta_known : Bool
-        delta_known = match form_delta { Known(_) => True  Unknown => False }
+		Ok({
+			as_of: latest.day,
+			fitness_ctl: latest.ctl,
+			ramp_7d: ramps.ramp_7d,
+			ramp_28d_avg: ramps.ramp_28d_avg,
+			fatigue_atl: latest.atl,
+			form_tsb: latest.tsb,
+			# stable machine identifier for the form band (#154) — ADDITIVE; clients
+			# switch on this instead of re-deriving band boundaries from raw TSB
+			form_state: Metrics.form_state(latest.tsb),
+			# ADDITIVE field, so the envelope version stays (same precedent as `converged`
+			# and the ramp fields). Unknown flattens to 0.0 here, which is the house
+			# meaning of a numeric 0 — "not available", not "form did not move". The human
+			# renderer keeps the distinction and simply omits the clause.
+			form_delta_7d: match form_delta {
+				Known(d) => d
+				Unknown => 0.0
+			},
+			# 0.0 is ambiguous HERE in a way the house "0 = not available" rule does not
+			# cover: form genuinely level for a week is a real, useful answer that is also
+			# exactly 0. So the flag carries what the number cannot, for machine consumers
+			# as much as for the renderer.
+			form_delta_known: delta_known,
+			# 0 = not available, per the house rule; a real streak is always >= 1.
+			# The value alone cannot say whether it is exact or truncated by the window,
+			# so it travels with a flag — see form_band_days_capped.
+			form_band_days: match band_days {
+				Known(n) => n
+				AtLeast(n) => n
+				Unknown => 0
+			},
+			# TRUE means the streak filled the whole series and is a FLOOR, not a count.
+			# `dated_load` is a 31-day window sized for the #93 ramp, so a 45-day streak
+			# arrives here as 31; without this flag the coach reads 31 as fact. Annotated
+			# Bool for the same reason delta_known is.
+			form_band_days_capped: band_capped,
+			load_days: load_days,
+			ctl_warming_up: load_days < 90,
+			last_hard_session_date: last_hard,
+			# stimulus features (#159) — counts and spacing are MEASUREMENTS; the
+			# spacing/days-since flags are the ADR 0009 null (0 with known false)
+			hard_days: {
+				d14: (hard_d14).to_i64_wrap(),
+				d28: hd.d28,
+				spacing_median_days_28d: match spacing {
+					Known(g) => g
+					Unknown => 0
+				},
+				spacing_known: spacing_known_b,
+				days_since_last: match days_since_hard {
+					Known(d) => d
+					Unknown => 0
+				},
+				days_since_known: days_since_known_b,
+			},
+			# windowed loads with same-width adjacent prior windows; deltas raw
+			load_windows: {
+				d7: zsum7.tss,
+				d28: zsum.tss,
+				d90: loadw.d90,
+				prior_d7: loadw.p7,
+				prior_d28: loadw.p28,
+				delta_7d: zsum7.tss - loadw.p7,
+				delta_28d: zsum.tss - loadw.p28,
+			},
+			pending_sessions: pending,
+			last_7d: {
+				tss: zsum7.tss,
+				polarization_known: total7 > 0,
+				z1_s: zsum7.z1,
+				z2_s: zsum7.z2,
+				z3_s: zsum7.z3,
+				z4_s: zsum7.z4,
+				z5_s: zsum7.z5,
+				easy_pct: pct_num(easy7, total7),
+				moderate_pct: pct_num(zsum7.moderate, total7),
+				hard_pct: pct_num(hard7, total7),
+				sessions: zsum7.sessions,
+				moving_time: zsum7.moving_time,
+				distance_m: zsum7.distance_m,
+				hr_streams: zsum7.hr_streams,
+				intensity_streams: zsum7.intensity_streams,
+				load_coverage: cov7,
+			},
+			last_28d: {
+				tss: zsum.tss,
+				polarization_known: total > 0,
+				z1_s: zsum.z1,
+				z2_s: zsum.z2,
+				z3_s: zsum.z3,
+				z4_s: zsum.z4,
+				z5_s: zsum.z5,
+				easy_pct: pct_num(easy, total),
+				moderate_pct: pct_num(zsum.moderate, total),
+				hard_pct: pct_num(hard, total),
+				measured_pct: measured_pct,
+				sessions: zsum.sessions,
+				moving_time: zsum.moving_time,
+				distance_m: zsum.distance_m,
+				hr_streams: zsum.hr_streams,
+				intensity_streams: zsum.intensity_streams,
+				load_coverage: cov28,
+			},
+			# provenance for the CTL/ATL/TSB numbers above: what the trailing ~two
+			# CTL time constants of load are MADE of. Descriptive only (#154) —
+			# stride states the mix, the coach decides whether it matters.
+			form_coverage_90d: cov90,
+			ftp: {
+				best_20min_w_60d: best20_row,
+				estimated_ftp_w: Metrics.ftp_from_best_20min(ftp_best_row),
+				# trajectory (#159): the PRIOR 60d window's best beside the current —
+				# which way the demonstrated ceiling moved; known=false = no power
+				# in that window (a delta against nothing is not 0)
+				prior_60d_best_20min_w: prior_best20.b,
+				prior_60d_known: prior_b20_known_b,
+			},
+			hr_zones: { z1_max: zb.z1_max, z2_max: zb.z2_max, z3_max: zb.z3_max, z4_max: zb.z4_max },
+			sports_28d: sports,
+		})
+	}
+	# sport-word filter shared by top/activities/power-curve: the human word
+	# widens to its Strava family (Sports.family), matched IN (...) with
+	# NOCASE. Placeholders are numbered so the bindings stay real bindings.
+	sport_filter_sql : Str -> { frag : Str, binds : List({ name : Str, value : [Null, Real(F64), Integer(I64), String(Str), Bytes(List(U8))] }) }
+	sport_filter_sql = |word|
+		if Str.is_empty(word) {
+			# a lone SPACE, never "": interpolating a compile-time-constant empty
+			# string was the str_concat trap. Fixed upstream in
+			# roc#10595 (closed 2026-08-04, before this pin), so this is now a style
+			# rule rather than survival — non-empty by construction, same as Plan.roc
+			{ frag: " ", binds: [] }
+		} else {
+			fam = Sports.family(word)
+			names = List.map_with_index(fam, |_, i| ":sp${(i).to_str()}")
+			{ frag: " AND a.sport_type COLLATE NOCASE IN (${Str.join_with(names, ", ")})", binds: List.map_with_index(fam, |s, i| { name: ":sp${(i).to_str()}", value: String(s) }) }
+		}
 
-        Ok({
-            as_of: latest.day,
-            fitness_ctl: latest.ctl,
-            ramp_7d: ramps.ramp_7d,
-            ramp_28d_avg: ramps.ramp_28d_avg,
-            fatigue_atl: latest.atl,
-            form_tsb: latest.tsb,
-            # stable machine identifier for the form band (#154) — ADDITIVE; clients
-            # switch on this instead of re-deriving band boundaries from raw TSB
-            form_state: Metrics.form_state(latest.tsb),
-            # ADDITIVE field, so the envelope version stays (same precedent as `converged`
-            # and the ramp fields). Unknown flattens to 0.0 here, which is the house
-            # meaning of a numeric 0 — "not available", not "form did not move". The human
-            # renderer keeps the distinction and simply omits the clause.
-            form_delta_7d: match form_delta { Known(d) => d  Unknown => 0.0 },
-            # 0.0 is ambiguous HERE in a way the house "0 = not available" rule does not
-            # cover: form genuinely level for a week is a real, useful answer that is also
-            # exactly 0. So the flag carries what the number cannot, for machine consumers
-            # as much as for the renderer.
-            form_delta_known: delta_known,
-            # 0 = not available, per the house rule; a real streak is always >= 1.
-            # The value alone cannot say whether it is exact or truncated by the window,
-            # so it travels with a flag — see form_band_days_capped.
-            form_band_days: match band_days { Known(n) => n  AtLeast(n) => n  Unknown => 0 },
-            # TRUE means the streak filled the whole series and is a FLOOR, not a count.
-            # `dated_load` is a 31-day window sized for the #93 ramp, so a 45-day streak
-            # arrives here as 31; without this flag the coach reads 31 as fact. Annotated
-            # Bool for the same reason delta_known is.
-            form_band_days_capped: band_capped,
-            load_days: load_days,
-            ctl_warming_up: load_days < 90,
-            last_hard_session_date: last_hard,
-            # stimulus features (#159) — counts and spacing are MEASUREMENTS; the
-            # spacing/days-since flags are the ADR 0009 null (0 with known false)
-            hard_days: {
-                d14: (hard_d14).to_i64_wrap(),
-                d28: hd.d28,
-                spacing_median_days_28d: match spacing { Known(g) => g  Unknown => 0 },
-                spacing_known: spacing_known_b,
-                days_since_last: match days_since_hard { Known(d) => d  Unknown => 0 },
-                days_since_known: days_since_known_b,
-            },
-            # windowed loads with same-width adjacent prior windows; deltas raw
-            load_windows: {
-                d7: zsum7.tss,
-                d28: zsum.tss,
-                d90: loadw.d90,
-                prior_d7: loadw.p7,
-                prior_d28: loadw.p28,
-                delta_7d: zsum7.tss - loadw.p7,
-                delta_28d: zsum.tss - loadw.p28,
-            },
-            pending_sessions: pending,
-            last_7d: {
-                tss: zsum7.tss,
-                polarization_known: total7 > 0,
-                z1_s: zsum7.z1,
-                z2_s: zsum7.z2,
-                z3_s: zsum7.z3,
-                z4_s: zsum7.z4,
-                z5_s: zsum7.z5,
-                easy_pct: pct_num(easy7, total7),
-                moderate_pct: pct_num(zsum7.moderate, total7),
-                hard_pct: pct_num(hard7, total7),
-                sessions: zsum7.sessions,
-                moving_time: zsum7.moving_time,
-                distance_m: zsum7.distance_m,
-                hr_streams: zsum7.hr_streams,
-                intensity_streams: zsum7.intensity_streams,
-                load_coverage: cov7,
-            },
-            last_28d: {
-                tss: zsum.tss,
-                polarization_known: total > 0,
-                z1_s: zsum.z1,
-                z2_s: zsum.z2,
-                z3_s: zsum.z3,
-                z4_s: zsum.z4,
-                z5_s: zsum.z5,
-                easy_pct: pct_num(easy, total),
-                moderate_pct: pct_num(zsum.moderate, total),
-                hard_pct: pct_num(hard, total),
-                measured_pct: measured_pct,
-                sessions: zsum.sessions,
-                moving_time: zsum.moving_time,
-                distance_m: zsum.distance_m,
-                hr_streams: zsum.hr_streams,
-                intensity_streams: zsum.intensity_streams,
-                load_coverage: cov28,
-            },
-            # provenance for the CTL/ATL/TSB numbers above: what the trailing ~two
-            # CTL time constants of load are MADE of. Descriptive only (#154) —
-            # stride states the mix, the coach decides whether it matters.
-            form_coverage_90d: cov90,
-            ftp: {
-                best_20min_w_60d: best20_row,
-                estimated_ftp_w: Metrics.ftp_from_best_20min(ftp_best_row),
-                # trajectory (#159): the PRIOR 60d window's best beside the current —
-                # which way the demonstrated ceiling moved; known=false = no power
-                # in that window (a delta against nothing is not 0)
-                prior_60d_best_20min_w: prior_best20.b,
-                prior_60d_known: prior_b20_known_b,
-            },
-            hr_zones: { z1_max: zb.z1_max, z2_max: zb.z2_max, z3_max: zb.z3_max, z4_max: zb.z4_max },
-            sports_28d: sports,
-        })
-    }
-    # sport-word filter shared by top/activities/power-curve: the human word
-    # widens to its Strava family (Sports.family), matched IN (...) with
-    # NOCASE. Placeholders are numbered so the bindings stay real bindings.
-    sport_filter_sql : Str -> { frag : Str, binds : List({ name : Str, value : [Null, Real(F64), Integer(I64), String(Str), Bytes(List(U8))] }) }
-    sport_filter_sql = |word|
-        if Str.is_empty(word) {
-            # a lone SPACE, never "": interpolating a compile-time-constant empty
-            # string was the str_concat trap. Fixed upstream in
-            # roc#10595 (closed 2026-08-04, before this pin), so this is now a style
-            # rule rather than survival — non-empty by construction, same as Plan.roc
-            { frag: " ", binds: [] }
-        } else {
-            fam = Sports.family(word)
-            names = List.map_with_index(fam, |_, i| ":sp${(i).to_str()}")
-            { frag: " AND a.sport_type COLLATE NOCASE IN (${Str.join_with(names, ", ")})", binds: List.map_with_index(fam, |s, i| { name: ":sp${(i).to_str()}", value: String(s) }) }
-        }
+	# Pace's sport filter is EXACT, where power's is by family (ADR 0002 amendment).
+	# A pool swim, an open-water swim and a trail run share the arithmetic of a speed
+	# model and nothing else: still water, chop and a rocky descent produce speeds that
+	# are not comparable at all, so pooling them the way sport_filter_sql pools a power
+	# family would fit one curve through three unrelated populations. Empty word = no
+	# filter, matching sport_filter_sql's contract (a lone SPACE, never "").
+	sport_exact_sql : Str -> { frag : Str, binds : List({ name : Str, value : [Null, Real(F64), Integer(I64), String(Str), Bytes(List(U8))] }) }
+	sport_exact_sql = |word|
+		if Str.is_empty(word) {
+			{ frag: " ", binds: [] }
+		} else {
+			{ frag: " AND a.sport_type COLLATE NOCASE = :spx", binds: [{ name: ":spx", value: String(word) }] }
+		}
 
+	# Which sports actually hold a speed ladder in the window — the no-silent-empty hint for
+	# `pace-curve`, which refuses a pooled fit and has to say what the athlete CAN ask for.
+	# Each rung is tested separately rather than COALESCEd into one: COALESCE returns the
+	# first NON-NULL, so a stored 0.0 in the 20-min rung would mask positive 5- and 10-min
+	# ones — and Db.roc documents these columns as "0/NULL = no data", so 0 is an admitted
+	# stored value. That predicate denied a sport whose curve fits.
+	# Ordered by row count so the sport they train most is named first.
+	sports_with_speed! : Str, U64 => Try(List(Str), _)
+	sports_with_speed! = |path, days| {
+		cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - (days).to_i64_wrap())
+		Sql.query_many!({
+			path: Path.utf8(path),
+			query: \\SELECT COALESCE(CAST(a.sport_type AS TEXT), '') AS s
+				\\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+				\\WHERE a.start_local >= :cutoff
+				\\  AND (COALESCE(m.best_20min_speed, 0) > 0 OR COALESCE(m.best_600s_speed, 0) > 0
+				\\       OR COALESCE(m.best_300s_speed, 0) > 0)
+				\\GROUP BY a.sport_type
+				\\ORDER BY COUNT(*) DESC
+			,
+			bindings: [{ name: ":cutoff", value: String(cutoff) }],
+			rows: Sql.str("s"),
+		})
+	}
+	load_series! : U64 => Try({}, _)
+	load_series! = |days| {
+		path = Db.open_db!({})?
+		rows = Sql.query_many!({
+			path: Path.utf8(path),
+			query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, tss AS tss, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT ${(days).to_str()}",
+			bindings: [],
+			rows: |cols| |stmt| {
+				day = Sql.str("day")(cols)(stmt)?
+				tss = Sql.f64("tss")(cols)(stmt)?
+				ctl = Sql.f64("ctl")(cols)(stmt)?
+				atl = Sql.f64("atl")(cols)(stmt)?
+				tsb = Sql.f64("tsb")(cols)(stmt)?
+				Ok({ day, tss, ctl, atl, tsb })
+			},
+		})?
+		# GUARDED here rather than in Render: a pure renderer can DROP the row but cannot
+		# NAME it, and naming the row is the whole of #243. What Render absorbed was real —
+		# `.ok_or(0)` collapses an unreadable day to epoch 0, rendering a 1969 week row
+		# AND anchoring the verdict on it (`List.last(ordered)` makes it `today`).
+		# Dropping via keep_oks would silently under-count the rollup instead; daily_load
+		# is DERIVED, so refusing with a one-command remedy costs nothing that was ever
+		# available — a lexically-high garbage day sorts to the top of `ORDER BY day
+		# DESC`, so it is inside every window. Same rule and helper as every other
+		# daily_load.day read here (#243), so `load` stops being the one command that
+		# answers where the rest refuse.
+		_ = List.map_try(rows, |r| canonical_day(r.day))?
+		ordered = List.fold(rows, [], |acc, x| List.concat([x], acc))
+		Output.out!(ordered, Render.load_screen)
+	}
 
-    # Pace's sport filter is EXACT, where power's is by family (ADR 0002 amendment).
-    # A pool swim, an open-water swim and a trail run share the arithmetic of a speed
-    # model and nothing else: still water, chop and a rocky descent produce speeds that
-    # are not comparable at all, so pooling them the way sport_filter_sql pools a power
-    # family would fit one curve through three unrelated populations. Empty word = no
-    # filter, matching sport_filter_sql's contract (a lone SPACE, never "").
-    sport_exact_sql : Str -> { frag : Str, binds : List({ name : Str, value : [Null, Real(F64), Integer(I64), String(Str), Bytes(List(U8))] }) }
-    sport_exact_sql = |word|
-        if Str.is_empty(word) {
-            { frag: " ", binds: [] }
-        } else {
-            { frag: " AND a.sport_type COLLATE NOCASE = :spx", binds: [{ name: ":spx", value: String(word) }] }
-        }
-
-    # Which sports actually hold a speed ladder in the window — the no-silent-empty hint for
-    # `pace-curve`, which refuses a pooled fit and has to say what the athlete CAN ask for.
-    # Each rung is tested separately rather than COALESCEd into one: COALESCE returns the
-    # first NON-NULL, so a stored 0.0 in the 20-min rung would mask positive 5- and 10-min
-    # ones — and Db.roc documents these columns as "0/NULL = no data", so 0 is an admitted
-    # stored value. That predicate denied a sport whose curve fits.
-    # Ordered by row count so the sport they train most is named first.
-    sports_with_speed! : Str, U64 => Try(List(Str), _)
-    sports_with_speed! = |path, days| {
-        cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - (days).to_i64_wrap())
-        Sql.query_many!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT COALESCE(CAST(a.sport_type AS TEXT), '') AS s
-                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
-                \\WHERE a.start_local >= :cutoff
-                \\  AND (COALESCE(m.best_20min_speed, 0) > 0 OR COALESCE(m.best_600s_speed, 0) > 0
-                \\       OR COALESCE(m.best_300s_speed, 0) > 0)
-                \\GROUP BY a.sport_type
-                \\ORDER BY COUNT(*) DESC
-            ,
-            bindings: [{ name: ":cutoff", value: String(cutoff) }],
-            rows: Sql.str("s"),
-        })
-    }
-    load_series! : U64 => Try({}, _)
-    load_series! = |days| {
-        path = Db.open_db!({})?
-        rows = Sql.query_many!({
-            path: Path.utf8(path),
-            query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, tss AS tss, ctl AS ctl, atl AS atl, tsb AS tsb FROM daily_load ORDER BY day DESC LIMIT ${(days).to_str()}",
-            bindings: [],
-            rows: |cols| |stmt| {
-                day = Sql.str("day")(cols)(stmt)?
-                tss = Sql.f64("tss")(cols)(stmt)?
-                ctl = Sql.f64("ctl")(cols)(stmt)?
-                atl = Sql.f64("atl")(cols)(stmt)?
-                tsb = Sql.f64("tsb")(cols)(stmt)?
-                Ok({ day, tss, ctl, atl, tsb })
-            },
-        })?
-        # GUARDED here rather than in Render: a pure renderer can DROP the row but cannot
-        # NAME it, and naming the row is the whole of #243. What Render absorbed was real —
-        # `.ok_or(0)` collapses an unreadable day to epoch 0, rendering a 1969 week row
-        # AND anchoring the verdict on it (`List.last(ordered)` makes it `today`).
-        # Dropping via keep_oks would silently under-count the rollup instead; daily_load
-        # is DERIVED, so refusing with a one-command remedy costs nothing that was ever
-        # available — a lexically-high garbage day sorts to the top of `ORDER BY day
-        # DESC`, so it is inside every window. Same rule and helper as every other
-        # daily_load.day read here (#243), so `load` stops being the one command that
-        # answers where the rest refuse.
-        _ = List.map_try(rows, |r| canonical_day(r.day))?
-        ordered = List.fold(rows, [], |acc, x| List.concat([x], acc))
-        Output.out!(ordered, Render.load_screen)
-    }
-
-    # The athlete's CP/W' fit for ONE SPORT FAMILY as of a DATE, over the same
-    # 2-20 minute band power-curve fits (#186/#187 spend this model, so they
-    # must not fit a second, differently-shaped one).
-    #
-    # Strictly BEFORE the date, not on-or-before: a ride inside its own fit
-    # window raises the very W' it is then measured against. Measured on a
-    # breakthrough 3x12 — W' 2490 J excluding the
-    # ride, 6416 J including it, a 2.58x change in the denominator that scales
-    # every W' number for that ride, and it fires precisely on the rides where
-    # the athlete did something new.
-    #
-    # The family is the CALLER's, never a hardcoded Ride: a rowing session was
-    # being scored against a cyclist's CP and flagged known, which is worse than
-    # having no number at all.
-    cp_fit_as_of! = |path, family, on_date, days| {
-        row = Sql.query!({
-            path: Path.utf8(path),
-            query:
-                \\SELECT CAST(COALESCE(MAX(m.best_300s_w), 0) AS REAL) AS d300,
-                \\       CAST(COALESCE(MAX(m.best_600s_w), 0) AS REAL) AS d600,
-                \\       CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS d1200
-                \\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
-                \\WHERE a.sport_family = :fam
-                \\  AND substr(a.start_local, 1, 10) < :on
-                \\  AND a.start_local >= date(:on, '-' || :days || ' days')
-            ,
-            bindings: [
-                { name: ":fam", value: String(family) },
-                { name: ":on", value: String(on_date) },
-                { name: ":days", value: String((days).to_str()) },
-            ],
-            row: |cols| |stmt| {
-                d300 = Sql.f64("d300")(cols)(stmt)?
-                d600 = Sql.f64("d600")(cols)(stmt)?
-                d1200 = Sql.f64("d1200")(cols)(stmt)?
-                Ok({ d300, d600, d1200 })
-            },
-        })?
-        pts = List.keep_if(
-            [{ dur_s: 300.0, watts: row.d300 }, { dur_s: 600.0, watts: row.d600 }, { dur_s: 1200.0, watts: row.d1200 }],
-            |p| p.watts > 0.0,
-        )
-        match Metrics.critical_power(pts) {
-            Ok(c) => Ok({ cp: c.cp, w_prime: c.w_prime, points: (List.len(pts)).to_i64_wrap(), family, r2: c.r2, pts })
-            Err(_) => Ok({ cp: 0.0, w_prime: 0.0, points: (List.len(pts)).to_i64_wrap(), family, r2: 0.0, pts })
-        }
-    }
+	# The athlete's CP/W' fit for ONE SPORT FAMILY as of a DATE, over the same
+	# 2-20 minute band power-curve fits (#186/#187 spend this model, so they
+	# must not fit a second, differently-shaped one).
+	#
+	# Strictly BEFORE the date, not on-or-before: a ride inside its own fit
+	# window raises the very W' it is then measured against. Measured on a
+	# breakthrough 3x12 — W' 2490 J excluding the
+	# ride, 6416 J including it, a 2.58x change in the denominator that scales
+	# every W' number for that ride, and it fires precisely on the rides where
+	# the athlete did something new.
+	#
+	# The family is the CALLER's, never a hardcoded Ride: a rowing session was
+	# being scored against a cyclist's CP and flagged known, which is worse than
+	# having no number at all.
+	cp_fit_as_of! = |path, family, on_date, days| {
+		row = Sql.query!({
+			path: Path.utf8(path),
+			query: \\SELECT CAST(COALESCE(MAX(m.best_300s_w), 0) AS REAL) AS d300,
+				\\       CAST(COALESCE(MAX(m.best_600s_w), 0) AS REAL) AS d600,
+				\\       CAST(COALESCE(MAX(m.best_20min_w), 0) AS REAL) AS d1200
+				\\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+				\\WHERE a.sport_family = :fam
+				\\  AND substr(a.start_local, 1, 10) < :on
+				\\  AND a.start_local >= date(:on, '-' || :days || ' days')
+			,
+			bindings: [
+				{ name: ":fam", value: String(family) },
+				{ name: ":on", value: String(on_date) },
+				{ name: ":days", value: String((days).to_str()) },
+			],
+			row: |cols| |stmt| {
+				d300 = Sql.f64("d300")(cols)(stmt)?
+				d600 = Sql.f64("d600")(cols)(stmt)?
+				d1200 = Sql.f64("d1200")(cols)(stmt)?
+				Ok({ d300, d600, d1200 })
+			},
+		})?
+		pts = List.keep_if(
+			[{ dur_s: 300.0, watts: row.d300 }, { dur_s: 600.0, watts: row.d600 }, { dur_s: 1200.0, watts: row.d1200 }],
+			|p| p.watts > 0.0,
+		)
+		match Metrics.critical_power(pts) {
+			Ok(c) => Ok({ cp: c.cp, w_prime: c.w_prime, points: (List.len(pts)).to_i64_wrap(), family, r2: c.r2, pts })
+			Err(_) => Ok({ cp: 0.0, w_prime: 0.0, points: (List.len(pts)).to_i64_wrap(), family, r2: 0.0, pts })
+		}
+	}
 
 }

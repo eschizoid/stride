@@ -16,8 +16,8 @@ Config :: [].{
 	is_secret : Str -> Bool
 	is_secret = |k|
 		List.contains(secret_keys, k)
-		or Str.ends_with(k, "_token")
-		or Str.ends_with(k, "_secret")
+			or Str.ends_with(k, "_token")
+			or Str.ends_with(k, "_secret")
 
 	# Keys the engine LOOKS UP A VALUE FOR. Absent from this and `config get`/`set`
 	# answer `unknown_key` rather than `not_set`/plain success (#254): `not_set`
@@ -61,8 +61,8 @@ Config :: [].{
 	known_key : Str -> Bool
 	known_key = |k|
 		List.contains(secret_keys, k)
-		or List.contains(plain_keys, k)
-		or is_zone_key(k)
+			or List.contains(plain_keys, k)
+			or is_zone_key(k)
 
 	# Of the keys the engine reads, the ones a PERSON sets. The rest — `last_sync_epoch`,
 	# the `strava_*` family — are stride's own bookkeeping, writable so a broken one can be
@@ -151,7 +151,6 @@ Config :: [].{
 	is_bookkeeping : Str -> Bool
 	is_bookkeeping = |k| List.contains(["last_sync_epoch", "strava_reads_today", "strava_reads_day"], k)
 
-
 	# bytes: h r _ z <digit> _ m a x, then either end-of-key or `_` and a non-empty suffix
 	zone_shape : List(U8) -> Bool
 	zone_shape = |b|
@@ -193,9 +192,9 @@ Config :: [].{
 	# refusal loud and keeps the read sites honest.
 	numeric_key : Str -> [Int, Decimal, Free]
 	numeric_key = |k|
-		if k == "utc_offset_minutes" or k == "last_sync_epoch" or k == "strava_reads_today" or k == "strava_reads_day" or Str.ends_with(k, "_expires_at")
+		if (k == "utc_offset_minutes" or k == "last_sync_epoch" or k == "strava_reads_today" or k == "strava_reads_day" or Str.ends_with(k, "_expires_at"))
 			Int
-		else if Str.starts_with(k, "hr_z")
+		else if (Str.starts_with(k, "hr_z"))
 			Decimal
 		else
 			Free
@@ -209,8 +208,8 @@ Config :: [].{
 	api_base_allowed : Str -> Bool
 	api_base_allowed = |b|
 		host_ok(b, "https://www.strava.com")
-		or host_ok(b, "http://localhost")
-		or host_ok(b, "http://127.0.0.1")
+			or host_ok(b, "http://localhost")
+			or host_ok(b, "http://127.0.0.1")
 
 	# b is exactly `hp` (scheme+host), or `hp` + a '/path', or `hp:` + a strictly numeric
 	# port (then optional '/path'). The numeric-port rule blocks the userinfo bypass
@@ -218,11 +217,11 @@ Config :: [].{
 	# parser reads `localhost:8799` as credentials and `attacker.tld` as the real host.
 	host_ok : Str, Str -> Bool
 	host_ok = |b, hp|
-		if b == hp
+		if (b == hp)
 			True
-		else if Str.starts_with(b, "${hp}/")
+		else if (Str.starts_with(b, "${hp}/"))
 			True
-		else if Str.starts_with(b, "${hp}:")
+		else if (Str.starts_with(b, "${hp}:"))
 			numeric_port(drop_n(Str.to_utf8(b), List.len(Str.to_utf8(hp)) + 1))
 		else
 			False
@@ -230,7 +229,7 @@ Config :: [].{
 	# drop the first n bytes (recursive — no List.drop_first dependency)
 	drop_n : List(U8), U64 -> List(U8)
 	drop_n = |xs, n|
-		if n == 0
+		if (n == 0)
 			xs
 		else
 			match xs {
@@ -246,7 +245,7 @@ Config :: [].{
 		match bytes {
 			[] => False
 			[c, .. as rest] =>
-				if c >= 48 and c <= 57
+				if (c >= 48 and c <= 57)
 					port_tail(rest)
 				else
 					False
@@ -256,9 +255,9 @@ Config :: [].{
 		match bytes {
 			[] => True
 			[c, .. as rest] =>
-				if c == 47
+				if (c == 47)
 					True
-				else if c >= 48 and c <= 57
+				else if (c >= 48 and c <= 57)
 					port_tail(rest)
 				else
 					False
