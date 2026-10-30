@@ -1639,8 +1639,8 @@ b_init_config! = |ctx| {
 	# not read as parser arms. Comments are stripped first, so a commented-out arm
 	# cannot feed a verb in either. The character class is [A-Za-z0-9_-], not
 	# [a-z-], so an arm named `zone2` or `power_curve` is visible. Whitespace inside
-	# the pattern is tolerated: `roc fmt` is blocked upstream (#27), so nothing
-	# normalises the spacing of a hand-written arm. LC_ALL=C for collation.
+	# the pattern is tolerated, so the scan does not depend on how an arm is laid
+	# out. LC_ALL=C for collation.
 	verbs_dir = "${ctx.home}/.verbs"
 	parser_verbs = "sed 's/#.*//' src/cli/Command.roc | grep -oE '^[[:space:]]*\\[[[:space:]]*\"[A-Za-z0-9_-]+\"' | sed 's/.*\"\\([A-Za-z0-9_-]*\\)\"/\\1/' | grep -v '^-' | grep -vx help | LC_ALL=C sort -u"
 	spec_verbs = "HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[].name | split(\" \")[0]' | LC_ALL=C sort -u"
@@ -3475,13 +3475,13 @@ b_seed_analyze! = |ctx| {
 	# error code that is not in the schema fails here, which is the same drift
 	# bargain additionalKeys makes for payload keys
 	check!("an error envelope conforms, code included", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' activity 99999999 2>&1 | jq -r --slurpfile schema schemas/v3/envelope.json -f tools/validate.jq 2>&1")) == "")?
-	# The enum is hand-maintained beside every emit site, and this PR proved twice
-	# in one file that it drifts: a fabricated code (bad_args, left over from a
-	# rewritten branch) and a missing one (activity_required, a routine
-	# response). Set equality in BOTH directions, extracted multi-line-aware
-	# because err_out! calls wrap. A count check would have passed — the sets
-	# were both 27.
-	code_diff = Str.trim(sh!("cat src/cli/*.roc | tr '\\n' ' ' | grep -oE '(err_out!|emit_err!)\\( *\"[a-z_]+\"' | grep -oE '\"[a-z_]+\"' | tr -d '\"' | sort -u > /tmp/stride_src_codes.$$; jq -r '.properties.error.properties.code.enum[]' schemas/v3/envelope.json | sort > /tmp/stride_enum_codes.$$; diff /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$; rm -f /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$"))
+	# The enum is hand-maintained beside every emit site, so it drifts both ways:
+	# a code the source no longer emits, or one it emits that the contract omits.
+	# Set equality in BOTH directions, because a count check passes when one code
+	# is swapped for another. The scan joins lines because err_out! calls wrap,
+	# and takes `[[:space:]]*` after the paren because a wrapped call puts the
+	# formatter's tabs before the code.
+	code_diff = Str.trim(sh!("cat src/cli/*.roc | tr '\\n' ' ' | grep -oE '(err_out!|emit_err!)\\([[:space:]]*\"[a-z_]+\"' | grep -oE '\"[a-z_]+\"' | tr -d '\"' | sort -u > /tmp/stride_src_codes.$$; jq -r '.properties.error.properties.code.enum[]' schemas/v3/envelope.json | sort > /tmp/stride_enum_codes.$$; diff /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$; rm -f /tmp/stride_src_codes.$$ /tmp/stride_enum_codes.$$"))
 	check!("every error code the source emits is in the contract, and vice versa", code_diff == "")?
 	# ── the 1.0 additivity guards (§9c). Set EQUALITY above cannot see a coordinated
 	# DELETION — remove a code from the source and the enum together and it stays
@@ -7815,12 +7815,12 @@ b_viz_caps! = |ctx| {
 	check!("every day and id field's accepts names the place its refusal names (${noun_parity})", noun_parity == "same")?
 	# an id takes precedence over a day: both id accepts say so, and in both
 	# resolvers the id branch is tried before the day branch
-	prec_parity = Str.trim(sh!("ti=$(grep -n 'directive.trace_id >= 0 (sel_for_id' src/viz/main.roc | cut -d: -f1); td=$(grep -n 'directive.trace_day != \"\" (sel_for_day' src/viz/main.roc | cut -d: -f1); gi=$(grep -n 'directive.ghost_id >= 0 (ghost_for_id' src/viz/main.roc | cut -d: -f1); gd=$(grep -n 'directive.ghost_day != \"\" (ghost_for_day' src/viz/main.roc | cut -d: -f1); pr=$(grep -cE 'name: \"(trace_id|ghost_id)\".*precedence' src/viz/main.roc); if [ -n \"$ti\" ] && [ -n \"$gi\" ] && [ \"$ti\" -lt \"$td\" ] && [ \"$gi\" -lt \"$gd\" ] && [ \"$pr\" = 2 ]; then echo same; else echo \"ti=$ti td=$td gi=$gi gd=$gd precedence=$pr\"; fi"))
+	prec_parity = Str.trim(sh!("ti=$(grep -nE 'directive\\.trace_id >= 0\\)? \\(sel_for_id' src/viz/main.roc | cut -d: -f1); td=$(grep -nE 'directive\\.trace_day != \"\"\\)? \\(sel_for_day' src/viz/main.roc | cut -d: -f1); gi=$(grep -nE 'directive\\.ghost_id >= 0\\)? \\(ghost_for_id' src/viz/main.roc | cut -d: -f1); gd=$(grep -nE 'directive\\.ghost_day != \"\"\\)? \\(ghost_for_day' src/viz/main.roc | cut -d: -f1); pr=$(grep -cE 'name: \"(trace_id|ghost_id)\".*precedence' src/viz/main.roc); if [ -n \"$ti\" ] && [ -n \"$gi\" ] && [ \"$ti\" -lt \"$td\" ] && [ \"$gi\" -lt \"$gd\" ] && [ \"$pr\" = 2 ]; then echo same; else echo \"ti=$ti td=$td gi=$gi gd=$gd precedence=$pr\"; fi"))
 	check!("an id resolves before a day in both resolvers, and both id accepts say so (${prec_parity})", prec_parity == "same")?
 	# 'none' dismisses: both ghost accepts say so, the resolver has the
-	# branch, and every ghost refusal segment - the `(if dv.ghost_...` that
-	# opens one - stands down on it
-	none_parity = Str.trim(sh!("na=$(grep -cE \"name: \\\"ghost_(day|id)\\\".*'none'\" src/viz/main.roc); nr=$(grep -c 'directive.ghost_day == \"none\"' src/viz/main.roc); m=$(grep -cE '\\(if dv\\.ghost_(id >= 0|day != \"\")' src/viz/main.roc); g=$(grep -E '\\(if dv\\.ghost_(id >= 0|day != \"\")' src/viz/main.roc | grep -c '!= \"none\"'); if [ \"$na\" = 2 ] && [ \"$nr\" = 1 ] && [ \"$m\" -gt 0 ] && [ \"$m\" = \"$g\" ]; then echo same; else echo \"accepts=$na resolver=$nr segments=$m guarded=$g\"; fi"))
+	# branch, and every ghost refusal segment - the `(if (dv.ghost_...` that
+	# opens one, its condition paren optional - stands down on it
+	none_parity = Str.trim(sh!("na=$(grep -cE \"name: \\\"ghost_(day|id)\\\".*'none'\" src/viz/main.roc); nr=$(grep -c 'directive.ghost_day == \"none\"' src/viz/main.roc); m=$(grep -cE '\\(if \\(?dv\\.ghost_(id >= 0|day != \"\")' src/viz/main.roc); g=$(grep -E '\\(if \\(?dv\\.ghost_(id >= 0|day != \"\")' src/viz/main.roc | grep -c '!= \"none\"'); if [ \"$na\" = 2 ] && [ \"$nr\" = 1 ] && [ \"$m\" -gt 0 ] && [ \"$m\" = \"$g\" ]; then echo same; else echo \"accepts=$na resolver=$nr segments=$m guarded=$g\"; fi"))
 	check!("'none' dismisses in the accepts, the resolver, and every ghost refusal segment (${none_parity})", none_parity == "same")?
 	# the directive history, newest first, capped at ten: an agent reads its
 	# outcome from the payload rather than from the table. No table, or a

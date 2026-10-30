@@ -36,7 +36,11 @@ for f in src/cli/*.roc; do
     decodes=$((decodes + 1))
     # The projection that names it: everything on the line BEFORE ` AS <alias>` — the
     # last whitespace token reads `substr(CAST(day AS TEXT), 1, 7) AS month` as `7)`.
-    grep -o ".* AS $alias\\b" "$f" 2>/dev/null | sed "s/ AS $alias\$//" | sort -u > "$tmp/exprs" || true
+    # Leading indentation and a leading record label (`query: \SELECT …`) are
+    # trimmed before deduplicating, so one projection is one site wherever the
+    # formatter puts its string, and the count below does not move when code is
+    # reformatted.
+    grep -o ".* AS $alias\\b" "$f" 2>/dev/null | sed -e "s/ AS $alias\$//" -e "s/^[[:space:]]*//" -e "s/^[a-z_][a-z_0-9]*: *//" | sort -u > "$tmp/exprs" || true
     if [ ! -s "$tmp/exprs" ]; then
       # PRAGMA results are SQLite-generated — no blob can reach them.
       if grep -q "PRAGMA $alias" "$f" 2>/dev/null; then continue; fi
@@ -55,7 +59,7 @@ for f in src/cli/*.roc; do
       # bus SQL, may be named by a projection there. The bare-line test above runs
       # first, so a bus alias cannot vouch for a bare column selected elsewhere.
       if grep -q 'Bus\.' "$f" 2>/dev/null; then
-        grep -o ".* AS $alias\\b" src/core/Bus.roc 2>/dev/null | sed "s/ AS $alias\$//" | sort -u > "$tmp/exprs" || true
+        grep -o ".* AS $alias\\b" src/core/Bus.roc 2>/dev/null | sed -e "s/ AS $alias\$//" -e "s/^[[:space:]]*//" -e "s/^[a-z_][a-z_0-9]*: *//" | sort -u > "$tmp/exprs" || true
       fi
       if [ ! -s "$tmp/exprs" ]; then
         printf '%-24s %-22s no projection found for this decode\n' "$(basename "$f")" "$alias" >> "$tmp/problems"
@@ -126,7 +130,7 @@ EXPECT_DECODES=85
 # count that nothing computed and nothing checked, so it drifted from the truth without
 # anything failing. A number a gate prints on every green run has to be a number the gate
 # enforces — which is why no historical value is quoted here either.
-EXPECT_SITES=157  # matched `... AS <alias>` projection expressions, not decoder call sites
+EXPECT_SITES=140  # matched `... AS <alias>` projection expressions, not decoder call sites
 if [ "$decodes" != "$EXPECT_DECODES" ]; then
   echo "blob-safety: inspected $decodes (file, alias) decode pairs, expected $EXPECT_DECODES."
   echo "blob-safety: if that change is intended, update the number in the same commit;"

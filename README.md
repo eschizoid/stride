@@ -587,6 +587,7 @@ the Windows/compiler-migration situation) are recorded in
 just test      # pure expects (Metrics, Render, Command, Config, …) -> build -> e2e
 just build     # the binary (--opt=dev; see AGENTS.md for why)
 just install   # build + symlink into ~/.local/bin
+just fmt       # roc fmt over src/ and tests/ (CI checks it)
 ```
 
 - **Toolchain:** Roc's new (Zig) compiler, pinned by exact nightly tag in the workflow

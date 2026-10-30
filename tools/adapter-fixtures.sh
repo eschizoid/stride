@@ -35,8 +35,11 @@ pkg=src/strength
 # is the same line when the list fits on one) with comments removed
 # comments are stripped BEFORE the range scan, not after: the terminator is a
 # `]`, and a comment between the list's open and its close that merely names
-# one would end the range early and silently drop every row below it
-block=$(sed 's/#.*//' "$table" | awk '/^    adapters = \[/{p=1} p{print} p && /\]/{exit}')
+# one would end the range early and silently drop every row below it.
+# Top level inside a module is ONE leading tab, as `roc fmt` writes it (CI
+# enforces the format), so a single [[:blank:]] anchors both scans below to
+# top-level definitions and keeps a nested `adapters`/`sample` from matching.
+block=$(sed 's/#.*//' "$table" | awk '/^[[:blank:]]adapters = \[/{p=1} p{print} p && /\]/{exit}')
 rows=$(printf '%s\n' "$block" | grep -oE '\{ name: "[a-z0-9_]+", parse: [A-Z][A-Za-z0-9]*\.parse \}') || true
 if [ -z "$rows" ]; then
   echo "adapter-fixtures: no adapter rows found in $table — the extractor matched nothing, refusing to pass blind" >&2
@@ -62,7 +65,7 @@ fi
 for m in $pkg_mods; do
   f="$pkg/$m.roc"
   # trailing whitespace tolerated so a CRLF checkout does not read as a missing sample
-  if ! grep -qE '^    sample : Str[[:space:]]*$' "$f"; then
+  if ! grep -qE '^[[:blank:]]sample : Str[[:space:]]*$' "$f"; then
     echo "adapter-fixtures: $f has no top-level \`sample : Str\` — an adapter ships a real sample of its source's text" >&2
     fail=1
   fi

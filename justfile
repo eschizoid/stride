@@ -29,6 +29,14 @@ default: test
 check:
     {{roc}} check src/cli/main.roc
 
+# rewrite every .roc file into `roc fmt` form; CI fails a PR that skips this
+fmt:
+    {{roc}} fmt src tests
+
+# what CI runs: exits non-zero if any .roc file is not in `roc fmt` form
+fmt-check:
+    {{roc}} fmt --check src tests
+
 # build the binary. --opt=dev on purpose, but for BUILD TIME (~14s against ~2min), not
 # correctness: the optimized backend's miscompile (#32) was fixed by the 2026-08-17 pin.
 # CI and the release workflow both pin dev, so match them here or `just test` tests a
