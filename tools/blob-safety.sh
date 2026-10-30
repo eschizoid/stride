@@ -7,13 +7,13 @@
 # `internal_error` — a data fault reported as a bug (#296, #307). This lint pairs each
 # string decode with the projection producing its alias and fails on a bare column.
 #
-# Known limits, none firing on the tree today: a projection split across two
-# source lines reports an empty expression; a comment quoting an old bare form
-# above a wrapped projection is reported; `${Interpolated} AS alias` and
-# `AS ${alias}` are not understood; two projections for one alias on one line
-# keep only the last (grep -o is greedy). Stated rather than fixed — each needs
-# a real SQL parse, and a gate whose limits are written down is one a reader can
-# trust the rest of.
+# Known limits: a projection split across source lines is read only from the
+# line holding ` AS <alias>`, so a bare column on an earlier line of it passes;
+# a comment quoting an old bare form above a wrapped projection is reported;
+# `${Interpolated} AS alias` and `AS ${alias}` are not understood; two
+# projections for one alias on one line keep only the last (grep -o is greedy).
+# Stated rather than fixed — each needs a real SQL parse, and a gate whose
+# limits are written down is one a reader can trust the rest of.
 #
 # Exactly two exemptions: `COUNT(` (integer) and `PRAGMA` (SQLite-generated). Every
 # wider entry tried (MAX/MIN/group_concat/CASE) was false over a TEXT column — MAX over

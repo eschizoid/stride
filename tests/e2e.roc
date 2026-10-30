@@ -7818,9 +7818,12 @@ b_viz_caps! = |ctx| {
 	prec_parity = Str.trim(sh!("ti=$(grep -nE 'directive\\.trace_id >= 0\\)? \\(sel_for_id' src/viz/main.roc | cut -d: -f1); td=$(grep -nE 'directive\\.trace_day != \"\"\\)? \\(sel_for_day' src/viz/main.roc | cut -d: -f1); gi=$(grep -nE 'directive\\.ghost_id >= 0\\)? \\(ghost_for_id' src/viz/main.roc | cut -d: -f1); gd=$(grep -nE 'directive\\.ghost_day != \"\"\\)? \\(ghost_for_day' src/viz/main.roc | cut -d: -f1); pr=$(grep -cE 'name: \"(trace_id|ghost_id)\".*precedence' src/viz/main.roc); if [ -n \"$ti\" ] && [ -n \"$gi\" ] && [ \"$ti\" -lt \"$td\" ] && [ \"$gi\" -lt \"$gd\" ] && [ \"$pr\" = 2 ]; then echo same; else echo \"ti=$ti td=$td gi=$gi gd=$gd precedence=$pr\"; fi"))
 	check!("an id resolves before a day in both resolvers, and both id accepts say so (${prec_parity})", prec_parity == "same")?
 	# 'none' dismisses: both ghost accepts say so, the resolver has the
-	# branch, and every ghost refusal segment - the `(if (dv.ghost_...` that
-	# opens one, its condition paren optional - stands down on it
-	none_parity = Str.trim(sh!("na=$(grep -cE \"name: \\\"ghost_(day|id)\\\".*'none'\" src/viz/main.roc); nr=$(grep -c 'directive.ghost_day == \"none\"' src/viz/main.roc); m=$(grep -cE '\\(if \\(?dv\\.ghost_(id >= 0|day != \"\")' src/viz/main.roc); g=$(grep -E '\\(if \\(?dv\\.ghost_(id >= 0|day != \"\")' src/viz/main.roc | grep -c '!= \"none\"'); if [ \"$na\" = 2 ] && [ \"$nr\" = 1 ] && [ \"$m\" -gt 0 ] && [ \"$m\" = \"$g\" ]; then echo same; else echo \"accepts=$na resolver=$nr segments=$m guarded=$g\"; fi"))
+	# branch, and every ghost refusal segment stands down on it. A segment opens
+	# with `(if (dv.ghost_...` on one line, or `(` alone with `if dv.ghost_... {`
+	# on the next when its branch is a block; the pattern takes both. The six
+	# segments are pinned, so a layout the pattern misses fails here rather than
+	# shrinking both counts together.
+	none_parity = Str.trim(sh!("na=$(grep -cE \"name: \\\"ghost_(day|id)\\\".*'none'\" src/viz/main.roc); nr=$(grep -c 'directive.ghost_day == \"none\"' src/viz/main.roc); m=$(grep -cE '(\\(|^[[:space:]]*)if \\(?dv\\.ghost_(id >= 0|day != \"\")' src/viz/main.roc); g=$(grep -E '(\\(|^[[:space:]]*)if \\(?dv\\.ghost_(id >= 0|day != \"\")' src/viz/main.roc | grep -c '!= \"none\"'); if [ \"$na\" = 2 ] && [ \"$nr\" = 1 ] && [ \"$m\" = 6 ] && [ \"$m\" = \"$g\" ]; then echo same; else echo \"accepts=$na resolver=$nr segments=$m guarded=$g\"; fi"))
 	check!("'none' dismisses in the accepts, the resolver, and every ghost refusal segment (${none_parity})", none_parity == "same")?
 	# the directive history, newest first, capped at ten: an agent reads its
 	# outcome from the payload rather than from the table. No table, or a
