@@ -120,17 +120,15 @@ Report :: [].{
         })
 
     # activity stats within a half-open [from, to) date window (both are date strings
-    # compared against start_local; ISO makes the lexical compare correct). The p*
-    # zone sums cover only the activities the activity_intensity view marks
+    # compared against start_local; ISO makes the lexical compare correct). The
+    # p_* zone sums cover only the activities the activity_intensity view marks
     # `polarized`, the population every polarization share reads.
-    window_stats! : Str, Str, Str => Try({ z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, p_easy : I64, p_hard : I64, p_total : I64, tss : F64, sessions : I64 }, _)
+    window_stats! : Str, Str, Str => Try({ p_easy : I64, p_hard : I64, p_total : I64, tss : F64, sessions : I64 }, _)
     window_stats! = |path, from_str, to_str|
         Sql.query!({
             path: Path.utf8(path),
             query:
-                \\SELECT COALESCE(SUM(m.z1_s),0) AS z1, COALESCE(SUM(m.z2_s),0) AS z2, COALESCE(SUM(m.z3_s),0) AS z3,
-                \\       COALESCE(SUM(m.z4_s),0) AS z4, COALESCE(SUM(m.z5_s),0) AS z5,
-                \\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.z1_s + ai.z2_s ELSE 0 END),0) AS p_easy,
+                \\SELECT COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.z1_s + ai.z2_s ELSE 0 END),0) AS p_easy,
                 \\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.z4_s + ai.z5_s ELSE 0 END),0) AS p_hard,
                 \\       COALESCE(SUM(CASE WHEN ai.polarized = 1 THEN ai.z1_s + ai.z2_s + ai.z3_s + ai.z4_s + ai.z5_s ELSE 0 END),0) AS p_total,
                 \\       CAST(COALESCE(SUM(m.tss),0) AS REAL) AS tss, COUNT(*) AS sessions
@@ -140,17 +138,12 @@ Report :: [].{
             ,
             bindings: [{ name: ":from", value: String(from_str) }, { name: ":to", value: String(to_str) }],
             row: |cols| |stmt| {
-                z1 = Sql.i64("z1")(cols)(stmt)?
-                z2 = Sql.i64("z2")(cols)(stmt)?
-                z3 = Sql.i64("z3")(cols)(stmt)?
-                z4 = Sql.i64("z4")(cols)(stmt)?
-                z5 = Sql.i64("z5")(cols)(stmt)?
                 p_easy = Sql.i64("p_easy")(cols)(stmt)?
                 p_hard = Sql.i64("p_hard")(cols)(stmt)?
                 p_total = Sql.i64("p_total")(cols)(stmt)?
                 tss = Sql.f64("tss")(cols)(stmt)?
                 sessions = Sql.i64("sessions")(cols)(stmt)?
-                Ok({ z1, z2, z3, z4, z5, p_easy, p_hard, p_total, tss, sessions })
+                Ok({ p_easy, p_hard, p_total, tss, sessions })
             },
         })
 

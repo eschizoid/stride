@@ -362,7 +362,7 @@ run_all! = || {
     _ = sh!("rm -rf '${home}'")
     reset_sqlite_errors!({})
     tally_is_scoped!({})?
-    checks_ran_exactly!(1322)?
+    checks_ran_exactly!(1326)?
     Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7403,6 +7403,19 @@ b_strength_import! = |ctx| {
     check!("summary's easy share counts the workout's easy time only once it has no sets", rose(0))?
     check!("...and so does compare's", rose(1))?
     check!("...and so does season's", rose(2))?
+    # a window of lifting alone: a load day ahead of every fixture activity moves
+    # the series clock there, so summary's 7-day window holds one lifted workout
+    # and nothing polarized. The lift carries an HR stream, so the window has
+    # intensity streams; deleting its sets afterwards must turn the flag true,
+    # which ties the false value to this lift's sets and not to a missing row.
+    _ = sql!(ctx.db, "INSERT INTO daily_load (day, tss, ctl, atl, tsb) VALUES ('2099-06-15', 10.0, 1.0, 1.0, 0.0); INSERT INTO activities (id, name, sport_type, start_local, moving_time, distance) VALUES (9734, 'lone lift', 'Workout', '2099-06-15T12:00:00Z', 3600, 0); INSERT INTO activity_metrics (activity_id, tss, z1_s, z2_s, z3_s, z4_s, z5_s) VALUES (9734, 10, 3000, 0, 0, 0, 0); INSERT INTO strength_sets (activity_id, ordinal, exercise, sets, reps, weight_kg, source) VALUES (9734, 0, 'Curl', 3, 8, 10.0, 'strava'); INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (9734, '{\"time\":{\"data\":[0,1]},\"heartrate\":{\"data\":[110,111]}}');")
+    check!("...the lone lift's window has an intensity stream", strjq!(ctx, ["summary"], ".data.last_7d.intensity_streams") == "1")?
+    lone = strjq!(ctx, ["summary"], ".data | \"\\(.last_7d.polarization_known)|\\(.last_7d.z1_s)|\\(.as_of)\"")
+    check!("a window of lifting alone reports no polarization, not a 0% one", List.get(Str.split_on(lone, "|"), 0).ok_or("") == "false")?
+    check!("...though the window holds exactly the lift's zone time, on the moved clock", List.get(Str.split_on(lone, "|"), 1).ok_or("") == "3000" and List.get(Str.split_on(lone, "|"), 2).ok_or("") == "2099-06-15")?
+    _ = sql!(ctx.db, "DELETE FROM strength_sets WHERE activity_id = 9734;")
+    check!("...and the same window is polarized once the lift has no sets", strjq!(ctx, ["summary"], ".data.last_7d.polarization_known | tostring") == "true")?
+    _ = sql!(ctx.db, "DELETE FROM strength_sets WHERE activity_id = 9734; DELETE FROM streams WHERE activity_id = 9734; DELETE FROM activity_metrics WHERE activity_id = 9734; DELETE FROM activities WHERE id = 9734; DELETE FROM daily_load WHERE day = '2099-06-15';")
     _ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (9730, 9731, 9732, 9733); DELETE FROM activities WHERE id IN (9730, 9731, 9732, 9733);")
     Ok({})
 }
