@@ -20,7 +20,7 @@ Hud :: [].{
 
 	level_climb : I64, I64 -> I64
 	level_climb = |hours, l|
-		if 5 * (l + 1) * (l + 2) <= hours level_climb(hours, l + 1) else l
+		if (5 * (l + 1) * (l + 2) <= hours) level_climb(hours, l + 1) else l
 
 	# progress through the current level, 0..1
 	xp_frac : I64 -> F32
@@ -40,10 +40,10 @@ Hud :: [].{
 
 	tier : I64 -> Str
 	tier = |l|
-		if l < 10 "rookie"
-		else if l < 20 "grinder"
-		else if l < 30 "engine"
-		else if l < 40 "machine"
+		if (l < 10) "rookie"
+		else if (l < 20) "grinder"
+		else if (l < 30) "engine"
+		else if (l < 40) "machine"
 		else "legend"
 
 	total_hours : List(Db.CareerSport) -> I64
@@ -56,17 +56,21 @@ Hud :: [].{
 	# does not break the streak - the week is not over.
 	streak_weeks : List(Db.HeatDay) -> I64
 	streak_weeks = |heat| {
-		folded = List.fold(heat, { weeks: [], cur: Bool.False, seen: Bool.False }, |a, d| {
-			if d.dow == 1 and a.seen {
-				{ weeks: List.append(a.weeks, a.cur), cur: d.tss > 0, seen: Bool.True }
-			} else {
-				{ weeks: a.weeks, cur: a.cur or (d.tss > 0), seen: Bool.True }
-			}
-		})
-		all = if folded.seen List.append(folded.weeks, folded.cur) else folded.weeks
+		folded = List.fold(
+			heat,
+			{ weeks: [], cur: Bool.False, seen: Bool.False },
+			|a, d| {
+				if d.dow == 1 and a.seen {
+					{ weeks: List.append(a.weeks, a.cur), cur: d.tss > 0, seen: Bool.True }
+				} else {
+					{ weeks: a.weeks, cur: a.cur or (d.tss > 0), seen: Bool.True }
+				}
+			},
+		)
+		all = if (folded.seen) List.append(folded.weeks, folded.cur) else folded.weeks
 		# the newest week only counts while it has load; empty-so-far is skipped
 		trimmed = match List.last(all) {
-			Ok(last) => if last all else List.take_first(all, List.len(all) - 1)
+			Ok(last) => if (last) all else List.take_first(all, List.len(all) - 1)
 			Err(_) => all
 		}
 		count_back(trimmed)
@@ -75,17 +79,17 @@ Hud :: [].{
 	count_back : List(Bool) -> I64
 	count_back = |flags|
 		match List.last(flags) {
-			Ok(f) => if f (count_back(List.take_first(flags, List.len(flags) - 1)) + 1) else 0
+			Ok(f) => if (f) (count_back(List.take_first(flags, List.len(flags) - 1)) + 1) else 0
 			Err(_) => 0
 		}
 
 	# the form verdict a TSB value earns, in the app's own voice
 	form_band : F32 -> { label : Str, c : Color.Rgba }
 	form_band = |tsb|
-		if tsb < -30.0 ({ label: "cooked", c: Theme.alarm_c })
-		else if tsb < -10.0 ({ label: "building", c: Theme.atl_c })
-		else if tsb < 5.0 ({ label: "steady", c: Theme.ink_muted })
-		else if tsb < 25.0 ({ label: "primed", c: Theme.gold_c })
+		if (tsb < -30.0) ({ label: "cooked", c: Theme.alarm_c })
+		else if (tsb < -10.0) ({ label: "building", c: Theme.atl_c })
+		else if (tsb < 5.0) ({ label: "steady", c: Theme.ink_muted })
+		else if (tsb < 25.0) ({ label: "primed", c: Theme.gold_c })
 		else { label: "coasting", c: Theme.tsb_c }
 
 	# a small flame at (x, y): a tall teardrop of embers tapering to a tip
@@ -122,14 +126,14 @@ Hud :: [].{
 	rail! : Ui.Model, Draw.Frame => {}
 	rail! = |model, frame| {
 		hours = total_hours(model.career_sports)
-		if hours <= 0 {} else {
+		if (hours <= 0) {} else {
 			lvl = level_of(hours)
 			top = 40.0
 			bot = model.win.h - 44.0
 			span = bot - top
 			# arrive over ~1.5s: the fill is the greeting
 			arr0 = U64.to_f32(model.tick) / 90.0
-			arr1 = if arr0 > 1.0 (1.0) else arr0
+			arr1 = if (arr0 > 1.0) (1.0) else arr0
 			arr = 1.0 - (1.0 - arr1) * (1.0 - arr1)
 			fill = span * xp_frac(hours) * arr
 			frame.rounded_rectangle!({ x: 21.0, y: top, width: 4.0, height: span, radius: 2.0, segments: 4, style: Draw.filled(Color.with_alpha(Theme.card, 220)) })
@@ -137,7 +141,7 @@ Hud :: [].{
 				frame.rectangle_gradient_v!({ x: 21.0, y: bot - fill, width: 4.0, height: fill, color_top: Theme.gold_c, color_bottom: Color.with_alpha(Theme.ctl_c, 200) })
 				# the head breathes on the tick
 				t = model.tick % 40
-				tri = (if t < 20 (U64.to_f32(t)) else U64.to_f32(40 - t)) / 20.0
+				tri = (if (t < 20) (U64.to_f32(t)) else U64.to_f32(40 - t)) / 20.0
 				frame.circle!({ center: { x: 23.0, y: bot - fill }, radius: 3.0 + tri * 1.2, style: Draw.filled(Color.with_alpha(Theme.gold_c, 200)) })
 			}
 			Text.from(I64.to_str(lvl), model.font).size(10).draw!(frame, { pos: { x: 23.0, y: bot + 6.0 }, color: Theme.gold_c, align: (Top, Center) })

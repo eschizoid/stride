@@ -59,14 +59,17 @@ Db :: [].{
 		match db.query!(q, []) {
 			Err(_) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "daily_load query failed - analyzed yet?" }
 			Ok(rows) => {
-				decoded = List.map_try(rows, |r| {
-					d = r.str("day") ? |_| "bad day"
-					c = r.i64("c10") ? |_| "bad ctl"
-					a = r.i64("a10") ? |_| "bad atl"
-					t = r.i64("t10") ? |_| "bad tsb"
-					s = r.i64("s10") ? |_| "bad tss"
-					Ok({ d, c, a, t, s })
-				})
+				decoded = List.map_try(
+					rows,
+					|r| {
+						d = r.str("day") ? |_| "bad day"
+						c = r.i64("c10") ? |_| "bad ctl"
+						a = r.i64("a10") ? |_| "bad atl"
+						t = r.i64("t10") ? |_| "bad tsb"
+						s = r.i64("s10") ? |_| "bad tss"
+						Ok({ d, c, a, t, s })
+					},
+				)
 				match decoded {
 					Err(why) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: why }
 					Ok(raw) => {
@@ -97,8 +100,10 @@ Db :: [].{
 			Err(_) => 0
 			Ok(rows) => match List.first(rows) {
 				Err(_) => 0
-				Ok(r) => match r.i64("st") { Ok(x) => if x > 0 x else 0
-					Err(_) => 0 }
+				Ok(r) => match r.i64("st") {
+					Ok(x) => if (x > 0) x else 0
+					Err(_) => 0
+				}
 			}
 		}
 
@@ -112,12 +117,18 @@ Db :: [].{
 				# no past event is a normal state, not an error
 				Err(_) => { day: "", name: "", ago: -1, err: "" }
 				Ok(r) => {
-					d = match r.str("event_date") { Ok(x) => x
-						Err(_) => "" }
-					nm = match r.str("name") { Ok(x) => x
-						Err(_) => "" }
-					ag = match r.i64("ago") { Ok(x) => x
-						Err(_) => -1 }
+					d = match r.str("event_date") {
+						Ok(x) => x
+						Err(_) => ""
+					}
+					nm = match r.str("name") {
+						Ok(x) => x
+						Err(_) => ""
+					}
+					ag = match r.i64("ago") {
+						Ok(x) => x
+						Err(_) => -1
+					}
 					# a row that exists but will not decode is corruption — surface it,
 					# same rule as load_event!
 					if d == "" or nm == "" or ag < 0 {
@@ -156,7 +167,6 @@ Db :: [].{
 			}
 		}
 
-
 	# The power-duration curve: the window's max per rung off the shared
 	# activity_power_ladder view. CAST(ROUND(..)) because a bare CAST
 	# truncates and would draw the whole ladder a watt low. A rung nobody
@@ -172,12 +182,15 @@ Db :: [].{
 		match db.query!(q, [{ name: ":d", value: Integer(days) }]) {
 			Err(_) => []
 			Ok(rows) =>
-				List.keep_oks(rows, |r| {
-					d = r.i64("d") ? |_| "bad d"
-					p = r.i64("p") ? |_| "bad p"
+				List.keep_oks(
+					rows,
+					|r| {
+						d = r.i64("d") ? |_| "bad d"
+						p = r.i64("p") ? |_| "bad p"
 
-					Ok({ dur_s: d, watts: I64.to_f32(p) })
-				})
+						Ok({ dur_s: d, watts: I64.to_f32(p) })
+					},
+				)
 		}
 	}
 
@@ -192,12 +205,15 @@ Db :: [].{
 		match db.query!(q, [{ name: ":d", value: Integer(days) }, { name: ":d2", value: Integer(days * 2) }]) {
 			Err(_) => []
 			Ok(rows) =>
-				List.keep_oks(rows, |r| {
-					d = r.i64("d") ? |_| "bad d"
-					p = r.i64("p") ? |_| "bad p"
+				List.keep_oks(
+					rows,
+					|r| {
+						d = r.i64("d") ? |_| "bad d"
+						p = r.i64("p") ? |_| "bad p"
 
-					Ok({ dur_s: d, watts: I64.to_f32(p) })
-				})
+						Ok({ dur_s: d, watts: I64.to_f32(p) })
+					},
+				)
 		}
 	}
 
@@ -211,11 +227,14 @@ Db :: [].{
 		match db.query!("SELECT CAST(substr(start_local, 1, 10) AS TEXT) AS day, CAST(group_concat(name, ' + ') AS TEXT) AS note FROM activities WHERE start_local >= (SELECT date(today, '-400 days') FROM series_clock) GROUP BY day", []) {
 			Err(_) => []
 			Ok(rows) =>
-				List.keep_oks(rows, |r| {
-					dy = r.str("day") ? |_| "bad day"
-					nt = r.str("note") ? |_| "bad note"
-					Ok({ day: dy, note: ascii_safe(nt) })
-				})
+				List.keep_oks(
+					rows,
+					|r| {
+						dy = r.str("day") ? |_| "bad day"
+						nt = r.str("note") ? |_| "bad note"
+						Ok({ day: dy, note: ascii_safe(nt) })
+					},
+				)
 		}
 
 	# ── the coach-window bus (ADR 0015: pixels for the human, state for the
@@ -234,20 +253,25 @@ Db :: [].{
 			Err(_) => 0
 			Ok(rows) => match List.first(rows) {
 				Err(_) => 0
-				Ok(r) => match r.i64("c") { Ok(c) => c
-					Err(_) => 0 }
+				Ok(r) => match r.i64("c") {
+					Ok(c) => c
+					Err(_) => 0
+				}
 			}
 		}
-		if present == Bus.sentinel_present {} else ensure_bus_ddl!(db)
+		if (present == Bus.sentinel_present) {} else ensure_bus_ddl!(db)
 	}
 
 	# the migration is core.Bus's statement list, executed in order; an ALTER
 	# on a column that already exists fails and the _ discards that, by design
 	ensure_bus_ddl! : Sqlite.Db => {}
 	ensure_bus_ddl! = |db|
-		List.for_each!(Bus.ddl, |q| {
-			_ = db.execute!(q, [])
-		})
+		List.for_each!(
+			Bus.ddl,
+			|q| {
+				_ = db.execute!(q, [])
+			},
+		)
 
 	# the window's half of capability discovery (#439): what an agent may put
 	# on the bus is a fact about THIS binary, so this binary states it. The
@@ -264,12 +288,18 @@ Db :: [].{
 		_ = db.execute!("DELETE FROM viz_views", [])
 		_ = db.execute!("DELETE FROM viz_fields", [])
 		_ = db.execute!("INSERT INTO viz_capabilities (key, value) VALUES ('protocol', '1'), ('staleness_seconds', '${(stale_secs).to_str()}'), ('focus_staleness_seconds', '${(focus_stale_secs).to_str()}'), ('published_at', datetime('now'))", [])
-		List.for_each!(views, |v| {
-			_ = db.execute!("INSERT INTO viz_views (id, name) VALUES (:i, :n)", [{ name: ":i", value: Integer(v.id) }, { name: ":n", value: String(v.name) }])
-		})
-		List.for_each!(fields, |f| {
-			_ = db.execute!("INSERT INTO viz_fields (field, kind, accepts) VALUES (:f, :k, :a)", [{ name: ":f", value: String(f.name) }, { name: ":k", value: String(f.kind) }, { name: ":a", value: String(f.accepts) }])
-		})
+		List.for_each!(
+			views,
+			|v| {
+				_ = db.execute!("INSERT INTO viz_views (id, name) VALUES (:i, :n)", [{ name: ":i", value: Integer(v.id) }, { name: ":n", value: String(v.name) }])
+			},
+		)
+		List.for_each!(
+			fields,
+			|f| {
+				_ = db.execute!("INSERT INTO viz_fields (field, kind, accepts) VALUES (:f, :k, :a)", [{ name: ":f", value: String(f.name) }, { name: ":k", value: String(f.kind) }, { name: ":a", value: String(f.accepts) }])
+			},
+		)
 		_ = db.execute!("COMMIT", [])
 	}
 
@@ -307,53 +337,75 @@ Db :: [].{
 			Err(_) => Bool.False
 			Ok(prows) => match List.first(prows) {
 				Err(_) => Bool.False
-				Ok(pr) => (match pr.i64("e") { Ok(e9) => e9
-					Err(_) => 0 }) == 1
+				Ok(pr) => (
+					match pr.i64("e") {
+						Ok(e9) => e9
+						Err(_) => 0
+					}
+				) == 1
 			}
 		}
-		if !has_pending None
+		if (!has_pending) None
 		else {
-		# a directive written while no window was open must not seize the one
-		# that eventually launches: anything past the freshness window closes
-		# as stale, applied by nobody. The SELECT below refuses stale rows
-		# independently, so one slipping past this sweep is labeled late but
-		# never applied.
-		_ = db.execute!(Bus.stale_sweep_sql, [])
-		match db.query!(Bus.winner_sql, []) {
-			Err(_) => None
-			Ok(rows) => match List.first(rows) {
+			# a directive written while no window was open must not seize the one
+			# that eventually launches: anything past the freshness window closes
+			# as stale, applied by nobody. The SELECT below refuses stale rows
+			# independently, so one slipping past this sweep is labeled late but
+			# never applied.
+			_ = db.execute!(Bus.stale_sweep_sql, [])
+			match db.query!(Bus.winner_sql, []) {
 				Err(_) => None
-				Ok(r) => {
-					id = match r.i64("id") { Ok(x) => x
-						Err(_) => -1 }
-					v = match r.i64("v") { Ok(x) => x
-						Err(_) => -1 }
-					rg = match r.i64("rg") { Ok(x) => x
-						Err(_) => -1 }
-					cd = match r.str("cd") { Ok(x) => x
-						Err(_) => "" }
-					td = match r.str("td") { Ok(x) => x
-						Err(_) => "" }
-					gd = match r.str("gd") { Ok(x) => x
-						Err(_) => "" }
-					ti = match r.i64("ti") { Ok(x) => x
-						Err(_) => -1 }
-					gi = match r.i64("gi") { Ok(x) => x
-						Err(_) => -1 }
-					cp = match r.str("cp") { Ok(x) => x
-						Err(_) => "" }
-					if id < 0 None
-					else {
-						# older unconsumed rows are closed as superseded; the
-						# winning row stays PENDING until the frame that applies
-						# it reports back - a crash between read and apply
-						# leaves it retryable instead of silently lost
-						_ = db.execute!(Bus.supersede_sql, [{ name: ":id", value: Integer(id) }])
-						Some({ id, view: v, range: rg, cursor_day: cd, trace_day: td, ghost_day: gd, trace_id: ti, ghost_id: gi, capture: cp })
+				Ok(rows) => match List.first(rows) {
+					Err(_) => None
+					Ok(r) => {
+						id = match r.i64("id") {
+							Ok(x) => x
+							Err(_) => -1
+						}
+						v = match r.i64("v") {
+							Ok(x) => x
+							Err(_) => -1
+						}
+						rg = match r.i64("rg") {
+							Ok(x) => x
+							Err(_) => -1
+						}
+						cd = match r.str("cd") {
+							Ok(x) => x
+							Err(_) => ""
+						}
+						td = match r.str("td") {
+							Ok(x) => x
+							Err(_) => ""
+						}
+						gd = match r.str("gd") {
+							Ok(x) => x
+							Err(_) => ""
+						}
+						ti = match r.i64("ti") {
+							Ok(x) => x
+							Err(_) => -1
+						}
+						gi = match r.i64("gi") {
+							Ok(x) => x
+							Err(_) => -1
+						}
+						cp = match r.str("cp") {
+							Ok(x) => x
+							Err(_) => ""
+						}
+						if (id < 0) None
+						else {
+							# older unconsumed rows are closed as superseded; the
+							# winning row stays PENDING until the frame that applies
+							# it reports back - a crash between read and apply
+							# leaves it retryable instead of silently lost
+							_ = db.execute!(Bus.supersede_sql, [{ name: ":id", value: Integer(id) }])
+							Some({ id, view: v, range: rg, cursor_day: cd, trace_day: td, ghost_day: gd, trace_id: ti, ghost_id: gi, capture: cp })
+						}
 					}
 				}
 			}
-		}
 		}
 	}
 
@@ -408,13 +460,17 @@ Db :: [].{
 	local_offset_minutes! = |runner, db| {
 		# the CLI reads the offset as a plain integer (an optional minus, then
 		# digits) and treats anything else as unreadable, which scores as 0
-		fixed = match plain_int(config_value!(db, "utc_offset_minutes")) { Ok(n) => n
-			Err(_) => 0 }
+		fixed = match plain_int(config_value!(db, "utc_offset_minutes")) {
+			Ok(n) => n
+			Err(_) => 0
+		}
 		tz = config_value!(db, "timezone")
-		if tz == "" fixed
-		else match zone_offset_now!(runner, tz) { Ok(off) => off
+		if (tz == "") fixed
+		else match zone_offset_now!(runner, tz) {
+			Ok(off) => off
 			# an unknown zone falls back to the fixed offset, as the CLI does
-			Err(_) => fixed }
+			Err(_) => fixed
+		}
 	}
 
 	# a config value as stored, untrimmed as the CLI reads it, or "" when the
@@ -422,9 +478,13 @@ Db :: [].{
 	config_value! : Sqlite.Db, Str => Str
 	config_value! = |db, key|
 		match db.query!("SELECT CAST(value AS TEXT) AS v FROM config WHERE key = '${key}';", []) {
-			Ok(rows) => match List.first(rows) { Ok(r) => match r.str("v") { Ok(v) => v
-					Err(_) => "" }
-				Err(_) => "" }
+			Ok(rows) => match List.first(rows) {
+				Ok(r) => match r.str("v") {
+					Ok(v) => v
+					Err(_) => ""
+				}
+				Err(_) => ""
+			}
 			Err(_) => ""
 		}
 
@@ -446,8 +506,8 @@ Db :: [].{
 	plain_int : Str -> Try(I64, [NotAnInt])
 	plain_int = |s| {
 		bytes = Str.to_utf8(s)
-		digits = if Str.starts_with(s, "-") List.drop_first(bytes, 1) else bytes
-		if !(List.is_empty(digits)) and List.all(digits, |b| b >= 48 and b <= 57) (I64.from_str(s).map_err(|_| NotAnInt)) else Err(NotAnInt)
+		digits = if (Str.starts_with(s, "-")) List.drop_first(bytes, 1) else bytes
+		if (!(List.is_empty(digits)) and List.all(digits, |b| b >= 48 and b <= 57)) (I64.from_str(s).map_err(|_| NotAnInt)) else Err(NotAnInt)
 	}
 
 	# "+HHMM" / "-HHMM", what `date +%z` prints, to minutes east of UTC
@@ -455,11 +515,11 @@ Db :: [].{
 	parse_utc_offset = |raw|
 		match Str.trim(raw).to_utf8() {
 			[sign, h1, h2, m1, m2] => {
-				digit = |b| if b >= 48 and b <= 57 Ok(b.to_i64() - 48) else Err(BadTz)
+				digit = |b| if (b >= 48 and b <= 57) Ok(b.to_i64() - 48) else Err(BadTz)
 				hh = (digit(h1)? * 10) + digit(h2)?
 				mm = (digit(m1)? * 10) + digit(m2)?
 				mag = (hh * 60) + mm
-				if sign == 45 Ok(-mag) else if sign == 43 Ok(mag) else Err(BadTz)
+				if (sign == 45) Ok(-mag) else if (sign == 43) Ok(mag) else Err(BadTz)
 			}
 			_ => Err(BadTz)
 		}
@@ -480,10 +540,14 @@ Db :: [].{
 			Ok(rows) => match List.first(rows) {
 				Err(_) => { done: 0, total: 0 }
 				Ok(r) => {
-					dn = match r.i64("dn") { Ok(x) => x
-						Err(_) => 0 }
-					tot = match r.i64("tot") { Ok(x) => x
-						Err(_) => 0 }
+					dn = match r.i64("dn") {
+						Ok(x) => x
+						Err(_) => 0
+					}
+					tot = match r.i64("tot") {
+						Ok(x) => x
+						Err(_) => 0
+					}
 					{ done: dn, total: tot }
 				}
 			}
@@ -501,10 +565,13 @@ Db :: [].{
 		match db.query!("WITH anchor AS (SELECT date('now', '${today_mod}') AS today) SELECT CAST(target_date AS TEXT) AS d, CAST(COALESCE(session_type, '') AS TEXT) AS t, CAST(COALESCE(detail, '') AS TEXT) AS dt, CAST(COALESCE(rationale, '') AS TEXT) AS ra, (COALESCE(status, '') = 'done') AS dn, (COALESCE(status, '') = 'skipped') AS sk, (target_date = (SELECT today FROM anchor)) AS td FROM plan_current, anchor WHERE target_date >= (SELECT today FROM anchor) AND target_date <= date((SELECT today FROM anchor), '+6 days') ORDER BY target_date, id", []) {
 			Err(_) => []
 			Ok(rows) =>
-				List.map(rows, |r| match decode_plan_row(r) {
-					Ok(row) => row
-					Err(_) => { day: "?", typ: "?", detail: "plan record unreadable", rationale: "", done: Bool.False, skipped: Bool.False, today: Bool.False }
-				})
+				List.map(
+					rows,
+					|r| match decode_plan_row(r) {
+						Ok(row) => row
+						Err(_) => { day: "?", typ: "?", detail: "plan record unreadable", rationale: "", done: Bool.False, skipped: Bool.False, today: Bool.False }
+					},
+				)
 		}
 
 	decode_plan_row : Sqlite.Row -> Try(PlanRow, [BadRow])
@@ -528,10 +595,14 @@ Db :: [].{
 			Ok(rows) => match List.first(rows) {
 				Err(_) => { this: 0, last: 0 }
 				Ok(r) => {
-					tw = match r.i64("tw") { Ok(x) => x
-						Err(_) => 0 }
-					lw = match r.i64("lw") { Ok(x) => x
-						Err(_) => 0 }
+					tw = match r.i64("tw") {
+						Ok(x) => x
+						Err(_) => 0
+					}
+					lw = match r.i64("lw") {
+						Ok(x) => x
+						Err(_) => 0
+					}
 					{ this: tw, last: lw }
 				}
 			}
@@ -546,19 +617,27 @@ Db :: [].{
 			Ok(rows) => match List.first(rows) {
 				Err(_) => "no directives yet"
 				Ok(r) => {
-					at = match r.str("at") { Ok(x) => x
-						Err(_) => "" }
-					v = match r.i64("v") { Ok(x) => x
-						Err(_) => -1 }
-					rg = match r.i64("rg") { Ok(x) => x
-						Err(_) => -1 }
-					cd = match r.str("cd") { Ok(x) => x
-						Err(_) => "" }
-					vn = if v == 0 "form" else if v == 1 "power" else if v == 2 "trace" else if v == 3 "table" else if v == 4 "plan" else if v == 5 "heat" else if v == 6 "zones" else if v == 7 "ramp" else if v == 8 "career" else if v >= 0 "view ${I64.to_str(v)} (ignored)" else ""
-					rgp = if rg > 0 "${I64.to_str(rg)}d" else ""
+					at = match r.str("at") {
+						Ok(x) => x
+						Err(_) => ""
+					}
+					v = match r.i64("v") {
+						Ok(x) => x
+						Err(_) => -1
+					}
+					rg = match r.i64("rg") {
+						Ok(x) => x
+						Err(_) => -1
+					}
+					cd = match r.str("cd") {
+						Ok(x) => x
+						Err(_) => ""
+					}
+					vn = if (v == 0) "form" else if (v == 1) "power" else if (v == 2) "trace" else if (v == 3) "table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else if (v == 8) "career" else if (v >= 0) "view ${I64.to_str(v)} (ignored)" else ""
+					rgp = if (rg > 0) "${I64.to_str(rg)}d" else ""
 					joined = Str.join_with(List.keep_if([vn, rgp], |s2| s2 != ""), " / ")
-					parts = if joined == "" "steer" else joined
-					if cd != "" "${at}  ->  ${parts} @ ${cd}" else "${at}  ->  ${parts}"
+					parts = if (joined == "") "steer" else joined
+					if (cd != "") "${at}  ->  ${parts} @ ${cd}" else "${at}  ->  ${parts}"
 				}
 			}
 		}
@@ -573,12 +652,15 @@ Db :: [].{
 		match db.query!("SELECT CAST(day AS TEXT) AS d, CAST(ROUND(COALESCE(tss, 0)) AS INTEGER) AS t, CAST(strftime('%w', day) AS INTEGER) AS w FROM (SELECT day, tss FROM daily_load ORDER BY day DESC LIMIT 372) ORDER BY day ASC", []) {
 			Err(_) => []
 			Ok(rows) =>
-				List.keep_oks(rows, |r| {
-					dy = r.str("d") ? |_| "bad"
-					ts = r.i64("t") ? |_| "bad"
-					w = r.i64("w") ? |_| "bad"
-					Ok({ day: dy, tss: ts, dow: w })
-				})
+				List.keep_oks(
+					rows,
+					|r| {
+						dy = r.str("d") ? |_| "bad"
+						ts = r.i64("t") ? |_| "bad"
+						w = r.i64("w") ? |_| "bad"
+						Ok({ day: dy, tss: ts, dow: w })
+					},
+				)
 		}
 
 	# twelve Monday weeks of zone seconds and intensity classes, oldest first,
@@ -593,18 +675,21 @@ Db :: [].{
 		match db.query!("WITH mondays(wk) AS (SELECT date(mon, '-77 days') FROM week_bounds UNION ALL SELECT date(wk, '+7 days') FROM mondays WHERE wk < (SELECT mon FROM week_bounds)), agg AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, SUM(z1_s) AS z1, SUM(z2_s) AS z2, SUM(z3_s) AS z3, SUM(z4_s) AS z4, SUM(z5_s) AS z5, SUM(CASE WHEN polarized = 1 THEN easy_s ELSE 0 END) AS easy, SUM(CASE WHEN polarized = 1 THEN moderate_s ELSE 0 END) AS moderate, SUM(CASE WHEN polarized = 1 THEN hard_s ELSE 0 END) AS hard FROM activity_intensity WHERE day >= (SELECT date(mon, '-77 days') FROM week_bounds) GROUP BY awk) SELECT CAST(m.wk AS TEXT) AS wk, CAST(COALESCE(a.z1, 0) AS INTEGER) AS z1, CAST(COALESCE(a.z2, 0) AS INTEGER) AS z2, CAST(COALESCE(a.z3, 0) AS INTEGER) AS z3, CAST(COALESCE(a.z4, 0) AS INTEGER) AS z4, CAST(COALESCE(a.z5, 0) AS INTEGER) AS z5, CAST(COALESCE(a.easy, 0) AS INTEGER) AS easy, CAST(COALESCE(a.moderate, 0) AS INTEGER) AS moderate, CAST(COALESCE(a.hard, 0) AS INTEGER) AS hard FROM mondays m LEFT JOIN agg a ON a.awk = m.wk ORDER BY m.wk ASC", []) {
 			Err(_) => []
 			Ok(rows) =>
-				List.keep_oks(rows, |r| {
-					wk = r.str("wk") ? |_| "bad"
-					z1 = r.i64("z1") ? |_| "bad"
-					z2 = r.i64("z2") ? |_| "bad"
-					z3 = r.i64("z3") ? |_| "bad"
-					z4 = r.i64("z4") ? |_| "bad"
-					z5 = r.i64("z5") ? |_| "bad"
-					ez = r.i64("easy") ? |_| "bad"
-					mo = r.i64("moderate") ? |_| "bad"
-					hd = r.i64("hard") ? |_| "bad"
-					Ok({ wk, z1, z2, z3, z4, z5, easy: ez, moderate: mo, hard: hd })
-				})
+				List.keep_oks(
+					rows,
+					|r| {
+						wk = r.str("wk") ? |_| "bad"
+						z1 = r.i64("z1") ? |_| "bad"
+						z2 = r.i64("z2") ? |_| "bad"
+						z3 = r.i64("z3") ? |_| "bad"
+						z4 = r.i64("z4") ? |_| "bad"
+						z5 = r.i64("z5") ? |_| "bad"
+						ez = r.i64("easy") ? |_| "bad"
+						mo = r.i64("moderate") ? |_| "bad"
+						hd = r.i64("hard") ? |_| "bad"
+						Ok({ wk, z1, z2, z3, z4, z5, easy: ez, moderate: mo, hard: hd })
+					},
+				)
 		}
 
 	# twelve Monday weeks off the weekly_ramp view - the ONE definition of
@@ -615,13 +700,16 @@ Db :: [].{
 		match db.query!("SELECT CAST(wk AS TEXT) AS wk, CAST(ROUND(tss) AS INTEGER) AS tss, CAST(ROUND(ctl_end * 10) AS INTEGER) AS ctl10, CAST(ROUND(ramp * 10) AS INTEGER) AS ramp10 FROM weekly_ramp ORDER BY wk ASC", []) {
 			Err(_) => []
 			Ok(rows) =>
-				List.keep_oks(rows, |r| {
-					wk = r.str("wk") ? |_| "bad"
-					ts = r.i64("tss") ? |_| "bad"
-					c10 = r.i64("ctl10") ? |_| "bad"
-					r10 = r.i64("ramp10") ? |_| "bad"
-					Ok({ wk, tss: ts, ctl10: c10, ramp10: r10 })
-				})
+				List.keep_oks(
+					rows,
+					|r| {
+						wk = r.str("wk") ? |_| "bad"
+						ts = r.i64("tss") ? |_| "bad"
+						c10 = r.i64("ctl10") ? |_| "bad"
+						r10 = r.i64("ramp10") ? |_| "bad"
+						Ok({ wk, tss: ts, ctl10: c10, ramp10: r10 })
+					},
+				)
 		}
 
 	# The career, assembled from the three v32 views: per-sport totals, the
@@ -646,12 +734,15 @@ Db :: [].{
 		match db.query!("SELECT CAST(fam AS TEXT) AS f, CAST(kind AS TEXT) AS k, COUNT(*) AS n FROM monthly_threshold GROUP BY fam, kind ORDER BY n DESC, fam", []) {
 			Err(_) => []
 			Ok(rows) =>
-				List.keep_oks(rows, |r| {
-					f = r.str("f") ? |_| "bad"
-					k = r.str("k") ? |_| "bad"
-					n = r.i64("n") ? |_| "bad"
-					Ok({ fam: f, kind: k, months: n })
-				})
+				List.keep_oks(
+					rows,
+					|r| {
+						f = r.str("f") ? |_| "bad"
+						k = r.str("k") ? |_| "bad"
+						n = r.i64("n") ? |_| "bad"
+						Ok({ fam: f, kind: k, months: n })
+					},
+				)
 		}
 
 	# every family's arc, from two reads however many families there are:
@@ -668,13 +759,19 @@ Db :: [].{
 	load_career_spines! = |db, fams, today_mod| {
 		base = load_monthly_base_at!(db, today_mod)
 		thr = load_all_thresholds!(db)
-		List.map(fams, |f| {
-			rows = List.map(base, |b| {
-				ftp10 = List.fold(thr, 0, |acc, x| if x.fam == f.fam and x.month == b.month x.ftp10 else acc)
-				{ month: b.month, load: b.load, ftp10, partial: b.partial }
-			})
-			{ fam: f.fam, kind: f.kind, rows }
-		})
+		List.map(
+			fams,
+			|f| {
+				rows = List.map(
+					base,
+					|b| {
+						ftp10 = List.fold(thr, 0, |acc, x| if (x.fam == f.fam and x.month == b.month) x.ftp10 else acc)
+						{ month: b.month, load: b.load, ftp10, partial: b.partial }
+					},
+				)
+				{ fam: f.fam, kind: f.kind, rows }
+			},
+		)
 	}
 
 	# the spine ground, shared by every family: one row per month with its
@@ -686,12 +783,15 @@ Db :: [].{
 		match db.query!("SELECT CAST(month AS TEXT) AS m, CAST(ROUND(load) AS INTEGER) AS ld, CASE WHEN month = strftime('%Y-%m', 'now', '${today_mod}') THEN 1 ELSE 0 END AS pt FROM monthly_load ORDER BY month ASC", []) {
 			Err(_) => []
 			Ok(rows) =>
-				List.keep_oks(rows, |r| {
-					m = r.str("m") ? |_| "bad"
-					ld = r.i64("ld") ? |_| "bad"
-					pt = r.i64("pt") ? |_| "bad"
-					Ok({ month: m, load: ld, partial: pt == 1 })
-				})
+				List.keep_oks(
+					rows,
+					|r| {
+						m = r.str("m") ? |_| "bad"
+						ld = r.i64("ld") ? |_| "bad"
+						pt = r.i64("pt") ? |_| "bad"
+						Ok({ month: m, load: ld, partial: pt == 1 })
+					},
+				)
 		}
 
 	# every family's month-close threshold in tenths, all families in ONE read
@@ -703,12 +803,15 @@ Db :: [].{
 		match db.query!("SELECT CAST(fam AS TEXT) AS f, CAST(month AS TEXT) AS m, CAST(ROUND(value * 10) AS INTEGER) AS f10 FROM monthly_threshold", []) {
 			Err(_) => []
 			Ok(rows) =>
-				List.keep_oks(rows, |r| {
-					f = r.str("f") ? |_| "bad"
-					m = r.str("m") ? |_| "bad"
-					f10 = r.i64("f10") ? |_| "bad"
-					Ok({ fam: f, month: m, ftp10: f10 })
-				})
+				List.keep_oks(
+					rows,
+					|r| {
+						f = r.str("f") ? |_| "bad"
+						m = r.str("m") ? |_| "bad"
+						f10 = r.i64("f10") ? |_| "bad"
+						Ok({ fam: f, month: m, ftp10: f10 })
+					},
+				)
 		}
 
 	# the athlete's unit preference from config, resolved by the shared rule in
@@ -737,13 +840,16 @@ Db :: [].{
 		match db.query!("SELECT CAST(sport AS TEXT) AS s, sessions AS n, CAST(ROUND(secs / 360.0) AS INTEGER) AS h10, CAST(COALESCE(meters, 0) AS REAL) AS m FROM career_totals ORDER BY sessions DESC, sport", []) {
 			Err(_) => []
 			Ok(rows) =>
-				List.keep_oks(rows, |r| {
-					s = r.str("s") ? |_| "bad"
-					n = r.i64("n") ? |_| "bad"
-					h10 = r.i64("h10") ? |_| "bad"
-					m = r.f64("m") ? |_| "bad"
-					Ok({ sport: s, sessions: n, hours10: h10, dist_m: m })
-				})
+				List.keep_oks(
+					rows,
+					|r| {
+						s = r.str("s") ? |_| "bad"
+						n = r.i64("n") ? |_| "bad"
+						h10 = r.i64("h10") ? |_| "bad"
+						m = r.f64("m") ? |_| "bad"
+						Ok({ sport: s, sessions: n, hours10: h10, dist_m: m })
+					},
+				)
 		}
 
 	# one family's own month: the load it carried and how many sessions built
@@ -760,13 +866,16 @@ Db :: [].{
 		match db.query!("SELECT CAST(fam AS TEXT) AS f, CAST(month AS TEXT) AS m, load AS ld, sessions AS n FROM monthly_family_load ORDER BY f, m", []) {
 			Err(_) => []
 			Ok(rows) =>
-				List.keep_oks(rows, |r| {
-					f = r.str("f") ? |_| "bad"
-					m = r.str("m") ? |_| "bad"
-					ld = r.i64("ld") ? |_| "bad"
-					n = r.i64("n") ? |_| "bad"
-					Ok({ fam: f, month: m, load: ld, sessions: n })
-				})
+				List.keep_oks(
+					rows,
+					|r| {
+						f = r.str("f") ? |_| "bad"
+						m = r.str("m") ? |_| "bad"
+						ld = r.i64("ld") ? |_| "bad"
+						n = r.i64("n") ? |_| "bad"
+						Ok({ fam: f, month: m, load: ld, sessions: n })
+					},
+				)
 		}
 
 	# every RIDE power PR: the best-ever watts per duration rung and the day
@@ -789,13 +898,16 @@ Db :: [].{
 		match db.query!("WITH best AS (SELECT rung, watts, day FROM (SELECT rung, watts, day, ROW_NUMBER() OVER (PARTITION BY rung ORDER BY watts DESC, start_local ASC) AS rn FROM activity_power_ladder WHERE sport_family = 'Ride') WHERE rn = 1) SELECT CAST(r.rung AS TEXT) AS rung, CAST(r.secs AS INTEGER) AS secs, CAST(COALESCE(ROUND(b.watts), 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM power_ladder_rungs r LEFT JOIN best b ON b.rung = r.rung ORDER BY r.secs ASC", []) {
 			Err(_) => []
 			Ok(rows) =>
-				List.keep_oks(rows, |r| {
-					rg = r.str("rung") ? |_| "bad"
-					sc = r.i64("secs") ? |_| "bad"
-					w9 = r.i64("w") ? |_| "bad"
-					dy = r.str("day") ? |_| "bad"
-					Ok({ rung: rg, secs: sc, w: w9, day: dy })
-				})
+				List.keep_oks(
+					rows,
+					|r| {
+						rg = r.str("rung") ? |_| "bad"
+						sc = r.i64("secs") ? |_| "bad"
+						w9 = r.i64("w") ? |_| "bad"
+						dy = r.str("day") ? |_| "bad"
+						Ok({ rung: rg, secs: sc, w: w9, day: dy })
+					},
+				)
 		}
 
 	# event days inside the heat window only - the grid spans at most 372 days
@@ -805,16 +917,19 @@ Db :: [].{
 		match db.query!("WITH anchor AS (SELECT today FROM series_clock) SELECT DISTINCT CAST(event_date AS TEXT) AS d FROM events, anchor WHERE event_date >= date(today, '-372 days') AND event_date <= today", []) {
 			Err(_) => []
 			Ok(rows) =>
-				List.keep_oks(rows, |r| {
-					d = r.str("d") ? |_| "bad"
-					Ok(d)
-				})
+				List.keep_oks(
+					rows,
+					|r| {
+						d = r.str("d") ? |_| "bad"
+						Ok(d)
+					},
+				)
 		}
 
 	# a day's note from load_day_notes!, or the honest default
 	note_for : List({ day : Str, note : Str }), Str -> Str
 	note_for = |notes, dy|
-		List.fold(notes, "rest day", |acc, x| if x.day == dy x.note else acc)
+		List.fold(notes, "rest day", |acc, x| if (x.day == dy) x.note else acc)
 
 	# one day's full story for the detail panel: each activity with its type,
 	# duration, distance and load - pre-formatted lines, coach-legible, in the
@@ -838,11 +953,11 @@ Db :: [].{
 		mins = secs // 60
 		dk = Fmt.tenths((Units.dist_value(units, dist_m) * 10.0).round_to_i64_try().ok_or(0))
 		du = Units.dist_unit(units)
-		stats = if np > 0 "${I64.to_str(mins)}min  ${dk}${du}  ${I64.to_str(tss)} tss  ${I64.to_str(np)}w np" else "${I64.to_str(mins)}min  ${dk}${du}  ${I64.to_str(tss)} tss"
+		stats = if (np > 0) "${I64.to_str(mins)}min  ${dk}${du}  ${I64.to_str(tss)} tss  ${I64.to_str(np)}w np" else "${I64.to_str(mins)}min  ${dk}${du}  ${I64.to_str(tss)} tss"
 		# if100 is intensity_factor * 100 rounded: 98 -> "IF 0.98", 105 -> "IF 1.05"
-		p1 = if if100 > 0 "IF ${Fmt.hundredths(if100)}" else ""
-		p2 = if hr > 0 "${I64.to_str(hr)} bpm avg" else ""
-		p3 = if rpe != "0.0" and rpe != "0" "rpe ${rpe}" else "unrated"
+		p1 = if (if100 > 0) "IF ${Fmt.hundredths(if100)}" else ""
+		p2 = if (hr > 0) "${I64.to_str(hr)} bpm avg" else ""
+		p3 = if (rpe != "0.0" and rpe != "0") "rpe ${rpe}" else "unrated"
 		extra = Str.join_with(List.keep_if([p1, p2, p3], |s| s != ""), "   ")
 		Ok({ title: ascii_safe("${nm} [${sp}]"), stats, extra, zones: [z1, z2, z3, z4, z5] })
 	}
@@ -852,14 +967,17 @@ Db :: [].{
 		match db.query!("SELECT CAST(a.name AS TEXT) AS name, CAST(a.sport_type AS TEXT) AS sport, CAST(COALESCE(a.moving_time, 0) AS INTEGER) AS secs, CAST(COALESCE(a.distance, 0) AS REAL) AS dist_m, CAST(ROUND(COALESCE(m.tss, 0)) AS INTEGER) AS tss, CAST(ROUND(COALESCE(m.normalized_power, 0)) AS INTEGER) AS np, CAST(ROUND(COALESCE(m.intensity_factor, 0) * 100) AS INTEGER) AS if100, CAST(ROUND(COALESCE(a.avg_hr, 0)) AS INTEGER) AS hr, CAST(ROUND(COALESCE(r.rpe, 0), 1) AS TEXT) AS rpe, CAST(COALESCE(m.z1_s, 0) AS INTEGER) AS z1, CAST(COALESCE(m.z2_s, 0) AS INTEGER) AS z2, CAST(COALESCE(m.z3_s, 0) AS INTEGER) AS z3, CAST(COALESCE(m.z4_s, 0) AS INTEGER) AS z4, CAST(COALESCE(m.z5_s, 0) AS INTEGER) AS z5 FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id LEFT JOIN ratings r ON r.activity_id = a.id WHERE a.start_local >= :d AND a.start_local < date(:d, '+1 day') ORDER BY a.start_local", [{ name: ":d", value: String(day) }]) {
 			Err(_) => [{ title: "detail query failed", stats: "", extra: "", zones: [] }]
 			Ok(rows) =>
-				if List.is_empty(rows) [{ title: "rest day - no activities", stats: "", extra: "", zones: [] }]
+				if (List.is_empty(rows)) [{ title: "rest day - no activities", stats: "", extra: "", zones: [] }]
 				else
-					# corruption surfaces PER ROW: an unreadable activity renders as
-					# its own error line while its neighbors still show
-					List.map(rows, |r| match decode_activity_row(units, r) {
-						Ok(line) => line
-						Err(_) => { title: "activity record unreadable", stats: "", extra: "", zones: [] }
-					})
+				# corruption surfaces PER ROW: an unreadable activity renders as
+				# its own error line while its neighbors still show
+					List.map(
+						rows,
+						|r| match decode_activity_row(units, r) {
+							Ok(line) => line
+							Err(_) => { title: "activity record unreadable", stats: "", extra: "", zones: [] }
+						},
+					)
 		}
 
 	# How many sessions the picker offers. The bound is about how far back a
@@ -905,18 +1023,18 @@ Db :: [].{
 	# which is the property the layout needs.
 	cap_name : Str -> Str
 	cap_name = |s|
-		if Str.count_utf8_bytes(s) > 52 (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(s), 48)), "..")) else s
+		if (Str.count_utf8_bytes(s) > 52) (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(s), 48)), "..")) else s
 
 	expect {
 		cap_name("short") == "short"
-		# 52 exactly passes untouched: the cap marks only what it shortens
-		and cap_name(Str.repeat("a", 52)) == Str.repeat("a", 52)
-		and cap_name(Str.repeat("a", 53)) == Str.concat(Str.repeat("a", 48), "..")
-		# the marker fits INSIDE the bound rather than pushing past it
-		and Str.count_utf8_bytes(cap_name(Str.repeat("a", 200))) == 50
-		# and the bound holds when the cut lands mid-sequence: the partial
-		# character becomes a 3-byte replacement, not an overrun
-		and Str.count_utf8_bytes(cap_name(Str.concat("a", Str.repeat("é", 26)))) <= 52
+			# 52 exactly passes untouched: the cap marks only what it shortens
+			and cap_name(Str.repeat("a", 52)) == Str.repeat("a", 52)
+			and cap_name(Str.repeat("a", 53)) == Str.concat(Str.repeat("a", 48), "..")
+			# the marker fits INSIDE the bound rather than pushing past it
+			and Str.count_utf8_bytes(cap_name(Str.repeat("a", 200))) == 50
+			# and the bound holds when the cut lands mid-sequence: the partial
+			# character becomes a 3-byte replacement, not an overrun
+			and Str.count_utf8_bytes(cap_name(Str.concat("a", Str.repeat("é", 26)))) <= 52
 	}
 
 	watts_chan : Str
@@ -936,7 +1054,7 @@ Db :: [].{
 	# units - the samples stay SI m/s, only the label converts.
 	trace_unit : Str, [Metric, Imperial] -> Str
 	trace_unit = |chan, units|
-		if chan == hr_chan ("bpm") else if chan == pace_chan (Units.pace_unit(units)) else "W"
+		if (chan == hr_chan) ("bpm") else if (chan == pace_chan) (Units.pace_unit(units)) else "W"
 
 	expect trace_unit(watts_chan, Metric) == "W"
 	expect trace_unit(hr_chan, Imperial) == "bpm"
@@ -947,7 +1065,7 @@ Db :: [].{
 	# where a unit string would beg the units question prose does not have
 	chan_name : Str -> Str
 	chan_name = |chan|
-		if chan == hr_chan ("heart rate") else if chan == pace_chan ("pace") else "power"
+		if (chan == hr_chan) ("heart rate") else if (chan == pace_chan) ("pace") else "power"
 
 	expect chan_name(watts_chan) == "power"
 	expect chan_name(hr_chan) == "heart rate"
@@ -958,17 +1076,20 @@ Db :: [].{
 		match db.query!(trace_menu_q, [{ name: ":lim", value: Integer(trace_menu_limit) }]) {
 			Err(_) => []
 			Ok(rows) =>
-				List.keep_oks(rows, |r| {
-					i = r.i64("id") ? |_| "bad id"
-					d = r.str("day") ? |_| "bad day"
-					nm = r.str("name") ? |_| "bad name"
-					sp = r.str("sport") ? |_| "bad sport"
-					ch = r.str("chan") ? |_| "bad chan"
-					# names pass the ascii_safe gate - the brand atlases carry
-					# ASCII, and an unmapped glyph draws as '?'. Gate first,
-					# THEN cap: the gate can grow what it maps
-					Ok({ id: i, day: d, name: cap_name(ascii_safe(nm)), sport: sp, chan: ch })
-				})
+				List.keep_oks(
+					rows,
+					|r| {
+						i = r.i64("id") ? |_| "bad id"
+						d = r.str("day") ? |_| "bad day"
+						nm = r.str("name") ? |_| "bad name"
+						sp = r.str("sport") ? |_| "bad sport"
+						ch = r.str("chan") ? |_| "bad chan"
+						# names pass the ascii_safe gate - the brand atlases carry
+						# ASCII, and an unmapped glyph draws as '?'. Gate first,
+						# THEN cap: the gate can grow what it maps
+						Ok({ id: i, day: d, name: cap_name(ascii_safe(nm)), sport: sp, chan: ch })
+					},
+				)
 		}
 
 	# One session's trace, DOWNSAMPLED in SQL to ~800 points. A 45-minute ride
@@ -989,10 +1110,13 @@ Db :: [].{
 			q = "WITH w AS (SELECT json_each.key AS i, CAST(json_each.value AS INTEGER) AS v FROM streams, json_each(json_extract(streams.raw_json, :chan)) WHERE streams.activity_id = :aid), n AS (SELECT MAX(i)+1 AS c FROM w) SELECT v FROM w, n WHERE i % (MAX(n.c/800,1)) = 0 ORDER BY i"
 			match db.query!(q, [{ name: ":aid", value: Integer(aid) }, { name: ":chan", value: String(chan) }]) {
 				Err(_) => []
-				Ok(rows) => List.keep_oks(rows, |r| {
-					v = r.i64("v") ? |_| "bad v"
-					Ok(I64.to_f32(v))
-				})
+				Ok(rows) => List.keep_oks(
+					rows,
+					|r| {
+						v = r.i64("v") ? |_| "bad v"
+						Ok(I64.to_f32(v))
+					},
+				)
 			}
 		}
 	}
@@ -1014,10 +1138,13 @@ Db :: [].{
 		q = "SELECT CAST(json_each.value AS REAL) AS v FROM streams, json_each(json_extract(streams.raw_json, :p)) WHERE streams.activity_id = :aid ORDER BY json_each.key"
 		match db.query!(q, [{ name: ":aid", value: Integer(aid) }, { name: ":p", value: String(path) }]) {
 			Err(_) => []
-			Ok(rows) => List.keep_oks(rows, |r| {
-				v = r.f64("v") ? |_| "bad v"
-				Ok(v)
-			})
+			Ok(rows) => List.keep_oks(
+				rows,
+				|r| {
+					v = r.f64("v") ? |_| "bad v"
+					Ok(v)
+				},
+			)
 		}
 	}
 
@@ -1053,13 +1180,17 @@ Db :: [].{
 			[]
 		} else {
 			size = (n + cap - 1) // cap
-			walked = List.fold(xs, { out: [], acc: 0.0.F64, m: 0.U64 }, |st, x|
-				if st.m + 1 == size {
-					{ out: List.append(st.out, mean_mm(st.acc + x, size)), acc: 0.0.F64, m: 0.U64 }
-				} else {
-					{ out: st.out, acc: st.acc + x, m: st.m + 1 }
-				})
-			if walked.m > 0 (List.append(walked.out, mean_mm(walked.acc, walked.m))) else walked.out
+			walked = List.fold(
+				xs,
+				{ out: [], acc: 0.0.F64, m: 0.U64 },
+				|st, x|
+					if st.m + 1 == size {
+						{ out: List.append(st.out, mean_mm(st.acc + x, size)), acc: 0.0.F64, m: 0.U64 }
+					} else {
+						{ out: st.out, acc: st.acc + x, m: st.m + 1 }
+					},
+			)
+			if (walked.m > 0) (List.append(walked.out, mean_mm(walked.acc, walked.m))) else walked.out
 		}
 	}
 
@@ -1082,12 +1213,15 @@ Db :: [].{
 		q = "SELECT CAST(kind AS TEXT) AS kind, start_s, dur_s FROM activity_segments WHERE activity_id = :aid ORDER BY ordinal"
 		match db.query!(q, [{ name: ":aid", value: Integer(aid) }]) {
 			Err(_) => []
-			Ok(rows) => List.keep_oks(rows, |r| {
-				k = r.str("kind") ? |_| "bad kind"
-				s = r.i64("start_s") ? |_| "bad start"
-				d = r.i64("dur_s") ? |_| "bad dur"
-				Ok({ kind: k, start_s: s, dur_s: d })
-			})
+			Ok(rows) => List.keep_oks(
+				rows,
+				|r| {
+					k = r.str("kind") ? |_| "bad kind"
+					s = r.i64("start_s") ? |_| "bad start"
+					d = r.i64("dur_s") ? |_| "bad dur"
+					Ok({ kind: k, start_s: s, dur_s: d })
+				},
+			)
 		}
 	}
 
@@ -1104,8 +1238,10 @@ Db :: [].{
 			Err(_) => 1.0
 			Ok(rows) => match List.first(rows) {
 				Err(_) => 1.0
-				Ok(r) => match r.i64("t") { Ok(v) => if v > 0 (I64.to_f32(v)) else 1.0
-					Err(_) => 1.0 }
+				Ok(r) => match r.i64("t") {
+					Ok(v) => if (v > 0) (I64.to_f32(v)) else 1.0
+					Err(_) => 1.0
+				}
 			}
 		}
 
@@ -1120,16 +1256,22 @@ Db :: [].{
 				# the run of numeric bytes that opens the remainder; `done`
 				# freezes the accumulator at the first byte that cannot be part
 				# of a JSON number, so a later digit elsewhere is never joined on
-				taken = List.fold(Str.to_utf8(rest), { out: [], done: Bool.False }, |acc, b|
-					if acc.done {
-						acc
-					} else if (b >= '0' and b <= '9') or b == '-' or b == '+' or b == '.' or b == 'e' or b == 'E' {
-						{ ..acc, out: List.append(acc.out, b) }
-					} else {
-						{ ..acc, done: Bool.True }
-					})
-				match Str.from_utf8(taken.out) { Ok(s) => s
-					Err(_) => "" }
+				taken = List.fold(
+					Str.to_utf8(rest),
+					{ out: [], done: Bool.False },
+					|acc, b|
+						if acc.done {
+							acc
+						} else if (b >= '0' and b <= '9') or b == '-' or b == '+' or b == '.' or b == 'e' or b == 'E' {
+							{ ..acc, out: List.append(acc.out, b) }
+						} else {
+							{ ..acc, done: Bool.True }
+						},
+				)
+				match Str.from_utf8(taken.out) {
+					Ok(s) => s
+					Err(_) => ""
+				}
 			}
 			_ => ""
 		}
@@ -1143,11 +1285,13 @@ Db :: [].{
 	load_fit! : Cmd.Runner, I64 => Fit
 	load_fit! = |runner, days| {
 		out = match runner.run_utf8!(Cmd.with_args(Cmd.new("stride"), ["power-curve", I64.to_str(days), "Ride", "--json"])) {
-			Ok(o) => if o.exit_code == 0 o.stdout else ""
+			Ok(o) => if (o.exit_code == 0) o.stdout else ""
 			Err(_) => ""
 		}
-		num = |key| match F32.from_str(json_number(out, key)) { Ok(v) => v
-			Err(_) => -1.0 }
+		num = |key| match F32.from_str(json_number(out, key)) {
+			Ok(v) => v
+			Err(_) => -1.0
+		}
 		cp = num("cp")
 		wp = num("w_prime")
 		r2 = num("fit_r2")
@@ -1159,7 +1303,7 @@ Db :: [].{
 		List.fold(
 			List.map_with_index(days, |d, i| { day: d, index: i }),
 			{ found: Bool.False, idx: 0.U64 },
-			|acc, x| if x.day == target ({ found: Bool.True, idx: x.index }) else acc,
+			|acc, x| if (x.day == target) ({ found: Bool.True, idx: x.index }) else acc,
 		)
 }
 
@@ -1187,7 +1331,7 @@ expect {
 	bound = List.all(names, |nm| Str.contains(sql, Str.concat(nm, ",")) or Str.contains(sql, Str.concat(nm, ")")))
 	inserted = List.all(cols, |c| Str.contains(sql, " ${c},") or Str.contains(sql, " ${c})"))
 	carried = List.all(cols, |c| Str.contains(sql, "${c} = excluded.${c}"))
-	distinct = List.len(List.fold(names, [], |acc, nm| if List.contains(acc, nm) acc else List.append(acc, nm))) == List.len(names)
+	distinct = List.len(List.fold(names, [], |acc, nm| if (List.contains(acc, nm)) acc else List.append(acc, nm))) == List.len(names)
 	bound and distinct and colons == List.len(names) and inserted and carried
 }
 # the engine's power-curve JSON, read one key at a time: the value that

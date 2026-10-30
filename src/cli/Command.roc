@@ -7,6 +7,7 @@ import Metrics
 Command := [
 	Init,
 	Auth,
+
 	## `--all` forces a full re-list: the watermark is ignored so every activity is
 	## re-listed and old deletions propagate. Mostly a dev-mode start-from-scratch;
 	## normal use never needs it, because a plain `sync` converges on its own (#232).
@@ -18,10 +19,12 @@ Command := [
 	Doctor,
 	Zones,
 	Strength,
+
 	## a structured strength log Strava's MCP connector returned, read from a
 	## file or from stdin when the argument is `-`
 	StrengthImport(Str),
 	Version,
+
 	## the window's self-published bus capabilities (#439): views, directive
 	## fields, staleness - served from the database the window wrote them to
 	VizCaps,
@@ -37,10 +40,12 @@ Command := [
 	Import(Str),
 	Rate(Str, Str),
 	Progress(Str, [Asc, Desc]),
+
 	## time to exhaustion at a power the CALLER names (#187). ADR 0010: the
 	## caller states the input and stride does the arithmetic — choosing a
 	## target power for the athlete would be prescription.
 	Tte(Str),
+
 	## rep-level comparison: the anchor session's detected blocks against the
 	## same-shaped blocks of earlier comparable sessions (#149)
 	Reps(Str),
@@ -55,6 +60,7 @@ Command := [
 	WeekAddT(Str, Str, Str, Str, Str),
 	Complete(Str, Str),
 	CompleteRest(Str),
+
 	## `complete latest`: the latest activity closing the open session on its day
 	CompleteLatest,
 	Skip(Str, Str),
@@ -92,18 +98,22 @@ Command := [
 
 	split_format_args : List(Str) -> { mode : FormatMode, rest : List(Str) }
 	split_format_args = |args| {
-		walked = List.fold(args, { mode: Auto, rest: [], literal: False }, |acc, a|
-			if acc.literal {
-				{ ..acc, rest: List.append(acc.rest, a) }
-			} else if a == "--" {
-				{ ..acc, literal: True }
-			} else if a == "--json" {
-				{ ..acc, mode: ForceJson }
-			} else if a == "--human" {
-				{ ..acc, mode: ForceHuman }
-			} else {
-				{ ..acc, rest: List.append(acc.rest, a) }
-			})
+		walked = List.fold(
+			args,
+			{ mode: Auto, rest: [], literal: False },
+			|acc, a|
+				if acc.literal {
+					{ ..acc, rest: List.append(acc.rest, a) }
+				} else if a == "--" {
+					{ ..acc, literal: True }
+				} else if a == "--json" {
+					{ ..acc, mode: ForceJson }
+				} else if a == "--human" {
+					{ ..acc, mode: ForceHuman }
+				} else {
+					{ ..acc, rest: List.append(acc.rest, a) }
+				},
+		)
 		{ mode: walked.mode, rest: walked.rest }
 	}
 
@@ -116,6 +126,7 @@ Command := [
 			["auth"] => Ok(Auth)
 			["sync"] => Ok(Sync(False))
 			["sync", "--all"] => Ok(Sync(True))
+
 			## Retired in #232, with a pointer rather than a bare unknown_command. Every
 			## README, skill and shell history said `stride backfill` until that commit,
 			## and the plan->week rename beside it sets the precedent for redirecting.
@@ -193,6 +204,7 @@ Command := [
 			# (#198, ADR 0014) — validated in Plan (bad_target), stored beside the prose
 			["week", "add", date, session_type, detail, rationale, target] => Ok(WeekAddT(date, session_type, detail, rationale, target))
 			["week", "add", date, session_type, detail, rationale] => Ok(WeekAdd(date, session_type, detail, rationale))
+
 			## the literal resolves BOTH ids - the latest activity and the open session
 			## on its day. BOTH literal arms sit above the id arms: patterns match in
 			## order, so `complete latest x` would otherwise read as a session id
@@ -279,10 +291,14 @@ Command := [
 	## as a second list, so the two cannot disagree about which names exist.
 	command_names : List(Str)
 	command_names =
-		List.fold(specs, [], |acc, s| {
-			v = verb_of(s.name)
-			if List.contains(acc, v) acc else List.append(acc, v)
-		})
+		List.fold(
+			specs,
+			[],
+			|acc, s| {
+				v = verb_of(s.name)
+				if (List.contains(acc, v)) acc else List.append(acc, v)
+			},
+		)
 
 	## One argument. Positional, with one exception: `sync`'s `--all` is a literal
 	## flag accepted in an argument position. `name` is the placeholder as it appears
@@ -339,19 +355,24 @@ Command := [
 	Spec : {
 		name : Str,
 		args : List(Arg),
+
 		## writes to the database. Checked against behaviour rather than trusted: the
 		## offline e2e suite runs every `mutates: False` form against a copy of the
 		## fixture and fails if the database CONTENTS move. Contents, not file bytes —
 		## WAL means a committed write can leave db.sqlite untouched.
 		mutates : Bool,
+
 		## talks to Strava. Since #232 that is `auth` and `sync` and nothing else.
 		network : Bool,
+
 		## blocks on a human. `auth` opens a browser and waits for a paste, so it is the
 		## one form an unattended agent must not call.
 		interactive : Bool,
+
 		## the file under schemas/v3 its success payload validates against, "" when the
 		## command has no machine payload of its own.
 		schema : Str,
+
 		## error codes THIS FORM can return, on top of `universal_error_codes` below.
 		## The pair matters: an agent deciding whether a failure is worth retrying needs
 		## to tell "this database is unreadable" (universal, retrying will not help) from
@@ -418,7 +439,7 @@ Command := [
 		} else if Str.contains(name, "|") {
 			first = List.first(Str.split_on(Str.replace_each(Str.replace_each(name, "<", ""), ">", ""), "|"))
 			match first {
-				Ok(v) => if Str.contains(v, "_") "" else v
+				Ok(v) => if (Str.contains(v, "_")) "" else v
 				Err(_) => ""
 			}
 		} else {
@@ -448,6 +469,7 @@ Command := [
 		errs(writes("rate", [req("<activity_id|latest>"), req("<1-10>")], "rate.json"), ["activity_not_found", "bad_id", "bad_rpe", "no_activities", "unreadable_activity_date"]),
 		errs(writes("week add", [req_ex("<YYYY-MM-DD>", "2099-01-01"), req_ex("<type>", "endurance"), req_ex("<detail>", "example"), req_ex("<rationale>", "example"), opt_ex("<RxMM:SS@WWWW>", "3x12:00@230W")], "week_add.json"), ["bad_date", "bad_target"]),
 		errs(writes("complete", [req("<session_id>"), opt("<activity_id>")], "complete.json"), ["activity_already_linked", "activity_not_found", "activity_required", "bad_id", "session_not_found"]),
+
 		## the resolving form: no arguments of its own, its own refusal when the
 		## day holds no open session, and the date guards `latest` always carries
 		errs(writes("complete latest", [], "complete.json"), ["activity_already_linked", "no_activities", "no_open_session", "unreadable_activity_date"]),
@@ -465,23 +487,28 @@ Command := [
 		errs(writes("config unset", [req_ex("<key>", "timezone")], "config_unset.json"), []),
 		errs(reads("summary", [], "summary.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
 		errs(reads("plan", [], "plan.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
+
 		## `stats` had no declared codes: its totals are a pure listing, until #249 found
 		## that `WHERE start_local >= :cutoff` is NULL-false, so an unreadable date leaves
 		## an ALL TIME total silently short. It refuses now.
 		errs(reads("stats", [], "stats.json"), ["unreadable_activity_date"]),
 		reads("doctor", [], "doctor.json"),
+
 		## the payload is the WINDOW's claim about itself, relayed: absence of the
 		## capability tables is the window never having run, an answer with a code
 		errs(reads("viz", [], "viz.json"), ["no_viz_capabilities"]),
+
 		## the window's directive lifecycle run once, headless, through the same
 		## core.Bus statements the window polls with; it consumes and marks rows,
 		## so it writes
 		writes("viz tick", [opt("--no-ack")], "viz-tick.json"),
 		errs(reads("zones", [], "zones.json"), ["no_power_data"]),
+
 		## per-exercise progression + monthly tonnage with coverage (#522);
 		## empty states are payload facts, not errors, so no codes beyond
 		## the universal set
 		reads("strength", [], "strength.json"),
+
 		## the connector's JSON for strength workouts, stored per activity and
 		## parsed into strength_sets at once; a workout it cannot place is a
 		## `skipped` entry in the payload, not an error. The example is empty: a
@@ -491,16 +518,19 @@ Command := [
 		errs(reads("pz", [], "zones.json"), ["no_power_data"]),
 		errs(reads("compare", [opt("<week|month>")], "compare.json"), ["bad_period", "no_data", "unreadable_activity_date", "unreadable_daily_load_day"]),
 		errs(reads("activities", [opt_ex("<limit>", "5"), opt_ex("<sport>", "Ride")], "activities.json"), ["bad_count"]),
+
 		## `unreadable_activity_date` on the three forms #249 made REFUSE rather than report
 		## an empty date. The split is by what the form does with the date: `activities` and
 		## `top` list or rank and still report the row, so they gain no code; `activity`,
 		## `reps` and `progress` compute from it — a 90-day window, a comparables filter, a
 		## trend — and now name the row instead of answering over a value they invented.
 		errs(reads("activity", [req("<activity_id>")], "activity.json"), ["activity_not_found", "unreadable_activity_date"]),
+
 		## the metric set is CLOSED, so it is spelled out. A caller reading only this
 		## payload cannot guess it, and it is the one required argument here whose
 		## wrong value costs a round trip (`bad_metric`).
 		errs(reads("top", [req("<hr|tss|power|intensity|distance|time|output>"), opt_ex("<limit>", "5"), opt_ex("<sport>", "Ride")], "top.json"), ["bad_count", "bad_metric"]),
+
 		## DAYS of lookback, not a row count — `power-curve` returns a fixed set of
 		## points regardless, so `<n>` beside `activities`' `<n>` left two identical
 		## shapes meaning different things.
@@ -514,6 +544,7 @@ Command := [
 		errs(reads("pc", [opt_ex("<days>", "30"), opt_ex("<sport>", "Ride")], "power_curve.json"), ["bad_count"]),
 		errs(reads("pace-curve", [opt_ex("<days>", "30"), opt_ex("<sport>", "Run")], "pace_curve.json"), ["bad_count"]),
 		errs(reads("cs", [opt_ex("<days>", "30"), opt_ex("<sport>", "Run")], "pace_curve.json"), ["bad_count"]),
+
 		## A DATE, not a workout name. The parse arm bound this to a variable called
 		## `name`, which is where a `<name>` placeholder once came from — the
 		## handler queries `substr(start_local, 1, 10) = :date` and answers
@@ -523,6 +554,7 @@ Command := [
 		errs(reads("tte", [req_ex("<watts>", "300")], "tte.json"), ["bad_watts", "no_cp_fit"]),
 		errs(reads("reps", [opt("<YYYY-MM-DD>")], "reps.json"), ["irregular_anchor", "no_detected_intervals", "no_intervals_on_date", "unreadable_activity_date"]),
 		errs(reads("season", [], "season.json"), ["no_activities", "unreadable_activity_date", "unreadable_daily_load_day"]),
+
 		## `week` refuses an unplanned activity whose date it cannot read (#249),
 		## rather than sorting it to the epoch and listing it first.
 		errs(reads("week", [opt("all")], "week.json"), ["unreadable_activity_date"]),
@@ -822,37 +854,39 @@ expect
 		_ => False
 	}
 
-
 # asking for help is never an error, however it is spelled (#163)
 expect {
-    help_forms = [[], ["--help"], ["-h"], ["help"]]
-    List.all(help_forms, |f|
-        match Command.parse(f) {
-            Err(ShowHelp) => True
-            _ => False
-        })
+	help_forms = [[], ["--help"], ["-h"], ["help"]]
+	List.all(
+		help_forms,
+		|f|
+			match Command.parse(f) {
+				Err(ShowHelp) => True
+				_ => False
+			},
+	)
 }
 
 # a REAL command with wrong arguments is a usage error naming itself, never
 # "no such command" — the message must not assert something false
 expect {
-    match Command.parse(["sync", "extra"]) {
-        Err(Usage(u)) => Str.contains(u, "sync")
-        _ => False
-    }
+	match Command.parse(["sync", "extra"]) {
+		Err(Usage(u)) => Str.contains(u, "sync")
+		_ => False
+	}
 }
 expect {
-    match Command.parse(["top"]) {
-        Err(Usage(_)) => True
-        _ => False
-    }
+	match Command.parse(["top"]) {
+		Err(Usage(_)) => True
+		_ => False
+	}
 }
 # ...and a name stride genuinely lacks is still unknown
 expect {
-    match Command.parse(["wat"]) {
-        Err(UnknownCmd("wat")) => True
-        _ => False
-    }
+	match Command.parse(["wat"]) {
+		Err(UnknownCmd("wat")) => True
+		_ => False
+	}
 }
 # One expect per name in `command_names`, each in its minimal valid form,
 # asserting each maps to its OWN variant — membership avoiding UnknownCmd is
@@ -879,102 +913,267 @@ expect Command.example_of("<key>") == ""
 expect Command.example_of("<YYYY-MM-DD>") == ""
 expect Command.example_of("<activity_id>") == ""
 
-expect match Command.parse(["init"]) { Ok(Init) => True  _ => False }
-expect match Command.parse(["auth"]) { Ok(Auth) => True  _ => False }
-expect match Command.parse(["sync"]) { Ok(Sync(False)) => True  _ => False }
-expect match Command.parse(["sync", "--all"]) { Ok(Sync(True)) => True  _ => False }
-expect match Command.parse(["analyze"]) { Ok(Analyze) => True  _ => False }
-expect match Command.parse(["summary"]) { Ok(Summary) => True  _ => False }
-expect match Command.parse(["stats"]) { Ok(Stats) => True  _ => False }
-expect match Command.parse(["doctor"]) { Ok(Doctor) => True  _ => False }
-expect match Command.parse(["import", "x.zip"]) { Ok(Import("x.zip")) => True  _ => False }
-expect match Command.parse(["rate", "1", "5"]) { Ok(Rate("1", "5")) => True  _ => False }
-expect match Command.parse(["activity", "7"]) { Ok(Activity("7")) => True  _ => False }
-expect match Command.parse(["zones"]) { Ok(Zones) => True  _ => False }
-expect match Command.parse(["viz"]) { Ok(VizCaps) => True  _ => False }
-expect match Command.parse(["viz", "tick"]) { Ok(VizTick({ ack: True })) => True  _ => False }
-expect match Command.parse(["viz", "tick", "--no-ack"]) { Ok(VizTick({ ack: False })) => True  _ => False }
-expect match Command.parse(["viz", "tick", "--ack"]) { Err(_) => True  _ => False }
-expect match Command.parse(["viz", "extra"]) { Err(_) => True  _ => False }
-expect match Command.parse(["pz"]) { Ok(Zones) => True  _ => False }
-expect match Command.parse(["compare"]) { Ok(Compare("week")) => True  _ => False }
-expect match Command.parse(["activities"]) { Ok(Activities(30, "")) => True  _ => False }
-expect match Command.parse(["top", "np"]) { Ok(Top("np", 10, "")) => True  _ => False }
-expect match Command.parse(["load"]) { Ok(Load(90)) => True  _ => False }
-expect match Command.parse(["power-curve"]) { Ok(PowerCurve(90, "")) => True  _ => False }
-expect match Command.parse(["pc"]) { Ok(PowerCurve(90, "")) => True  _ => False }
-expect match Command.parse(["progress"]) { Ok(Progress("", Asc)) => True  _ => False }
-expect match Command.parse(["week"]) { Ok(WeekView) => True  _ => False }
-expect match Command.parse(["plan"]) { Ok(Plan) => True  _ => False }
-expect match Command.parse(["complete", "3", "9"]) { Ok(Complete("3", "9")) => True  _ => False }
-expect match Command.parse(["skip", "3", "sick"]) { Ok(Skip("3", "sick")) => True  _ => False }
-expect match Command.parse(["relabel", "45", "threshold", "3x12 @ 230W"]) { Ok(Relabel("45", "threshold", "3x12 @ 230W")) => True  _ => False }
-expect match Command.parse(["relabel", "45", "threshold", "3x12 @ 230W", "day-swapped with Sunday"]) { Ok(RelabelWith("45", "threshold", "3x12 @ 230W", "day-swapped with Sunday")) => True  _ => False }
-expect match Command.parse(["relabel", "45"]) { Err(Usage(_)) => True  _ => False }
+expect match Command.parse(["init"]) {
+	Ok(Init) => True
+	_ => False
+}
+expect match Command.parse(["auth"]) {
+	Ok(Auth) => True
+	_ => False
+}
+expect match Command.parse(["sync"]) {
+	Ok(Sync(False)) => True
+	_ => False
+}
+expect match Command.parse(["sync", "--all"]) {
+	Ok(Sync(True)) => True
+	_ => False
+}
+expect match Command.parse(["analyze"]) {
+	Ok(Analyze) => True
+	_ => False
+}
+expect match Command.parse(["summary"]) {
+	Ok(Summary) => True
+	_ => False
+}
+expect match Command.parse(["stats"]) {
+	Ok(Stats) => True
+	_ => False
+}
+expect match Command.parse(["doctor"]) {
+	Ok(Doctor) => True
+	_ => False
+}
+expect match Command.parse(["import", "x.zip"]) {
+	Ok(Import("x.zip")) => True
+	_ => False
+}
+expect match Command.parse(["rate", "1", "5"]) {
+	Ok(Rate("1", "5")) => True
+	_ => False
+}
+expect match Command.parse(["activity", "7"]) {
+	Ok(Activity("7")) => True
+	_ => False
+}
+expect match Command.parse(["zones"]) {
+	Ok(Zones) => True
+	_ => False
+}
+expect match Command.parse(["viz"]) {
+	Ok(VizCaps) => True
+	_ => False
+}
+expect match Command.parse(["viz", "tick"]) {
+	Ok(VizTick({ ack: True })) => True
+	_ => False
+}
+expect match Command.parse(["viz", "tick", "--no-ack"]) {
+	Ok(VizTick({ ack: False })) => True
+	_ => False
+}
+expect match Command.parse(["viz", "tick", "--ack"]) {
+	Err(_) => True
+	_ => False
+}
+expect match Command.parse(["viz", "extra"]) {
+	Err(_) => True
+	_ => False
+}
+expect match Command.parse(["pz"]) {
+	Ok(Zones) => True
+	_ => False
+}
+expect match Command.parse(["compare"]) {
+	Ok(Compare("week")) => True
+	_ => False
+}
+expect match Command.parse(["activities"]) {
+	Ok(Activities(30, "")) => True
+	_ => False
+}
+expect match Command.parse(["top", "np"]) {
+	Ok(Top("np", 10, "")) => True
+	_ => False
+}
+expect match Command.parse(["load"]) {
+	Ok(Load(90)) => True
+	_ => False
+}
+expect match Command.parse(["power-curve"]) {
+	Ok(PowerCurve(90, "")) => True
+	_ => False
+}
+expect match Command.parse(["pc"]) {
+	Ok(PowerCurve(90, "")) => True
+	_ => False
+}
+expect match Command.parse(["progress"]) {
+	Ok(Progress("", Asc)) => True
+	_ => False
+}
+expect match Command.parse(["week"]) {
+	Ok(WeekView) => True
+	_ => False
+}
+expect match Command.parse(["plan"]) {
+	Ok(Plan) => True
+	_ => False
+}
+expect match Command.parse(["complete", "3", "9"]) {
+	Ok(Complete("3", "9")) => True
+	_ => False
+}
+expect match Command.parse(["skip", "3", "sick"]) {
+	Ok(Skip("3", "sick")) => True
+	_ => False
+}
+expect match Command.parse(["relabel", "45", "threshold", "3x12 @ 230W"]) {
+	Ok(Relabel("45", "threshold", "3x12 @ 230W")) => True
+	_ => False
+}
+expect match Command.parse(["relabel", "45", "threshold", "3x12 @ 230W", "day-swapped with Sunday"]) {
+	Ok(RelabelWith("45", "threshold", "3x12 @ 230W", "day-swapped with Sunday")) => True
+	_ => False
+}
+expect match Command.parse(["relabel", "45"]) {
+	Err(Usage(_)) => True
+	_ => False
+}
 # strength import: one file argument, `-` passed through for the handler to
 # read stdin, and either arity miss a usage error rather than the bare
 # `strength` report
-expect match Command.parse(["strength", "import", "log.json"]) { Ok(StrengthImport("log.json")) => True  _ => False }
-expect match Command.parse(["strength", "import", "-"]) { Ok(StrengthImport("-")) => True  _ => False }
-expect match Command.parse(["strength", "import"]) { Err(Usage(_)) => True  _ => False }
-expect match Command.parse(["strength", "import", "a.json", "b.json"]) { Err(Usage(_)) => True  _ => False }
-expect match Command.parse(["week", "add", "2026-01-01", "threshold", "3x12", "build", "3x12:00@230W"]) { Ok(WeekAddT("2026-01-01", "threshold", "3x12", "build", "3x12:00@230W")) => True  _ => False }
-expect match Command.parse(["event", "add", "2026-10-15", "Fall Century"]) { Ok(EventAdd("2026-10-15", "Fall Century")) => True  _ => False }
-expect match Command.parse(["event", "remove", "3"]) { Ok(EventRemove("3")) => True  _ => False }
-expect match Command.parse(["events"]) { Ok(Events) => True  _ => False }
-expect match Command.parse(["project", "2026-10-15"]) { Ok(Project("2026-10-15")) => True  _ => False }
-expect match Command.parse(["project", "2026-10-15", "2026-09-15=3x12:00@230W"]) { Ok(ProjectWith("2026-10-15", "2026-09-15=3x12:00@230W")) => True  _ => False }
-expect match Command.parse(["project"]) { Err(Usage(_)) => True  _ => False }
-expect match Command.parse(["event", "add", "2026-10-15"]) { Err(Usage(_)) => True  _ => False }
-expect match Command.parse(["config", "get", "ftp"]) { Ok(ConfigGet("ftp")) => True  _ => False }
-expect match Command.parse(["tte", "250"]) { Ok(Tte("250")) => True  _ => False }
-expect match Command.parse(["reps"]) { Ok(Reps("")) => True  _ => False }
-expect match Command.parse(["season"]) { Ok(Season) => True  _ => False }
-expect match Command.parse(["--version"]) { Ok(Version) => True  _ => False }
-expect match Command.parse(["--help"]) { Err(ShowHelp) => True  _ => False }
-expect match Command.parse(["-h"]) { Err(ShowHelp) => True  _ => False }
-expect match Command.parse(["help"]) { Err(ShowHelp) => True  _ => False }
+expect match Command.parse(["strength", "import", "log.json"]) {
+	Ok(StrengthImport("log.json")) => True
+	_ => False
+}
+expect match Command.parse(["strength", "import", "-"]) {
+	Ok(StrengthImport("-")) => True
+	_ => False
+}
+expect match Command.parse(["strength", "import"]) {
+	Err(Usage(_)) => True
+	_ => False
+}
+expect match Command.parse(["strength", "import", "a.json", "b.json"]) {
+	Err(Usage(_)) => True
+	_ => False
+}
+expect match Command.parse(["week", "add", "2026-01-01", "threshold", "3x12", "build", "3x12:00@230W"]) {
+	Ok(WeekAddT("2026-01-01", "threshold", "3x12", "build", "3x12:00@230W")) => True
+	_ => False
+}
+expect match Command.parse(["event", "add", "2026-10-15", "Fall Century"]) {
+	Ok(EventAdd("2026-10-15", "Fall Century")) => True
+	_ => False
+}
+expect match Command.parse(["event", "remove", "3"]) {
+	Ok(EventRemove("3")) => True
+	_ => False
+}
+expect match Command.parse(["events"]) {
+	Ok(Events) => True
+	_ => False
+}
+expect match Command.parse(["project", "2026-10-15"]) {
+	Ok(Project("2026-10-15")) => True
+	_ => False
+}
+expect match Command.parse(["project", "2026-10-15", "2026-09-15=3x12:00@230W"]) {
+	Ok(ProjectWith("2026-10-15", "2026-09-15=3x12:00@230W")) => True
+	_ => False
+}
+expect match Command.parse(["project"]) {
+	Err(Usage(_)) => True
+	_ => False
+}
+expect match Command.parse(["event", "add", "2026-10-15"]) {
+	Err(Usage(_)) => True
+	_ => False
+}
+expect match Command.parse(["config", "get", "ftp"]) {
+	Ok(ConfigGet("ftp")) => True
+	_ => False
+}
+expect match Command.parse(["tte", "250"]) {
+	Ok(Tte("250")) => True
+	_ => False
+}
+expect match Command.parse(["reps"]) {
+	Ok(Reps("")) => True
+	_ => False
+}
+expect match Command.parse(["season"]) {
+	Ok(Season) => True
+	_ => False
+}
+expect match Command.parse(["--version"]) {
+	Ok(Version) => True
+	_ => False
+}
+expect match Command.parse(["--help"]) {
+	Err(ShowHelp) => True
+	_ => False
+}
+expect match Command.parse(["-h"]) {
+	Err(ShowHelp) => True
+	_ => False
+}
+expect match Command.parse(["help"]) {
+	Err(ShowHelp) => True
+	_ => False
+}
 
 # a help spelling with junk after it is still a help spelling, not an unknown
 # command — the falsehood item 2 removed, surviving in a corner
 expect {
-    match Command.parse(["--help", "extra"]) {
-        Err(Usage(u)) => Str.contains(u, "--help")
-        _ => False
-    }
+	match Command.parse(["--help", "extra"]) {
+		Err(Usage(u)) => Str.contains(u, "--help")
+		_ => False
+	}
 }
 
 # format flags (#162): stripped from any position, last wins, args preserved
 expect {
-    r = Command.split_format_args(["summary", "--json"])
-    r.mode == ForceJson and r.rest == ["summary"]
+	r = Command.split_format_args(["summary", "--json"])
+	r.mode == ForceJson and r.rest == ["summary"]
 }
 expect {
-    r = Command.split_format_args(["--json", "activities", "5"])
-    r.mode == ForceJson and r.rest == ["activities", "5"]
+	r = Command.split_format_args(["--json", "activities", "5"])
+	r.mode == ForceJson and r.rest == ["activities", "5"]
 }
 expect {
-    r = Command.split_format_args(["--human", "--json", "summary"])
-    r.mode == ForceJson and r.rest == ["summary"]
+	r = Command.split_format_args(["--human", "--json", "summary"])
+	r.mode == ForceJson and r.rest == ["summary"]
 }
 expect {
-    r = Command.split_format_args(["--json", "--human", "summary"])
-    r.mode == ForceHuman and r.rest == ["summary"]
+	r = Command.split_format_args(["--json", "--human", "summary"])
+	r.mode == ForceHuman and r.rest == ["summary"]
 }
 expect {
-    r = Command.split_format_args(["summary"])
-    r.mode == Auto and r.rest == ["summary"]
+	r = Command.split_format_args(["summary"])
+	r.mode == Auto and r.rest == ["summary"]
 }
 # `--` ends flag parsing: a literal "--json" argument survives intact, and the
 # terminator itself never reaches the command parser
 expect {
-    r = Command.split_format_args(["skip", "5", "--", "--json"])
-    r.mode == Auto and r.rest == ["skip", "5", "--json"]
+	r = Command.split_format_args(["skip", "5", "--", "--json"])
+	r.mode == Auto and r.rest == ["skip", "5", "--json"]
 }
 expect {
-    r = Command.split_format_args(["--json", "skip", "5", "--", "--human"])
-    r.mode == ForceJson and r.rest == ["skip", "5", "--human"]
+	r = Command.split_format_args(["--json", "skip", "5", "--", "--human"])
+	r.mode == ForceJson and r.rest == ["skip", "5", "--human"]
 }
-expect match Command.parse(["pace-curve"]) { Ok(PaceCurve(90, "")) => True  _ => False }
-expect match Command.parse(["cs"]) { Ok(PaceCurve(90, "")) => True  _ => False }
-expect match Command.parse(["pace-curve", "60", "Run"]) { Ok(PaceCurve(60, "Run")) => True  _ => False }
+expect match Command.parse(["pace-curve"]) {
+	Ok(PaceCurve(90, "")) => True
+	_ => False
+}
+expect match Command.parse(["cs"]) {
+	Ok(PaceCurve(90, "")) => True
+	_ => False
+}
+expect match Command.parse(["pace-curve", "60", "Run"]) {
+	Ok(PaceCurve(60, "Run")) => True
+	_ => False
+}

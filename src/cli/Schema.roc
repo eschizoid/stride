@@ -2,492 +2,492 @@ import core.Sports
 
 Schema :: [].{
 
-    # ── database schema (DDL only — pure strings, no decoders to drift from) ──
-    #
-    # These are the ORIGINAL CREATE statements. Columns added later live as additive
-    # ALTERs in Db.roc `run_migrations!` (weighted_avg_watts, best_20min_w, ftp_used,
-    # planned_sessions.status, planned_sessions.skipped_reason) — look there, not here, if a
-    # column seems missing. (`relative_effort` is REAL as of schema v2; read sites keep
-    # the CAST(... AS REAL) so pre-v2 dbs, where it was INTEGER, still decode.)
+	# ── database schema (DDL only — pure strings, no decoders to drift from) ──
+	#
+	# These are the ORIGINAL CREATE statements. Columns added later live as additive
+	# ALTERs in Db.roc `run_migrations!` (weighted_avg_watts, best_20min_w, ftp_used,
+	# planned_sessions.status, planned_sessions.skipped_reason) — look there, not here, if a
+	# column seems missing. (`relative_effort` is REAL as of schema v2; read sites keep
+	# the CAST(... AS REAL) so pre-v2 dbs, where it was INTEGER, still decode.)
 
-    activities =
-        \\CREATE TABLE IF NOT EXISTS activities (
-        \\  id              INTEGER PRIMARY KEY,
-        \\  name            TEXT,
-        \\  sport_type      TEXT,
-        \\  start_local     TEXT,
-        \\  moving_time     INTEGER,
-        \\  distance        REAL,
-        \\  elevation       REAL,
-        \\  relative_effort REAL,
-        \\  avg_watts       REAL,
-        \\  avg_hr          REAL
-        \\)
+	activities =
+		\\CREATE TABLE IF NOT EXISTS activities (
+		\\  id              INTEGER PRIMARY KEY,
+		\\  name            TEXT,
+		\\  sport_type      TEXT,
+		\\  start_local     TEXT,
+		\\  moving_time     INTEGER,
+		\\  distance        REAL,
+		\\  elevation       REAL,
+		\\  relative_effort REAL,
+		\\  avg_watts       REAL,
+		\\  avg_hr          REAL
+		\\)
 
-    metrics =
-        \\CREATE TABLE IF NOT EXISTS activity_metrics (
-        \\  activity_id      INTEGER PRIMARY KEY REFERENCES activities(id),
-        \\  tss              REAL,
-        \\  normalized_power REAL,
-        \\  intensity_factor REAL,
-        \\  z1_s INTEGER, z2_s INTEGER, z3_s INTEGER, z4_s INTEGER, z5_s INTEGER,
-        \\  computed_at      TEXT  -- provenance only; written, never read back
-        \\)
+	metrics =
+		\\CREATE TABLE IF NOT EXISTS activity_metrics (
+		\\  activity_id      INTEGER PRIMARY KEY REFERENCES activities(id),
+		\\  tss              REAL,
+		\\  normalized_power REAL,
+		\\  intensity_factor REAL,
+		\\  z1_s INTEGER, z2_s INTEGER, z3_s INTEGER, z4_s INTEGER, z5_s INTEGER,
+		\\  computed_at      TEXT  -- provenance only; written, never read back
+		\\)
 
-    # computed tier (ADR 0008): detected interval structure, rebuilt by analyze,
-    # deletable at will — exactly like activity_metrics. HR columns are NULL when
-    # the session carried no HR (honest absence, never zeros).
-    segments =
-        \\CREATE TABLE IF NOT EXISTS activity_segments (
-        \\  activity_id  INTEGER REFERENCES activities(id),
-        \\  ordinal      INTEGER,
-        \\  kind         TEXT,     -- work | recovery | warmup | cooldown
-        \\  start_s      INTEGER,
-        \\  dur_s        INTEGER,
-        \\  avg_signal   REAL,
-        \\  signal       TEXT,     -- power | pace
-        \\  peak_hr      REAL,
-        \\  avg_hr       REAL,
-        \\  rec_drop_60s REAL,
-        \\  PRIMARY KEY (activity_id, ordinal)
-        \\)
+	# computed tier (ADR 0008): detected interval structure, rebuilt by analyze,
+	# deletable at will — exactly like activity_metrics. HR columns are NULL when
+	# the session carried no HR (honest absence, never zeros).
+	segments =
+		\\CREATE TABLE IF NOT EXISTS activity_segments (
+		\\  activity_id  INTEGER REFERENCES activities(id),
+		\\  ordinal      INTEGER,
+		\\  kind         TEXT,     -- work | recovery | warmup | cooldown
+		\\  start_s      INTEGER,
+		\\  dur_s        INTEGER,
+		\\  avg_signal   REAL,
+		\\  signal       TEXT,     -- power | pace
+		\\  peak_hr      REAL,
+		\\  avg_hr       REAL,
+		\\  rec_drop_60s REAL,
+		\\  PRIMARY KEY (activity_id, ordinal)
+		\\)
 
-    daily_load =
-        \\CREATE TABLE IF NOT EXISTS daily_load (
-        \\  day  TEXT PRIMARY KEY,
-        \\  tss  REAL,
-        \\  ctl  REAL,
-        \\  atl  REAL,
-        \\  tsb  REAL
-        \\)
+	daily_load =
+		\\CREATE TABLE IF NOT EXISTS daily_load (
+		\\  day  TEXT PRIMARY KEY,
+		\\  tss  REAL,
+		\\  ctl  REAL,
+		\\  atl  REAL,
+		\\  tsb  REAL
+		\\)
 
-    planned_sessions =
-        \\CREATE TABLE IF NOT EXISTS planned_sessions (
-        \\  id                    INTEGER PRIMARY KEY,
-        \\  created_at            TEXT,
-        \\  target_date           TEXT,
-        \\  session_type          TEXT,
-        \\  detail                TEXT,
-        \\  rationale             TEXT,
-        \\  completed_activity_id INTEGER
-        \\)
+	planned_sessions =
+		\\CREATE TABLE IF NOT EXISTS planned_sessions (
+		\\  id                    INTEGER PRIMARY KEY,
+		\\  created_at            TEXT,
+		\\  target_date           TEXT,
+		\\  session_type          TEXT,
+		\\  detail                TEXT,
+		\\  rationale             TEXT,
+		\\  completed_activity_id INTEGER
+		\\)
 
-    # event targets (#138, judgment tier): a date the athlete is training toward.
-    # REMOVABLE, unlike planned_sessions — an event is a target, not a record of
-    # training done, so deleting one destroys no adherence history.
-    events =
-        \\CREATE TABLE IF NOT EXISTS events (
-        \\  id         INTEGER PRIMARY KEY,
-        \\  created_at TEXT,
-        \\  event_date TEXT,
-        \\  name       TEXT
-        \\)
+	# event targets (#138, judgment tier): a date the athlete is training toward.
+	# REMOVABLE, unlike planned_sessions — an event is a target, not a record of
+	# training done, so deleting one destroys no adherence history.
+	events =
+		\\CREATE TABLE IF NOT EXISTS events (
+		\\  id         INTEGER PRIMARY KEY,
+		\\  created_at TEXT,
+		\\  event_date TEXT,
+		\\  name       TEXT
+		\\)
 
-    streams =
-        \\CREATE TABLE IF NOT EXISTS streams (
-        \\  activity_id INTEGER PRIMARY KEY REFERENCES activities(id),
-        \\  raw_json    TEXT
-        \\)
+	streams =
+		\\CREATE TABLE IF NOT EXISTS streams (
+		\\  activity_id INTEGER PRIMARY KEY REFERENCES activities(id),
+		\\  raw_json    TEXT
+		\\)
 
-    # sync bookkeeping beside the streams mirror: one row per activity whose
-    # stream sync must fetch again, with the number of fetches that returned a
-    # body stride could not decode. A row with no `streams` row is a fetch that
-    # keeps failing; a row beside a stored stream is a stored body analyze could
-    # not decode, flagged at attempts 0. The streams queue retries an id while
-    # attempts < Strava.stream_attempt_cap and orders by attempts, so failing
-    # ids sit behind every other id; `sync --all` retries past the cap. A good
-    # fetch deletes the row. Deletable at will: deleting resets the counts,
-    # which costs at most the cap in reads per id.
-    stream_retries =
-        \\CREATE TABLE IF NOT EXISTS stream_retries (
-        \\  activity_id INTEGER PRIMARY KEY REFERENCES activities(id),
-        \\  attempts    INTEGER NOT NULL
-        \\)
+	# sync bookkeeping beside the streams mirror: one row per activity whose
+	# stream sync must fetch again, with the number of fetches that returned a
+	# body stride could not decode. A row with no `streams` row is a fetch that
+	# keeps failing; a row beside a stored stream is a stored body analyze could
+	# not decode, flagged at attempts 0. The streams queue retries an id while
+	# attempts < Strava.stream_attempt_cap and orders by attempts, so failing
+	# ids sit behind every other id; `sync --all` retries past the cap. A good
+	# fetch deletes the row. Deletable at will: deleting resets the counts,
+	# which costs at most the cap in reads per id.
+	stream_retries =
+		\\CREATE TABLE IF NOT EXISTS stream_retries (
+		\\  activity_id INTEGER PRIMARY KEY REFERENCES activities(id),
+		\\  attempts    INTEGER NOT NULL
+		\\)
 
-    # queue every stored body that is not JSON at all, the bodies stride stored
-    # before it began refusing them; one that is JSON but not stream JSON is
-    # caught when analyze next rescores its activity
-    seed_stream_retries =
-        \\INSERT OR IGNORE INTO stream_retries (activity_id, attempts)
-        \\SELECT s.activity_id, 0 FROM streams s
-        \\JOIN activities a ON a.id = s.activity_id
-        \\WHERE json_valid(s.raw_json) = 0
+	# queue every stored body that is not JSON at all, the bodies stride stored
+	# before it began refusing them; one that is JSON but not stream JSON is
+	# caught when analyze next rescores its activity
+	seed_stream_retries =
+		\\INSERT OR IGNORE INTO stream_retries (activity_id, attempts)
+		\\SELECT s.activity_id, 0 FROM streams s
+		\\JOIN activities a ON a.id = s.activity_id
+		\\WHERE json_valid(s.raw_json) = 0
 
-    # key-value store: strava tokens + client creds, sync watermark, ftp, zone bounds
-    config =
-        \\CREATE TABLE IF NOT EXISTS config (
-        \\  key   TEXT PRIMARY KEY,
-        \\  value TEXT
-        \\)
+	# key-value store: strava tokens + client creds, sync watermark, ftp, zone bounds
+	config =
+		\\CREATE TABLE IF NOT EXISTS config (
+		\\  key   TEXT PRIMARY KEY,
+		\\  value TEXT
+		\\)
 
-    # mirror tier, the streams pattern: one row per strength-family activity
-    # whose DESCRIPTION sync has fetched. Row presence retires the id from the
-    # notes drain queue, so an activity with no description stores '' the way
-    # a 404'd stream stores an empty marker — fetched and empty are the same
-    # durable fact, absent means not yet asked. The description is where a
-    # strength app's share summary lives (Strava's public API carries no
-    # per-exercise sets), and it is re-pullable, so replace-on-sync is safe.
-    strength_notes =
-        \\CREATE TABLE IF NOT EXISTS strength_notes (
-        \\  activity_id INTEGER PRIMARY KEY REFERENCES activities(id),
-        \\  description TEXT
-        \\)
+	# mirror tier, the streams pattern: one row per strength-family activity
+	# whose DESCRIPTION sync has fetched. Row presence retires the id from the
+	# notes drain queue, so an activity with no description stores '' the way
+	# a 404'd stream stores an empty marker — fetched and empty are the same
+	# durable fact, absent means not yet asked. The description is where a
+	# strength app's share summary lives (Strava's public API carries no
+	# per-exercise sets), and it is re-pullable, so replace-on-sync is safe.
+	strength_notes =
+		\\CREATE TABLE IF NOT EXISTS strength_notes (
+		\\  activity_id INTEGER PRIMARY KEY REFERENCES activities(id),
+		\\  description TEXT
+		\\)
 
-    # mirror tier: one structured strength log per activity, as Strava's MCP
-    # connector returns it. Strava's public API does not carry these, so the
-    # only writer is `stride strength import`, which a coach runs with the
-    # connector's JSON; `payload` is ONE workout object, the exact text the
-    # connector wrote for it, activity_id included. Upstream data,
-    # re-importable, so an import replaces the row for its activity, and
-    # prune deletes it with the activity it references.
-    strength_logs =
-        \\CREATE TABLE IF NOT EXISTS strength_logs (
-        \\  activity_id INTEGER PRIMARY KEY REFERENCES activities(id),
-        \\  payload     TEXT NOT NULL,
-        \\  imported_at TEXT NOT NULL
-        \\)
+	# mirror tier: one structured strength log per activity, as Strava's MCP
+	# connector returns it. Strava's public API does not carry these, so the
+	# only writer is `stride strength import`, which a coach runs with the
+	# connector's JSON; `payload` is ONE workout object, the exact text the
+	# connector wrote for it, activity_id included. Upstream data,
+	# re-importable, so an import replaces the row for its activity, and
+	# prune deletes it with the activity it references.
+	strength_logs =
+		\\CREATE TABLE IF NOT EXISTS strength_logs (
+		\\  activity_id INTEGER PRIMARY KEY REFERENCES activities(id),
+		\\  payload     TEXT NOT NULL,
+		\\  imported_at TEXT NOT NULL
+		\\)
 
-    # computed tier: the parsed set rows behind the tonnage spine, rebuilt
-    # on every analyze (like activity_segments, deletable at will) from each
-    # activity's strength_logs payload when it has one, else its
-    # strength_notes description. `weight_kg` is the mass one rep MOVES — the
-    # /side variants are resolved at parse time — so tonnage is
-    # sets * reps * weight_kg. `source` records provenance per row: the name
-    # of the ADAPTER that read the text ('strava' for a structured log,
-    # 'peloton' for a share summary) — the load_coverage discipline applied
-    # to sets, so a career of mixed apps and unequal sources stays
-    # distinguishable, never flattened.
-    strength_sets =
-        \\CREATE TABLE IF NOT EXISTS strength_sets (
-        \\  activity_id INTEGER REFERENCES activities(id),
-        \\  ordinal     INTEGER,
-        \\  exercise    TEXT,
-        \\  sets        INTEGER,
-        \\  reps        INTEGER,
-        \\  weight_kg   REAL,
-        \\  source      TEXT,
-        \\  PRIMARY KEY (activity_id, ordinal)
-        \\)
+	# computed tier: the parsed set rows behind the tonnage spine, rebuilt
+	# on every analyze (like activity_segments, deletable at will) from each
+	# activity's strength_logs payload when it has one, else its
+	# strength_notes description. `weight_kg` is the mass one rep MOVES — the
+	# /side variants are resolved at parse time — so tonnage is
+	# sets * reps * weight_kg. `source` records provenance per row: the name
+	# of the ADAPTER that read the text ('strava' for a structured log,
+	# 'peloton' for a share summary) — the load_coverage discipline applied
+	# to sets, so a career of mixed apps and unequal sources stays
+	# distinguishable, never flattened.
+	strength_sets =
+		\\CREATE TABLE IF NOT EXISTS strength_sets (
+		\\  activity_id INTEGER REFERENCES activities(id),
+		\\  ordinal     INTEGER,
+		\\  exercise    TEXT,
+		\\  sets        INTEGER,
+		\\  reps        INTEGER,
+		\\  weight_kg   REAL,
+		\\  source      TEXT,
+		\\  PRIMARY KEY (activity_id, ordinal)
+		\\)
 
-    # the judgment tier: user-entered effort ratings (Borg CR10 session-RPE).
-    # NEVER a column on activities — that table is a replace-on-sync mirror,
-    # and a re-sync would silently wipe anything a human typed into it.
-    ratings =
-        \\CREATE TABLE IF NOT EXISTS ratings (
-        \\  activity_id  INTEGER PRIMARY KEY,
-        \\  rpe          REAL NOT NULL,
-        \\  rated_at     TEXT
-        \\)
+	# the judgment tier: user-entered effort ratings (Borg CR10 session-RPE).
+	# NEVER a column on activities — that table is a replace-on-sync mirror,
+	# and a re-sync would silently wipe anything a human typed into it.
+	ratings =
+		\\CREATE TABLE IF NOT EXISTS ratings (
+		\\  activity_id  INTEGER PRIMARY KEY,
+		\\  rpe          REAL NOT NULL,
+		\\  rated_at     TEXT
+		\\)
 
-    # ── shared semantics as SQL views (#403's lesson): the CLI and the viz
-    # window must read the plan through the SAME rule, and the only channel
-    # they share is the database — so the rule lives here, as views. The
-    # engine re-creates them on every migration run (DROP + CREATE, so an
-    # edited definition always wins); readers just SELECT.
+	# ── shared semantics as SQL views (#403's lesson): the CLI and the viz
+	# window must read the plan through the SAME rule, and the only channel
+	# they share is the database — so the rule lives here, as views. The
+	# engine re-creates them on every migration run (DROP + CREATE, so an
+	# edited definition always wins); readers just SELECT.
 
-    # exactly ONE row per planned date: the newest non-skipped row wins, and
-    # a skipped tombstone speaks only when nothing replaced it
-    plan_current_drop =
-        \\DROP VIEW IF EXISTS plan_current
-    plan_current =
-        \\CREATE VIEW plan_current AS
-        \\SELECT * FROM planned_sessions
-        \\WHERE id = (SELECT p2.id FROM planned_sessions p2
-        \\            WHERE p2.target_date = planned_sessions.target_date
-        \\            ORDER BY (COALESCE(p2.status, 'open') <> 'skipped') DESC, p2.id DESC
-        \\            LIMIT 1)
+	# exactly ONE row per planned date: the newest non-skipped row wins, and
+	# a skipped tombstone speaks only when nothing replaced it
+	plan_current_drop =
+		\\DROP VIEW IF EXISTS plan_current
+	plan_current =
+		\\CREATE VIEW plan_current AS
+		\\SELECT * FROM planned_sessions
+		\\WHERE id = (SELECT p2.id FROM planned_sessions p2
+		\\            WHERE p2.target_date = planned_sessions.target_date
+		\\            ORDER BY (COALESCE(p2.status, 'open') <> 'skipped') DESC, p2.id DESC
+		\\            LIMIT 1)
 
-    # the series' own clock: `today` is the last analyzed day, so every
-    # surface that says "as of" or counts days back agrees with the plot,
-    # and the wall clock answers only while daily_load is empty (stride's
-    # time-mode config can shift its day away from localtime, and
-    # daily_load is built against stride's day). `stale_days` is how far
-    # the wall clock is past the series, 0 when analyze ran today.
-    series_clock_drop =
-        \\DROP VIEW IF EXISTS series_clock
-    series_clock =
-        \\CREATE VIEW series_clock AS
-        \\SELECT COALESCE(MAX(day), date('now', 'localtime')) AS today,
-        \\       CAST(MAX(0, CAST(julianday(date('now', 'localtime')) - julianday(COALESCE(MAX(day), date('now', 'localtime'))) AS INTEGER)) AS INTEGER) AS stale_days
-        \\FROM daily_load
+	# the series' own clock: `today` is the last analyzed day, so every
+	# surface that says "as of" or counts days back agrees with the plot,
+	# and the wall clock answers only while daily_load is empty (stride's
+	# time-mode config can shift its day away from localtime, and
+	# daily_load is built against stride's day). `stale_days` is how far
+	# the wall clock is past the series, 0 when analyze ran today.
+	series_clock_drop =
+		\\DROP VIEW IF EXISTS series_clock
+	series_clock =
+		\\CREATE VIEW series_clock AS
+		\\SELECT COALESCE(MAX(day), date('now', 'localtime')) AS today,
+		\\       CAST(MAX(0, CAST(julianday(date('now', 'localtime')) - julianday(COALESCE(MAX(day), date('now', 'localtime'))) AS INTEGER)) AS INTEGER) AS stale_days
+		\\FROM daily_load
 
-    # the Monday of the series' current week — the week alignment every
-    # weekly number must share (matches Metrics.weekly_rollup) — derived
-    # from the clock so the plot and the week agree on today
-    week_bounds_drop =
-        \\DROP VIEW IF EXISTS week_bounds
-    week_bounds =
-        \\CREATE VIEW week_bounds AS
-        \\SELECT date(today, '-6 days', 'weekday 1') AS mon
-        \\FROM series_clock
+	# the Monday of the series' current week — the week alignment every
+	# weekly number must share (matches Metrics.weekly_rollup) — derived
+	# from the clock so the plot and the week agree on today
+	week_bounds_drop =
+		\\DROP VIEW IF EXISTS week_bounds
+	week_bounds =
+		\\CREATE VIEW week_bounds AS
+		\\SELECT date(today, '-6 days', 'weekday 1') AS mon
+		\\FROM series_clock
 
-    # one row per activity: its day, seconds by zone, and seconds by intensity
-    # class. easy/moderate/hard prefer the pi_* split (power-derived with
-    # watts, pace-derived for a distance sport without) and fall back to HR
-    # zones (z1+z2 / z3 / z4+z5) when no split exists. Every polarization
-    # share reads it, so viz and CLI agree.
-    #
-    # `polarized` is 1 when the activity counts toward an easy/moderate/hard
-    # SHARE. An 80/20 verdict is about endurance work, and wrist HR during
-    # lifting reads as easy time that would inflate it, so a type in
-    # Sports.never_polarized is always out, and any other strength-like type
-    # (Sports.class) is out when it has recorded sets: with none, a workout is
-    # most often a class worked by heart rate. Only the WeightTraining family
-    # (weight training and workout) can have sets today. Hard-session
-    # predicates read hard_s for every activity, polarized or not, so a hard
-    # lifting session still counts as a hard day.
-    strength_like_sql : Str
-    strength_like_sql = sql_list(Sports.strength_like)
+	# one row per activity: its day, seconds by zone, and seconds by intensity
+	# class. easy/moderate/hard prefer the pi_* split (power-derived with
+	# watts, pace-derived for a distance sport without) and fall back to HR
+	# zones (z1+z2 / z3 / z4+z5) when no split exists. Every polarization
+	# share reads it, so viz and CLI agree.
+	#
+	# `polarized` is 1 when the activity counts toward an easy/moderate/hard
+	# SHARE. An 80/20 verdict is about endurance work, and wrist HR during
+	# lifting reads as easy time that would inflate it, so a type in
+	# Sports.never_polarized is always out, and any other strength-like type
+	# (Sports.class) is out when it has recorded sets: with none, a workout is
+	# most often a class worked by heart rate. Only the WeightTraining family
+	# (weight training and workout) can have sets today. Hard-session
+	# predicates read hard_s for every activity, polarized or not, so a hard
+	# lifting session still counts as a hard day.
+	strength_like_sql : Str
+	strength_like_sql = sql_list(Sports.strength_like)
 
-    never_polarized_sql : Str
-    never_polarized_sql = sql_list(Sports.never_polarized)
+	never_polarized_sql : Str
+	never_polarized_sql = sql_list(Sports.never_polarized)
 
-    # sport type names as a quoted SQL list; the names are stride's own
-    # constants, so no value from outside reaches the SQL
-    sql_list : List(Str) -> Str
-    sql_list = |types| Str.join_with(List.map(types, |t| "'${t}'"), ", ")
+	# sport type names as a quoted SQL list; the names are stride's own
+	# constants, so no value from outside reaches the SQL
+	sql_list : List(Str) -> Str
+	sql_list = |types| Str.join_with(List.map(types, |t| "'${t}'"), ", ")
 
-    activity_intensity_drop =
-        \\DROP VIEW IF EXISTS activity_intensity
-    activity_intensity =
-        \\CREATE VIEW activity_intensity AS
-        \\SELECT a.id AS activity_id,
-        \\       substr(a.start_local, 1, 10) AS day,
-        \\       COALESCE(m.z1_s, 0) AS z1_s, COALESCE(m.z2_s, 0) AS z2_s,
-        \\       COALESCE(m.z3_s, 0) AS z3_s, COALESCE(m.z4_s, 0) AS z4_s,
-        \\       COALESCE(m.z5_s, 0) AS z5_s,
-        \\       CASE WHEN COALESCE(m.pi_easy_s, 0) + COALESCE(m.pi_moderate_s, 0) + COALESCE(m.pi_hard_s, 0) > 0
-        \\            THEN COALESCE(m.pi_easy_s, 0) ELSE COALESCE(m.z1_s, 0) + COALESCE(m.z2_s, 0) END AS easy_s,
-        \\       CASE WHEN COALESCE(m.pi_easy_s, 0) + COALESCE(m.pi_moderate_s, 0) + COALESCE(m.pi_hard_s, 0) > 0
-        \\            THEN COALESCE(m.pi_moderate_s, 0) ELSE COALESCE(m.z3_s, 0) END AS moderate_s,
-        \\       CASE WHEN COALESCE(m.pi_easy_s, 0) + COALESCE(m.pi_moderate_s, 0) + COALESCE(m.pi_hard_s, 0) > 0
-        \\            THEN COALESCE(m.pi_hard_s, 0) ELSE COALESCE(m.z4_s, 0) + COALESCE(m.z5_s, 0) END AS hard_s,
-        \\       CASE WHEN a.sport_type IN (${never_polarized_sql}) THEN 0
-        \\            WHEN a.sport_type IN (${strength_like_sql}) AND EXISTS (SELECT 1 FROM strength_sets ss WHERE ss.activity_id = a.id) THEN 0
-        \\            ELSE 1 END AS polarized
-        \\FROM activities a
-        \\LEFT JOIN activity_metrics m ON m.activity_id = a.id
+	activity_intensity_drop =
+		\\DROP VIEW IF EXISTS activity_intensity
+	activity_intensity =
+		\\CREATE VIEW activity_intensity AS
+		\\SELECT a.id AS activity_id,
+		\\       substr(a.start_local, 1, 10) AS day,
+		\\       COALESCE(m.z1_s, 0) AS z1_s, COALESCE(m.z2_s, 0) AS z2_s,
+		\\       COALESCE(m.z3_s, 0) AS z3_s, COALESCE(m.z4_s, 0) AS z4_s,
+		\\       COALESCE(m.z5_s, 0) AS z5_s,
+		\\       CASE WHEN COALESCE(m.pi_easy_s, 0) + COALESCE(m.pi_moderate_s, 0) + COALESCE(m.pi_hard_s, 0) > 0
+		\\            THEN COALESCE(m.pi_easy_s, 0) ELSE COALESCE(m.z1_s, 0) + COALESCE(m.z2_s, 0) END AS easy_s,
+		\\       CASE WHEN COALESCE(m.pi_easy_s, 0) + COALESCE(m.pi_moderate_s, 0) + COALESCE(m.pi_hard_s, 0) > 0
+		\\            THEN COALESCE(m.pi_moderate_s, 0) ELSE COALESCE(m.z3_s, 0) END AS moderate_s,
+		\\       CASE WHEN COALESCE(m.pi_easy_s, 0) + COALESCE(m.pi_moderate_s, 0) + COALESCE(m.pi_hard_s, 0) > 0
+		\\            THEN COALESCE(m.pi_hard_s, 0) ELSE COALESCE(m.z4_s, 0) + COALESCE(m.z5_s, 0) END AS hard_s,
+		\\       CASE WHEN a.sport_type IN (${never_polarized_sql}) THEN 0
+		\\            WHEN a.sport_type IN (${strength_like_sql}) AND EXISTS (SELECT 1 FROM strength_sets ss WHERE ss.activity_id = a.id) THEN 0
+		\\            ELSE 1 END AS polarized
+		\\FROM activities a
+		\\LEFT JOIN activity_metrics m ON m.activity_id = a.id
 
-    # one row per activity per recorded ladder rung: WHICH columns are the
-    # power ladder and which family words they carry live here and nowhere
-    # else. 0 and NULL in a raw best_* column both mean unrecorded, and
-    # the view emits no row for either. Windowed bests, all-time PRs and
-    # health reports aggregate this differently, but they unpivot identically.
-    # the ladder's rungs as a LIST, one row each whether or not any session
-    # has recorded one: the unpivot below emits a row only where a session
-    # has a value, so an athlete whose longest effort is five minutes has no
-    # 10-, 20- or 60-minute row there, and a reader that took its rung list
-    # from the unpivot would draw a ladder that shrank with the history. A
-    # rung joins here, and a rung added to the unpivot is added here in the
-    # same edit; the two lists are pinned equal by the e2e suite.
-    power_ladder_rungs_drop =
-        \\DROP VIEW IF EXISTS power_ladder_rungs
-    power_ladder_rungs =
-        \\CREATE VIEW power_ladder_rungs AS
-        \\SELECT '5s' AS rung, 5 AS secs UNION ALL SELECT '15s', 15 UNION ALL SELECT '30s', 30 UNION ALL SELECT '1min', 60
-        \\UNION ALL SELECT '5min', 300 UNION ALL SELECT '10min', 600 UNION ALL SELECT '20min', 1200 UNION ALL SELECT '60min', 3600
+	# one row per activity per recorded ladder rung: WHICH columns are the
+	# power ladder and which family words they carry live here and nowhere
+	# else. 0 and NULL in a raw best_* column both mean unrecorded, and
+	# the view emits no row for either. Windowed bests, all-time PRs and
+	# health reports aggregate this differently, but they unpivot identically.
+	# the ladder's rungs as a LIST, one row each whether or not any session
+	# has recorded one: the unpivot below emits a row only where a session
+	# has a value, so an athlete whose longest effort is five minutes has no
+	# 10-, 20- or 60-minute row there, and a reader that took its rung list
+	# from the unpivot would draw a ladder that shrank with the history. A
+	# rung joins here, and a rung added to the unpivot is added here in the
+	# same edit; the two lists are pinned equal by the e2e suite.
+	power_ladder_rungs_drop =
+		\\DROP VIEW IF EXISTS power_ladder_rungs
+	power_ladder_rungs =
+		\\CREATE VIEW power_ladder_rungs AS
+		\\SELECT '5s' AS rung, 5 AS secs UNION ALL SELECT '15s', 15 UNION ALL SELECT '30s', 30 UNION ALL SELECT '1min', 60
+		\\UNION ALL SELECT '5min', 300 UNION ALL SELECT '10min', 600 UNION ALL SELECT '20min', 1200 UNION ALL SELECT '60min', 3600
 
-    activity_power_ladder_drop =
-        \\DROP VIEW IF EXISTS activity_power_ladder
-    activity_power_ladder =
-        \\CREATE VIEW activity_power_ladder AS
-        \\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '5s' AS rung, 5 AS secs, m.best_5s_w AS watts
-        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_5s_w, 0) > 0
-        \\UNION ALL
-        \\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '15s' AS rung, 15 AS secs, m.best_15s_w AS watts
-        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_15s_w, 0) > 0
-        \\UNION ALL
-        \\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '30s' AS rung, 30 AS secs, m.best_30s_w AS watts
-        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_30s_w, 0) > 0
-        \\UNION ALL
-        \\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '1min' AS rung, 60 AS secs, m.best_60s_w AS watts
-        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_60s_w, 0) > 0
-        \\UNION ALL
-        \\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '5min' AS rung, 300 AS secs, m.best_300s_w AS watts
-        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_300s_w, 0) > 0
-        \\UNION ALL
-        \\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '10min' AS rung, 600 AS secs, m.best_600s_w AS watts
-        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_600s_w, 0) > 0
-        \\UNION ALL
-        \\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '20min' AS rung, 1200 AS secs, m.best_20min_w AS watts
-        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_20min_w, 0) > 0
-        \\UNION ALL
-        \\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '60min' AS rung, 3600 AS secs, m.best_3600s_w AS watts
-        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_3600s_w, 0) > 0
+	activity_power_ladder_drop =
+		\\DROP VIEW IF EXISTS activity_power_ladder
+	activity_power_ladder =
+		\\CREATE VIEW activity_power_ladder AS
+		\\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '5s' AS rung, 5 AS secs, m.best_5s_w AS watts
+		\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_5s_w, 0) > 0
+		\\UNION ALL
+		\\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '15s' AS rung, 15 AS secs, m.best_15s_w AS watts
+		\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_15s_w, 0) > 0
+		\\UNION ALL
+		\\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '30s' AS rung, 30 AS secs, m.best_30s_w AS watts
+		\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_30s_w, 0) > 0
+		\\UNION ALL
+		\\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '1min' AS rung, 60 AS secs, m.best_60s_w AS watts
+		\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_60s_w, 0) > 0
+		\\UNION ALL
+		\\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '5min' AS rung, 300 AS secs, m.best_300s_w AS watts
+		\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_300s_w, 0) > 0
+		\\UNION ALL
+		\\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '10min' AS rung, 600 AS secs, m.best_600s_w AS watts
+		\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_600s_w, 0) > 0
+		\\UNION ALL
+		\\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '20min' AS rung, 1200 AS secs, m.best_20min_w AS watts
+		\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_20min_w, 0) > 0
+		\\UNION ALL
+		\\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '60min' AS rung, 3600 AS secs, m.best_3600s_w AS watts
+		\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_3600s_w, 0) > 0
 
-    # twelve Monday weeks of load and CTL slope: the week's TSS, its
-    # end-of-week CTL, and the ramp (CTL change vs the prior week's end).
-    # Anchored on week_bounds; empty weeks materialize as zero rows.
-    weekly_ramp_drop =
-        \\DROP VIEW IF EXISTS weekly_ramp
-    weekly_ramp =
-        \\CREATE VIEW weekly_ramp AS
-        \\WITH mondays(wk) AS (SELECT date(mon, '-77 days') FROM week_bounds UNION ALL SELECT date(wk, '+7 days') FROM mondays WHERE wk < (SELECT mon FROM week_bounds)),
-        \\wtss AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, SUM(COALESCE(tss, 0)) AS tss FROM daily_load WHERE day >= (SELECT date(mon, '-77 days') FROM week_bounds) GROUP BY awk),
-        \\wctl AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, MAX(day) AS last_day FROM daily_load WHERE day >= (SELECT date(mon, '-84 days') FROM week_bounds) GROUP BY awk)
-        \\SELECT m.wk AS wk, COALESCE(t.tss, 0) AS tss, COALESCE(dl.ctl, 0) AS ctl_end,
-        \\       COALESCE(dl.ctl, 0) - COALESCE(prev.ctl, COALESCE(dl.ctl, 0)) AS ramp
-        \\FROM mondays m
-        \\LEFT JOIN wtss t ON t.awk = m.wk
-        \\LEFT JOIN wctl wc ON wc.awk = m.wk
-        \\LEFT JOIN daily_load dl ON dl.day = wc.last_day
-        \\LEFT JOIN wctl pwc ON pwc.awk = date(m.wk, '-7 days')
-        \\LEFT JOIN daily_load prev ON prev.day = pwc.last_day
+	# twelve Monday weeks of load and CTL slope: the week's TSS, its
+	# end-of-week CTL, and the ramp (CTL change vs the prior week's end).
+	# Anchored on week_bounds; empty weeks materialize as zero rows.
+	weekly_ramp_drop =
+		\\DROP VIEW IF EXISTS weekly_ramp
+	weekly_ramp =
+		\\CREATE VIEW weekly_ramp AS
+		\\WITH mondays(wk) AS (SELECT date(mon, '-77 days') FROM week_bounds UNION ALL SELECT date(wk, '+7 days') FROM mondays WHERE wk < (SELECT mon FROM week_bounds)),
+		\\wtss AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, SUM(COALESCE(tss, 0)) AS tss FROM daily_load WHERE day >= (SELECT date(mon, '-77 days') FROM week_bounds) GROUP BY awk),
+		\\wctl AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, MAX(day) AS last_day FROM daily_load WHERE day >= (SELECT date(mon, '-84 days') FROM week_bounds) GROUP BY awk)
+		\\SELECT m.wk AS wk, COALESCE(t.tss, 0) AS tss, COALESCE(dl.ctl, 0) AS ctl_end,
+		\\       COALESCE(dl.ctl, 0) - COALESCE(prev.ctl, COALESCE(dl.ctl, 0)) AS ramp
+		\\FROM mondays m
+		\\LEFT JOIN wtss t ON t.awk = m.wk
+		\\LEFT JOIN wctl wc ON wc.awk = m.wk
+		\\LEFT JOIN daily_load dl ON dl.day = wc.last_day
+		\\LEFT JOIN wctl pwc ON pwc.awk = date(m.wk, '-7 days')
+		\\LEFT JOIN daily_load prev ON prev.day = pwc.last_day
 
-    # the career, per sport: every session ever, its moving seconds and its
-    # meters. The one definition `stats`' all-time table and the window's
-    # career view both read; `stats`' year-to-date arm keeps its own cutoff
-    # query because a view cannot take a parameter.
-    career_totals_drop =
-        \\DROP VIEW IF EXISTS career_totals
-    career_totals =
-        \\CREATE VIEW career_totals AS
-        \\SELECT COALESCE(CAST(sport_type AS TEXT), '') AS sport, COUNT(*) AS sessions,
-        \\       COALESCE(SUM(moving_time), 0) AS secs,
-        \\       COALESCE(SUM(distance), 0) AS meters
-        \\FROM activities GROUP BY sport_type
+	# the career, per sport: every session ever, its moving seconds and its
+	# meters. The one definition `stats`' all-time table and the window's
+	# career view both read; `stats`' year-to-date arm keeps its own cutoff
+	# query because a view cannot take a parameter.
+	career_totals_drop =
+		\\DROP VIEW IF EXISTS career_totals
+	career_totals =
+		\\CREATE VIEW career_totals AS
+		\\SELECT COALESCE(CAST(sport_type AS TEXT), '') AS sport, COUNT(*) AS sessions,
+		\\       COALESCE(SUM(moving_time), 0) AS secs,
+		\\       COALESCE(SUM(distance), 0) AS meters
+		\\FROM activities GROUP BY sport_type
 
-    # calendar-month load off daily_load - the month spine `season` sums and
-    # the career view draws. Empty months produce no row; a reader that wants
-    # a gapless month axis builds its own spine and joins.
-    monthly_load_drop =
-        \\DROP VIEW IF EXISTS monthly_load
-    monthly_load =
-        \\CREATE VIEW monthly_load AS
-        \\SELECT substr(CAST(day AS TEXT), 1, 7) AS month, CAST(COALESCE(SUM(tss), 0) AS REAL) AS load
-        \\FROM daily_load GROUP BY month ORDER BY month
+	# calendar-month load off daily_load - the month spine `season` sums and
+	# the career view draws. Empty months produce no row; a reader that wants
+	# a gapless month axis builds its own spine and joins.
+	monthly_load_drop =
+		\\DROP VIEW IF EXISTS monthly_load
+	monthly_load =
+		\\CREATE VIEW monthly_load AS
+		\\SELECT substr(CAST(day AS TEXT), 1, 7) AS month, CAST(COALESCE(SUM(tss), 0) AS REAL) AS load
+		\\FROM daily_load GROUP BY month ORDER BY month
 
-    # every family's month-close threshold: the value the engine scored that
-    # month's LAST scored activity of that family with. `kind` says which
-    # quantity it is - 'power' (watts: cycling FTP, rowing erg threshold) or
-    # 'pace' (metres per second) - because a reader must format and label them
-    # differently and must never plot two kinds on one axis. Stored as SPEED
-    # rather than seconds-per-distance on purpose: higher is better for both
-    # kinds, so an improving athlete's line rises whatever the sport.
-    # how much of a month's strength work the parsed sets actually cover:
-    # tracked sessions carry a pasted breakdown or an imported log,
-    # instructor-led classes never do, so a month's tonnage is a SAMPLE of
-    # its training — and a biased sample reads as a trend (#521). One row per
-    # strength month: how many of its sessions contributed sets, out of how
-    # many the family trained. Shared as a view so every surface states the
-    # same denominator.
-    # COUPLED to the family gates upstream of strength_sets: this WHERE and
-    # the tonnage arm's inner join both assume strength_sets rows only ever
-    # belong to the WeightTraining family. That holds because the notes drain
-    # fetches descriptions for that family only, `strength import` refuses a
-    # log for any other, and the strength_sets rebuild reads only activities
-    # of that family — widening one without the others makes a new family's
-    # tonnage vanish silently at the join.
-    strength_coverage_drop =
-        \\DROP VIEW IF EXISTS strength_coverage
-    strength_coverage =
-        \\CREATE VIEW strength_coverage AS
-        \\SELECT fm.month AS month,
-        \\       fm.fam AS fam,
-        \\       SUM(CASE WHEN EXISTS (SELECT 1 FROM strength_sets s WHERE s.activity_id = a.id) THEN 1 ELSE 0 END) AS covered,
-        \\       COUNT(*) AS total
-        \\FROM activities a JOIN activity_family_month fm ON fm.activity_id = a.id
-        \\WHERE fm.fam = 'WeightTraining'
-        \\GROUP BY fm.fam, fm.month
+	# every family's month-close threshold: the value the engine scored that
+	# month's LAST scored activity of that family with. `kind` says which
+	# quantity it is - 'power' (watts: cycling FTP, rowing erg threshold) or
+	# 'pace' (metres per second) - because a reader must format and label them
+	# differently and must never plot two kinds on one axis. Stored as SPEED
+	# rather than seconds-per-distance on purpose: higher is better for both
+	# kinds, so an improving athlete's line rises whatever the sport.
+	# how much of a month's strength work the parsed sets actually cover:
+	# tracked sessions carry a pasted breakdown or an imported log,
+	# instructor-led classes never do, so a month's tonnage is a SAMPLE of
+	# its training — and a biased sample reads as a trend (#521). One row per
+	# strength month: how many of its sessions contributed sets, out of how
+	# many the family trained. Shared as a view so every surface states the
+	# same denominator.
+	# COUPLED to the family gates upstream of strength_sets: this WHERE and
+	# the tonnage arm's inner join both assume strength_sets rows only ever
+	# belong to the WeightTraining family. That holds because the notes drain
+	# fetches descriptions for that family only, `strength import` refuses a
+	# log for any other, and the strength_sets rebuild reads only activities
+	# of that family — widening one without the others makes a new family's
+	# tonnage vanish silently at the join.
+	strength_coverage_drop =
+		\\DROP VIEW IF EXISTS strength_coverage
+	strength_coverage =
+		\\CREATE VIEW strength_coverage AS
+		\\SELECT fm.month AS month,
+		\\       fm.fam AS fam,
+		\\       SUM(CASE WHEN EXISTS (SELECT 1 FROM strength_sets s WHERE s.activity_id = a.id) THEN 1 ELSE 0 END) AS covered,
+		\\       COUNT(*) AS total
+		\\FROM activities a JOIN activity_family_month fm ON fm.activity_id = a.id
+		\\WHERE fm.fam = 'WeightTraining'
+		\\GROUP BY fm.fam, fm.month
 
-    # one row per activity with the two keys every per-family month series
-    # groups on: the family (the stored `sport_family`, falling back to
-    # `sport_type` for a row written before the canonicalizing trigger) and
-    # the calendar month of its local start. strength_coverage,
-    # monthly_threshold and monthly_family_load group on both keys through it,
-    # and monthly_ride_ftp takes its month from it, so a rule changed here
-    # changes every view that joins it at once.
-    activity_family_month_drop =
-        \\DROP VIEW IF EXISTS activity_family_month
-    activity_family_month =
-        \\CREATE VIEW activity_family_month AS
-        \\SELECT id AS activity_id,
-        \\       CAST(COALESCE(sport_family, sport_type) AS TEXT) AS fam,
-        \\       substr(CAST(start_local AS TEXT), 1, 7) AS month
-        \\FROM activities
+	# one row per activity with the two keys every per-family month series
+	# groups on: the family (the stored `sport_family`, falling back to
+	# `sport_type` for a row written before the canonicalizing trigger) and
+	# the calendar month of its local start. strength_coverage,
+	# monthly_threshold and monthly_family_load group on both keys through it,
+	# and monthly_ride_ftp takes its month from it, so a rule changed here
+	# changes every view that joins it at once.
+	activity_family_month_drop =
+		\\DROP VIEW IF EXISTS activity_family_month
+	activity_family_month =
+		\\CREATE VIEW activity_family_month AS
+		\\SELECT id AS activity_id,
+		\\       CAST(COALESCE(sport_family, sport_type) AS TEXT) AS fam,
+		\\       substr(CAST(start_local AS TEXT), 1, 7) AS month
+		\\FROM activities
 
-    # a family's load and session count per month, the window's career
-    # ground per family; `monthly_load` pools every sport for the same months
-    monthly_family_load_drop =
-        \\DROP VIEW IF EXISTS monthly_family_load
-    monthly_family_load =
-        \\CREATE VIEW monthly_family_load AS
-        \\SELECT fm.fam AS fam, fm.month AS month,
-        \\       CAST(ROUND(COALESCE(SUM(m.tss), 0)) AS INTEGER) AS load,
-        \\       COUNT(*) AS sessions
-        \\FROM activity_family_month fm JOIN activity_metrics m ON m.activity_id = fm.activity_id
-        \\GROUP BY fm.fam, fm.month
+	# a family's load and session count per month, the window's career
+	# ground per family; `monthly_load` pools every sport for the same months
+	monthly_family_load_drop =
+		\\DROP VIEW IF EXISTS monthly_family_load
+	monthly_family_load =
+		\\CREATE VIEW monthly_family_load AS
+		\\SELECT fm.fam AS fam, fm.month AS month,
+		\\       CAST(ROUND(COALESCE(SUM(m.tss), 0)) AS INTEGER) AS load,
+		\\       COUNT(*) AS sessions
+		\\FROM activity_family_month fm JOIN activity_metrics m ON m.activity_id = fm.activity_id
+		\\GROUP BY fm.fam, fm.month
 
-    monthly_threshold_drop =
-        \\DROP VIEW IF EXISTS monthly_threshold
-    monthly_threshold =
-        \\CREATE VIEW monthly_threshold AS
-        \\SELECT fm.month AS month,
-        \\       fm.fam AS fam,
-        \\       CASE WHEN COALESCE(m.ftp_used, 0) > 0 THEN 'power' ELSE 'pace' END AS kind,
-        \\       CAST(CASE WHEN COALESCE(m.ftp_used, 0) > 0 THEN m.ftp_used ELSE m.threshold_pace_used END AS REAL) AS value
-        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
-        \\JOIN activity_family_month fm ON fm.activity_id = a.id
-        \\WHERE (COALESCE(m.ftp_used, 0) > 0 OR COALESCE(m.threshold_pace_used, 0) > 0)
-        \\  AND a.id = (SELECT a2.id FROM activities a2
-        \\              JOIN activity_metrics m2 ON m2.activity_id = a2.id
-        \\              JOIN activity_family_month fm2 ON fm2.activity_id = a2.id
-        \\              WHERE (COALESCE(m2.ftp_used, 0) > 0 OR COALESCE(m2.threshold_pace_used, 0) > 0)
-        \\                AND fm2.fam = fm.fam
-        \\                AND fm2.month = fm.month
-        \\              ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)
-        \\-- tonnage is not a threshold: this view is the monthly SPINE series,
-        \\-- keyed by kind, and the strength arm sums a month's lifted mass
-        \\-- (kg) per family. The view keeps its threshold-era name because the
-        \\-- window's spine discovery query reads it by name across a second
-        \\-- binary and platform; the rename is deferred deliberately, not
-        \\-- forgotten.
-        \\-- A month under a THIRD coverage is refused rather than drawn:
-        \\-- tracked sessions carry sets, instructor-led classes never can, so
-        \\-- a thin month's total is a biased sample that reads as a decline
-        \\-- the athlete did not have — a missing point is honest where a
-        \\-- misleading one is not. A THIRD and not half, because an athlete
-        \\-- alternating tracked sessions with classes lives AT one-half, and
-        \\-- a bar there makes months flicker in and out of the chart with
-        \\-- which class they happened to book; one-third sits clear of that
-        \\-- band while still refusing the mostly-absent months. The rule
-        \\-- lives in the view so the CLI and the window cannot disagree about
-        \\-- which months exist, and a refused month renders exactly as an
-        \\-- unmeasured one: no row, which the career spine bridges with
-        \\-- dashes rather than a value.
-        \\UNION ALL
-        \\SELECT fm.month AS month,
-        \\       fm.fam AS fam,
-        \\       'tonnage' AS kind,
-        \\       CAST(SUM(s.sets * s.reps * s.weight_kg) AS REAL) AS value
-        \\FROM activities a JOIN strength_sets s ON s.activity_id = a.id
-        \\JOIN activity_family_month fm ON fm.activity_id = a.id
-        \\JOIN strength_coverage c ON c.month = fm.month AND c.fam = fm.fam
-        \\WHERE c.covered * 3 >= c.total
-        \\GROUP BY fm.fam, fm.month
+	monthly_threshold_drop =
+		\\DROP VIEW IF EXISTS monthly_threshold
+	monthly_threshold =
+		\\CREATE VIEW monthly_threshold AS
+		\\SELECT fm.month AS month,
+		\\       fm.fam AS fam,
+		\\       CASE WHEN COALESCE(m.ftp_used, 0) > 0 THEN 'power' ELSE 'pace' END AS kind,
+		\\       CAST(CASE WHEN COALESCE(m.ftp_used, 0) > 0 THEN m.ftp_used ELSE m.threshold_pace_used END AS REAL) AS value
+		\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
+		\\JOIN activity_family_month fm ON fm.activity_id = a.id
+		\\WHERE (COALESCE(m.ftp_used, 0) > 0 OR COALESCE(m.threshold_pace_used, 0) > 0)
+		\\  AND a.id = (SELECT a2.id FROM activities a2
+		\\              JOIN activity_metrics m2 ON m2.activity_id = a2.id
+		\\              JOIN activity_family_month fm2 ON fm2.activity_id = a2.id
+		\\              WHERE (COALESCE(m2.ftp_used, 0) > 0 OR COALESCE(m2.threshold_pace_used, 0) > 0)
+		\\                AND fm2.fam = fm.fam
+		\\                AND fm2.month = fm.month
+		\\              ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)
+		\\-- tonnage is not a threshold: this view is the monthly SPINE series,
+		\\-- keyed by kind, and the strength arm sums a month's lifted mass
+		\\-- (kg) per family. The view keeps its threshold-era name because the
+		\\-- window's spine discovery query reads it by name across a second
+		\\-- binary and platform; the rename is deferred deliberately, not
+		\\-- forgotten.
+		\\-- A month under a THIRD coverage is refused rather than drawn:
+		\\-- tracked sessions carry sets, instructor-led classes never can, so
+		\\-- a thin month's total is a biased sample that reads as a decline
+		\\-- the athlete did not have — a missing point is honest where a
+		\\-- misleading one is not. A THIRD and not half, because an athlete
+		\\-- alternating tracked sessions with classes lives AT one-half, and
+		\\-- a bar there makes months flicker in and out of the chart with
+		\\-- which class they happened to book; one-third sits clear of that
+		\\-- band while still refusing the mostly-absent months. The rule
+		\\-- lives in the view so the CLI and the window cannot disagree about
+		\\-- which months exist, and a refused month renders exactly as an
+		\\-- unmeasured one: no row, which the career spine bridges with
+		\\-- dashes rather than a value.
+		\\UNION ALL
+		\\SELECT fm.month AS month,
+		\\       fm.fam AS fam,
+		\\       'tonnage' AS kind,
+		\\       CAST(SUM(s.sets * s.reps * s.weight_kg) AS REAL) AS value
+		\\FROM activities a JOIN strength_sets s ON s.activity_id = a.id
+		\\JOIN activity_family_month fm ON fm.activity_id = a.id
+		\\JOIN strength_coverage c ON c.month = fm.month AND c.fam = fm.fam
+		\\WHERE c.covered * 3 >= c.total
+		\\GROUP BY fm.fam, fm.month
 
-    # the FTP the engine scored each month's LAST power-scored Ride-family
-    # activity with. Deliberately NOT season's ftp_end - that is a
-    # chronological per-day fold with family weighting and has its one body in
-    # ReportSeason - this is a different, simpler quantity with its own name:
-    # the threshold in force when the month closed. A correlated subquery with
-    # an id tie-break rather than a window function: the window's bundled
-    # SQLite must be able to read every shared view, and window functions are
-    # the one modern feature this repo does not assume. One database names
-    # one row either way.
-    monthly_ride_ftp_drop =
-        \\DROP VIEW IF EXISTS monthly_ride_ftp
-    monthly_ride_ftp =
-        \\CREATE VIEW monthly_ride_ftp AS
-        \\SELECT fm.month AS month,
-        \\       CAST(m.ftp_used AS REAL) AS ftp
-        \\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
-        \\JOIN activity_family_month fm ON fm.activity_id = a.id
-        \\WHERE COALESCE(m.ftp_used, 0) > 0 AND a.sport_family = 'Ride'
-        \\  AND a.id = (SELECT a2.id FROM activities a2
-        \\              JOIN activity_metrics m2 ON m2.activity_id = a2.id
-        \\              JOIN activity_family_month fm2 ON fm2.activity_id = a2.id
-        \\              WHERE COALESCE(m2.ftp_used, 0) > 0 AND a2.sport_family = 'Ride'
-        \\                AND fm2.month = fm.month
-        \\              ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)
+	# the FTP the engine scored each month's LAST power-scored Ride-family
+	# activity with. Deliberately NOT season's ftp_end - that is a
+	# chronological per-day fold with family weighting and has its one body in
+	# ReportSeason - this is a different, simpler quantity with its own name:
+	# the threshold in force when the month closed. A correlated subquery with
+	# an id tie-break rather than a window function: the window's bundled
+	# SQLite must be able to read every shared view, and window functions are
+	# the one modern feature this repo does not assume. One database names
+	# one row either way.
+	monthly_ride_ftp_drop =
+		\\DROP VIEW IF EXISTS monthly_ride_ftp
+	monthly_ride_ftp =
+		\\CREATE VIEW monthly_ride_ftp AS
+		\\SELECT fm.month AS month,
+		\\       CAST(m.ftp_used AS REAL) AS ftp
+		\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
+		\\JOIN activity_family_month fm ON fm.activity_id = a.id
+		\\WHERE COALESCE(m.ftp_used, 0) > 0 AND a.sport_family = 'Ride'
+		\\  AND a.id = (SELECT a2.id FROM activities a2
+		\\              JOIN activity_metrics m2 ON m2.activity_id = a2.id
+		\\              JOIN activity_family_month fm2 ON fm2.activity_id = a2.id
+		\\              WHERE COALESCE(m2.ftp_used, 0) > 0 AND a2.sport_family = 'Ride'
+		\\                AND fm2.month = fm.month
+		\\              ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)
 }

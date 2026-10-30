@@ -8,7 +8,7 @@
 ## The header carries its own compiler version, so `roc src/viz/main.roc` with a
 ## matching nightly is the whole build. roc-ray declares that same compiler, so
 ## the two apps and the platform all name one nightly.
-app [Model, program] { rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.11.1/4NWnSt7bKCyVx4xDFH89pV11ekYbiGQ43kdjfZ9NBJQn.tar.zst", core: "../core/package.roc" }
+app [Model, program] { core: "../core/package.roc", rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.11.1/4NWnSt7bKCyVx4xDFH89pV11ekYbiGQ43kdjfZ9NBJQn.tar.zst" }
 
 import rr.App
 import rr.Assets
@@ -61,8 +61,10 @@ program = { init!, update!, render! }
 # need no grant: the platform allows them beneath the configured output
 # directory, ./captures.
 stride_dir_of : List(Str) -> Str
-stride_dir_of = |args| match List.get(args, 1) { Ok(a) => a
-	Err(_) => "" }
+stride_dir_of = |args| match List.get(args, 1) {
+	Ok(a) => a
+	Err(_) => ""
+}
 
 # the directory the window was launched from, as the launcher passed it
 # second, read in init! (the one place argv may be read) and kept in the model: a
@@ -70,8 +72,10 @@ stride_dir_of = |args| match List.get(args, 1) { Ok(a) => a
 # it, which a reader can open without knowing where the window ran. "" when
 # the launcher passed none, and the path is then relative to that directory
 launch_dir_of : List(Str) -> Str
-launch_dir_of = |args| match List.get(args, 2) { Ok(a) => a
-	Err(_) => "" }
+launch_dir_of = |args| match List.get(args, 2) {
+	Ok(a) => a
+	Err(_) => ""
+}
 
 config_for_args : List(Str) -> App.Config
 config_for_args = |args| {
@@ -91,7 +95,7 @@ config_for_args = |args| {
 			.with_permission(Command("stride"))
 			.with_permission(Command("sh"))
 	dir = stride_dir_of(args)
-	if dir == "" base else base.with_permission(Directory(dir, ReadWrite))
+	if (dir == "") base else base.with_permission(Directory(dir, ReadWrite))
 }
 
 # the launcher's two arguments land where the loaders read them, and the
@@ -102,10 +106,10 @@ expect {
 	args = ["stride-viz", "/h/.stride", "/h"]
 	p = config_for_args(args).permissions()
 	stride_dir_of(args) == "/h/.stride" and launch_dir_of(args) == "/h"
-	and stride_dir_of(["stride-viz"]) == "" and launch_dir_of(["stride-viz", "/h/.stride"]) == ""
-	and List.contains(p, Command("stride")) and List.contains(p, Command("sh"))
-	and List.contains(p, Directory("/h/.stride", ReadWrite)) and List.contains(p, WorkingDirectory(ReadOnly))
-	and List.len(p) == 4 and List.len(config_for_args(["stride-viz"]).permissions()) == 3
+		and stride_dir_of(["stride-viz"]) == "" and launch_dir_of(["stride-viz", "/h/.stride"]) == ""
+		and List.contains(p, Command("stride")) and List.contains(p, Command("sh"))
+		and List.contains(p, Directory("/h/.stride", ReadWrite)) and List.contains(p, WorkingDirectory(ReadOnly))
+		and List.len(p) == 4 and List.len(config_for_args(["stride-viz"]).permissions()) == 3
 }
 
 # the athlete's directory and the authority to reach it, together: every
@@ -133,7 +137,7 @@ init! = App.init_for_args(
 # engine made it long before the window ran.
 open_db! : Access => Try(Sqlite.Db, [NoStrideDir, Unreachable])
 open_db! = |acc|
-	if acc.dir == "" Err(NoStrideDir)
+	if (acc.dir == "") Err(NoStrideDir)
 	else match acc.io.files().open_dir!(acc.dir) {
 		Err(_) => Err(Unreachable)
 		Ok(d) => match acc.io.sqlite().open!(d, "db.sqlite") {
@@ -145,7 +149,7 @@ open_db! = |acc|
 # a file the athlete's directory holds, or [] when it does not
 stride_bytes! : Access, Str => List(U8)
 stride_bytes! = |acc, rel|
-	if acc.dir == "" []
+	if (acc.dir == "") []
 	else match acc.io.files().open_dir_read!(acc.dir) {
 		Err(_) => []
 		Ok(d) => match d.read_bytes!(rel) {
@@ -171,8 +175,8 @@ checkout_bytes! = |acc, sub, name|
 brand_font! : Access, Str, I32, Text.Font => Text.Font
 brand_font! = |acc, name, size, fallback| {
 	from_checkout = checkout_bytes!(acc, "assets/fonts", name)
-	bytes = if !List.is_empty(from_checkout) from_checkout else stride_bytes!(acc, "fonts/${name}")
-	if List.is_empty(bytes) fallback
+	bytes = if (!List.is_empty(from_checkout)) from_checkout else stride_bytes!(acc, "fonts/${name}")
+	if (List.is_empty(bytes)) fallback
 	else match Draw.font_from_bytes!({ format: Ttf, bytes, size }) {
 		Ok(f) => f
 		Err(_) => fallback
@@ -184,11 +188,11 @@ brand_font! = |acc, name, size, fallback| {
 # way it seeds fonts). Splash-only, so nothing loads it outside boot.
 load_logo! : Access, Bool => [NoLogo, Logo(Texture.Texture)]
 load_logo! = |acc, boot|
-	if !boot NoLogo
+	if (!boot) NoLogo
 	else {
 		from_checkout = checkout_bytes!(acc, "img", "stride-icon.png")
-		bytes = if !List.is_empty(from_checkout) from_checkout else stride_bytes!(acc, "img/stride-icon.png")
-		if List.is_empty(bytes) NoLogo
+		bytes = if (!List.is_empty(from_checkout)) from_checkout else stride_bytes!(acc, "img/stride-icon.png")
+		if (List.is_empty(bytes)) NoLogo
 		else match Assets.texture_from_bytes!({ format: Png, bytes }) {
 			Ok(t) => Logo(t)
 			Err(_) => NoLogo
@@ -201,267 +205,281 @@ load_logo! = |acc, boot|
 # face, so a window that cannot reach the athlete's data says why.
 skeleton : Str -> _
 skeleton = |err|
-	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0 , tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric }
+	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric }
 
 # boot=True builds the instant skeleton the splash renders over: no database
 # and no engine call - the window opens on frame one and the real load runs
 # in a spawned task that answers with Reloaded.
 load_model! : Access, Str, Text.Font, I64, Bool => Try(Ui.Model, [ResourceLimit])
 load_model! = |acc, cwd, font, curve_days, boot| {
-		loaded = if boot { skeleton("") } else match open_db!(acc) {
-			Ok(db) => {
-				Db.publish_caps!(db, caps_views, caps_fields)
-				s = Db.load_series!(db)
-				e = Db.load_event!(db)
-				tm = Db.today_mod!(acc.io.commands(), db)
-				c = Db.load_curve!(db, curve_days, tm)
-				tids = Db.load_trace_ids!(db)
-				# ONLY the selected session is cached at boot. Caching the whole
-				# picker up front is what made the window take minutes to open on
-				# a real database: not the SQL (0.2s for the whole stream corpus)
-				# but the roc-ray SQLite binding, which marshals result rows one
-				# at a time - and each session's downsampled trace is hundreds of
-				# rows, so a hundred-odd sessions was ~100k rows before the first
-				# frame. A switch or ghost summon to an un-cached session falls
-				# through to the one-session load the cache-miss path already
-				# spawns (trace_task! / ghost_task!), so the cost is paid per
-				# session actually looked at, not for the whole picker at boot.
-				un = Db.units!(db)
-				tcache = load_tcache!(db, un, List.take_first(tids, 1))
-				tr = match List.first(tcache) { Ok(t0) => t0.tr
-					Err(_) => [] }
-				sg = match List.first(tcache) { Ok(t0) => t0.sg
-					Err(_) => [] }
-				du = match List.first(tcache) { Ok(t0) => t0.du
-					Err(_) => 1.0 }
-				st = Db.load_stale!(db)
-				pl = Db.load_plan_at!(db, tm)
-				wk = Db.load_week_tss!(db)
-				pw = Db.load_plan_week_at!(db, tm)
-				bn = Db.load_bus_note!(db)
-				rd = Db.load_ridden!(db)
-				ht = Db.load_heat!(db)
-				hev = Db.load_event_days!(db)
-				zw = Db.load_zone_weeks!(db)
-				sfs = Db.load_spine_fams!(db)
-				csp = Db.load_career_spines!(db, sfs, tm)
-				cs = Db.load_career_sports!(db)
-				cfm = Db.load_fam_months!(db)
-				rw = Db.load_ramp_weeks!(db)
-				prs = Db.load_prs!(db)
-				nts = Db.load_day_notes!(db)
-				cpv = Db.load_curve_prev!(db, curve_days, tm)
-				{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, rw, csp, cs, cfm, prs, tcache, un }
+	loaded = if boot {
+		skeleton("")
+	} else match open_db!(acc) {
+		Ok(db) => {
+			Db.publish_caps!(db, caps_views, caps_fields)
+			s = Db.load_series!(db)
+			e = Db.load_event!(db)
+			tm = Db.today_mod!(acc.io.commands(), db)
+			c = Db.load_curve!(db, curve_days, tm)
+			tids = Db.load_trace_ids!(db)
+			# ONLY the selected session is cached at boot. Caching the whole
+			# picker up front is what made the window take minutes to open on
+			# a real database: not the SQL (0.2s for the whole stream corpus)
+			# but the roc-ray SQLite binding, which marshals result rows one
+			# at a time - and each session's downsampled trace is hundreds of
+			# rows, so a hundred-odd sessions was ~100k rows before the first
+			# frame. A switch or ghost summon to an un-cached session falls
+			# through to the one-session load the cache-miss path already
+			# spawns (trace_task! / ghost_task!), so the cost is paid per
+			# session actually looked at, not for the whole picker at boot.
+			un = Db.units!(db)
+			tcache = load_tcache!(db, un, List.take_first(tids, 1))
+			tr = match List.first(tcache) {
+				Ok(t0) => t0.tr
+				Err(_) => []
 			}
-			Err(NoStrideDir) => skeleton("no stride directory — the launcher passes it as the first argument")
-			Err(Unreachable) => skeleton("cannot open ${acc.dir}/db.sqlite")
+			sg = match List.first(tcache) {
+				Ok(t0) => t0.sg
+				Err(_) => []
+			}
+			du = match List.first(tcache) {
+				Ok(t0) => t0.du
+				Err(_) => 1.0
+			}
+			st = Db.load_stale!(db)
+			pl = Db.load_plan_at!(db, tm)
+			wk = Db.load_week_tss!(db)
+			pw = Db.load_plan_week_at!(db, tm)
+			bn = Db.load_bus_note!(db)
+			rd = Db.load_ridden!(db)
+			ht = Db.load_heat!(db)
+			hev = Db.load_event_days!(db)
+			zw = Db.load_zone_weeks!(db)
+			sfs = Db.load_spine_fams!(db)
+			csp = Db.load_career_spines!(db, sfs, tm)
+			cs = Db.load_career_sports!(db)
+			cfm = Db.load_fam_months!(db)
+			rw = Db.load_ramp_weeks!(db)
+			prs = Db.load_prs!(db)
+			nts = Db.load_day_notes!(db)
+			cpv = Db.load_curve_prev!(db, curve_days, tm)
+			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, rw, csp, cs, cfm, prs, tcache, un }
 		}
-		ev = Db.find_idx(loaded.s.days, loaded.e.day)
-		# the fit runs the engine; the skeleton cannot afford it
-		fit = if boot ({ cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }) else Db.load_fit!(acc.io.commands(), curve_days)
-		fit_text =
-			if fit.ok
-				"CP ${Db.fmt_f(fit.cp)} W · W' ${Db.fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${Db.fmt_f(fit.r2)} from ${Db.fmt_i(fit.points)} bests"
-			else "CP fit unavailable - the engine did not answer"
-		# Quicksand carries prose; JetBrains Mono carries data. Small labels
-		# use an atlas close to their displayed size: shrinking title-sized
-		# glyphs to captions loses thin strokes between samples. Titles and
-		# KPI digits have their own larger atlases. Missing fonts fall back
-		# to the platform's built-in face.
-		head = brand_font!(acc, "Quicksand-Medium.ttf", 24, font)
-		title_font = brand_font!(acc, "Quicksand-Medium.ttf", 48, font)
-		mono_big = brand_font!(acc, "JetBrainsMono-Regular.ttf", 48, font)
-		mono = brand_font!(acc, "JetBrainsMono-Regular.ttf", 24, font)
-		mk! = |txt, sz| Text.from(txt, if sz >= 24 title_font else head).size(sz).prepare!()
-		mkm! = |txt, sz| Text.from(txt, mono).size(sz).prepare!()
-		mkb! = |txt, sz| Text.from(txt, mono_big).size(sz).prepare!()
-		curve_lbls = List.map_try!(loaded.c, |c| {
+		Err(NoStrideDir) => skeleton("no stride directory — the launcher passes it as the first argument")
+		Err(Unreachable) => skeleton("cannot open ${acc.dir}/db.sqlite")
+	}
+	ev = Db.find_idx(loaded.s.days, loaded.e.day)
+	# the fit runs the engine; the skeleton cannot afford it
+	fit = if (boot) ({ cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }) else Db.load_fit!(acc.io.commands(), curve_days)
+	fit_text =
+		if (fit.ok)
+			"CP ${Db.fmt_f(fit.cp)} W · W' ${Db.fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${Db.fmt_f(fit.r2)} from ${Db.fmt_i(fit.points)} bests"
+		else "CP fit unavailable - the engine did not answer"
+	# Quicksand carries prose; JetBrains Mono carries data. Small labels
+	# use an atlas close to their displayed size: shrinking title-sized
+	# glyphs to captions loses thin strokes between samples. Titles and
+	# KPI digits have their own larger atlases. Missing fonts fall back
+	# to the platform's built-in face.
+	head = brand_font!(acc, "Quicksand-Medium.ttf", 24, font)
+	title_font = brand_font!(acc, "Quicksand-Medium.ttf", 48, font)
+	mono_big = brand_font!(acc, "JetBrainsMono-Regular.ttf", 48, font)
+	mono = brand_font!(acc, "JetBrainsMono-Regular.ttf", 24, font)
+	mk! = |txt, sz| Text.from(txt, if (sz >= 24) title_font else head).size(sz).prepare!()
+	mkm! = |txt, sz| Text.from(txt, mono).size(sz).prepare!()
+	mkb! = |txt, sz| Text.from(txt, mono_big).size(sz).prepare!()
+	curve_lbls = List.map_try!(
+		loaded.c,
+		|c| {
 			p = mkm!(I64.to_str(c.dur_s), 12)?
 			Ok({ p, d: c.dur_s })
-		})?
-		ylabels = List.map_try!([-30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100], |v| {
+		},
+	)?
+	ylabels = List.map_try!(
+		[-30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+		|v| {
 			p = mkm!(I64.to_str(v), 12)?
 			Ok({ p, v: I64.to_f32(v) })
-		})?
-		ends = List.map_try!(
-			[
-				{ s: "CTL ${Db.fmt1(loaded.s.last.c)}", k: 0.U8 },
-				{ s: "ATL ${Db.fmt1(loaded.s.last.a)}", k: 1.U8 },
-				{ s: "TSB ${Db.fmt1(loaded.s.last.t)}", k: 2.U8 },
-			],
-			|e| {
-				p = mkm!(e.s, 13)?
-				Ok({ p, sel: e.k })
-			},
-		)?
-		as_of = match List.last(loaded.s.days) {
-			Ok(ld) => ld
-			Err(_) => "no data"
+		},
+	)?
+	ends = List.map_try!(
+		[
+			{ s: "CTL ${Db.fmt1(loaded.s.last.c)}", k: 0.U8 },
+			{ s: "ATL ${Db.fmt1(loaded.s.last.a)}", k: 1.U8 },
+			{ s: "TSB ${Db.fmt1(loaded.s.last.t)}", k: 2.U8 },
+		],
+		|e| {
+			p = mkm!(e.s, 13)?
+			Ok({ p, sel: e.k })
+		},
+	)?
+	as_of = match List.last(loaded.s.days) {
+		Ok(ld) => ld
+		Err(_) => "no data"
+	}
+	# the event tile prefers the future; a race inside the last week still
+	# deserves its "ridden" moment; otherwise the slot says so
+	ev_tile =
+		if loaded.e.day != "" {
+			{ top: loaded.e.name, sub: if (loaded.e.ahead == 0) ("today, ${loaded.e.day}") else "in ${I64.to_str(loaded.e.ahead)}d, ${loaded.e.day}" }
+		} else if loaded.rd.ago >= 0 and loaded.rd.ago <= 7 {
+			{ top: loaded.rd.name, sub: "ridden, ${I64.to_str(loaded.rd.ago)}d ago" }
+		} else {
+			{ top: "no event planned", sub: "stride event add <date> <name>" }
 		}
-		# the event tile prefers the future; a race inside the last week still
-		# deserves its "ridden" moment; otherwise the slot says so
-		ev_tile =
-			if loaded.e.day != "" {
-				{ top: loaded.e.name, sub: if loaded.e.ahead == 0 ("today, ${loaded.e.day}") else "in ${I64.to_str(loaded.e.ahead)}d, ${loaded.e.day}" }
-			} else if loaded.rd.ago >= 0 and loaded.rd.ago <= 7 {
-				{ top: loaded.rd.name, sub: "ridden, ${I64.to_str(loaded.rd.ago)}d ago" }
-			} else {
-				{ top: "no event planned", sub: "stride event add <date> <name>" }
-			}
-		initial_layout = DisplayScale.layout(DisplayScale.default_percent, { w: I32.to_f32(Theme.win_w), h: I32.to_f32(Theme.win_h) })
-		Ok({
-			title: mk!("Stride", 30)?,
-			subs: [
-				{ p: mk!("last 30 days, as of ${as_of}", 15)?, r: 30.U64, chip: mkm!("30d", 12)? },
-				{ p: mk!("last 60 days, as of ${as_of}", 15)?, r: 60.U64, chip: mkm!("60d", 12)? },
-				{ p: mk!("last 90 days, as of ${as_of}", 15)?, r: 90.U64, chip: mkm!("90d", 12)? },
-			],
-			leg_fit: mk!("Fitness", 15)?,
-			leg_fat: mk!("Fatigue", 15)?,
-			leg_form: mk!("Form", 15)?,
-			ylabels,
-			ends,
-			ev_label: mk!(loaded.e.name, 13)?,
-			ev_found: ev.found,
-			ev_idx: ev.idx,
-			ev_warn: mk!(if loaded.e.err != "" loaded.e.err else loaded.rd.err, 13)?,
-			ev_warn_found: loaded.e.err != "" or loaded.rd.err != "",
-			stale: mk!(
-				match List.last(loaded.s.days) {
-					Ok(ld) => "data as of ${ld} - analyze to refresh"
-					Err(_) => ""
-				},
-				13,
-			)?,
-			stale_found: loaded.st > 0,
-			view: 0,
-			curve: loaded.c,
-			curve_prev: loaded.cpv,
-			curve_lbls: curve_lbls,
-			fit_lbl: mk!(Db.ascii_safe(fit_text), 14)?,
-			curve_title: mk!("power - this ${I64.to_str(curve_days)}d vs the ${I64.to_str(curve_days)}d before it", 15)?,
-			curve_days,
-			trace_ids: loaded.tids,
-			trace_sel: 0.U64,
-			trace_gen: 0.U64,
-			trace_refetch: Bool.False,
-			trace_loading: Bool.False,
-			ghost_loading: Bool.False,
-			trace_day: match List.first(loaded.tids) {
-				Ok(x) => x.day
+	initial_layout = DisplayScale.layout(DisplayScale.default_percent, { w: I32.to_f32(Theme.win_w), h: I32.to_f32(Theme.win_h) })
+	Ok({
+		title: mk!("Stride", 30)?,
+		subs: [
+			{ p: mk!("last 30 days, as of ${as_of}", 15)?, r: 30.U64, chip: mkm!("30d", 12)? },
+			{ p: mk!("last 60 days, as of ${as_of}", 15)?, r: 60.U64, chip: mkm!("60d", 12)? },
+			{ p: mk!("last 90 days, as of ${as_of}", 15)?, r: 90.U64, chip: mkm!("90d", 12)? },
+		],
+		leg_fit: mk!("Fitness", 15)?,
+		leg_fat: mk!("Fatigue", 15)?,
+		leg_form: mk!("Form", 15)?,
+		ylabels,
+		ends,
+		ev_label: mk!(loaded.e.name, 13)?,
+		ev_found: ev.found,
+		ev_idx: ev.idx,
+		ev_warn: mk!(if (loaded.e.err != "") loaded.e.err else loaded.rd.err, 13)?,
+		ev_warn_found: loaded.e.err != "" or loaded.rd.err != "",
+		stale: mk!(
+			match List.last(loaded.s.days) {
+				Ok(ld) => "data as of ${ld} - analyze to refresh"
 				Err(_) => ""
 			},
-			trace_unit: match List.first(loaded.tcache) {
-				Ok(t1) => t1.un
-				Err(_) => "W"
-			},
-			trace_splits: match List.first(loaded.tcache) {
-				Ok(t2) => t2.sp
-				Err(_) => []
-			},
-			units: loaded.un,
-			trace_sport: "",
-			curve_hint: mk!("1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-			trace_hint: mk!("[ / ]  older/newer session      X  sport filter      shift+[ / shift+]  ghost older/newer      C  clear ghost      wheel zoom  drag pan  0 reset      TAB  data table      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-			table_hint: mk!("arrows  scroll days      TAB  plan      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-			table_title: mk!("data table", 15)?,
-			table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?, mk!("session", 13)?],
-			kpis: [
-				{ v: mkb!(Db.fmt1(loaded.s.last.c), 27)?, cap: mk!("fitness - 42-day load avg", 11)?, sel: 0.U8 },
-				{ v: mkb!(Db.fmt1(loaded.s.last.a), 27)?, cap: mk!("fatigue - 7-day load avg", 11)?, sel: 1.U8 },
-				{ v: mkb!(Db.fmt1(loaded.s.last.t), 27)?, cap: mk!("form - fitness minus fatigue", 11)?, sel: 2.U8 },
-			],
-			ev_tile_top: mk!(Board.ev_line(head, ev_tile.top, "", 14.0), 14)?,
-			ev_tile_sub: mk!(ev_tile.sub, 11)?,
-			zero_note: mk!("fresh above", 11)?,
-			ridden_found: loaded.rd.ago >= 0 and loaded.rd.ago <= 7 and loaded.e.day != "",
-			ridden_note: mk!(Board.ev_line(head, loaded.rd.name, " ridden, ${I64.to_str(loaded.rd.ago)}d ago", 10.0), 10)?,
-			curve_empty: mk!("no rides in the selected window - the curve has nothing to draw", 16)?,
-			trace: loaded.tr,
-			ghost: [],
-			ghost_dur: 1.0,
-			ghost_sel: -1,
-			ghost_gen: 0.U64,
-			quitting: Bool.False,
-			quit_tick: 0.U64,
-			focus_cleared: Bool.False,
-			quit_mark_pending: -1.I64,
-			ghost_day: "",
-			trace_zoom: 1.0,
-			trace_pan: 0.0,
-			trace_cache: loaded.tcache,
-			segs: loaded.sg,
-			trace_dur: loaded.du,
-			fit_cp: if fit.ok (fit.cp) else 0.0,
-			fit_r2: if fit.ok (fit.r2) else 0.0,
-			cp_lbl: mkm!("CP ${Db.fmt_f(fit.cp)}W", 12)?,
-			data: loaded.s.data,
-			days: loaded.s.days,
-			stride_dir: acc.dir,
-			cwd,
-			tick: 0,
-			view_anim: 0,
-			last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "" },
-			day_notes: loaded.nts,
-			plan: loaded.pl,
-			week_tss: loaded.wk,
-			plan_week: loaded.pw,
-			bus_note: loaded.bn,
-			heat: loaded.ht,
-			heat_events: loaded.hev,
-			zone_weeks: loaded.zw,
-			career_spines: loaded.csp,
-			career_sports: loaded.cs,
-			career_fam_months: loaded.cfm,
-			spine_idx: 0,
-			ramp_weeks: loaded.rw,
-			prs: loaded.prs,
-			rec_status: Idle,
-			pending_capture: NoCapture,
-			rec_path: "",
-			glow: Unbuilt,
-			last_directive: { id: -1.I64, refused: "", result: "" },
-			glow_on: Bool.False,
-			ramp_title: mk!("the ramp - weekly load and how fast fitness is climbing", 15)?,
-			ramp_hint: mk!("hover a week to read it      TAB  form board      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-			zones_title: mk!("time in zone - twelve weeks, and the 80/20 story", 15)?,
-			zones_hint: mk!("hover a week to read it      TAB  ramp      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-			heat_title: mk!("training heat - one cell per day", 15)?,
-			heat_hint: mk!("hover a cell to read the day      TAB  zones      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-			plan_title: mk!("next 7 days - plan and progress", 15)?,
-			plan_hint: mk!("TAB  heat      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-			nav: [
-				{ p: mk!("form", 13)?, v: 0.U8 },
-				{ p: mk!("power", 13)?, v: 1.U8 },
-				{ p: mk!("trace", 13)?, v: 2.U8 },
-				{ p: mk!("table", 13)?, v: 3.U8 },
-				{ p: mk!("plan", 13)?, v: 4.U8 },
-				{ p: mk!("heat", 13)?, v: 5.U8 },
-				{ p: mk!("zones", 13)?, v: 6.U8 },
-				{ p: mk!("ramp", 13)?, v: 7.U8 },
-				{ p: mk!("career", 13)?, v: 8.U8 },
-			],
-			status: mk!(if boot "" else loaded.s.err, 16)?,
-			has_error: !boot and loaded.s.err != "",
-			booting: boot,
-			# a freshly loaded model is never mid-reload; the flag is raised in
-			# update! when a chip/R spawns the next load and cleared when it lands
-			reloading: Bool.False,
-			logo: load_logo!(acc, boot),
-			font: mono,
-			hint: mk!("1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   V record   G glow   ESC quit", 13)?,
-			empty: mk!("no data yet - sync and analyze first, then reopen", 16)?,
-			range: 90.U64,
-			mouse_x: 0.0,
-			mouse_y: 0.0,
-			win: { w: initial_layout.w, h: initial_layout.h },
-			ui_percent: DisplayScale.default_percent,
-			ui_scale: initial_layout.scale,
-			detail_day: "",
-			detail: [],
-			mouse_in: Bool.False,
-			cursor: -1,
-		})
+			13,
+		)?,
+		stale_found: loaded.st > 0,
+		view: 0,
+		curve: loaded.c,
+		curve_prev: loaded.cpv,
+		curve_lbls: curve_lbls,
+		fit_lbl: mk!(Db.ascii_safe(fit_text), 14)?,
+		curve_title: mk!("power - this ${I64.to_str(curve_days)}d vs the ${I64.to_str(curve_days)}d before it", 15)?,
+		curve_days,
+		trace_ids: loaded.tids,
+		trace_sel: 0.U64,
+		trace_gen: 0.U64,
+		trace_refetch: Bool.False,
+		trace_loading: Bool.False,
+		ghost_loading: Bool.False,
+		trace_day: match List.first(loaded.tids) {
+			Ok(x) => x.day
+			Err(_) => ""
+		},
+		trace_unit: match List.first(loaded.tcache) {
+			Ok(t1) => t1.un
+			Err(_) => "W"
+		},
+		trace_splits: match List.first(loaded.tcache) {
+			Ok(t2) => t2.sp
+			Err(_) => []
+		},
+		units: loaded.un,
+		trace_sport: "",
+		curve_hint: mk!("1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+		trace_hint: mk!("[ / ]  older/newer session      X  sport filter      shift+[ / shift+]  ghost older/newer      C  clear ghost      wheel zoom  drag pan  0 reset      TAB  data table      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+		table_hint: mk!("arrows  scroll days      TAB  plan      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+		table_title: mk!("data table", 15)?,
+		table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?, mk!("session", 13)?],
+		kpis: [
+			{ v: mkb!(Db.fmt1(loaded.s.last.c), 27)?, cap: mk!("fitness - 42-day load avg", 11)?, sel: 0.U8 },
+			{ v: mkb!(Db.fmt1(loaded.s.last.a), 27)?, cap: mk!("fatigue - 7-day load avg", 11)?, sel: 1.U8 },
+			{ v: mkb!(Db.fmt1(loaded.s.last.t), 27)?, cap: mk!("form - fitness minus fatigue", 11)?, sel: 2.U8 },
+		],
+		ev_tile_top: mk!(Board.ev_line(head, ev_tile.top, "", 14.0), 14)?,
+		ev_tile_sub: mk!(ev_tile.sub, 11)?,
+		zero_note: mk!("fresh above", 11)?,
+		ridden_found: loaded.rd.ago >= 0 and loaded.rd.ago <= 7 and loaded.e.day != "",
+		ridden_note: mk!(Board.ev_line(head, loaded.rd.name, " ridden, ${I64.to_str(loaded.rd.ago)}d ago", 10.0), 10)?,
+		curve_empty: mk!("no rides in the selected window - the curve has nothing to draw", 16)?,
+		trace: loaded.tr,
+		ghost: [],
+		ghost_dur: 1.0,
+		ghost_sel: -1,
+		ghost_gen: 0.U64,
+		quitting: Bool.False,
+		quit_tick: 0.U64,
+		focus_cleared: Bool.False,
+		quit_mark_pending: -1.I64,
+		ghost_day: "",
+		trace_zoom: 1.0,
+		trace_pan: 0.0,
+		trace_cache: loaded.tcache,
+		segs: loaded.sg,
+		trace_dur: loaded.du,
+		fit_cp: if (fit.ok) (fit.cp) else 0.0,
+		fit_r2: if (fit.ok) (fit.r2) else 0.0,
+		cp_lbl: mkm!("CP ${Db.fmt_f(fit.cp)}W", 12)?,
+		data: loaded.s.data,
+		days: loaded.s.days,
+		stride_dir: acc.dir,
+		cwd,
+		tick: 0,
+		view_anim: 0,
+		last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "" },
+		day_notes: loaded.nts,
+		plan: loaded.pl,
+		week_tss: loaded.wk,
+		plan_week: loaded.pw,
+		bus_note: loaded.bn,
+		heat: loaded.ht,
+		heat_events: loaded.hev,
+		zone_weeks: loaded.zw,
+		career_spines: loaded.csp,
+		career_sports: loaded.cs,
+		career_fam_months: loaded.cfm,
+		spine_idx: 0,
+		ramp_weeks: loaded.rw,
+		prs: loaded.prs,
+		rec_status: Idle,
+		pending_capture: NoCapture,
+		rec_path: "",
+		glow: Unbuilt,
+		last_directive: { id: -1.I64, refused: "", result: "" },
+		glow_on: Bool.False,
+		ramp_title: mk!("the ramp - weekly load and how fast fitness is climbing", 15)?,
+		ramp_hint: mk!("hover a week to read it      TAB  form board      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+		zones_title: mk!("time in zone - twelve weeks, and the 80/20 story", 15)?,
+		zones_hint: mk!("hover a week to read it      TAB  ramp      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+		heat_title: mk!("training heat - one cell per day", 15)?,
+		heat_hint: mk!("hover a cell to read the day      TAB  zones      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+		plan_title: mk!("next 7 days - plan and progress", 15)?,
+		plan_hint: mk!("TAB  heat      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+		nav: [
+			{ p: mk!("form", 13)?, v: 0.U8 },
+			{ p: mk!("power", 13)?, v: 1.U8 },
+			{ p: mk!("trace", 13)?, v: 2.U8 },
+			{ p: mk!("table", 13)?, v: 3.U8 },
+			{ p: mk!("plan", 13)?, v: 4.U8 },
+			{ p: mk!("heat", 13)?, v: 5.U8 },
+			{ p: mk!("zones", 13)?, v: 6.U8 },
+			{ p: mk!("ramp", 13)?, v: 7.U8 },
+			{ p: mk!("career", 13)?, v: 8.U8 },
+		],
+		status: mk!(if (boot) "" else loaded.s.err, 16)?,
+		has_error: !boot and loaded.s.err != "",
+		booting: boot,
+		# a freshly loaded model is never mid-reload; the flag is raised in
+		# update! when a chip/R spawns the next load and cleared when it lands
+		reloading: Bool.False,
+		logo: load_logo!(acc, boot),
+		font: mono,
+		hint: mk!("1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   V record   G glow   ESC quit", 13)?,
+		empty: mk!("no data yet - sync and analyze first, then reopen", 16)?,
+		range: 90.U64,
+		mouse_x: 0.0,
+		mouse_y: 0.0,
+		win: { w: initial_layout.w, h: initial_layout.h },
+		ui_percent: DisplayScale.default_percent,
+		ui_scale: initial_layout.scale,
+		detail_day: "",
+		detail: [],
+		mouse_in: Bool.False,
+		cursor: -1,
+	})
 }
 
 # The app spawns one kind of task: a screenshot, whose result it ignores —
@@ -526,7 +544,7 @@ build_glow! = |win|
 # selection moved, so a failure leaves no ghost, never a stale one.
 ghost_task! : Access, List(TraceId), I64, U64 => Msg
 ghost_task! = |acc, ids, gsel, gen|
-	if acc.dir == "" GhostSwitchFailed(gen)
+	if (acc.dir == "") GhostSwitchFailed(gen)
 	else match I64.to_u64_try(gsel) {
 		Err(_) => GhostSwitchFailed(gen)
 		Ok(gu) => match List.get(ids, gu) {
@@ -548,7 +566,7 @@ ghost_task! = |acc, ids, gsel, gen|
 # the window already had.
 trace_task! : Access, [Metric, Imperial], List(TraceId), U64, U64 => Msg
 trace_task! = |acc, units, ids, sel, gen|
-	if acc.dir == "" TraceSwitchFailed(gen)
+	if (acc.dir == "") TraceSwitchFailed(gen)
 	else match List.get(ids, sel) {
 		Err(_) => TraceSwitchFailed(gen)
 		Ok(entry) =>
@@ -558,7 +576,7 @@ trace_task! = |acc, units, ids, sel, gen|
 					tr = Db.load_trace!(db, entry.id, entry.chan)
 					sg = Db.load_segs!(db, entry.id)
 					du = Db.load_dur!(db, entry.id)
-					sp = if entry.chan == Db.pace_chan (Db.load_splits!(db, entry.id, Units.split_len(units))) else []
+					sp = if (entry.chan == Db.pace_chan) (Db.load_splits!(db, entry.id, Units.split_len(units))) else []
 					TraceSwitched({ tr, sg, du, gen, day: entry.day, un: Db.trace_unit(entry.chan, units), sp })
 				}
 			}
@@ -570,7 +588,7 @@ trace_task! = |acc, units, ids, sel, gen|
 # other surface until the next reload.
 detail_task! : Access, [Metric, Imperial], Str => Msg
 detail_task! = |acc, units, day|
-	if acc.dir == "" DayDetail({ day, lines: [{ title: "no database path", stats: "", extra: "", zones: [] }] })
+	if (acc.dir == "") DayDetail({ day, lines: [{ title: "no database path", stats: "", extra: "", zones: [] }] })
 	else match open_db!(acc) {
 		Err(_) => DayDetail({ day, lines: [{ title: "cannot open the database", stats: "", extra: "", zones: [] }] })
 		Ok(db) => DayDetail({ day, lines: Db.load_day_detail!(db, units, day) })
@@ -588,7 +606,7 @@ detail_task! = |acc, units, day|
 # applied again anyway.
 poll_task! : Access, I64 => Msg
 poll_task! = |acc, last_id|
-	if acc.dir == "" DirectiveNone
+	if (acc.dir == "") DirectiveNone
 	else match open_db!(acc) {
 		Err(_) => DirectiveNone
 		Ok(db) => {
@@ -599,7 +617,7 @@ poll_task! = |acc, last_id|
 					# dismisses the ghost and names nothing - and only on
 					# first delivery
 					names_session = dv.trace_day != "" or dv.trace_id >= 0 or dv.ghost_id >= 0 or (dv.ghost_day != "" and dv.ghost_day != "none")
-					ids = if names_session and dv.id != last_id (Fresh(Db.load_trace_ids!(db))) else Kept
+					ids = if (names_session and dv.id != last_id) (Fresh(Db.load_trace_ids!(db))) else Kept
 					Directive({ dv, note, ids })
 				}
 				None => Polled(note)
@@ -623,17 +641,21 @@ sport_ok = |filt, sp| filt == "" or filt == sp
 # a key press at either end a no-op rather than a wrap-around jump.
 next_admitted : List(TraceId), U64, Str, Bool -> U64
 next_admitted = |ids, cur, filt, older|
-	List.fold(List.map_with_index(ids, |e, i| { e, i }), cur, |acc, x|
-		if !(sport_ok(filt, x.e.sport)) acc
-		else if older (if x.i > cur and (acc == cur or x.i < acc) x.i else acc)
-		else if x.i < cur and (acc == cur or x.i > acc) x.i else acc)
+	List.fold(
+		List.map_with_index(ids, |e, i| { e, i }),
+		cur,
+		|acc, x|
+			if (!(sport_ok(filt, x.e.sport))) acc
+			else if (older) (if (x.i > cur and (acc == cur or x.i < acc)) x.i else acc)
+			else if (x.i < cur and (acc == cur or x.i > acc)) x.i else acc,
+	)
 
 # The newest session a filter admits, for snapping the selection when the
 # filter changes under it. `fallback` stands when the filter admits nothing,
 # so an empty result leaves the window on the session it already had.
 first_admitted : List(TraceId), Str, U64 -> U64
 first_admitted = |ids, filt, fallback|
-	match List.first(List.keep_oks(List.map_with_index(ids, |e, i| { e, i }), |x| if sport_ok(filt, x.e.sport) (Ok(x.i)) else Err({}))) {
+	match List.first(List.keep_oks(List.map_with_index(ids, |e, i| { e, i }), |x| if (sport_ok(filt, x.e.sport)) (Ok(x.i)) else Err({}))) {
 		Ok(h) => h
 		Err(_) => fallback
 	}
@@ -643,7 +665,7 @@ first_admitted = |ids, filt, fallback|
 # list of sports, so X can never land on a filter that admits nothing.
 sport_cycle : List(TraceId) -> List(Str)
 sport_cycle = |ids|
-	List.fold(ids, [""], |acc, e| if e.sport != "" and !(List.contains(acc, e.sport)) (List.append(acc, e.sport)) else acc)
+	List.fold(ids, [""], |acc, e| if (e.sport != "" and !(List.contains(acc, e.sport))) (List.append(acc, e.sport)) else acc)
 
 # A ghost candidate must be the SAME KIND of session as the live one: same
 # sport AND same measured channel. The two tests guard different lies. The
@@ -666,15 +688,23 @@ ghost_matches = |live, cand| live.sport == cand.sport and live.chan == cand.chan
 next_ghost : List(TraceId), I64, U64, Bool -> I64
 next_ghost = |ids, cur, sel, older| {
 	live = entry_at(ids, sel)
-	sel_i = match U64.to_i64_try(sel) { Ok(v) => v
-		Err(_) => -1 }
-	List.fold(List.map_with_index(ids, |e, i| { e, i }), -1, |acc, x| {
-		xi = match U64.to_i64_try(x.i) { Ok(v) => v
-			Err(_) => -1 }
-		if xi < 0 or xi == sel_i or !(ghost_matches(live, x.e)) acc
-		else if older (if xi > cur and (acc < 0 or xi < acc) xi else acc)
-		else if xi < cur and (acc < 0 or xi > acc) xi else acc
-	})
+	sel_i = match U64.to_i64_try(sel) {
+		Ok(v) => v
+		Err(_) => -1
+	}
+	List.fold(
+		List.map_with_index(ids, |e, i| { e, i }),
+		-1,
+		|acc, x| {
+			xi = match U64.to_i64_try(x.i) {
+				Ok(v) => v
+				Err(_) => -1
+			}
+			if (xi < 0 or xi == sel_i or !(ghost_matches(live, x.e))) acc
+			else if (older) (if (xi > cur and (acc < 0 or xi < acc)) xi else acc)
+			else if (xi < cur and (acc < 0 or xi > acc)) xi else acc
+		},
+	)
 }
 
 # The picker entry at `sel`. The fallback's empty channel matches no real
@@ -705,8 +735,12 @@ expect id_at([], 0) == -1
 focus_beat_ticks : U64
 focus_beat_ticks = 60 * 30
 
-expect focus_beat_ticks == 60 * (match I64.to_u64_try(Db.focus_beat_secs) { Ok(b) => b
-	Err(_) => 0 })
+expect focus_beat_ticks == 60 * (
+	match I64.to_u64_try(Db.focus_beat_secs) {
+		Ok(b) => b
+		Err(_) => 0
+	}
+)
 
 # A ghost is chosen against one selection and outlives it: stepping the
 # solid session, a directive, or a filter snap all move the live trace
@@ -721,10 +755,10 @@ ghost_for_sel = |ids, sel, ghost|
 	match I64.to_u64_try(ghost) {
 		Err(_) => -1
 		Ok(gu) =>
-			if gu == sel (-1)
+			if (gu == sel) (-1)
 			else match List.get(ids, gu) {
 				Err(_) => -1
-				Ok(ge) => if ghost_matches(entry_at(ids, sel), ge) ghost else -1
+				Ok(ge) => if (ghost_matches(entry_at(ids, sel), ge)) ghost else -1
 			}
 	}
 
@@ -736,17 +770,17 @@ expect {
 	]
 	# a compatible pair survives the re-judgment
 	ghost_for_sel(m, 0, 2) == 2
-	# the solid session moved to the workout: the ride ghost is dismissed
-	and ghost_for_sel(m, 1, 2) == -1
-	# and the reverse pairing dies the same way
-	and ghost_for_sel(m, 0, 1) == -1
-	# no ghost stays no ghost
-	and ghost_for_sel(m, 0, -1) == -1
-	# a ghost ON the selection is a session compared against itself
-	and ghost_for_sel(m, 2, 2) == -1
-	# an out-of-range ghost cannot ride entry_at's self-equal fallback
-	and ghost_for_sel(m, 0, 99) == -1
-	and ghost_for_sel([], 5, 3) == -1
+		# the solid session moved to the workout: the ride ghost is dismissed
+		and ghost_for_sel(m, 1, 2) == -1
+		# and the reverse pairing dies the same way
+		and ghost_for_sel(m, 0, 1) == -1
+		# no ghost stays no ghost
+		and ghost_for_sel(m, 0, -1) == -1
+		# a ghost ON the selection is a session compared against itself
+		and ghost_for_sel(m, 2, 2) == -1
+		# an out-of-range ghost cannot ride entry_at's self-equal fallback
+		and ghost_for_sel(m, 0, 99) == -1
+		and ghost_for_sel([], 5, 3) == -1
 }
 
 # The filter and the selection are stored as a pair, and a directive can move
@@ -755,7 +789,7 @@ expect {
 # menu, so the header can never claim "Rowing only" over a Ride.
 sport_for_sel : List(TraceId), U64, Str -> Str
 sport_for_sel = |ids, sel, filt|
-	if sport_ok(filt, entry_at(ids, sel).sport) filt else ""
+	if (sport_ok(filt, entry_at(ids, sel).sport)) filt else ""
 
 expect {
 	m = [
@@ -764,10 +798,10 @@ expect {
 	]
 	# a filter the shown session satisfies survives
 	sport_for_sel(m, 1, "Rowing") == "Rowing"
-	# a directive landed a Ride under a Rowing filter: the filter resets
-	and sport_for_sel(m, 0, "Rowing") == ""
-	# the whole-menu filter admits anything, itself included
-	and sport_for_sel(m, 0, "") == ""
+		# a directive landed a Ride under a Rowing filter: the filter resets
+		and sport_for_sel(m, 0, "Rowing") == ""
+		# the whole-menu filter admits anything, itself included
+		and sport_for_sel(m, 0, "") == ""
 }
 
 expect {
@@ -780,26 +814,26 @@ expect {
 	]
 	# stepping older from the watts ride at 0 SKIPS the bpm ride at 1
 	next_ghost(m, 0, 0, Bool.True) == 2
-	# ...and stops short of the row at 3: same watts, different sport
-	and next_ghost(m, 2, 0, Bool.True) == -1
-	# the bpm ride's only company is itself
-	and next_ghost(m, 1, 1, Bool.True) == -1
-	# the row matches nothing else in the menu, in either direction
-	and next_ghost(m, 3, 3, Bool.False) == -1
-	# stepping newer from cur=2 with the live session AT 0: its own index is
-	# skipped, so the walk ends instead of landing the ghost on the live trace
-	and next_ghost(m, 2, 0, Bool.False) == -1
-	# and the honest newer step, live at 2, finds the ride at 0
-	and next_ghost(m, 2, 2, Bool.False) == 0
-	and entry_at(m, 1).chan == Db.hr_chan
-	# an out-of-range selection matches no real session
-	and next_ghost(m, 0, 99, Bool.True) == -1
+		# ...and stops short of the row at 3: same watts, different sport
+		and next_ghost(m, 2, 0, Bool.True) == -1
+		# the bpm ride's only company is itself
+		and next_ghost(m, 1, 1, Bool.True) == -1
+		# the row matches nothing else in the menu, in either direction
+		and next_ghost(m, 3, 3, Bool.False) == -1
+		# stepping newer from cur=2 with the live session AT 0: its own index is
+		# skipped, so the walk ends instead of landing the ghost on the live trace
+		and next_ghost(m, 2, 0, Bool.False) == -1
+		# and the honest newer step, live at 2, finds the ride at 0
+		and next_ghost(m, 2, 2, Bool.False) == 0
+		and entry_at(m, 1).chan == Db.hr_chan
+		# an out-of-range selection matches no real session
+		and next_ghost(m, 0, 99, Bool.True) == -1
 }
 
 next_sport : List(TraceId), Str -> Str
 next_sport = |ids, cur| {
 	cyc = sport_cycle(ids)
-	idx = List.fold(List.map_with_index(cyc, |s, i| { s, i }), 0.U64, |acc, x| if x.s == cur x.i else acc)
+	idx = List.fold(List.map_with_index(cyc, |s, i| { s, i }), 0.U64, |acc, x| if (x.s == cur) x.i else acc)
 	match List.get(cyc, (idx + 1) % List.len(cyc)) {
 		Ok(s9) => s9
 		Err(_) => ""
@@ -808,8 +842,8 @@ next_sport = |ids, cur| {
 
 expect {
 	sport_ok("", "Ride")
-	and sport_ok("Ride", "Ride")
-	and !(sport_ok("Ride", "Rowing"))
+		and sport_ok("Ride", "Ride")
+		and !(sport_ok("Ride", "Rowing"))
 }
 
 expect {
@@ -817,38 +851,38 @@ expect {
 	m = [{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan }, { id: 2, day: "d2", name: "n2", sport: "Rowing", chan: Db.watts_chan }, { id: 3, day: "d3", name: "n3", sport: "Ride", chan: Db.watts_chan }]
 	# unfiltered, "older" is simply the next index
 	next_admitted(m, 0, "", Bool.True) == 1
-	# filtered to Ride, the Rowing entry between them is skipped entirely
-	and next_admitted(m, 0, "Ride", Bool.True) == 2
-	# and the same skip walking back toward newer sessions
-	and next_admitted(m, 2, "Ride", Bool.False) == 0
-	# nothing older than the last admitted entry: the selection holds rather
-	# than wrapping
-	and next_admitted(m, 2, "Ride", Bool.True) == 2
-	and next_admitted(m, 0, "", Bool.False) == 0
+		# filtered to Ride, the Rowing entry between them is skipped entirely
+		and next_admitted(m, 0, "Ride", Bool.True) == 2
+		# and the same skip walking back toward newer sessions
+		and next_admitted(m, 2, "Ride", Bool.False) == 0
+		# nothing older than the last admitted entry: the selection holds rather
+		# than wrapping
+		and next_admitted(m, 2, "Ride", Bool.True) == 2
+		and next_admitted(m, 0, "", Bool.False) == 0
 }
 
 expect {
 	m = [{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan }, { id: 2, day: "d2", name: "n2", sport: "Rowing", chan: Db.watts_chan }, { id: 3, day: "d3", name: "n3", sport: "Ride", chan: Db.watts_chan }]
 	first_admitted(m, "Rowing", 0) == 1
-	and first_admitted(m, "", 2) == 0
-	# a filter the menu cannot satisfy leaves the selection where it was
-	and first_admitted(m, "Run", 2) == 2
+		and first_admitted(m, "", 2) == 0
+		# a filter the menu cannot satisfy leaves the selection where it was
+		and first_admitted(m, "Run", 2) == 2
 }
 
 expect {
 	m = [{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan }, { id: 2, day: "d2", name: "n2", sport: "Rowing", chan: Db.watts_chan }, { id: 3, day: "d3", name: "n3", sport: "Ride", chan: Db.watts_chan }]
 	sport_cycle(m) == ["", "Ride", "Rowing"]
-	and next_sport(m, "") == "Ride"
-	and next_sport(m, "Ride") == "Rowing"
-	# the cycle closes back to the unfiltered menu
-	and next_sport(m, "Rowing") == ""
+		and next_sport(m, "") == "Ride"
+		and next_sport(m, "Ride") == "Rowing"
+		# the cycle closes back to the unfiltered menu
+		and next_sport(m, "Rowing") == ""
 }
 
 expect {
 	# an empty menu still cycles, so X on a database with no streams is a
 	# no-op rather than a filter nothing can satisfy
 	sport_cycle([]) == [""]
-	and next_sport([], "") == ""
+		and next_sport([], "") == ""
 }
 
 # The selection after the picker is re-read: the same SESSION, found by id
@@ -865,7 +899,7 @@ sel_following_id = |old, old_sel, fresh| {
 		Ok(e) => e.id
 		Err(_) => -1
 	}
-	List.fold(List.map_with_index(fresh, |e, i| { e, i }), { sel: 0, found: Bool.False }, |s, x| if x.e.id == cur_id ({ sel: x.i, found: Bool.True }) else s)
+	List.fold(List.map_with_index(fresh, |e, i| { e, i }), { sel: 0, found: Bool.False }, |s, x| if (x.e.id == cur_id) ({ sel: x.i, found: Bool.True }) else s)
 }
 
 # A directive's session, resolved against the picker. A day names its
@@ -874,13 +908,17 @@ sel_following_id = |old, old_sel, fresh| {
 # one session exactly. Absent, the selection stays where it was.
 sel_for_day : List(TraceId), Str, U64 -> U64
 sel_for_day = |ids, day, fallback|
-	match List.find_first_index(ids, |e| e.day == day) { Ok(i) => i
-		Err(_) => fallback }
+	match List.find_first_index(ids, |e| e.day == day) {
+		Ok(i) => i
+		Err(_) => fallback
+	}
 
 sel_for_id : List(TraceId), I64, U64 -> U64
 sel_for_id = |ids, id, fallback|
-	match List.find_first_index(ids, |e| e.id == id) { Ok(i) => i
-		Err(_) => fallback }
+	match List.find_first_index(ids, |e| e.id == id) {
+		Ok(i) => i
+		Err(_) => fallback
+	}
 
 # a day with two sessions resolves to the newest - index 0 of a
 # newest-first picker - not to whichever the fold visited last
@@ -889,10 +927,10 @@ expect {
 	b = { id: 11, day: "2026-09-26", name: "evening", sport: "Ride", chan: "w" }
 	c = { id: 12, day: "2026-09-27", name: "c", sport: "Ride", chan: "w" }
 	sel_for_day([c, b, a], "2026-09-26", 7) == 1
-	and sel_for_day([c, b, a], "2026-09-27", 7) == 0
-	and sel_for_day([c, b, a], "2026-01-01", 7) == 7
-	and sel_for_id([c, b, a], 10, 7) == 2
-	and sel_for_id([c, b, a], 99, 7) == 7
+		and sel_for_day([c, b, a], "2026-09-27", 7) == 0
+		and sel_for_day([c, b, a], "2026-01-01", 7) == 7
+		and sel_for_id([c, b, a], 10, 7) == 2
+		and sel_for_id([c, b, a], 99, 7) == 7
 }
 
 # The ghost the same way, with the kind test the keyboard path applies: the
@@ -901,16 +939,20 @@ expect {
 ghost_for_day : List(TraceId), TraceId, Str, I64 -> I64
 ghost_for_day = |ids, live, day, fallback|
 	match List.find_first_index(ids, |e| e.day == day and ghost_matches(live, e)) {
-		Ok(i) => match U64.to_i64_try(i) { Ok(gi) => gi
-			Err(_) => fallback }
+		Ok(i) => match U64.to_i64_try(i) {
+			Ok(gi) => gi
+			Err(_) => fallback
+		}
 		Err(_) => fallback
 	}
 
 ghost_for_id : List(TraceId), TraceId, I64, I64 -> I64
 ghost_for_id = |ids, live, id, fallback|
 	match List.find_first_index(ids, |e| e.id == id and ghost_matches(live, e)) {
-		Ok(i) => match U64.to_i64_try(i) { Ok(gi) => gi
-			Err(_) => fallback }
+		Ok(i) => match U64.to_i64_try(i) {
+			Ok(gi) => gi
+			Err(_) => fallback
+		}
 		Err(_) => fallback
 	}
 
@@ -921,10 +963,10 @@ expect {
 	row = { id: 20, day: "2026-09-26", name: "row", sport: "Rowing", chan: "w" }
 	ride = { id: 21, day: "2026-09-26", name: "ride", sport: "Ride", chan: "w" }
 	ghost_for_day([live, row, ride], live, "2026-09-26", -1) == 2
-	and ghost_for_day([live, row, ride], live, "2026-01-01", -1) == -1
-	and ghost_for_id([live, row, ride], live, 21, -1) == 2
-	# the right id but the wrong kind is no ghost
-	and ghost_for_id([live, row, ride], live, 20, -1) == -1
+		and ghost_for_day([live, row, ride], live, "2026-01-01", -1) == -1
+		and ghost_for_id([live, row, ride], live, 21, -1) == 2
+		# the right id but the wrong kind is no ghost
+		and ghost_for_id([live, row, ride], live, 20, -1) == -1
 }
 
 # Where the ghost stands after a picker re-read: no ghost stays no ghost
@@ -939,8 +981,12 @@ ghost_after_reread = |ghost_sel, old, fresh|
 		Err(_) => { sel: -1, keep: Bool.True }
 		Ok(gu) => {
 			gr = sel_following_id(old, gu, fresh)
-			if gr.found (match U64.to_i64_try(gr.sel) { Ok(gs) => { sel: gs, keep: Bool.True }
-				Err(_) => { sel: -1, keep: Bool.False } }) else { sel: -1, keep: Bool.False }
+			if (gr.found) (
+				match U64.to_i64_try(gr.sel) {
+					Ok(gs) => { sel: gs, keep: Bool.True }
+					Err(_) => { sel: -1, keep: Bool.False }
+				}
+			) else { sel: -1, keep: Bool.False }
 		}
 	}
 
@@ -979,7 +1025,7 @@ expect {
 	a = { id: 10, day: "2026-09-01", name: "a", sport: "Ride", chan: "watts" }
 	b = { id: 11, day: "2026-09-02", name: "b", sport: "Ride", chan: "watts" }
 	sel_following_id([b, a], 0, [a]) == { sel: 0, found: Bool.False }
-	and sel_following_id([b, a], 1, [b]) == { sel: 0, found: Bool.False }
+		and sel_following_id([b, a], 1, [b]) == { sel: 0, found: Bool.False }
 }
 
 # an old index past the old list (nothing was shown) and an empty fresh
@@ -987,7 +1033,7 @@ expect {
 expect {
 	a = { id: 10, day: "2026-09-01", name: "a", sport: "Ride", chan: "watts" }
 	sel_following_id([], 0, [a]) == { sel: 0, found: Bool.False }
-	and sel_following_id([a], 0, []) == { sel: 0, found: Bool.False }
+		and sel_following_id([a], 0, []) == { sel: 0, found: Bool.False }
 }
 
 # a capture's refusal, the judgements joined: the vocabulary first, then the
@@ -997,61 +1043,90 @@ expect {
 # newer capture would otherwise close without its file
 capture_refusal_for : Str, Bool, Bool -> Str
 capture_refusal_for = |kind, rec_active, cap_pending|
-	Str.join_with(List.keep_if([
-		Bus.capture_refusal(kind),
-		(if kind == "webm_start" and rec_active ("capture webm_start: a recording is already running") else ""),
-		(if kind == "webm_stop" and !rec_active ("capture webm_stop: no recording is running") else ""),
-		(if kind != "" and cap_pending and Bus.capture_refusal(kind) == "" ("capture ${kind}: an earlier capture is still pending") else ""),
-	], |s8| s8 != ""), "; ")
+	Str.join_with(
+		List.keep_if(
+			[
+				Bus.capture_refusal(kind),
+				(if (kind == "webm_start" and rec_active) ("capture webm_start: a recording is already running") else ""),
+				(if (kind == "webm_stop" and !rec_active) ("capture webm_stop: no recording is running") else ""),
+				(if (kind != "" and cap_pending and Bus.capture_refusal(kind) == "") ("capture ${kind}: an earlier capture is still pending") else ""),
+			],
+			|s8| s8 != "",
+		),
+		"; ",
+	)
 
-refusals_for :{ has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, capture : Str }, I64, U64, U64, List(TraceId), Bool, Bool -> Str
+refusals_for : { has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, capture : Str }, I64, U64, U64, List(TraceId), Bool, Bool -> Str
 refusals_for = |dv, cdir, wsel, cur_sel, ids, rec_active, cap_pending| {
-	segs = List.keep_if([
-		(if dv.view > 8 or dv.view < -1 ("view ${I64.to_str(dv.view)} unknown") else ""),
-		(if dv.range != -1 and dv.range != 30 and dv.range != 60 and dv.range != 90 ("range ${I64.to_str(dv.range)} not 30/60/90") else ""),
-		(if dv.cursor_day != "" and cdir == -2 ("cursor_day ${dv.cursor_day} not in the series") else ""),
-		# a day beside an id is not judged: the resolver reads the id and never
-		# the day, so the refusal names only what was consulted
-		(if dv.trace_day != "" and dv.trace_id < 0 and wsel == cur_sel and (match List.get(ids, wsel) { Ok(te9) => te9.day != dv.trace_day
-			Err(_) => Bool.True }) ("trace_day ${dv.trace_day} not in the picker") else ""),
-		# an id resolves by identity, so "not in the picker" is exact: no
-		# session with that id, rather than no session on that day
-		(if dv.trace_id >= 0 and wsel == cur_sel and (match List.get(ids, wsel) { Ok(te8) => te8.id != dv.trace_id
-			Err(_) => Bool.True }) ("trace_id ${I64.to_str(dv.trace_id)} not in the picker") else ""),
-		(if dv.ghost_day != "" and dv.ghost_day != "none" and dv.ghost_id < 0 and !(List.any(ids, |ge9| ge9.day == dv.ghost_day)) ("ghost_day ${dv.ghost_day} not in the picker") else ""),
-		# the session on screen cannot be its own ghost: the kind test below
-		# stays quiet on it (a session trivially matches itself), and the
-		# dismissal in ghost_for_sel is silent, so without this segment the
-		# directive would report applied while drawing nothing
-		(if dv.ghost_day != "" and dv.ghost_day != "none" and dv.ghost_id < 0 and dv.ghost_day == entry_at(ids, wsel).day ("ghost_day ${dv.ghost_day} is the session on screen") else ""),
-		# in the picker but the wrong KIND of session: naming what differs -
-		# the sport, or failing that the unit - is what makes this actionable,
-		# since "refused" alone reads as a missing day
-		(if dv.ghost_day != "" and dv.ghost_day != "none" and dv.ghost_id < 0 and List.any(ids, |ge8| ge8.day == dv.ghost_day) and !(List.any(ids, |ge7| ge7.day == dv.ghost_day and ghost_matches(entry_at(ids, wsel), ge7))) {
-			live6 = entry_at(ids, wsel)
-			gh6 = List.fold(ids, live6, |acc, g6| if g6.day == dv.ghost_day g6 else acc)
-			if gh6.sport != live6.sport ("ghost_day ${dv.ghost_day} is ${gh6.sport}, the session is ${live6.sport}")
-			else "ghost_day ${dv.ghost_day} is ${Db.chan_name(gh6.chan)}, the session is ${Db.chan_name(live6.chan)}"
-		} else ""),
-		# the same three judgements for a ghost named by id. A ghost_day of
-		# 'none' dismisses regardless of ghost_id, so an id beside it is not
-		# judged at all - the resolver never reads it either
-		(if dv.ghost_id >= 0 and dv.ghost_day != "none" and !(List.any(ids, |gi9| gi9.id == dv.ghost_id)) ("ghost_id ${I64.to_str(dv.ghost_id)} not in the picker") else ""),
-		(if dv.ghost_id >= 0 and dv.ghost_day != "none" and dv.ghost_id == entry_at(ids, wsel).id ("ghost_id ${I64.to_str(dv.ghost_id)} is the session on screen") else ""),
-		(if dv.ghost_id >= 0 and dv.ghost_day != "none" and dv.ghost_id != entry_at(ids, wsel).id and List.any(ids, |gi8| gi8.id == dv.ghost_id) and !(List.any(ids, |gi7| gi7.id == dv.ghost_id and ghost_matches(entry_at(ids, wsel), gi7))) {
-			live5 = entry_at(ids, wsel)
-			gh5 = List.fold(ids, live5, |acc, g5| if g5.id == dv.ghost_id g5 else acc)
-			if gh5.sport != live5.sport ("ghost_id ${I64.to_str(dv.ghost_id)} is ${gh5.sport}, the session is ${live5.sport}")
-			else "ghost_id ${I64.to_str(dv.ghost_id)} is ${Db.chan_name(gh5.chan)}, the session is ${Db.chan_name(live5.chan)}"
-		} else ""),
-		(capture_refusal_for(dv.capture, rec_active, cap_pending)),
-	], |s9| s9 != "")
+	segs = List.keep_if(
+		[
+			(if (dv.view > 8 or dv.view < -1) ("view ${I64.to_str(dv.view)} unknown") else ""),
+			(if (dv.range != -1 and dv.range != 30 and dv.range != 60 and dv.range != 90) ("range ${I64.to_str(dv.range)} not 30/60/90") else ""),
+			(if (dv.cursor_day != "" and cdir == -2) ("cursor_day ${dv.cursor_day} not in the series") else ""),
+			# a day beside an id is not judged: the resolver reads the id and never
+			# the day, so the refusal names only what was consulted
+			(
+				if (
+					dv.trace_day != "" and dv.trace_id < 0 and wsel == cur_sel and (
+						match List.get(ids, wsel) {
+							Ok(te9) => te9.day != dv.trace_day
+							Err(_) => Bool.True
+						}
+					)
+				) ("trace_day ${dv.trace_day} not in the picker") else ""
+			),
+			# an id resolves by identity, so "not in the picker" is exact: no
+			# session with that id, rather than no session on that day
+			(
+				if (
+					dv.trace_id >= 0 and wsel == cur_sel and (
+						match List.get(ids, wsel) {
+							Ok(te8) => te8.id != dv.trace_id
+							Err(_) => Bool.True
+						}
+					)
+				) ("trace_id ${I64.to_str(dv.trace_id)} not in the picker") else ""
+			),
+			(if (dv.ghost_day != "" and dv.ghost_day != "none" and dv.ghost_id < 0 and !(List.any(ids, |ge9| ge9.day == dv.ghost_day))) ("ghost_day ${dv.ghost_day} not in the picker") else ""),
+			# the session on screen cannot be its own ghost: the kind test below
+			# stays quiet on it (a session trivially matches itself), and the
+			# dismissal in ghost_for_sel is silent, so without this segment the
+			# directive would report applied while drawing nothing
+			(if (dv.ghost_day != "" and dv.ghost_day != "none" and dv.ghost_id < 0 and dv.ghost_day == entry_at(ids, wsel).day) ("ghost_day ${dv.ghost_day} is the session on screen") else ""),
+			# in the picker but the wrong KIND of session: naming what differs -
+			# the sport, or failing that the unit - is what makes this actionable,
+			# since "refused" alone reads as a missing day
+			(
+				if dv.ghost_day != "" and dv.ghost_day != "none" and dv.ghost_id < 0 and List.any(ids, |ge8| ge8.day == dv.ghost_day) and !(List.any(ids, |ge7| ge7.day == dv.ghost_day and ghost_matches(entry_at(ids, wsel), ge7))) {
+					live6 = entry_at(ids, wsel)
+					gh6 = List.fold(ids, live6, |acc, g6| if (g6.day == dv.ghost_day) g6 else acc)
+					if (gh6.sport != live6.sport) ("ghost_day ${dv.ghost_day} is ${gh6.sport}, the session is ${live6.sport}")
+					else "ghost_day ${dv.ghost_day} is ${Db.chan_name(gh6.chan)}, the session is ${Db.chan_name(live6.chan)}"
+				} else ""
+			),
+			# the same three judgements for a ghost named by id. A ghost_day of
+			# 'none' dismisses regardless of ghost_id, so an id beside it is not
+			# judged at all - the resolver never reads it either
+			(if (dv.ghost_id >= 0 and dv.ghost_day != "none" and !(List.any(ids, |gi9| gi9.id == dv.ghost_id))) ("ghost_id ${I64.to_str(dv.ghost_id)} not in the picker") else ""),
+			(if (dv.ghost_id >= 0 and dv.ghost_day != "none" and dv.ghost_id == entry_at(ids, wsel).id) ("ghost_id ${I64.to_str(dv.ghost_id)} is the session on screen") else ""),
+			(
+				if dv.ghost_id >= 0 and dv.ghost_day != "none" and dv.ghost_id != entry_at(ids, wsel).id and List.any(ids, |gi8| gi8.id == dv.ghost_id) and !(List.any(ids, |gi7| gi7.id == dv.ghost_id and ghost_matches(entry_at(ids, wsel), gi7))) {
+					live5 = entry_at(ids, wsel)
+					gh5 = List.fold(ids, live5, |acc, g5| if (g5.id == dv.ghost_id) g5 else acc)
+					if (gh5.sport != live5.sport) ("ghost_id ${I64.to_str(dv.ghost_id)} is ${gh5.sport}, the session is ${live5.sport}")
+					else "ghost_id ${I64.to_str(dv.ghost_id)} is ${Db.chan_name(gh5.chan)}, the session is ${Db.chan_name(live5.chan)}"
+				} else ""
+			),
+			(capture_refusal_for(dv.capture, rec_active, cap_pending)),
+		],
+		|s9| s9 != "",
+	)
 	Str.join_with(segs, "; ")
 }
 
 # two refusals joined the way the segments are
 join_refusal : Str, Str -> Str
-join_refusal = |a, b| if a == "" b else if b == "" a else "${a}; ${b}"
+join_refusal = |a, b| if (a == "") b else if (b == "") a else "${a}; ${b}"
 
 # why the host declined a screenshot, in the status row's words
 shot_error_text : Capture.ScreenshotError -> Str
@@ -1077,7 +1152,7 @@ capture_is_pending = |p|
 # the file a capture of this name will be: absolute when the launch
 # directory is known, under ./captures otherwise
 capture_path : Str, Str -> Str
-capture_path = |cwd, name| if cwd == "" (Str.concat("captures/", name)) else Str.concat(cwd, Str.concat("/captures/", name))
+capture_path = |cwd, name| if (cwd == "") (Str.concat("captures/", name)) else Str.concat(cwd, Str.concat("/captures/", name))
 
 # 600 frames - ten seconds at the app's 60 fps pacing, longer while a recording
 # slows the frames: a host that has not answered a
@@ -1095,7 +1170,9 @@ capture_timeout_ticks = 600
 # next input closes it with the reason; a stop closes on Finished or Failed.
 # Every wait ends by the timeout, with no result
 CaptureEvent : { shot : [NoShot, ShotDone(I64, Try({}, Capture.ScreenshotError))], rec : Capture.Status, settled : Bool, tick : U64 }
+
 CaptureAction : [Nothing, TakeShot({ id : I64, name : Str }), Mark({ id : I64, refused : Str, result : Str })]
+
 capture_step : Ui.PendingCapture, CaptureEvent -> { next : Ui.PendingCapture, act : CaptureAction }
 capture_step = |p, ev| {
 	timed_out = |c| ev.tick - c.since >= capture_timeout_ticks
@@ -1103,8 +1180,8 @@ capture_step = |p, ev| {
 	match p {
 		NoCapture => { next: NoCapture, act: Nothing }
 		ArmedShot(c) =>
-			if timed_out(c) (give_up(c, "png"))
-			else if ev.settled ({ next: AwaitingShot({ ..c, since: ev.tick }), act: TakeShot({ id: c.id, name: c.name }) })
+			if (timed_out(c)) (give_up(c, "png"))
+			else if (ev.settled) ({ next: AwaitingShot({ ..c, since: ev.tick }), act: TakeShot({ id: c.id, name: c.name }) })
 			else { next: p, act: Nothing }
 		AwaitingShot(c) =>
 			match ev.shot {
@@ -1113,7 +1190,7 @@ capture_step = |p, ev| {
 						Ok(_) => { next: NoCapture, act: Mark({ id: c.id, refused: c.refused, result: c.path }) }
 						Err(e) => { next: NoCapture, act: Mark({ id: c.id, refused: join_refusal(c.refused, shot_error_text(e)), result: "" }) }
 					}
-				_ => if timed_out(c) (give_up(c, "png")) else { next: p, act: Nothing }
+				_ => if (timed_out(c)) (give_up(c, "png")) else { next: p, act: Nothing }
 			}
 		AwaitingStart(c) =>
 			match ev.rec {
@@ -1122,13 +1199,13 @@ capture_step = |p, ev| {
 				# start reads Active, a rejected one the Failed the host latched, and
 				# either overwrites what an earlier recording left
 				Failed(f) => { next: NoCapture, act: Mark({ id: c.id, refused: join_refusal(c.refused, Str.concat("capture webm_start failed: ", rec_failure_text(f.reason))), result: "" }) }
-				_ => if timed_out(c) (give_up(c, "webm_start")) else { next: p, act: Nothing }
+				_ => if (timed_out(c)) (give_up(c, "webm_start")) else { next: p, act: Nothing }
 			}
 		AwaitingStop(c) =>
 			match ev.rec {
 				Finished(_) => { next: NoCapture, act: Mark({ id: c.id, refused: c.refused, result: c.path }) }
 				Failed(f) => { next: NoCapture, act: Mark({ id: c.id, refused: join_refusal(c.refused, Str.concat("capture webm_stop failed: ", rec_failure_text(f.reason))), result: "" }) }
-				_ => if timed_out(c) (give_up(c, "webm_stop")) else { next: p, act: Nothing }
+				_ => if (timed_out(c)) (give_up(c, "webm_stop")) else { next: p, act: Nothing }
 			}
 	}
 }
@@ -1161,11 +1238,11 @@ expect {
 	c = { id: 7, refused: "range 45 not 30/60/90", path: "/h/captures/table.png", name: "table.png", since: 1 }
 	ld = { id: 7, refused: "range 45 not 30/60/90", result: "" }
 	capture_abandon(NoCapture) == Nothing
-	and capture_abandon(ArmedShot(c)) == Mark({ id: 7, refused: "range 45 not 30/60/90; capture png failed: the window closed before the host answered", result: "" })
-	and capture_abandon(AwaitingStop({ ..c, refused: "" })) == Mark({ id: 7, refused: "capture webm_stop failed: the window closed before the host answered", result: "" })
-	and last_directive_after(ld, Mark({ id: 7, refused: "range 45 not 30/60/90", result: "/h/captures/table.png" })) == { id: 7, refused: "range 45 not 30/60/90", result: "/h/captures/table.png" }
-	and last_directive_after(ld, Mark({ id: 8, refused: "", result: "/h/captures/table.png" })) == ld
-	and last_directive_after(ld, Nothing) == ld
+		and capture_abandon(ArmedShot(c)) == Mark({ id: 7, refused: "range 45 not 30/60/90; capture png failed: the window closed before the host answered", result: "" })
+		and capture_abandon(AwaitingStop({ ..c, refused: "" })) == Mark({ id: 7, refused: "capture webm_stop failed: the window closed before the host answered", result: "" })
+		and last_directive_after(ld, Mark({ id: 7, refused: "range 45 not 30/60/90", result: "/h/captures/table.png" })) == { id: 7, refused: "range 45 not 30/60/90", result: "/h/captures/table.png" }
+		and last_directive_after(ld, Mark({ id: 8, refused: "", result: "/h/captures/table.png" })) == ld
+		and last_directive_after(ld, Nothing) == ld
 }
 
 # why the recorder refused or died, in the status row's words
@@ -1199,11 +1276,11 @@ expect {
 	# test cannot catch it (a session trivially matches itself) and the
 	# dismissal downstream is silent
 	refusals_for(dv, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_day d1 is the session on screen"
-	# the same day as a ghost for the OTHER session is a kind question, and
-	# these two differ by sport
-	and refusals_for(dv, -2, 1, 1, m, Bool.False, Bool.False) == "ghost_day d1 is Ride, the session is Rowing"
-	# a clean directive refuses nothing
-	and refusals_for({ has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }, -2, 0, 0, m, Bool.False, Bool.False) == ""
+		# the same day as a ghost for the OTHER session is a kind question, and
+		# these two differ by sport
+		and refusals_for(dv, -2, 1, 1, m, Bool.False, Bool.False) == "ghost_day d1 is Ride, the session is Rowing"
+		# a clean directive refuses nothing
+		and refusals_for({ has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }, -2, 0, 0, m, Bool.False, Bool.False) == ""
 }
 
 # a session named by id is judged by identity: absent, the one on screen, or
@@ -1217,19 +1294,19 @@ expect {
 	# an id no picker entry carries; the selection did not move, so it is
 	# judged against the shown session and refused by name
 	refusals_for({ ..blank, trace_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "trace_id 9 not in the picker"
-	# the same absent id while the selection MOVED (wsel differs from
-	# cur_sel) is not judged against the shown session at all - the move is
-	# the answer - so nothing is refused; this is the guard's own case
-	and refusals_for({ ..blank, trace_id: 9 }, -2, 1, 0, m, Bool.False, Bool.False) == ""
-	and refusals_for({ ..blank, ghost_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 9 not in the picker"
-	and refusals_for({ ..blank, ghost_id: 1 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 1 is the session on screen"
-	and refusals_for({ ..blank, ghost_id: 1 }, -2, 1, 1, m, Bool.False, Bool.False) == "ghost_id 1 is Ride, the session is Rowing"
-	# 'none' dismisses; an id beside it is never judged, so nothing is refused
-	# - not an absent id, not the shown session's own id, not one of the
-	# wrong kind (each would otherwise name its own refusal)
-	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == ""
-	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 1 }, -2, 0, 0, m, Bool.False, Bool.False) == ""
-	and refusals_for({ ..blank, ghost_day: "none", ghost_id: 1 }, -2, 1, 1, m, Bool.False, Bool.False) == ""
+		# the same absent id while the selection MOVED (wsel differs from
+		# cur_sel) is not judged against the shown session at all - the move is
+		# the answer - so nothing is refused; this is the guard's own case
+		and refusals_for({ ..blank, trace_id: 9 }, -2, 1, 0, m, Bool.False, Bool.False) == ""
+		and refusals_for({ ..blank, ghost_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 9 not in the picker"
+		and refusals_for({ ..blank, ghost_id: 1 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 1 is the session on screen"
+		and refusals_for({ ..blank, ghost_id: 1 }, -2, 1, 1, m, Bool.False, Bool.False) == "ghost_id 1 is Ride, the session is Rowing"
+		# 'none' dismisses; an id beside it is never judged, so nothing is refused
+		# - not an absent id, not the shown session's own id, not one of the
+		# wrong kind (each would otherwise name its own refusal)
+		and refusals_for({ ..blank, ghost_day: "none", ghost_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == ""
+		and refusals_for({ ..blank, ghost_day: "none", ghost_id: 1 }, -2, 0, 0, m, Bool.False, Bool.False) == ""
+		and refusals_for({ ..blank, ghost_day: "none", ghost_id: 1 }, -2, 1, 1, m, Bool.False, Bool.False) == ""
 }
 
 # a day beside an id: the id takes precedence in the resolver, so the
@@ -1242,12 +1319,12 @@ expect {
 	]
 	blank = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }
 	refusals_for({ ..blank, trace_day: "d9", trace_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "trace_id 9 not in the picker"
-	and refusals_for({ ..blank, trace_day: "d9" }, -2, 0, 0, m, Bool.False, Bool.False) == "trace_day d9 not in the picker"
-	and refusals_for({ ..blank, trace_day: "d9", trace_id: 1 }, -2, 0, 0, m, Bool.False, Bool.False) == ""
-	and refusals_for({ ..blank, ghost_day: "d9", ghost_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 9 not in the picker"
-	and refusals_for({ ..blank, ghost_day: "d9" }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_day d9 not in the picker"
-	and refusals_for({ ..blank, ghost_day: "d1", ghost_id: 2 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 2 is Rowing, the session is Ride"
-	and refusals_for({ ..blank, ghost_day: "d2", ghost_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 9 not in the picker"
+		and refusals_for({ ..blank, trace_day: "d9" }, -2, 0, 0, m, Bool.False, Bool.False) == "trace_day d9 not in the picker"
+		and refusals_for({ ..blank, trace_day: "d9", trace_id: 1 }, -2, 0, 0, m, Bool.False, Bool.False) == ""
+		and refusals_for({ ..blank, ghost_day: "d9", ghost_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 9 not in the picker"
+		and refusals_for({ ..blank, ghost_day: "d9" }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_day d9 not in the picker"
+		and refusals_for({ ..blank, ghost_day: "d1", ghost_id: 2 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 2 is Rowing, the session is Ride"
+		and refusals_for({ ..blank, ghost_day: "d2", ghost_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 9 not in the picker"
 }
 
 # a capture is judged by its vocabulary and by the recorder's state: a
@@ -1260,15 +1337,15 @@ expect {
 	]
 	blank = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }
 	refusals_for({ ..blank, capture: "gif" }, -2, 0, 0, m, Bool.False, Bool.False) == "capture gif not png/webm_start/webm_stop"
-	and refusals_for({ ..blank, capture: "png" }, -2, 0, 0, m, Bool.False, Bool.False) == ""
-	and refusals_for({ ..blank, capture: "png" }, -2, 0, 0, m, Bool.True, Bool.False) == ""
-	and refusals_for({ ..blank, capture: "png" }, -2, 0, 0, m, Bool.False, Bool.True) == "capture png: an earlier capture is still pending"
-	and refusals_for({ ..blank, capture: "gif" }, -2, 0, 0, m, Bool.False, Bool.True) == "capture gif not png/webm_start/webm_stop"
-	and refusals_for({ ..blank, capture: "webm_start" }, -2, 0, 0, m, Bool.False, Bool.False) == ""
-	and refusals_for({ ..blank, capture: "webm_start" }, -2, 0, 0, m, Bool.True, Bool.False) == "capture webm_start: a recording is already running"
-	and refusals_for({ ..blank, capture: "webm_stop" }, -2, 0, 0, m, Bool.True, Bool.False) == ""
-	and refusals_for({ ..blank, capture: "webm_stop" }, -2, 0, 0, m, Bool.False, Bool.False) == "capture webm_stop: no recording is running"
-	and refusals_for({ ..blank, range: 45, capture: "webm_stop" }, -2, 0, 0, m, Bool.False, Bool.False) == "range 45 not 30/60/90; capture webm_stop: no recording is running"
+		and refusals_for({ ..blank, capture: "png" }, -2, 0, 0, m, Bool.False, Bool.False) == ""
+		and refusals_for({ ..blank, capture: "png" }, -2, 0, 0, m, Bool.True, Bool.False) == ""
+		and refusals_for({ ..blank, capture: "png" }, -2, 0, 0, m, Bool.False, Bool.True) == "capture png: an earlier capture is still pending"
+		and refusals_for({ ..blank, capture: "gif" }, -2, 0, 0, m, Bool.False, Bool.True) == "capture gif not png/webm_start/webm_stop"
+		and refusals_for({ ..blank, capture: "webm_start" }, -2, 0, 0, m, Bool.False, Bool.False) == ""
+		and refusals_for({ ..blank, capture: "webm_start" }, -2, 0, 0, m, Bool.True, Bool.False) == "capture webm_start: a recording is already running"
+		and refusals_for({ ..blank, capture: "webm_stop" }, -2, 0, 0, m, Bool.True, Bool.False) == ""
+		and refusals_for({ ..blank, capture: "webm_stop" }, -2, 0, 0, m, Bool.False, Bool.False) == "capture webm_stop: no recording is running"
+		and refusals_for({ ..blank, range: 45, capture: "webm_stop" }, -2, 0, 0, m, Bool.False, Bool.False) == "range 45 not 30/60/90; capture webm_stop: no recording is running"
 }
 
 expect join_refusal("", "b") == "b" and join_refusal("a", "") == "a" and join_refusal("a", "b") == "a; b"
@@ -1287,11 +1364,11 @@ expect {
 	other = capture_step(AwaitingShot(c), { ..ev, shot: ShotDone(4, Ok({})) })
 	late = capture_step(AwaitingShot(c), { ..ev, tick: 700 })
 	armed == { next: ArmedShot(c), act: Nothing }
-	and taken == { next: AwaitingShot({ ..c, since: 101 }), act: TakeShot({ id: 3, name: "power.png" }) }
-	and ok == { next: NoCapture, act: Mark({ id: 3, refused: "", result: "/h/captures/power.png" }) }
-	and bad == { next: NoCapture, act: Mark({ id: 3, refused: "range 45 not 30/60/90; capture png failed: the host is busy", result: "" }) }
-	and other == { next: AwaitingShot(c), act: Nothing }
-	and late == { next: NoCapture, act: Mark({ id: 3, refused: "capture png failed: no answer from the host within 600 frames", result: "" }) }
+		and taken == { next: AwaitingShot({ ..c, since: 101 }), act: TakeShot({ id: 3, name: "power.png" }) }
+		and ok == { next: NoCapture, act: Mark({ id: 3, refused: "", result: "/h/captures/power.png" }) }
+		and bad == { next: NoCapture, act: Mark({ id: 3, refused: "range 45 not 30/60/90; capture png failed: the host is busy", result: "" }) }
+		and other == { next: AwaitingShot(c), act: Nothing }
+		and late == { next: NoCapture, act: Mark({ id: 3, refused: "capture png failed: no answer from the host within 600 frames", result: "" }) }
 }
 # a start marks on Active with the file, a Failed read at the tick the wait
 # began (the frame after the start, which is when the step first runs)
@@ -1308,19 +1385,19 @@ expect {
 	waiting = capture_step(AwaitingStop(c), { ..ev, rec: Active(fr) })
 	gone = capture_step(AwaitingStart(c), { ..ev, tick: 700 })
 	started == { next: NoCapture, act: Mark({ id: 5, refused: "", result: "/h/captures/power.webm" }) }
-	and refused == { next: NoCapture, act: Mark({ id: 5, refused: "capture webm_start failed: a recording is already running", result: "" }) }
-	and stopped == { next: NoCapture, act: Mark({ id: 5, refused: "", result: "/h/captures/power.webm" }) }
-	and died == { next: NoCapture, act: Mark({ id: 5, refused: "capture webm_stop failed: the encoder failed", result: "" }) }
-	and waiting == { next: AwaitingStop(c), act: Nothing }
-	and gone == { next: NoCapture, act: Mark({ id: 5, refused: "capture webm_start failed: no answer from the host within 600 frames", result: "" }) }
-	and capture_is_pending(AwaitingStop(c)) and !capture_is_pending(NoCapture)
-	and capture_path("", "power.png") == "captures/power.png" and capture_path("/h", "power.png") == "/h/captures/power.png"
-	and view_settled({ view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
-	and !view_settled({ view_anim: 100, tick: 129, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
-	and view_settled({ view_anim: 100, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
-	and !view_settled({ view_anim: 100, tick: 130, trace_loading: Bool.True, ghost_loading: Bool.False, reloading: Bool.False })
-	and !view_settled({ view_anim: 100, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.True, reloading: Bool.False })
-	and !view_settled({ view_anim: 0, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.True })
+		and refused == { next: NoCapture, act: Mark({ id: 5, refused: "capture webm_start failed: a recording is already running", result: "" }) }
+		and stopped == { next: NoCapture, act: Mark({ id: 5, refused: "", result: "/h/captures/power.webm" }) }
+		and died == { next: NoCapture, act: Mark({ id: 5, refused: "capture webm_stop failed: the encoder failed", result: "" }) }
+		and waiting == { next: AwaitingStop(c), act: Nothing }
+		and gone == { next: NoCapture, act: Mark({ id: 5, refused: "capture webm_start failed: no answer from the host within 600 frames", result: "" }) }
+		and capture_is_pending(AwaitingStop(c)) and !capture_is_pending(NoCapture)
+		and capture_path("", "power.png") == "captures/power.png" and capture_path("/h", "power.png") == "/h/captures/power.png"
+		and view_settled({ view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
+		and !view_settled({ view_anim: 100, tick: 129, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
+		and view_settled({ view_anim: 100, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
+		and !view_settled({ view_anim: 100, tick: 130, trace_loading: Bool.True, ghost_loading: Bool.False, reloading: Bool.False })
+		and !view_settled({ view_anim: 100, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.True, reloading: Bool.False })
+		and !view_settled({ view_anim: 0, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.True })
 }
 
 # Reports a directive's terminal outcome from the task lane.
@@ -1364,7 +1441,7 @@ clear_focus_task! = |acc|
 # The window's answer: upsert what the human is looking at
 focus_task! : Access, Db.Focus => Msg
 focus_task! = |acc, f|
-	if acc.dir == "" FocusWriteFailed
+	if (acc.dir == "") FocusWriteFailed
 	else match open_db!(acc) {
 		Err(_) => FocusWriteFailed
 		Ok(db) => match Db.write_focus!(db, f) {
@@ -1396,7 +1473,7 @@ load_curve_window! = |acc, font, curve_days| {
 	}
 	fit = Db.load_fit!(acc.io.commands(), curve_days)
 	fit_text =
-		if fit.ok
+		if (fit.ok)
 			"CP ${Db.fmt_f(fit.cp)} W · W' ${Db.fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${Db.fmt_f(fit.r2)} from ${Db.fmt_i(fit.points)} bests"
 		else "CP fit unavailable - the engine did not answer"
 	# the same two faces the full loader prepares these labels with, so a
@@ -1405,10 +1482,13 @@ load_curve_window! = |acc, font, curve_days| {
 	mono = brand_font!(acc, "JetBrainsMono-Regular.ttf", 24, font)
 	mk! = |txt, sz| Text.from(txt, head).size(sz).prepare!()
 	mkm! = |txt, sz| Text.from(txt, mono).size(sz).prepare!()
-	lbls = List.map_try!(read.c, |x| {
-		p = mkm!(I64.to_str(x.dur_s), 12)?
-		Ok({ p, d: x.dur_s })
-	})?
+	lbls = List.map_try!(
+		read.c,
+		|x| {
+			p = mkm!(I64.to_str(x.dur_s), 12)?
+			Ok({ p, d: x.dur_s })
+		},
+	)?
 	Ok({
 		days: curve_days,
 		c: read.c,
@@ -1417,8 +1497,8 @@ load_curve_window! = |acc, font, curve_days| {
 		title: mk!("power - this ${I64.to_str(curve_days)}d vs the ${I64.to_str(curve_days)}d before it", 15)?,
 		fit_lbl: mk!(Db.ascii_safe(fit_text), 14)?,
 		cp_lbl: mkm!("CP ${Db.fmt_f(fit.cp)}W", 12)?,
-		fit_cp: if fit.ok (fit.cp) else 0.0,
-		fit_r2: if fit.ok (fit.r2) else 0.0,
+		fit_cp: if (fit.ok) (fit.cp) else 0.0,
+		fit_r2: if (fit.ok) (fit.r2) else 0.0,
 	})
 }
 
@@ -1483,7 +1563,7 @@ load_tcache! = |db, units, ids|
 			du9 = Db.load_dur!(db, te.id)
 			# splits only where a pace trace draws them - the panel is the
 			# pace channel's companion, and the arrays are only read once
-			sp9 = if te.chan == Db.pace_chan (Db.load_splits!(db, te.id, Units.split_len(units))) else []
+			sp9 = if (te.chan == Db.pace_chan) (Db.load_splits!(db, te.id, Units.split_len(units))) else []
 			# the unit travels with the samples so a cache read needs no second
 			# lookup into the picker row; prepend so picker order survives
 			# without List.reverse, which this stdlib lacks
@@ -1498,11 +1578,11 @@ load_tcache! = |db, units, ids|
 # pinned compiler has miscompiled before - a call is the shape that survives.
 focus_view_code : U8 -> I64
 focus_view_code = |v|
-	if v == 0 (0) else if v == 1 (1) else if v == 2 (2) else if v == 3 (3) else if v == 4 (4) else if v == 5 (5) else if v == 6 (6) else if v == 7 (7) else 8
+	if (v == 0) (0) else if (v == 1) (1) else if (v == 2) (2) else if (v == 3) (3) else if (v == 4) (4) else if (v == 5) (5) else if (v == 6) (6) else if (v == 7) (7) else 8
 
 view_basename : U8 -> Str
 view_basename = |v|
-	if v == 0 "form-board" else if v == 1 "power" else if v == 2 "session-trace" else if v == 3 "data-table" else if v == 4 "plan" else if v == 5 "heat" else if v == 6 "zones" else if v == 7 "ramp" else "career"
+	if (v == 0) "form-board" else if (v == 1) "power" else if (v == 2) "session-trace" else if (v == 3) "data-table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else "career"
 
 # what the bus accepts, as data (#439). caps_views derives from view_basename
 # so the published list can never drift from the dispatch; caps_fields must
@@ -1528,110 +1608,118 @@ update! = |model0, program_input, io| {
 	d = program_input.devices
 	# task answers land as messages; fold them in before this frame's input.
 	# A finished reload keeps the UI state the user has moved since spawning.
-	model = List.fold(program_input.messages, model0, |acc, msg|
-		match msg {
-			Shot(_) => acc
-			DirShot(_) => acc
-			RecCmd(_) => acc
-			MarkDone(mid) => if mid == acc.quit_mark_pending ({ ..acc, quit_mark_pending: -1 }) else acc
-			# also the boot task's failure exit: the splash must never spin
-			# forever, so a dead load hands over to the skeleton's own screens
-			# clear reloading too: a failed reload must not leave the power
-			# view's "loading…" note burned on forever — the flag is reset on
-			# BOTH terminal outcomes, not just success
-			ReloadFailed => { ..acc, booting: Bool.False, reloading: Bool.False }
-			# only the answer to the CURRENT window lands; curve_days moved on
-			# the click, so an older reply's days no longer match and it is
-			# dropped whole - including its reloading flag, which the newer
-			# request still owns
-			CurveReloaded(w) =>
-				if w.days != acc.curve_days acc
-				else { ..acc, curve: w.c, curve_prev: w.cpv, curve_lbls: w.lbls, curve_title: w.title, fit_lbl: w.fit_lbl, cp_lbl: w.cp_lbl, fit_cp: w.fit_cp, fit_r2: w.fit_r2, reloading: Bool.False }
-			CurveReloadFailed(days) => if days != acc.curve_days acc else { ..acc, reloading: Bool.False }
-			# a failed fetch lowers the loading flag only if it was the current
-			# fetch: a failure for a superseded switch must not clear the flag
-			# the newer fetch still owns
-			TraceSwitchFailed(g) => if g != acc.trace_gen acc else { ..acc, trace_loading: Bool.False }
-			GhostSwitchFailed(gg) => if gg != acc.ghost_gen acc else { ..acc, ghost_loading: Bool.False }
-			# only the reply for the current ghost generation lands: a slow load
-			# for a pick since replaced, or since dismissed, applies nowhere
-			GhostSwitched(gw) => if gw.gen == acc.ghost_gen ({ ..acc, ghost: gw.tr, ghost_dur: gw.du, ghost_day: gw.day, ghost_loading: Bool.False }) else acc
-			DirectiveNone => acc
-			Polled(note) => { ..acc, bus_note: note }
-			FocusWritten => acc
-			FocusCleared => { ..acc, focus_cleared: Bool.True }
-			# a dropped write must not leave the coach stale: resetting
-			# last_focus makes the next throttle tick try again
-			# only the answer for the day still open lands; a result for a day
-			# the user closed or switched away from is dropped
-			DayDetail(dd) => if dd.day == acc.detail_day ({ ..acc, detail: dd.lines }) else acc
-			FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "" } }
-			# a session-naming directive replaces the picker with the one it
-			# was read against, so the refusal below and the selection it
-			# resolves both see the database as it is. The trace cache is
-			# index-aligned to the picker, so it empties with the re-read,
-			# and the selection follows the shown session by id rather than
-			# by position, since a session synced since boot shifts every
-			# position after it. The shown samples stay unless the shown
-			# session itself is gone: the header names sessions by index, so
-			# leaving those samples under the index the selection fell to
-			# would label one session with another's name - trace_refetch
-			# makes the next frame fetch what the selection now names. A
-			# redelivered directive (its id already applied) changes nothing.
-			Directive(d2) =>
-				match d2.ids {
-					Kept => { ..acc, bus_note: d2.note }
-					Fresh(fresh) =>
-						if d2.dv.id == acc.last_directive.id { ..acc, bus_note: d2.note }
-						else {
-							r = sel_following_id(acc.trace_ids, acc.trace_sel, fresh)
-							# refetch only when the shown session is gone: the fallback
-							# is a different session whose samples are not in memory.
-							# A session merely moved to another index needs nothing -
-							# a fetch still in flight for it is matched by generation,
-							# not by index, and its samples land under the new index;
-							# samples already drawn are that session's by id.
-							# The ghost follows its session by id the same way, and a
-							# ghost whose session is gone is dismissed - its samples,
-							# day and duration cleared together - rather than left
-							# pointing at whatever session now holds its old index.
-							# A dismissal here opens a new ghost generation exactly as
-							# a keyboard dismissal does, so a ghost fetch still in
-							# flight for the vanished session lands nowhere instead
-							# of resurrecting its samples beside a cleared selection.
-							g = ghost_after_reread(acc.ghost_sel, acc.trace_ids, fresh)
-							{ ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: r.sel, trace_refetch: !r.found and !(List.is_empty(fresh)), ghost_sel: g.sel, ghost_loading: (if g.keep acc.ghost_loading else Bool.False), ghost: (if g.keep acc.ghost else []), ghost_day: (if g.keep acc.ghost_day else ""), ghost_dur: (if g.keep acc.ghost_dur else 0.0), ghost_gen: (if g.keep acc.ghost_gen else acc.ghost_gen + 1) }
-						}
+	model = List.fold(
+		program_input.messages,
+		model0,
+		|acc, msg|
+			match msg {
+				Shot(_) => acc
+				DirShot(_) => acc
+				RecCmd(_) => acc
+				MarkDone(mid) => if (mid == acc.quit_mark_pending) ({ ..acc, quit_mark_pending: -1 }) else acc
+				# also the boot task's failure exit: the splash must never spin
+				# forever, so a dead load hands over to the skeleton's own screens
+				# clear reloading too: a failed reload must not leave the power
+				# view's "loading…" note burned on forever — the flag is reset on
+				# BOTH terminal outcomes, not just success
+				ReloadFailed => { ..acc, booting: Bool.False, reloading: Bool.False }
+				# only the answer to the CURRENT window lands; curve_days moved on
+				# the click, so an older reply's days no longer match and it is
+				# dropped whole - including its reloading flag, which the newer
+				# request still owns
+				CurveReloaded(w) =>
+					if (w.days != acc.curve_days) acc
+					else { ..acc, curve: w.c, curve_prev: w.cpv, curve_lbls: w.lbls, curve_title: w.title, fit_lbl: w.fit_lbl, cp_lbl: w.cp_lbl, fit_cp: w.fit_cp, fit_r2: w.fit_r2, reloading: Bool.False }
+				CurveReloadFailed(days) => if (days != acc.curve_days) acc else { ..acc, reloading: Bool.False }
+				# a failed fetch lowers the loading flag only if it was the current
+				# fetch: a failure for a superseded switch must not clear the flag
+				# the newer fetch still owns
+				TraceSwitchFailed(g) => if (g != acc.trace_gen) acc else { ..acc, trace_loading: Bool.False }
+				GhostSwitchFailed(gg) => if (gg != acc.ghost_gen) acc else { ..acc, ghost_loading: Bool.False }
+				# only the reply for the current ghost generation lands: a slow load
+				# for a pick since replaced, or since dismissed, applies nowhere
+				GhostSwitched(gw) => if (gw.gen == acc.ghost_gen) ({ ..acc, ghost: gw.tr, ghost_dur: gw.du, ghost_day: gw.day, ghost_loading: Bool.False }) else acc
+				DirectiveNone => acc
+				Polled(note) => { ..acc, bus_note: note }
+				FocusWritten => acc
+				FocusCleared => { ..acc, focus_cleared: Bool.True }
+				# a dropped write must not leave the coach stale: resetting
+				# last_focus makes the next throttle tick try again
+				# only the answer for the day still open lands; a result for a day
+				# the user closed or switched away from is dropped
+				DayDetail(dd) => if (dd.day == acc.detail_day) ({ ..acc, detail: dd.lines }) else acc
+				FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "" } }
+				# a session-naming directive replaces the picker with the one it
+				# was read against, so the refusal below and the selection it
+				# resolves both see the database as it is. The trace cache is
+				# index-aligned to the picker, so it empties with the re-read,
+				# and the selection follows the shown session by id rather than
+				# by position, since a session synced since boot shifts every
+				# position after it. The shown samples stay unless the shown
+				# session itself is gone: the header names sessions by index, so
+				# leaving those samples under the index the selection fell to
+				# would label one session with another's name - trace_refetch
+				# makes the next frame fetch what the selection now names. A
+				# redelivered directive (its id already applied) changes nothing.
+				Directive(d2) =>
+					match d2.ids {
+						Kept => { ..acc, bus_note: d2.note }
+						Fresh(fresh) =>
+							if (d2.dv.id == acc.last_directive.id) { ..acc, bus_note: d2.note }
+							else {
+								r = sel_following_id(acc.trace_ids, acc.trace_sel, fresh)
+								# refetch only when the shown session is gone: the fallback
+								# is a different session whose samples are not in memory.
+								# A session merely moved to another index needs nothing -
+								# a fetch still in flight for it is matched by generation,
+								# not by index, and its samples land under the new index;
+								# samples already drawn are that session's by id.
+								# The ghost follows its session by id the same way, and a
+								# ghost whose session is gone is dismissed - its samples,
+								# day and duration cleared together - rather than left
+								# pointing at whatever session now holds its old index.
+								# A dismissal here opens a new ghost generation exactly as
+								# a keyboard dismissal does, so a ghost fetch still in
+								# flight for the vanished session lands nowhere instead
+								# of resurrecting its samples beside a cleared selection.
+								g = ghost_after_reread(acc.ghost_sel, acc.trace_ids, fresh)
+								{ ..acc, bus_note: d2.note, trace_ids: fresh, trace_cache: [], trace_sel: r.sel, trace_refetch: !r.found and !(List.is_empty(fresh)), ghost_sel: g.sel, ghost_loading: (if (g.keep) acc.ghost_loading else Bool.False), ghost: (if (g.keep) acc.ghost else []), ghost_day: (if (g.keep) acc.ghost_day else ""), ghost_dur: (if (g.keep) acc.ghost_dur else 0.0), ghost_gen: (if (g.keep) acc.ghost_gen else acc.ghost_gen + 1) }
+							}
+					}
+				Reloaded(fresh) => {
+					merged = { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending }
+					# R reads the window it was pressed on, and it is the slow path.
+					# A chip clicked while it ran has since moved curve_days and
+					# landed its own curve for the window now on screen; when the
+					# two disagree that slice is the newer answer and is kept, while
+					# R still refreshes everything the window does not drive. The
+					# reloading flag stays the chip's too, since its request may
+					# still be in flight.
+					if (fresh.curve_days == acc.curve_days) merged
+					else { ..merged, curve: acc.curve, curve_prev: acc.curve_prev, curve_lbls: acc.curve_lbls, curve_title: acc.curve_title, curve_days: acc.curve_days, fit_lbl: acc.fit_lbl, cp_lbl: acc.cp_lbl, fit_cp: acc.fit_cp, fit_r2: acc.fit_r2, reloading: acc.reloading }
 				}
-			Reloaded(fresh) => {
-				merged = { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending }
-				# R reads the window it was pressed on, and it is the slow path.
-				# A chip clicked while it ran has since moved curve_days and
-				# landed its own curve for the window now on screen; when the
-				# two disagree that slice is the newer answer and is kept, while
-				# R still refreshes everything the window does not drive. The
-				# reloading flag stays the chip's too, since its request may
-				# still be in flight.
-				if fresh.curve_days == acc.curve_days merged
-				else { ..merged, curve: acc.curve, curve_prev: acc.curve_prev, curve_lbls: acc.curve_lbls, curve_title: acc.curve_title, curve_days: acc.curve_days, fit_lbl: acc.fit_lbl, cp_lbl: acc.cp_lbl, fit_cp: acc.fit_cp, fit_r2: acc.fit_r2, reloading: acc.reloading }
-			}
-			# only the reply for the current trace generation lands: two switches
-			# faster than the first fetch resolves would otherwise let the first,
-			# stale answer overwrite the second. A dropped stale reply leaves the
-			# loading flag up, since the newer fetch is still coming. The reply
-			# carries samples, never a selection - trace_sel belongs to the frame
-			# that switches, and a picker re-read may have moved the session
-			# since the fetch read its index; the samples are still that
-			# session's, so they land under whatever index it holds now.
-			TraceSwitched(sw) => if sw.gen != acc.trace_gen acc else { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_day: sw.day, trace_unit: sw.un, trace_splits: sw.sp, trace_loading: Bool.False }
-		})
+				# only the reply for the current trace generation lands: two switches
+				# faster than the first fetch resolves would otherwise let the first,
+				# stale answer overwrite the second. A dropped stale reply leaves the
+				# loading flag up, since the newer fetch is still coming. The reply
+				# carries samples, never a selection - trace_sel belongs to the frame
+				# that switches, and a picker re-read may have moved the session
+				# since the fetch read its index; the samples are still that
+				# session's, so they land under whatever index it holds now.
+				TraceSwitched(sw) => if (sw.gen != acc.trace_gen) acc else { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_day: sw.day, trace_unit: sw.un, trace_splits: sw.sp, trace_loading: Bool.False }
+			},
+	)
 	# the coach's word arrives beside the human's input and steers only what
 	# it names: view, range, a day for the crosshair, a session for the trace
-	directive0 = List.fold(program_input.messages, { has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }, |acc, msg|
-		match msg {
-			Directive(d2) => { has_d: Bool.True, id: d2.dv.id, view: d2.dv.view, range: d2.dv.range, cursor_day: d2.dv.cursor_day, trace_day: d2.dv.trace_day, ghost_day: d2.dv.ghost_day, trace_id: d2.dv.trace_id, ghost_id: d2.dv.ghost_id, capture: d2.dv.capture }
-			_ => acc
-		})
+	directive0 = List.fold(
+		program_input.messages,
+		{ has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" },
+		|acc, msg|
+			match msg {
+				Directive(d2) => { has_d: Bool.True, id: d2.dv.id, view: d2.dv.view, range: d2.dv.range, cursor_day: d2.dv.cursor_day, trace_day: d2.dv.trace_day, ghost_day: d2.dv.ghost_day, trace_id: d2.dv.trace_id, ghost_id: d2.dv.ghost_id, capture: d2.dv.capture }
+				_ => acc
+			},
+	)
 	# a re-delivered id means the mark was lost to a busy database (the row
 	# stayed pending and was re-polled): re-report the recorded outcome and
 	# apply NOTHING - re-applying fought the user's own input every second
@@ -1651,8 +1739,14 @@ update! = |model0, program_input, io| {
 	# the pending capture's step for this frame: the directive's own
 	# screenshot answer (the S key's is untagged and cannot close it), the
 	# recorder's status, and whether the view has settled
-	shot_done = List.fold(program_input.messages, NoShot, |acc9, msg9| match msg9 { DirShot(r9) => ShotDone(r9.id, r9.res)
-		_ => acc9 })
+	shot_done = List.fold(
+		program_input.messages,
+		NoShot,
+		|acc9, msg9| match msg9 {
+			DirShot(r9) => ShotDone(r9.id, r9.res)
+			_ => acc9
+		},
+	)
 	cap_step = capture_step(model.pending_capture, { shot: shot_done, rec: program_input.capture, settled: view_settled({ view_anim: model.view_anim, tick: model.tick, trace_loading: model.trace_loading, ghost_loading: model.ghost_loading, reloading: model.reloading }), tick: model.tick })
 	pending1 = cap_step.next
 	_ = match cap_step.act {
@@ -1671,12 +1765,12 @@ update! = |model0, program_input, io| {
 	}
 	# the outcome a re-delivery re-reports, once the capture has answered
 	last_directive1 = last_directive_after(model.last_directive, cap_step.act)
-	directive = if is_redelivery ({ has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }) else directive0
+	directive = if (is_redelivery) ({ has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }) else directive0
 	if model.quitting {
-		if exits_now(model.focus_cleared and model.quit_mark_pending < 0, model.tick, model.quit_tick) (Err(Exit(0)))
+		if (exits_now(model.focus_cleared and model.quit_mark_pending < 0, model.tick, model.quit_tick)) (Err(Exit(0)))
 		else Ok({ ..model, tick: model.tick + 1, pending_capture: pending1, last_directive: last_directive1 })
 	} else if d.key_pressed(KeyEscape) {
-		if model.stride_dir == "" (Err(Exit(0)))
+		if (model.stride_dir == "") (Err(Exit(0)))
 		else {
 			accq = { io, dir: model.stride_dir }
 			_ = Task.spawn!(program_input, || clear_focus_task!(accq))
@@ -1694,7 +1788,7 @@ update! = |model0, program_input, io| {
 	} else {
 		pixels = { w: I32.to_f32(program_input.window.size.width), h: I32.to_f32(program_input.window.size.height) }
 		ctrl = d.key_down(KeyLeftControl) or d.key_down(KeyRightControl)
-		ui_action = if !ctrl Keep else if d.key_pressed(KeyEqual) Larger else if d.key_pressed(KeyMinus) Smaller else if d.key_pressed(Key0) Reset else Keep
+		ui_action = if (!ctrl) Keep else if (d.key_pressed(KeyEqual)) Larger else if (d.key_pressed(KeyMinus)) Smaller else if (d.key_pressed(Key0)) Reset else Keep
 		ui_percent = DisplayScale.adjust(model.ui_percent, ui_action)
 		layout = DisplayScale.layout(ui_percent, pixels)
 		win = { w: layout.w, h: layout.h }
@@ -1706,24 +1800,36 @@ update! = |model0, program_input, io| {
 		nav_click =
 			if Mouse.button_pressed(d.mouse, Left) and m0.y >= 30.0 and m0.y <= 54.0 {
 				nav_n = List.len(model.nav)
-				List.fold(List.map_with_index(model.nav, |nv2, vi| { nv2, vi }), -1, |acc, x| {
-					nx2 = win.w - 36.0 - U64.to_f32(nav_n - x.vi) * nav_pitch
-					if m0.x >= nx2 and m0.x <= nx2 + nav_width (U8.to_i64(x.nv2.v)) else acc
-				})
+				List.fold(
+					List.map_with_index(model.nav, |nv2, vi| { nv2, vi }),
+					-1,
+					|acc, x| {
+						nx2 = win.w - 36.0 - U64.to_f32(nav_n - x.vi) * nav_pitch
+						if (m0.x >= nx2 and m0.x <= nx2 + nav_width) (U8.to_i64(x.nv2.v)) else acc
+					},
+				)
 			} else -1
 		view_input =
-			if nav_click >= 0 (match I64.to_u8_try(nav_click) { Ok(v9) => v9
-				Err(_) => model.view })
-			else if d.key_pressed(KeyTab) (if model.view == 8 0 else model.view + 1) else model.view
-		view = if directive.has_d and directive.view >= 0 and directive.view <= 8 (match I64.to_u8_try(directive.view) { Ok(v8) => v8
-			Err(_) => view_input }) else view_input
+			if (nav_click >= 0) (
+				match I64.to_u8_try(nav_click) {
+					Ok(v9) => v9
+					Err(_) => model.view
+				}
+			)
+			else if (d.key_pressed(KeyTab)) (if (model.view == 8) 0 else model.view + 1) else model.view
+		view = if (directive.has_d and directive.view >= 0 and directive.view <= 8) (
+			match I64.to_u8_try(directive.view) {
+				Ok(v8) => v8
+				Err(_) => view_input
+			}
+		) else view_input
 		# chips hit-test against the frame-true view render will draw
 		clicked_chip =
 			if (view == 0 or view == 1) and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0 {
 				chip0 = win.w - 420.0
-				if m0.x >= chip0 and m0.x <= chip0 + 46.0 (30.U64)
-				else if m0.x >= chip0 + 54.0 and m0.x <= chip0 + 100.0 (60.U64)
-				else if m0.x >= chip0 + 108.0 and m0.x <= chip0 + 154.0 (90.U64)
+				if (m0.x >= chip0 and m0.x <= chip0 + 46.0) (30.U64)
+				else if (m0.x >= chip0 + 54.0 and m0.x <= chip0 + 100.0) (60.U64)
+				else if (m0.x >= chip0 + 108.0 and m0.x <= chip0 + 154.0) (90.U64)
 				else 0.U64
 			} else 0.U64
 		# 1/2/3 answer to whichever view is showing: the form board's range, or
@@ -1733,26 +1839,30 @@ update! = |model0, program_input, io| {
 			# judged against THIS frame's visible view (post-directive, post-TAB),
 			# never the prior frame's. The curve keeps its own window (want_days
 			# below), never the form-board range.
-			if directive.has_d and view != 1 and (directive.range == 30 or directive.range == 60 or directive.range == 90) (match I64.to_u64_try(directive.range) { Ok(rr) => rr
-				Err(_) => model.range }) else
+			if (directive.has_d and view != 1 and (directive.range == 30 or directive.range == 60 or directive.range == 90)) (
+				match I64.to_u64_try(directive.range) {
+					Ok(rr) => rr
+					Err(_) => model.range
+				}
+			) else
 			# chips clicked on the power view re-window the curve (below), not this
-			if view != 1 and clicked_chip > 0 clicked_chip
-			# keys judge the same frame-true view the directive rule does — a
-			# TAB and a range key in one frame land the range where TAB went
-			else if view == 1 model.range
-			else if d.key_pressed(Key1) 30.U64
-			else if d.key_pressed(Key2) 60.U64
-			else if d.key_pressed(Key3) 90.U64
-			else model.range
+				if (view != 1 and clicked_chip > 0) clicked_chip
+				# keys judge the same frame-true view the directive rule does — a
+				# TAB and a range key in one frame land the range where TAB went
+				else if (view == 1) model.range
+				else if (d.key_pressed(Key1)) 30.U64
+				else if (d.key_pressed(Key2)) 60.U64
+				else if (d.key_pressed(Key3)) 90.U64
+				else model.range
 		# cursor counts days back from the series' latest day — the last ANALYZED
 		# day, not necessarily today (0 = that column, -1 = off); LEFT walks
 		# older, RIGHT walks newer, and the board clamps to the window
 		# the form board and the data table share the cursor (chart crosshair,
 		# table scroll); the other views leave it parked
 		cursor =
-			if view != 0 and view != 3 model.cursor
-			else if d.key_pressed(KeyLeft) (if model.cursor < 0 0 else model.cursor + 1)
-			else if d.key_pressed(KeyRight) (if model.cursor <= 0 (-1) else model.cursor - 1)
+			if (view != 0 and view != 3) model.cursor
+			else if (d.key_pressed(KeyLeft)) (if (model.cursor < 0) 0 else model.cursor + 1)
+			else if (d.key_pressed(KeyRight)) (if (model.cursor <= 0) (-1) else model.cursor - 1)
 			else model.cursor
 		m = m0
 		# S writes a PNG of the CURRENT view into ./captures — #372's "session
@@ -1786,21 +1896,25 @@ update! = |model0, program_input, io| {
 		# on the curve view "range" MEANS the curve window — a directive saying
 		# (view 1, range 30) re-windows the ladder and fit, same as the keys
 		want_days =
-			if view == 1 and directive.has_d and (directive.range == 30 or directive.range == 60 or directive.range == 90) directive.range
-			else if view == 1 and clicked_chip > 0 (match U64.to_i64_try(clicked_chip) { Ok(cd9) => cd9
-				Err(_) => model.curve_days })
-			else if view == 1 (if d.key_pressed(Key1) 30 else if d.key_pressed(Key2) 60 else if d.key_pressed(Key3) 90 else model.curve_days)
+			if (view == 1 and directive.has_d and (directive.range == 30 or directive.range == 60 or directive.range == 90)) directive.range
+			else if (view == 1 and clicked_chip > 0) (
+				match U64.to_i64_try(clicked_chip) {
+					Ok(cd9) => cd9
+					Err(_) => model.curve_days
+				}
+			)
+			else if (view == 1) (if (d.key_pressed(Key1)) 30 else if (d.key_pressed(Key2)) 60 else if (d.key_pressed(Key3)) 90 else model.curve_days)
 			else model.curve_days
 		# on the trace view, [ and ] walk the picker, X narrows it to one sport.
 		# A filter change moves the selection itself, because the session the
 		# window is showing may be one the new filter does not admit.
 		shifted = d.key_down(KeyLeftShift) or d.key_down(KeyRightShift)
-		want_sport = if view == 2 and !shifted and d.key_pressed(KeyX) (next_sport(model.trace_ids, model.trace_sport)) else model.trace_sport
+		want_sport = if (view == 2 and !shifted and d.key_pressed(KeyX)) (next_sport(model.trace_ids, model.trace_sport)) else model.trace_sport
 		want_sel =
-			if view != 2 or shifted model.trace_sel
-			else if want_sport != model.trace_sport (first_admitted(model.trace_ids, want_sport, model.trace_sel))
-			else if d.key_pressed(KeyLeftBracket) (next_admitted(model.trace_ids, model.trace_sel, want_sport, Bool.True))
-			else if d.key_pressed(KeyRightBracket) (next_admitted(model.trace_ids, model.trace_sel, want_sport, Bool.False))
+			if (view != 2 or shifted) model.trace_sel
+			else if (want_sport != model.trace_sport) (first_admitted(model.trace_ids, want_sport, model.trace_sel))
+			else if (d.key_pressed(KeyLeftBracket)) (next_admitted(model.trace_ids, model.trace_sel, want_sport, Bool.True))
+			else if (d.key_pressed(KeyRightBracket)) (next_admitted(model.trace_ids, model.trace_sel, want_sport, Bool.False))
 			else model.trace_sel
 		# shift+[ summons/ages the ghost; shift+] youngs it and clears it when
 		# it would pass the newest candidate. -1 is no ghost. next_ghost owns
@@ -1808,18 +1922,22 @@ update! = |model0, program_input, io| {
 		# it admits only sessions of the live one's kind, never the live
 		# session's own index.
 		want_ghost =
-			if view != 2 model.ghost_sel
+			if (view != 2) model.ghost_sel
 			# C clears in ONE press from any state - stepping the ghost off the
 			# end also clears, but from deep in the menu that is many presses,
 			# each one looking like nothing happened
-			else if d.key_pressed(KeyC) (-1)
-			else if !shifted model.ghost_sel
+			else if (d.key_pressed(KeyC)) (-1)
+			else if (!shifted) model.ghost_sel
 			else if d.key_pressed(KeyLeftBracket) {
-				start = if model.ghost_sel < 0 (match U64.to_i64_try(model.trace_sel) { Ok(ts9) => ts9
-					Err(_) => -1 }) else model.ghost_sel
+				start = if (model.ghost_sel < 0) (
+					match U64.to_i64_try(model.trace_sel) {
+						Ok(ts9) => ts9
+						Err(_) => -1
+					}
+				) else model.ghost_sel
 				next_ghost(model.trace_ids, start, model.trace_sel, Bool.True)
 			}
-			else if d.key_pressed(KeyRightBracket) (if model.ghost_sel >= 0 (next_ghost(model.trace_ids, model.ghost_sel, model.trace_sel, Bool.False)) else -1)
+			else if (d.key_pressed(KeyRightBracket)) (if (model.ghost_sel >= 0) (next_ghost(model.trace_ids, model.ghost_sel, model.trace_sel, Bool.False)) else -1)
 			else model.ghost_sel
 		# clicking a table row jumps to that day's crosshair on the form board
 		# -2 = no directive OR day not in the series: both leave the cursor
@@ -1827,13 +1945,21 @@ update! = |model0, program_input, io| {
 		cursor_dir =
 			if directive.has_d and directive.cursor_day != "" {
 				total2 = List.len(model.days)
-				List.fold(List.map_with_index(model.days, |dy, di| { dy, di }), -2, |acc, x| if x.dy == directive.cursor_day (match U64.to_i64_try(total2 - 1 - x.di) { Ok(cb2) => cb2
-					Err(_) => acc }) else acc)
+				List.fold(
+					List.map_with_index(model.days, |dy, di| { dy, di }),
+					-2,
+					|acc, x| if (x.dy == directive.cursor_day) (
+						match U64.to_i64_try(total2 - 1 - x.di) {
+							Ok(cb2) => cb2
+							Err(_) => acc
+						}
+					) else acc,
+				)
 			} else -2
 		# the pre-click cursor: arrows and directives applied, row
 		# clicks not yet - the scroll state a click resolves against; the
 		# hover resolves against the post-click state it is about to draw
-		cursor_pre = if cursor_dir >= 0 cursor_dir else cursor
+		cursor_pre = if (cursor_dir >= 0) cursor_dir else cursor
 		row_hit =
 			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and m.x < Table.table_edge(win.w, model.detail_day) and m.y >= Table.rows_top {
 				total = List.len(model.data)
@@ -1857,14 +1983,14 @@ update! = |model0, program_input, io| {
 				match I64.to_u64_try(row_hit.cb) {
 					Err(_) => ""
 					Ok(cb4) =>
-						if cb4 >= total4 ""
+						if (cb4 >= total4) ""
 						else match List.get(model.days, total4 - 1 - cb4) {
 							Ok(dy) => dy
 							Err(_) => ""
 						}
 				}
 			} else ""
-		detail_day2 = if row_hit.hit (if clicked_day == model.detail_day "" else clicked_day) else model.detail_day
+		detail_day2 = if (row_hit.hit) (if (clicked_day == model.detail_day) "" else clicked_day) else model.detail_day
 		# spawn unconditionally: detail_task! answers "no database path" itself,
 		# so a missing directory shows that instead of loading... forever
 		_ = if row_hit.hit and detail_day2 != "" {
@@ -1875,7 +2001,7 @@ update! = |model0, program_input, io| {
 		}
 		view2 = view
 		# a directive naming a day parks the crosshair there
-		cursor2 = if row_hit.hit row_hit.cb else cursor_pre
+		cursor2 = if (row_hit.hit) row_hit.cb else cursor_pre
 		# moving the mouse over the form board's plot un-parks the crosshair:
 		# the hover takes over while inside, and nothing lingers on the way
 		# out. Only a cursor NOT re-parked this same frame (arrow, directive,
@@ -1894,23 +2020,27 @@ update! = |model0, program_input, io| {
 		# an id names one session exactly and wins over a day; a day names
 		# whichever session of that day sorts first, which is the newest
 		want_sel2 =
-			if directive.has_d and directive.trace_id >= 0 (sel_for_id(model.trace_ids, directive.trace_id, want_sel))
-			else if directive.has_d and directive.trace_day != "" (sel_for_day(model.trace_ids, directive.trace_day, want_sel))
+			if (directive.has_d and directive.trace_id >= 0) (sel_for_id(model.trace_ids, directive.trace_id, want_sel))
+			else if (directive.has_d and directive.trace_day != "") (sel_for_day(model.trace_ids, directive.trace_day, want_sel))
 			else want_sel
 		# NoSwitch joins List.get's OutOfBounds in one inferred error union
 		# a switch is the selection moving, or a refetch the picker re-read
 		# asked for: the shown session is gone and the index it fell to
 		# names a session whose samples are not on screen
 		moving = want_sel2 != model.trace_sel or model.trace_refetch
-		switched = if moving (List.get(model.trace_cache, want_sel2)) else Err(NoSwitch)
+		switched = if (moving) (List.get(model.trace_cache, want_sel2)) else Err(NoSwitch)
 		# a switch that misses the cache fetches off the main loop and blanks the
 		# plot until it lands; a switch that HITS answers from memory this frame,
 		# so only the miss is a load in flight
-		trace_fetch = moving and (match switched { Ok(_) => Bool.False
-			Err(_) => Bool.True })
+		trace_fetch = moving and (
+			match switched {
+				Ok(_) => Bool.False
+				Err(_) => Bool.True
+			}
+		)
 		# every switch opens a new generation, fetch or not: a hit also retires
 		# whatever fetch the previous selection still had in flight
-		trace_gen2 = if moving (model.trace_gen + 1) else model.trace_gen
+		trace_gen2 = if (moving) (model.trace_gen + 1) else model.trace_gen
 		_ = if trace_fetch {
 			acc2 = { io, dir: model.stride_dir }
 			units2 = model.units
@@ -1922,15 +2052,15 @@ update! = |model0, program_input, io| {
 		# belonged to the old ride)
 		wheel = Mouse.wheel_delta(d.mouse)
 		zoom_raw =
-			if view != 2 model.trace_zoom
-			else if d.key_pressed(Key0) and !ctrl 1.0
-			else if wheel.y > 0.1 (model.trace_zoom * 1.15)
-			else if wheel.y < -0.1 (model.trace_zoom / 1.15)
+			if (view != 2) model.trace_zoom
+			else if (d.key_pressed(Key0) and !ctrl) 1.0
+			else if (wheel.y > 0.1) (model.trace_zoom * 1.15)
+			else if (wheel.y < -0.1) (model.trace_zoom / 1.15)
 			else model.trace_zoom
-		trace_zoom2 = if moving (1.0) else F32.min(20.0, F32.max(1.0, zoom_raw))
+		trace_zoom2 = if (moving) (1.0) else F32.min(20.0, F32.max(1.0, zoom_raw))
 		pan_raw =
-			if view != 2 model.trace_pan
-			else if (d.key_pressed(Key0) and !ctrl) or moving 0.0
+			if (view != 2) model.trace_pan
+			else if ((d.key_pressed(Key0) and !ctrl) or moving) 0.0
 			else {
 				pw9 = win.w - Theme.pad_l - Theme.pad_r
 				u9 = F32.min(1.0, F32.max(0.0, (m.x - Theme.pad_l) / pw9))
@@ -1946,9 +2076,9 @@ update! = |model0, program_input, io| {
 		# a directive naming a ghost of another kind is refused rather than
 		# honoured: ghost_matches is the same test the keyboard path applies
 		want_ghost_raw =
-			if directive.has_d and directive.ghost_day == "none" (-1)
-			else if directive.has_d and directive.ghost_id >= 0 (ghost_for_id(model.trace_ids, entry_at(model.trace_ids, want_sel2), directive.ghost_id, want_ghost))
-			else if directive.has_d and directive.ghost_day != "" (ghost_for_day(model.trace_ids, entry_at(model.trace_ids, want_sel2), directive.ghost_day, want_ghost))
+			if (directive.has_d and directive.ghost_day == "none") (-1)
+			else if (directive.has_d and directive.ghost_id >= 0) (ghost_for_id(model.trace_ids, entry_at(model.trace_ids, want_sel2), directive.ghost_id, want_ghost))
+			else if (directive.has_d and directive.ghost_day != "") (ghost_for_day(model.trace_ids, entry_at(model.trace_ids, want_sel2), directive.ghost_day, want_ghost))
 			else want_ghost
 		# whatever chose the ghost, the PAIR is re-judged against this frame's
 		# selection: a ghost summoned beside one session must not outlive a
@@ -1960,14 +2090,20 @@ update! = |model0, program_input, io| {
 		want_sport2 = sport_for_sel(model.trace_ids, want_sel2, want_sport)
 		ghost_hit =
 			if want_ghost2 != model.ghost_sel and want_ghost2 >= 0 {
-				match I64.to_u64_try(want_ghost2) { Ok(gu9) => List.get(model.trace_cache, gu9)
-					Err(_) => Err(OutOfBounds) }
+				match I64.to_u64_try(want_ghost2) {
+					Ok(gu9) => List.get(model.trace_cache, gu9)
+					Err(_) => Err(OutOfBounds)
+				}
 			} else Err(NoSwitch)
 		# any ghost change - a new pick, a cache hit, or a dismissal - opens a
 		# new generation, so a load still in flight for the old pick lands nowhere
-		ghost_gen2 = if want_ghost2 != model.ghost_sel (model.ghost_gen + 1) else model.ghost_gen
-		ghost_fetch = want_ghost2 != model.ghost_sel and want_ghost2 >= 0 and (match ghost_hit { Ok(_) => Bool.False
-			Err(_) => Bool.True })
+		ghost_gen2 = if (want_ghost2 != model.ghost_sel) (model.ghost_gen + 1) else model.ghost_gen
+		ghost_fetch = want_ghost2 != model.ghost_sel and want_ghost2 >= 0 and (
+			match ghost_hit {
+				Ok(_) => Bool.False
+				Err(_) => Bool.True
+			}
+		)
 		_ = if ghost_fetch {
 			acc3 = { io, dir: model.stride_dir }
 			ids3 = model.trace_ids
@@ -1975,41 +2111,64 @@ update! = |model0, program_input, io| {
 		}
 		# the flag a capture waits on: raised with the fetch, lowered by its
 		# answer, and dropped by a change that needs no fetch (a hit, a dismissal)
-		ghost_loading2 = if ghost_fetch Bool.True else if want_ghost2 != model.ghost_sel Bool.False else model.ghost_loading
+		ghost_loading2 = if (ghost_fetch) Bool.True else if (want_ghost2 != model.ghost_sel) Bool.False else model.ghost_loading
 		# any ghost change clears the overlay this frame: a failed load leaves
 		# no ghost rather than the previous one
-		ghost2 = match ghost_hit { Ok(gc) => gc.tr
-			Err(_) => if want_ghost2 != model.ghost_sel ([]) else model.ghost }
+		ghost2 = match ghost_hit {
+			Ok(gc) => gc.tr
+			Err(_) => if (want_ghost2 != model.ghost_sel) ([]) else model.ghost
+		}
 		ghost_day2 = match ghost_hit {
-			Ok(_) => match I64.to_u64_try(want_ghost2) { Ok(gu8) => (match List.get(model.trace_ids, gu8) { Ok(ge) => ge.day
-				Err(_) => "" })
-				Err(_) => "" }
-			Err(_) => if want_ghost2 != model.ghost_sel ("") else model.ghost_day }
-		ghost_dur2 = match ghost_hit { Ok(gc) => gc.du
-			Err(_) => model.ghost_dur }
+			Ok(_) => match I64.to_u64_try(want_ghost2) {
+				Ok(gu8) => (
+					match List.get(model.trace_ids, gu8) {
+						Ok(ge) => ge.day
+						Err(_) => ""
+					}
+				)
+				Err(_) => ""
+			}
+			Err(_) => if (want_ghost2 != model.ghost_sel) ("") else model.ghost_day
+		}
+		ghost_dur2 = match ghost_hit {
+			Ok(gc) => gc.du
+			Err(_) => model.ghost_dur
+		}
 		# a cache hit lands its data this frame; a miss clears rather than
 		# drawing the previous ride under the new day
 		switching = moving
-		trace2 = match switched { Ok(sc) => sc.tr
-			Err(_) => if switching ([]) else model.trace }
-		segs2m = match switched { Ok(sc) => sc.sg
-			Err(_) => if switching ([]) else model.segs }
-		trace_splits2 = match switched { Ok(sc) => sc.sp
-			Err(_) => if switching ([]) else model.trace_splits }
-		trace_dur2 = match switched { Ok(sc) => sc.du
-			Err(_) => if switching (1.0) else model.trace_dur }
+		trace2 = match switched {
+			Ok(sc) => sc.tr
+			Err(_) => if (switching) ([]) else model.trace
+		}
+		segs2m = match switched {
+			Ok(sc) => sc.sg
+			Err(_) => if (switching) ([]) else model.segs
+		}
+		trace_splits2 = match switched {
+			Ok(sc) => sc.sp
+			Err(_) => if (switching) ([]) else model.trace_splits
+		}
+		trace_dur2 = match switched {
+			Ok(sc) => sc.du
+			Err(_) => if (switching) (1.0) else model.trace_dur
+		}
 		trace_day2 =
 			if switching {
-				match List.get(model.trace_ids, want_sel2) { Ok(se) => se.day
-					Err(_) => model.trace_day }
+				match List.get(model.trace_ids, want_sel2) {
+					Ok(se) => se.day
+					Err(_) => model.trace_day
+				}
 			} else model.trace_day
 		# the unit is re-derived from the picker row's CHANNEL, not read from
 		# the cache entry, so it is right on a cache miss too - the axis must
 		# never label a heart-rate trace in watts while the samples load
 		trace_unit2 =
 			if switching {
-				match List.get(model.trace_ids, want_sel2) { Ok(se) => Db.trace_unit(se.chan, model.units)
-					Err(_) => model.trace_unit }
+				match List.get(model.trace_ids, want_sel2) {
+					Ok(se) => Db.trace_unit(se.chan, model.units)
+					Err(_) => model.trace_unit
+				}
 			} else model.trace_unit
 		reload_spawned = want_days != model.curve_days or d.key_pressed(KeyR)
 		# R is the full reload - every table, for an athlete who just synced.
@@ -2018,36 +2177,52 @@ update! = |model0, program_input, io| {
 			f2 = model.font
 			acc2r = { io, dir: model.stride_dir }
 			cwd2 = model.cwd
-			Task.spawn!(program_input, || match load_model!(acc2r, cwd2, f2, want_days, Bool.False) {
-				Ok(m2) => Reloaded(m2)
-				Err(_) => ReloadFailed
-			})
+			Task.spawn!(
+				program_input,
+				|| match load_model!(acc2r, cwd2, f2, want_days, Bool.False) {
+					Ok(m2) => Reloaded(m2)
+					Err(_) => ReloadFailed
+				},
+			)
 		} else if want_days != model.curve_days {
 			f3 = model.font
 			acc3r = { io, dir: model.stride_dir }
-			Task.spawn!(program_input, || match load_curve_window!(acc3r, f3, want_days) {
-				Ok(w) => CurveReloaded(w)
-				Err(_) => CurveReloadFailed(want_days)
-			})
+			Task.spawn!(
+				program_input,
+				|| match load_curve_window!(acc3r, f3, want_days) {
+					Ok(w) => CurveReloaded(w)
+					Err(_) => CurveReloadFailed(want_days)
+				},
+			)
 		}
 		chip0h = win.w - 420.0
 		# per-chip, not one wide band: the 8px gaps between chips are not
 		# clickable and must not claim the pointer
 		over_chip = (view2 == 0 or view2 == 1) and m.y >= 64.0 and m.y <= 86.0 and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0))
-		over_row = view2 == 3 and m.x >= 36.0 and m.x < Table.table_edge(win.w, detail_day2) and (match Table.row_at(Table.page_for(model, cursor2), m.y) { Row(_) => Bool.True
-			None => Bool.False })
-		over_nav = m.y >= 30.0 and m.y <= 54.0 and (List.fold(List.map_with_index(model.nav, |nv3, vi3| { nv3, vi3 }), Bool.False, |acc, x| {
-			nx3 = win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.vi3) * nav_pitch
-			if m.x >= nx3 and m.x <= nx3 + nav_width Bool.True else acc
-		}))
-		Mouse.set_cursor!(if over_chip or over_row or over_nav PointingHand else Default)
+		over_row = view2 == 3 and m.x >= 36.0 and m.x < Table.table_edge(win.w, detail_day2) and (
+			match Table.row_at(Table.page_for(model, cursor2), m.y) {
+				Row(_) => Bool.True
+				None => Bool.False
+			}
+		)
+		over_nav = m.y >= 30.0 and m.y <= 54.0 and (
+			List.fold(
+				List.map_with_index(model.nav, |nv3, vi3| { nv3, vi3 }),
+				Bool.False,
+				|acc, x| {
+					nx3 = win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.vi3) * nav_pitch
+					if (m.x >= nx3 and m.x <= nx3 + nav_width) Bool.True else acc
+				},
+			)
+		)
+		Mouse.set_cursor!(if (over_chip or over_row or over_nav) PointingHand else Default)
 		# a view switch stamps this frame; render fades the new view in from it
 		# a click settles the career sweep instantly - zero means "no animation"
 		# to every consumer of view_anim, so the twentieth arrival never pays
 		# the first arrival's price
 		# F cycles the career view's sport; harmless elsewhere
-		spine_idx = if view == 8 and d.key_pressed(KeyF) (model.spine_idx + 1) else model.spine_idx
-		view_anim = if view != model.view (model.tick + 1) else if view == 8 and Mouse.button_pressed(d.mouse, Left) (0) else model.view_anim
+		spine_idx = if (view == 8 and d.key_pressed(KeyF)) (model.spine_idx + 1) else model.spine_idx
+		view_anim = if (view != model.view) (model.tick + 1) else if (view == 8 and Mouse.button_pressed(d.mouse, Left)) (0) else model.view_anim
 		tick = model.tick + 1
 		# frame one of a boot: the window is already on screen showing the
 		# splash - kick the real load exactly once, the same task R runs
@@ -2055,20 +2230,23 @@ update! = |model0, program_input, io| {
 			f0 = model.font
 			acc0r = { io, dir: model.stride_dir }
 			cwd0 = model.cwd
-			Task.spawn!(program_input, || match load_model!(acc0r, cwd0, f0, 90, Bool.False) {
-				Ok(m2) => Reloaded(m2)
-				Err(_) => ReloadFailed
-			})
+			Task.spawn!(
+				program_input,
+				|| match load_model!(acc0r, cwd0, f0, 90, Bool.False) {
+					Ok(m2) => Reloaded(m2)
+					Err(_) => ReloadFailed
+				},
+			)
 		}
 		# focus mirrors the screen: view, range, the crosshair day, the session
 		cur_day =
-			if cursor3 < 0 ""
+			if (cursor3 < 0) ""
 			else {
 				total3 = List.len(model.days)
 				match I64.to_u64_try(cursor3) {
 					Err(_) => ""
 					Ok(cb3) =>
-						if cb3 >= total3 ""
+						if (cb3 >= total3) ""
 						else match List.get(model.days, total3 - 1 - cb3) {
 							Ok(dy) => dy
 							Err(_) => ""
@@ -2079,10 +2257,11 @@ update! = |model0, program_input, io| {
 			view: focus_view_code(view2),
 			# the curve view's window IS its range; the other views report the
 			# form board's
-			range:
-				if view2 == 1 want_days
-				else match U64.to_i64_try(range) { Ok(ri) => ri
-					Err(_) => 90 },
+			range: if (view2 == 1) want_days
+			else match U64.to_i64_try(range) {
+				Ok(ri) => ri
+				Err(_) => 90
+			},
 			cursor_day: cur_day,
 			# both frame-true: a cached switch or summon lands this frame, and
 			# the coach's readout must not trail it by one write
@@ -2091,12 +2270,16 @@ update! = |model0, program_input, io| {
 			# the ids answer "which session" where a day cannot, on a day that
 			# carries two; -1 (no session) writes as NULL
 			trace_id: id_at(model.trace_ids, want_sel2),
-			ghost_id: (match I64.to_u64_try(want_ghost2) { Ok(gu5) => id_at(model.trace_ids, gu5)
-				Err(_) => -1 }),
+			ghost_id: (
+				match I64.to_u64_try(want_ghost2) {
+					Ok(gu5) => id_at(model.trace_ids, gu5)
+					Err(_) => -1
+				}
+			),
 			# beyond the session: the table's open panel day (drawn on the table
 			# view only, so named there only), the trace's sport
 			# filter and the career view's family, each '' (NULL) when none
-			detail_day: (if view2 == 3 detail_day2 else ""),
+			detail_day: (if (view2 == 3) detail_day2 else ""),
 			sport: want_sport2,
 			family: Career.spine_at(model.career_spines, spine_idx).fam,
 		}
@@ -2114,10 +2297,12 @@ update! = |model0, program_input, io| {
 		# honoured directive closes with none. "applied" means the frame
 		# accepted and acted; async completions it started (a reload, a
 		# cache-miss fetch) may still fail and recover by their own rules.
-		rec_active = match program_input.capture { Active(_) => Bool.True
-			_ => Bool.False }
+		rec_active = match program_input.capture {
+			Active(_) => Bool.True
+			_ => Bool.False
+		}
 		cap_pending = capture_is_pending(pending1)
-		refused9 = if directive.has_d and directive.id >= 0 (refusals_for(directive, cursor_dir, want_sel2, model.trace_sel, model.trace_ids, rec_active, cap_pending)) else ""
+		refused9 = if (directive.has_d and directive.id >= 0) (refusals_for(directive, cursor_dir, want_sel2, model.trace_sel, model.trace_ids, rec_active, cap_pending)) else ""
 		# a capture the refusals let through waits on the host for its mark;
 		# the test is the predicate that produced the refusal, so refusal text
 		# elsewhere in the row cannot suppress it. The file is named for the
@@ -2130,17 +2315,17 @@ update! = |model0, program_input, io| {
 			_ = io.capture().start!(rec9)
 			{}
 		}
-		_ = if cap_ok and directive.capture == "webm_stop" (Task.spawn!(program_input, || RecCmd(io.capture().stop!())))
+		_ = if (cap_ok and directive.capture == "webm_stop") (Task.spawn!(program_input, || RecCmd(io.capture().stop!())))
 		v_starts = d.key_pressed(KeyV) and !rec_active
 		rec_path2 =
-			if cap_ok and directive.capture == "webm_start" (capture_path(model.cwd, Str.concat(cap_name, ".webm")))
-			else if v_starts (capture_path(model.cwd, Str.concat(view_basename(view), ".webm")))
+			if (cap_ok and directive.capture == "webm_start") (capture_path(model.cwd, Str.concat(cap_name, ".webm")))
+			else if (v_starts) (capture_path(model.cwd, Str.concat(view_basename(view), ".webm")))
 			else model.rec_path
 		wait9 = |name9, path9| { id: directive.id, refused: refused9, path: path9, name: name9, since: tick }
 		pending2 =
-			if cap_ok and directive.capture == "png" (ArmedShot(wait9(Str.concat(cap_name, ".png"), capture_path(model.cwd, Str.concat(cap_name, ".png")))))
-			else if cap_ok and directive.capture == "webm_start" (AwaitingStart(wait9(Str.concat(cap_name, ".webm"), rec_path2)))
-			else if cap_ok and directive.capture == "webm_stop" (AwaitingStop(wait9("", model.rec_path)))
+			if (cap_ok and directive.capture == "png") (ArmedShot(wait9(Str.concat(cap_name, ".png"), capture_path(model.cwd, Str.concat(cap_name, ".png")))))
+			else if (cap_ok and directive.capture == "webm_start") (AwaitingStart(wait9(Str.concat(cap_name, ".webm"), rec_path2)))
+			else if (cap_ok and directive.capture == "webm_stop") (AwaitingStop(wait9("", model.rec_path)))
 			else pending1
 		# no directory means no database means no bus - spawning would only
 		# manufacture failing tasks every tick, forever
@@ -2161,13 +2346,13 @@ update! = |model0, program_input, io| {
 		}
 		glow2 =
 			match model.glow {
-				Ready(g9) => if g9.gw == pixels.w and g9.gh == pixels.h (model.glow) else build_glow!(pixels)
+				Ready(g9) => if (g9.gw == pixels.w and g9.gh == pixels.h) (model.glow) else build_glow!(pixels)
 				Unbuilt => build_glow!(pixels)
 				# a refusal is sticky at the size it happened; a resize retries
-				Unavailable(u9) => if u9.gw == pixels.w and u9.gh == pixels.h (model.glow) else build_glow!(pixels)
+				Unavailable(u9) => if (u9.gw == pixels.w and u9.gh == pixels.h) (model.glow) else build_glow!(pixels)
 			}
-		glow_on2 = if d.key_pressed(KeyG) (!model.glow_on) else model.glow_on
-		Ok({ ..model, reloading: (if reload_spawned Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if directive.has_d and directive.id >= 0 ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if trace_fetch Bool.True else if moving Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if detail_day2 != model.detail_day [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if view2 == 0 (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		glow_on2 = if (d.key_pressed(KeyG)) (!model.glow_on) else model.glow_on
+		Ok({ ..model, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
@@ -2252,7 +2437,7 @@ scene! = |model, frame| {
 	# default: a standing "150%" reads as a value something set wrong, when it is
 	# just the shipped default. At rest it is a plain affordance; a changed scale
 	# earns the number, because then it is the athlete's own choice and feedback.
-	scale_label = if model.ui_percent == DisplayScale.default_percent "Ctrl +/-  resize" else "${Db.fmt_i(model.ui_scale * 100.0)}%  Ctrl +/-"
+	scale_label = if (model.ui_percent == DisplayScale.default_percent) "Ctrl +/-  resize" else "${Db.fmt_i(model.ui_scale * 100.0)}%  Ctrl +/-"
 	Text.from(scale_label, model.font).size(11).draw!(frame, { pos: { x: 152.0, y: 40.0 }, color: Theme.ink_muted, align: (Top, Left) })
 	# the recording badge lives below the pills on every view: a red dot
 	# while filming, a quiet confirmation once the file is written
@@ -2279,18 +2464,21 @@ scene! = |model, frame| {
 	}
 	# the nav: every view, visible and clickable, active one filled - TAB
 	# stays as the keyboard accelerator
-	List.for_each!(List.map_with_index(model.nav, |nv, ni| { nv, ni }), |x| {
-		nx = model.win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.ni) * nav_pitch
-		on2 = x.nv.v == model.view
-		hov2 = model.mouse_x >= nx and model.mouse_x <= nx + nav_width and model.mouse_y >= 30.0 and model.mouse_y <= 54.0
-		style2 = if on2 (Draw.filled(Color.with_alpha(Theme.ctl_c, 60))) else if hov2 (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
-		frame.rounded_rectangle!({ x: nx, y: 30.0, width: nav_width, height: 24.0, radius: 7.0, segments: 6, style: style2 })
-		ic = if on2 Color.white else Theme.ink_muted
-		nav_icon!(frame, x.nv.v, nx + 7.0, 36.0, ic)
-		# the label centers in the span RIGHT of the mark, not the pill - a
-		# pill-centered label would sit under the icon
-		x.nv.p.draw!(frame, { pos: { x: nx + 44.0, y: 35.0 }, color: ic, align: (Top, Center) })
-	})
+	List.for_each!(
+		List.map_with_index(model.nav, |nv, ni| { nv, ni }),
+		|x| {
+			nx = model.win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.ni) * nav_pitch
+			on2 = x.nv.v == model.view
+			hov2 = model.mouse_x >= nx and model.mouse_x <= nx + nav_width and model.mouse_y >= 30.0 and model.mouse_y <= 54.0
+			style2 = if (on2) (Draw.filled(Color.with_alpha(Theme.ctl_c, 60))) else if (hov2) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
+			frame.rounded_rectangle!({ x: nx, y: 30.0, width: nav_width, height: 24.0, radius: 7.0, segments: 6, style: style2 })
+			ic = if (on2) Color.white else Theme.ink_muted
+			nav_icon!(frame, x.nv.v, nx + 7.0, 36.0, ic)
+			# the label centers in the span RIGHT of the mark, not the pill - a
+			# pill-centered label would sit under the icon
+			x.nv.p.draw!(frame, { pos: { x: nx + 44.0, y: 35.0 }, color: ic, align: (Top, Center) })
+		},
+	)
 	# Legend belongs to the FORM BOARD only: it draws in the same row the
 	# other views put their titles in, and overprinted them.
 	if model.view == 0 {
@@ -2329,8 +2517,10 @@ scene! = |model, frame| {
 	age = model.tick - model.view_anim
 	if model.view_anim > 0 and age < 10 {
 		fade = 10 - age
-		a = match U64.to_u8_try(fade * fade * 2) { Ok(v) => v
-			Err(_) => 0 }
+		a = match U64.to_u8_try(fade * fade * 2) {
+			Ok(v) => v
+			Err(_) => 0
+		}
 		frame.rectangle!({ x: 16.0, y: 16.0, width: model.win.w - 32.0, height: model.win.h - 32.0, style: Draw.filled(Color.with_alpha(Theme.panel, a)) })
 	}
 	drawn
@@ -2365,9 +2555,11 @@ splash! = |model, frame| {
 	mixc = |t| {
 		lerp = |a, b, k| {
 			v = a + (b - a) * k
-			match F32.round_to_u64_try(if v < 0.0 (0.0) else if v > 255.0 (255.0) else v) {
-				Ok(u) => match U64.to_u8_try(u) { Ok(c8) => c8
-					Err(_) => 255.U8 }
+			match F32.round_to_u64_try(if (v < 0.0) (0.0) else if (v > 255.0) (255.0) else v) {
+				Ok(u) => match U64.to_u8_try(u) {
+					Ok(c8) => c8
+					Err(_) => 255.U8
+				}
 				Err(_) => 0.U8
 			}
 		}
@@ -2389,9 +2581,11 @@ splash! = |model, frame| {
 			# in over the first moments and breathes gently while the
 			# load works; the glow shader has nothing to add here.
 			tf = U64.to_f32(model.tick)
-			ar = if tf > 42.0 (255.0) else tf * 6.0
-			a8 = match F32.to_u8_try(ar) { Ok(av) => av
-				Err(_) => 255.U8 }
+			ar = if (tf > 42.0) (255.0) else tf * 6.0
+			a8 = match F32.to_u8_try(ar) {
+				Ok(av) => av
+				Err(_) => 255.U8
+			}
 			sc = 1.0 + 0.015 * F32.sin(tf / 25.0)
 			side = 264.0 * sc
 			frame.texture!({ texture: lt, source: { x: 0.0, y: 0.0, width: lt.width, height: lt.height }, dest: { x: cx - side / 2.0, y: (cy - 16.0) - side / 2.0, width: side, height: side }, origin: { x: 0.0, y: 0.0 }, rotation: 0.0, tint: Color.with_alpha(Color.white, a8) })
@@ -2400,7 +2594,7 @@ splash! = |model, frame| {
 		NoLogo => splash_route!(model, frame, cx, cy, pi, mixc)
 	}
 	Text.from("Stride", model.font).size(30).draw!(frame, { pos: { x: cx, y: cy + 124.0 }, color: Color.white, align: (Top, Center) })
-	dots = if model.tick % 90 < 30 "." else if model.tick % 90 < 60 ".." else "..."
+	dots = if (model.tick % 90 < 30) "." else if (model.tick % 90 < 60) ".." else "..."
 	Text.from("loading your training story${dots}", model.font).size(13).draw!(frame, { pos: { x: cx, y: cy + 164.0 }, color: Theme.ink_muted, align: (Top, Center) })
 	Ok({})
 }
@@ -2446,22 +2640,25 @@ splash_route! = |model, frame, cx, cy, pi, mixc| {
 	# inside the loading window and the mountain would never be seen
 	cyc = model.tick % 90
 	p_raw = U64.to_f32(cyc) / 56.0
-	p1 = if p_raw > 1.0 (1.0) else p_raw
+	p1 = if (p_raw > 1.0) (1.0) else p_raw
 	p = 1.0 - (1.0 - p1) * (1.0 - p1)
 	start = pt(0)
 	# the start marker is a RING in the logo, not a dot
 	frame.circle!({ center: { x: start.x, y: start.y }, radius: 9.0, style: Draw.filled(Theme.tsb_c) })
 	frame.circle!({ center: { x: start.x, y: start.y }, radius: 5.0, style: Draw.filled(Theme.bg) })
-	List.for_each!(List.map_with_index(List.repeat({}, n), |_u, i| i), |i| {
-		a = pt(i)
-		b = pt(i + 1)
-		if b.t <= p {
-			# a round cap at every joint: bare segment ends leave a notch
-			# per joint that reads as a speckled edge under magnification
-			frame.line!({ start: { x: a.x, y: a.y }, end: { x: b.x, y: b.y }, stroke: Draw.stroke(mixc(a.t), 6) })
-			frame.circle!({ center: { x: b.x, y: b.y }, radius: 2.9, style: Draw.filled(mixc(b.t)) })
-		}
-	})
+	List.for_each!(
+		List.map_with_index(List.repeat({}, n), |_u, i| i),
+		|i| {
+			a = pt(i)
+			b = pt(i + 1)
+			if b.t <= p {
+				# a round cap at every joint: bare segment ends leave a notch
+				# per joint that reads as a speckled edge under magnification
+				frame.line!({ start: { x: a.x, y: a.y }, end: { x: b.x, y: b.y }, stroke: Draw.stroke(mixc(a.t), 6) })
+				frame.circle!({ center: { x: b.x, y: b.y }, radius: 2.9, style: Draw.filled(mixc(b.t)) })
+			}
+		},
+	)
 	# the mountain: apex, a left slope ending in a short downward foot, and
 	# the long open right slope - separate from the route, arriving with a
 	# pop once the route has finished drawing
@@ -2477,12 +2674,25 @@ splash_route! = |model, frame, cx, cy, pi, mixc| {
 		frame.circle!({ center: { x: l1.x, y: l1.y }, radius: 2.9, style: Draw.filled(vio) })
 		hold = U64.to_f32(cyc - 56) / 34.0
 		pop = F32.sin(hold * pi)
-		frame.circle!({ center: { x: ax, y: ay }, radius: 5.0 + pop * 9.0, style: Draw.filled(Color.with_alpha(vio, match F32.to_u8_try(70.0 * (1.0 - hold)) { Ok(pa) => pa
-			Err(_) => 0 })) })
+		frame.circle!({
+			center: { x: ax, y: ay },
+			radius: 5.0 + pop * 9.0,
+			style: Draw.filled(
+				Color.with_alpha(
+					vio,
+					match F32.to_u8_try(70.0 * (1.0 - hold)) {
+						Ok(pa) => pa
+						Err(_) => 0
+					},
+				),
+			),
+		})
 	} else {
 		# the comet at the pen, the same one the career view rides
-		head_i = match F32.round_to_u64_try(p * U64.to_f32(n)) { Ok(hi) => hi
-			Err(_) => 0.U64 }
+		head_i = match F32.round_to_u64_try(p * U64.to_f32(n)) {
+			Ok(hi) => hi
+			Err(_) => 0.U64
+		}
 		hp = pt(head_i)
 		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 11.0, style: Draw.filled(Color.with_alpha(Color.white, 26)) })
 		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 6.0, style: Draw.filled(Color.with_alpha(mixc(p), 140)) })
@@ -2512,11 +2722,17 @@ render! = |model, frame| {
 					Err(_) => {}
 					Ok(_) => {
 						td = { texture: g.rt.texture(), source: g.rt.source(), dest: { x: 0.0, y: 0.0, width: g.gw, height: g.gh }, origin: { x: 0.0, y: 0.0 }, rotation: 0.0, tint: Color.white }
-						_ = frame.with_blend_mode!(Additive, |f2|
-							f2.with_shader!(g.shader, |f3| {
-								f3.texture!(td)
-								Ok({})
-							}))
+						_ = frame.with_blend_mode!(
+							Additive,
+							|f2|
+								f2.with_shader!(
+									g.shader,
+									|f3| {
+										f3.texture!(td)
+										Ok({})
+									},
+								),
+						)
 					}
 				}
 				Ok({})

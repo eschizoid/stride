@@ -72,6 +72,21 @@ jobs:
           echo "--- roc check src/cli/Schema.roc (DDL-only, no expects) ---"
           roc check src/cli/Schema.roc
 
+  # Every .roc file must already be in `roc fmt` form. The formatter reads only
+  # source, so one OS is enough; Linux, whose checkout keeps the files byte for
+  # byte as committed.
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Roc (new compiler)
+        uses: ./.github/actions/setup-roc
+
+      - name: Check formatting (roc fmt --check)
+        shell: bash
+        run: roc fmt --check src tests
+
   # Builds the real binary and runs the e2e suites against it with a sandboxed
   # HOME and no network. It runs on macOS, where the suite is known green; no
   # known bug pins it there, so moving it needs a trial run. No job here builds

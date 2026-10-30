@@ -12,11 +12,11 @@ Trace :: [].{
 	# heart rate span different ranges on the same axis.
 	y_step : F32 -> F32
 	y_step = |hi|
-		if hi <= 60.0 (10.0)
-		else if hi <= 150.0 (25.0)
-		else if hi <= 300.0 (50.0)
-		else if hi <= 600.0 (100.0)
-		else if hi <= 1500.0 (250.0)
+		if (hi <= 60.0) (10.0)
+		else if (hi <= 150.0) (25.0)
+		else if (hi <= 300.0) (50.0)
+		else if (hi <= 600.0) (100.0)
+		else if (hi <= 1500.0) (250.0)
 		else 500.0
 
 	# The pace channel's samples are metres per second, spanning single
@@ -27,8 +27,8 @@ Trace :: [].{
 	# "better" to read.
 	y_step_pace : F32 -> F32
 	y_step_pace = |hi|
-		if hi <= 2.0 (0.25)
-		else if hi <= 4.0 (0.5)
+		if (hi <= 2.0) (0.25)
+		else if (hi <= 4.0) (0.5)
 		else 1.0
 
 	# the pace channel is recognized by its unit label - the one channel
@@ -49,12 +49,12 @@ Trace :: [].{
 	# whole-session spacing and labelling nothing.
 	x_step : F32, F32 -> F32
 	x_step = |dur, zoom| {
-		vis = if zoom > 0.0 (dur / zoom) else dur
-		if vis <= 120.0 (15.0)
-		else if vis <= 300.0 (30.0)
-		else if vis <= 900.0 (60.0)
-		else if vis <= 1800.0 (300.0)
-		else if vis <= 5400.0 (600.0)
+		vis = if (zoom > 0.0) (dur / zoom) else dur
+		if (vis <= 120.0) (15.0)
+		else if (vis <= 300.0) (30.0)
+		else if (vis <= 900.0) (60.0)
+		else if (vis <= 1800.0) (300.0)
+		else if (vis <= 5400.0) (600.0)
 		else 1800.0
 	}
 
@@ -62,19 +62,21 @@ Trace :: [].{
 	# session is remembered, rather than as a sample count.
 	fmt_clock : F32 -> Str
 	fmt_clock = |s| {
-		t = match F32.round_to_u64_try(F32.max(s, 0.0)) { Ok(v) => v
-			Err(_) => 0.U64 }
+		t = match F32.round_to_u64_try(F32.max(s, 0.0)) {
+			Ok(v) => v
+			Err(_) => 0.U64
+		}
 		ss = t % 60
-		"${U64.to_str(t // 60)}:${if ss < 10 ("0") else ""}${U64.to_str(ss)}"
+		"${U64.to_str(t // 60)}:${if (ss < 10) ("0") else ""}${U64.to_str(ss)}"
 	}
 
 	expect {
 		# a ride peaking near 500W and a strength session's heart rate land on
 		# different steps from the same function
 		y_step(550.0) == 100.0
-		and y_step(198.0) == 50.0
-		and y_step(40.0) == 10.0
-		and y_step(3000.0) == 500.0
+			and y_step(198.0) == 50.0
+			and y_step(40.0) == 10.0
+			and y_step(3000.0) == 500.0
 	}
 
 	expect {
@@ -82,18 +84,18 @@ Trace :: [].{
 		# span is 270s, which earns 30s ticks — the step follows what is ON
 		# SCREEN, not the session length
 		x_step(2700.0, 1.0) == 600.0
-		and x_step(2700.0, 2.0) == 300.0
-		and x_step(2700.0, 10.0) == 30.0
-		# a zoom of zero cannot divide: the whole session stands in
-		and x_step(2700.0, 0.0) == 600.0
+			and x_step(2700.0, 2.0) == 300.0
+			and x_step(2700.0, 10.0) == 30.0
+			# a zoom of zero cannot divide: the whole session stands in
+			and x_step(2700.0, 0.0) == 600.0
 	}
 
 	expect {
 		fmt_clock(0.0) == "0:00"
-		and fmt_clock(600.0) == "10:00"
-		and fmt_clock(65.0) == "1:05"
-		# a negative never reaches the axis, but it must not underflow U64
-		and fmt_clock(-5.0) == "0:00"
+			and fmt_clock(600.0) == "10:00"
+			and fmt_clock(65.0) == "1:05"
+			# a negative never reaches the axis, but it must not underflow U64
+			and fmt_clock(-5.0) == "0:00"
 	}
 
 	# ── session trace view (TAB) ────────────────────────────────────────────
@@ -118,26 +120,26 @@ Trace :: [].{
 		# describes THIS session: both the channel it plots and whether the
 		# detector found any blocks in it vary from one session to the next.
 		nsegs = List.len(List.keep_if(model.segs, |sg| sg.kind == "work"))
-		what = if model.trace_unit == "bpm" ("heart rate") else if pace_axis(model.trace_unit) ("pace") else "power"
+		what = if (model.trace_unit == "bpm") ("heart rate") else if (pace_axis(model.trace_unit)) ("pace") else "power"
 		blocks =
-			if List.is_empty(model.trace) ("")
-			else if nsegs == 0 (" - no intervals detected")
-			else if nsegs == 1 (" - 1 detected block shaded behind it") else " - ${U64.to_str(nsegs)} detected blocks shaded behind it"
+			if (List.is_empty(model.trace)) ("")
+			else if (nsegs == 0) (" - no intervals detected")
+			else if (nsegs == 1) (" - 1 detected block shaded behind it") else " - ${U64.to_str(nsegs)} detected blocks shaded behind it"
 		Text.from("${what} trace${blocks}", model.font).size(15).draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		# Which session, said the way a human remembers one: its NAME first,
 		# then the date, sport and picker position, then the filter X is
 		# holding - a mode key with no visible mode reads as a dead key.
-		if List.is_empty(model.trace_ids) {} else {
+		if (List.is_empty(model.trace_ids)) {} else {
 			n_ids = List.len(model.trace_ids)
 			sel = match List.get(model.trace_ids, model.trace_sel) {
 				Ok(te) => te
 				Err(_) => { id: 0, day: model.trace_day, name: "", sport: "", chan: "" }
 			}
 			Text.from(sel.name, model.font).size(13).draw!(frame, { pos: { x: model.win.w - 34.0, y: 70.0 }, color: Color.white, align: (Top, Right) })
-			filt = if model.trace_sport == "" ("all sports") else "${model.trace_sport} only"
+			filt = if (model.trace_sport == "") ("all sports") else "${model.trace_sport} only"
 			Text.from("${sel.day}   ${sel.sport}   ${U64.to_str(model.trace_sel + 1)}/${U64.to_str(n_ids)}   showing ${filt} (X cycles)", model.font).size(12).draw!(frame, { pos: { x: model.win.w - 34.0, y: 90.0 }, color: ink_muted, align: (Top, Right) })
 			if model.ghost_day != "" {
-				gname = List.fold(model.trace_ids, "", |acc, ge| if ge.day == model.ghost_day ge.name else acc)
+				gname = List.fold(model.trace_ids, "", |acc, ge| if (ge.day == model.ghost_day) ge.name else acc)
 				Text.from("ghost (purple): ${gname}  ${model.ghost_day}   C clears", model.font).size(12).draw!(frame, { pos: { x: model.win.w - 34.0, y: 110.0 }, color: Theme.atl_c, align: (Top, Right) })
 			}
 		}
@@ -189,52 +191,70 @@ Trace :: [].{
 			# [pan, pan + 1/zoom] of the session, in session-fraction space
 			cam = |frac| pad_l + pw * (frac - model.trace_pan) * model.trace_zoom
 			sx = |sec| cam(sec / total_s)
-			tx = |i| if nlast == 0 (pad_l) else cam(U64.to_f32(i) / U64.to_f32(nlast))
+			tx = |i| if (nlast == 0) (pad_l) else cam(U64.to_f32(i) / U64.to_f32(nlast))
 			ty = |w| pad_t + ph * (1.0 - w / w_hi)
 			x_min = pad_l
 			x_max = pad_l + pw
 			# clip a segment to the plot: fully outside skips, a straddler keeps
 			# its interpolated portion - ends clamp instead of vanishing
 			clip_seg! = |x0, y0, x1, y1, stk| {
-				if x1 <= x_min or x0 >= x_max or x1 <= x0 {} else {
-					t0 = if x0 < x_min ((x_min - x0) / (x1 - x0)) else 0.0
-					t1 = if x1 > x_max ((x_max - x0) / (x1 - x0)) else 1.0
+				if (x1 <= x_min or x0 >= x_max or x1 <= x0) {} else {
+					t0 = if (x0 < x_min) ((x_min - x0) / (x1 - x0)) else 0.0
+					t1 = if (x1 > x_max) ((x_max - x0) / (x1 - x0)) else 1.0
 					frame.line!({ start: { x: x0 + (x1 - x0) * t0, y: y0 + (y1 - y0) * t0 }, end: { x: x0 + (x1 - x0) * t1, y: y0 + (y1 - y0) * t1 }, stroke: stk })
 				}
 			}
-			List.for_each!(model.segs, |sg| {
-				col = if sg.kind == "work" (Color.with_alpha(tsb_c, 52)) else if sg.kind == "recovery" (Color.with_alpha(ink_faint, 36)) else Color.with_alpha(ink_faint, 18)
-				# blocks clamp to the plot edges; one fully outside draws nothing
-				x0 = F32.max(x_min, sx(I64.to_f32(sg.start_s)))
-				x1 = F32.min(x_max, sx(I64.to_f32(sg.start_s + sg.dur_s)))
-				if x1 > x0 {
-					frame.rectangle!({ x: x0, y: pad_t, width: F32.max(x1 - x0, 1.0), height: ph, style: Draw.filled(col) })
-				}
-			})
+			List.for_each!(
+				model.segs,
+				|sg| {
+					col = if (sg.kind == "work") (Color.with_alpha(tsb_c, 52)) else if (sg.kind == "recovery") (Color.with_alpha(ink_faint, 36)) else Color.with_alpha(ink_faint, 18)
+					# blocks clamp to the plot edges; one fully outside draws nothing
+					x0 = F32.max(x_min, sx(I64.to_f32(sg.start_s)))
+					x1 = F32.min(x_max, sx(I64.to_f32(sg.start_s + sg.dur_s)))
+					if x1 > x0 {
+						frame.rectangle!({ x: x0, y: pad_t, width: F32.max(x1 - x0, 1.0), height: ph, style: Draw.filled(col) })
+					}
+				},
+			)
 			# The y grid: a faint rule and a value at each step, so a level can
 			# be read off the plot instead of guessed. The axis starts at zero
 			# — the same origin the trace itself is scaled against.
 			is_pace = pace_axis(model.trace_unit)
-			ystep = if is_pace (y_step_pace(w_hi)) else y_step(w_hi)
-			ycount = match F32.round_to_u64_try(F32.div_floor_by(w_hi, ystep)) { Ok(yn) => yn
-				Err(_) => 0.U64 }
+			ystep = if (is_pace) (y_step_pace(w_hi)) else y_step(w_hi)
+			ycount = match F32.round_to_u64_try(F32.div_floor_by(w_hi, ystep)) {
+				Ok(yn) => yn
+				Err(_) => 0.U64
+			}
 			# the step reaches F64 through a millimetre integer - exact for
 			# every step this file chooses, and the label math wants F64
-			ystep64 = ((match F32.round_to_u64_try(ystep * 1000.0) { Ok(u) => u
-				Err(_) => 0.U64 })).to_f64() / 1000.0
-			List.for_each!(List.map_with_index(List.repeat({}, ycount), |_u, k| k), |k|
-				{
-					gv = (U64.to_f32(k) + 1.0) * ystep
-					if gv < w_hi {
-						frame.line!({ start: { x: x_min, y: ty(gv) }, end: { x: x_max, y: ty(gv) }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 36), 1) })
-						# a pace gridline says the pace, not the raw m/s the
-						# samples are stored in - the same last-moment rule
-						# every other surface follows
-						lbl = if is_pace (Units.pace_from_speed(model.units, ((k).to_f64() + 1.0) * ystep64)) else (match F32.round_to_u64_try(gv) { Ok(gi) => U64.to_str(gi)
-							Err(_) => "" })
-						Text.from(lbl, model.font).size(10).draw!(frame, { pos: { x: x_min - 8.0, y: ty(gv) - 6.0 }, color: ink_faint, align: (Top, Right) })
-					} else {}
-				})
+			ystep64 = (
+				(
+					match F32.round_to_u64_try(ystep * 1000.0) {
+						Ok(u) => u
+						Err(_) => 0.U64
+					}
+				)
+			).to_f64() / 1000.0
+			List.for_each!(
+				List.map_with_index(List.repeat({}, ycount), |_u, k| k),
+				|k|
+					{
+						gv = (U64.to_f32(k) + 1.0) * ystep
+						if gv < w_hi {
+							frame.line!({ start: { x: x_min, y: ty(gv) }, end: { x: x_max, y: ty(gv) }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 36), 1) })
+							# a pace gridline says the pace, not the raw m/s the
+							# samples are stored in - the same last-moment rule
+							# every other surface follows
+							lbl = if (is_pace) (Units.pace_from_speed(model.units, ((k).to_f64() + 1.0) * ystep64)) else (
+								match F32.round_to_u64_try(gv) {
+									Ok(gi) => U64.to_str(gi)
+									Err(_) => ""
+								}
+							)
+							Text.from(lbl, model.font).size(10).draw!(frame, { pos: { x: x_min - 8.0, y: ty(gv) - 6.0 }, color: ink_faint, align: (Top, Right) })
+						} else {}
+					},
+			)
 			# the unit names itself once, above the column of values it governs,
 			# rather than repeating on every rule
 			Text.from(model.trace_unit, model.font).size(10).draw!(frame, { pos: { x: x_min - 8.0, y: pad_t - 15.0 }, color: ink_muted, align: (Top, Right) })
@@ -243,15 +263,20 @@ Trace :: [].{
 			# ticks the camera puts outside the plot are skipped rather than
 			# clamped, which would stack them on the edge.
 			xstep = x_step(total_s, model.trace_zoom)
-			xcount = match F32.round_to_u64_try(F32.div_floor_by(total_s, xstep)) { Ok(xn) => xn
-				Err(_) => 0.U64 }
-			List.for_each!(List.map_with_index(List.repeat({}, xcount + 1), |_u, k| U64.to_f32(k) * xstep), |gs| {
-				gx9 = sx(gs)
-				if gx9 >= x_min and gx9 <= x_max {
-					frame.line!({ start: { x: gx9, y: pad_t }, end: { x: gx9, y: pad_t + ph }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 28), 1) })
-					Text.from(fmt_clock(gs), model.font).size(10).draw!(frame, { pos: { x: gx9, y: pad_t + ph + 6.0 }, color: ink_faint, align: (Top, Center) })
-				} else {}
-			})
+			xcount = match F32.round_to_u64_try(F32.div_floor_by(total_s, xstep)) {
+				Ok(xn) => xn
+				Err(_) => 0.U64
+			}
+			List.for_each!(
+				List.map_with_index(List.repeat({}, xcount + 1), |_u, k| U64.to_f32(k) * xstep),
+				|gs| {
+					gx9 = sx(gs)
+					if gx9 >= x_min and gx9 <= x_max {
+						frame.line!({ start: { x: gx9, y: pad_t }, end: { x: gx9, y: pad_t + ph }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 28), 1) })
+						Text.from(fmt_clock(gs), model.font).size(10).draw!(frame, { pos: { x: gx9, y: pad_t + ph + 6.0 }, color: ink_faint, align: (Top, Center) })
+					} else {}
+				},
+			)
 			# pairing the samples with their own tail expresses "each sample
 			# and its successor" without index arithmetic
 			# the ghost rides the SAME seconds-per-pixel as the live trace, so a
@@ -274,8 +299,10 @@ Trace :: [].{
 				clip_seg!(tx(x.i), ty(x.pr.a), tx(x.i + 1), ty(x.pr.b), Draw.stroke(ctl_c, 1.0)))
 			# the camera says where it is when it is anywhere but home
 			if model.trace_zoom > 1.01 {
-				zoom10 = match F32.round_to_u64_try(model.trace_zoom * 10.0) { Ok(z9) => z9
-					Err(_) => 10 }
+				zoom10 = match F32.round_to_u64_try(model.trace_zoom * 10.0) {
+					Ok(z9) => z9
+					Err(_) => 10
+				}
 				Text.from("zoom ${U64.to_str(zoom10 // 10)}.${U64.to_str(zoom10 % 10)}x   0 resets", model.font).size(11).draw!(frame, { pos: { x: win_w - 34.0, y: 130.0 }, color: ink_muted, align: (Top, Right) })
 			}
 			model.trace_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })

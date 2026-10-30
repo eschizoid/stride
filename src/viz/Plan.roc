@@ -11,10 +11,10 @@ Plan :: [].{
 	# corner - the bus made visible.
 	type_color : Str -> Color.Rgba
 	type_color = |typ|
-		if typ == "threshold" Theme.tsb_c
-		else if typ == "vo2" Theme.atl_c
-		else if typ == "endurance" Theme.ctl_c
-		else if typ == "strength" (Color.from_hex_rgb(0xd8c27a))
+		if (typ == "threshold") Theme.tsb_c
+		else if (typ == "vo2") Theme.atl_c
+		else if (typ == "endurance") Theme.ctl_c
+		else if (typ == "strength") (Color.from_hex_rgb(0xd8c27a))
 		else Theme.ink_faint
 
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
@@ -34,30 +34,43 @@ Plan :: [].{
 			qx0 = win_w - 36.0 - I64.to_f32(qt) * (pipw + 4.0)
 			complete = qd >= qt
 			t9 = model.tick % 40
-			tri9 = (if t9 < 20 (U64.to_f32(t9)) else U64.to_f32(40 - t9)) / 20.0
-			label = if complete "week complete" else "quest ${I64.to_str(qd)}/${I64.to_str(qt)}"
-			lc9 = if complete (Theme.gold_c) else ink_muted
+			tri9 = (if (t9 < 20) (U64.to_f32(t9)) else U64.to_f32(40 - t9)) / 20.0
+			label = if (complete) "week complete" else "quest ${I64.to_str(qd)}/${I64.to_str(qt)}"
+			lc9 = if (complete) (Theme.gold_c) else ink_muted
 			Text.from(label, model.font).size(11).draw!(frame, { pos: { x: qx0 - 10.0, y: 72.0 }, color: lc9, align: (Top, Right) })
-			pn = match I64.to_u64_try(qt) { Ok(u9) => u9
-				Err(_) => 0.U64 }
-			pulse_a = match F32.round_to_u64_try(200.0 + tri9 * 55.0) { Ok(u8v) => (match U64.to_u8_try(u8v) { Ok(a9) => a9
-				Err(_) => 255.U8 })
-				Err(_) => 255.U8 }
-			qdu = if qd <= 0 (0.U64) else match I64.to_u64_try(qd) { Ok(u1) => u1
-				Err(_) => 0.U64 }
-			List.for_each!(List.map_with_index(List.repeat({}, pn), |_q, qi| qi), |qi| {
-				px = qx0 + U64.to_f32(qi) * (pipw + 4.0)
-				lit = qi < qdu
-				st = if lit and complete (Draw.filled(Color.with_alpha(Theme.gold_c, pulse_a)))
-					else if lit (Draw.filled(Theme.gold_c))
+			pn = match I64.to_u64_try(qt) {
+				Ok(u9) => u9
+				Err(_) => 0.U64
+			}
+			pulse_a = match F32.round_to_u64_try(200.0 + tri9 * 55.0) {
+				Ok(u8v) => (
+					match U64.to_u8_try(u8v) {
+						Ok(a9) => a9
+						Err(_) => 255.U8
+					}
+				)
+				Err(_) => 255.U8
+			}
+			qdu = if (qd <= 0) (0.U64) else match I64.to_u64_try(qd) {
+				Ok(u1) => u1
+				Err(_) => 0.U64
+			}
+			List.for_each!(
+				List.map_with_index(List.repeat({}, pn), |_q, qi| qi),
+				|qi| {
+					px = qx0 + U64.to_f32(qi) * (pipw + 4.0)
+					lit = qi < qdu
+					st = if (lit and complete) (Draw.filled(Color.with_alpha(Theme.gold_c, pulse_a)))
+					else if (lit) (Draw.filled(Theme.gold_c))
 					else Draw.filled(Color.with_alpha(Theme.ink_faint, 70))
-				frame.rounded_rectangle!({ x: px, y: 70.0, width: pipw, height: 8.0, radius: 4.0, segments: 4, style: st })
-			})
+					frame.rounded_rectangle!({ x: px, y: 70.0, width: pipw, height: 8.0, radius: 4.0, segments: 4, style: st })
+				},
+			)
 		}
 
 		# today's card: the one answer that matters most, in full - the card
 		# grows with the wrapped prescription instead of truncating it
-		today = List.fold(model.plan, { day: "", typ: "", detail: "no plan for today - ask the coach", rationale: "", done: Bool.False, skipped: Bool.False, today: Bool.False }, |acc, p| if p.today p else acc)
+		today = List.fold(model.plan, { day: "", typ: "", detail: "no plan for today - ask the coach", rationale: "", done: Bool.False, skipped: Bool.False, today: Bool.False }, |acc, p| if (p.today) p else acc)
 		card_cols = Wrap.cols_for(win_w - 160.0, 7.8)
 		# the card is bounded even though coach-written details are not: past
 		# these caps the last line ends in an ellipsis, so a pathological
@@ -81,26 +94,30 @@ Plan :: [].{
 		row_cols = Wrap.cols_for(win_w - 340.0, 7.2)
 		ladder_top = 100.0 + card_h + 20.0
 		floor_y = win_h - 130.0
-		end = List.fold_try!(List.map_with_index(model.plan, |p, i| { p, i }), { y: ladder_top, hidden: 0.U64 }, |acc, x| {
-			lines = Wrap.wrap(x.p.detail, row_cols)
-			row_h = (U64.to_f32(List.len(lines)) * 18.0 + 12.0).max(30.0)
-			if acc.hidden > 0 or acc.y + row_h > floor_y Ok({ y: acc.y, hidden: acc.hidden + 1 })
-			else {
-				ly = acc.y
-				if x.p.today {
-					frame.rectangle!({ x: 34.0, y: ly - 4.0, width: win_w - 68.0, height: row_h - 3.0, style: Draw.filled(Color.with_alpha(Color.white, 14)) })
+		end = List.fold_try!(
+			List.map_with_index(model.plan, |p, i| { p, i }),
+			{ y: ladder_top, hidden: 0.U64 },
+			|acc, x| {
+				lines = Wrap.wrap(x.p.detail, row_cols)
+				row_h = (U64.to_f32(List.len(lines)) * 18.0 + 12.0).max(30.0)
+				if (acc.hidden > 0 or acc.y + row_h > floor_y) Ok({ y: acc.y, hidden: acc.hidden + 1 })
+				else {
+					ly = acc.y
+					if x.p.today {
+						frame.rectangle!({ x: 34.0, y: ly - 4.0, width: win_w - 68.0, height: row_h - 3.0, style: Draw.filled(Color.with_alpha(Color.white, 14)) })
+					}
+					Text.from(x.p.day, model.font).size(12).draw!(frame, { pos: { x: 44.0, y: ly }, color: if (x.p.today) Color.white else ink_muted, align: (Top, Left) })
+					frame.rounded_rectangle!({ x: 150.0, y: ly + 2.0, width: 92.0, height: 16.0, radius: 5.0, segments: 4, style: Draw.filled(Color.with_alpha(type_color(x.p.typ), 45)) })
+					Text.from(x.p.typ, model.font).size(11).draw!(frame, { pos: { x: 196.0, y: ly + 3.0 }, color: type_color(x.p.typ), align: (Top, Center) })
+					List.for_each!(List.map_with_index(lines, |ln, i| { ln, i }), |d|
+						Text.from(d.ln, model.font).size(12).draw!(frame, { pos: { x: 260.0, y: ly + U64.to_f32(d.i) * 18.0 }, color: if (x.p.today) Color.white else ink_muted, align: (Top, Left) }))
+					status = if (x.p.done) "done" else if (x.p.skipped) "skip" else if (x.p.today) ">>" else ""
+					scol = if (x.p.done) Theme.tsb_c else if (x.p.skipped) Theme.ink_faint else Theme.ctl_c
+					Text.from(status, model.font).size(12).draw!(frame, { pos: { x: win_w - 44.0, y: ly }, color: scol, align: (Top, Right) })
+					Ok({ y: ly + row_h, hidden: acc.hidden })
 				}
-				Text.from(x.p.day, model.font).size(12).draw!(frame, { pos: { x: 44.0, y: ly }, color: if x.p.today Color.white else ink_muted, align: (Top, Left) })
-				frame.rounded_rectangle!({ x: 150.0, y: ly + 2.0, width: 92.0, height: 16.0, radius: 5.0, segments: 4, style: Draw.filled(Color.with_alpha(type_color(x.p.typ), 45)) })
-				Text.from(x.p.typ, model.font).size(11).draw!(frame, { pos: { x: 196.0, y: ly + 3.0 }, color: type_color(x.p.typ), align: (Top, Center) })
-				List.for_each!(List.map_with_index(lines, |ln, i| { ln, i }), |d|
-					Text.from(d.ln, model.font).size(12).draw!(frame, { pos: { x: 260.0, y: ly + U64.to_f32(d.i) * 18.0 }, color: if x.p.today Color.white else ink_muted, align: (Top, Left) }))
-				status = if x.p.done "done" else if x.p.skipped "skip" else if x.p.today ">>" else ""
-				scol = if x.p.done Theme.tsb_c else if x.p.skipped Theme.ink_faint else Theme.ctl_c
-				Text.from(status, model.font).size(12).draw!(frame, { pos: { x: win_w - 44.0, y: ly }, color: scol, align: (Top, Right) })
-				Ok({ y: ly + row_h, hidden: acc.hidden })
-			}
-		})?
+			},
+		)?
 		if end.hidden > 0 {
 			Text.from("... ${U64.to_str(end.hidden)} more - grow the window", model.font).size(11).draw!(frame, { pos: { x: 260.0, y: (end.y).min(floor_y) }, color: ink_faint, align: (Top, Left) })
 		}

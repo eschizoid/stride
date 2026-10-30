@@ -68,8 +68,11 @@ expect {
 }
 expect {
 	# The same point hits the same button at every supported zoom.
-	List.all([1.0, 1.25, 1.5, 1.75, 2.0], |scale| {
-		p = DisplayScale.point({ x: 420 * scale, y: 75 * scale }, scale)
-		(p.x - 420).abs() < 0.001 and (p.y - 75).abs() < 0.001
-	})
+	List.all(
+		[1.0, 1.25, 1.5, 1.75, 2.0],
+		|scale| {
+			p = DisplayScale.point({ x: 420 * scale, y: 75 * scale }, scale)
+			(p.x - 420).abs() < 0.001 and (p.y - 75).abs() < 0.001
+		},
+	)
 }

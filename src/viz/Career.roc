@@ -33,7 +33,7 @@ Career :: [].{
 	progress : Ui.Model -> F32
 	progress = |model| {
 		age = model.tick - model.view_anim
-		if model.view_anim == 0 or U64.to_f32(age) >= dur (1.0)
+		if (model.view_anim == 0 or U64.to_f32(age) >= dur) (1.0)
 		else {
 			p = U64.to_f32(age) / dur
 			1.0 - (1.0 - p) * (1.0 - p)
@@ -57,7 +57,7 @@ Career :: [].{
 	spine_at : List(Db.CareerSpine), U64 -> Db.CareerSpine
 	spine_at = |spines, idx| {
 		n = List.len(spines)
-		match List.get(spines, (if n == 0 0 else idx % n)) {
+		match List.get(spines, (if (n == 0) 0 else idx % n)) {
 			Ok(c) => c
 			Err(_) => { fam: "", kind: "", rows: [] }
 		}
@@ -65,10 +65,10 @@ Career :: [].{
 
 	spine_label : [Metric, Imperial], I64, Str, Str -> Str
 	spine_label = |units, v10, kind, fam|
-		if kind == "power" "${I64.to_str(v10 // 10)}w"
+		if (kind == "power") "${I64.to_str(v10 // 10)}w"
 		else if kind == "tonnage" {
 			kg = v10 // 10
-			if kg < 1000 "${I64.to_str(kg)}kg"
+			if (kg < 1000) "${I64.to_str(kg)}kg"
 			else {
 				tenths_t = (v10 + 500) // 1000
 				"${I64.to_str(tenths_t // 10)}.${I64.to_str(tenths_t % 10)}t"
@@ -78,7 +78,7 @@ Career :: [].{
 			spd = I64.to_f64(v10) / 10.0
 			if fam == "Rowing" or fam == "Swim" {
 				u = Sports.pace_unit(fam)
-				if spd <= 0.0 "-" else Fmt.mmss((I64.to_f64(u.dist_m) / spd).round_to_i64_try().ok_or(0))
+				if (spd <= 0.0) "-" else Fmt.mmss((I64.to_f64(u.dist_m) / spd).round_to_i64_try().ok_or(0))
 			} else {
 				Units.pace_from_speed(units, spd)
 			}
@@ -94,28 +94,30 @@ Career :: [].{
 	# is presentation; inventing a peak would not be.
 	tangent : List(Ui.SpinePt), U64 -> F32
 	tangent = |pts, i| {
-		at = |k| match List.get(pts, k) { Ok(v) => v
-			Err(_) => { x: 0.0, y: 0.0, ok: Bool.False } }
+		at = |k| match List.get(pts, k) {
+			Ok(v) => v
+			Err(_) => { x: 0.0, y: 0.0, ok: Bool.False }
+		}
 		here = at(i)
-		prev = if i == 0 here else at(i - 1)
+		prev = if (i == 0) here else at(i - 1)
 		next = at(i + 1)
 		has_prev = i > 0 and prev.ok
 		has_next = next.ok
-		d_prev = if has_prev (here.y - prev.y) else 0.0
-		d_next = if has_next (next.y - here.y) else 0.0
+		d_prev = if (has_prev) (here.y - prev.y) else 0.0
+		d_next = if (has_next) (next.y - here.y) else 0.0
 		# a missing neighbour makes this an endpoint of its run, so the
 		# tangent is one-sided. A FLAT neighbouring segment is different:
 		# Fritsch-Carlson requires a zero tangent there, or the cubic
 		# between two equal values bulges above a plateau (a two-month
 		# 271w top drew an apex the athlete never reached).
-		if !has_prev (d_next)
-		else if !has_next (d_prev)
-		else if d_prev == 0.0 or d_next == 0.0 (0.0)
-		else if d_prev * d_next < 0.0 (0.0)
+		if (!has_prev) (d_next)
+		else if (!has_next) (d_prev)
+		else if (d_prev == 0.0 or d_next == 0.0) (0.0)
+		else if (d_prev * d_next < 0.0) (0.0)
 		else {
 			m = (d_prev + d_next) / 2.0
 			lim = 3.0 * (d_prev).abs().min((d_next).abs())
-			if (m).abs() > lim ((if m < 0.0 (-1.0) else 1.0) * lim) else m
+			if ((m).abs() > lim) ((if (m < 0.0) (-1.0) else 1.0) * lim) else m
 		}
 	}
 	# career_totals groups by sport_type; the composition bar wants FAMILIES,
@@ -126,14 +128,18 @@ Career :: [].{
 	# that sat between them and would otherwise draw behind it.
 	fold_families : List(Db.CareerSport) -> List({ sport : Str, sessions : I64 })
 	fold_families = |sports| {
-		folded = List.fold(sports, [], |acc, s| {
-			c = Sports.canonical(s.sport)
-			if List.is_empty(List.keep_if(acc, |x| x.sport == c)) {
-				List.append(acc, { sport: c, sessions: s.sessions })
-			} else {
-				List.map(acc, |x| if x.sport == c ({ ..x, sessions: x.sessions + s.sessions }) else x)
-			}
-		})
+		folded = List.fold(
+			sports,
+			[],
+			|acc, s| {
+				c = Sports.canonical(s.sport)
+				if List.is_empty(List.keep_if(acc, |x| x.sport == c)) {
+					List.append(acc, { sport: c, sessions: s.sessions })
+				} else {
+					List.map(acc, |x| if (x.sport == c) ({ ..x, sessions: x.sessions + s.sessions }) else x)
+				}
+			},
+		)
 		List.sort_with(folded, |a, b| b.sessions.order_relative_to(a.sessions))
 	}
 
@@ -167,20 +173,20 @@ Career :: [].{
 		# young, which is the evidence this gate was sized on.
 		raw_measured = List.len(List.keep_if(cur.rows, |m| m.ftp10 > 0))
 		spine_ready = cur.kind != "tonnage" or raw_measured >= 3
-		months = if spine_ready cur.rows else List.map(cur.rows, |m| { ..m, ftp10: 0 })
+		months = if (spine_ready) cur.rows else List.map(cur.rows, |m| { ..m, ftp10: 0 })
 		n = List.len(months)
 		sp = { fam: cur.fam, kind: cur.kind }
 		unit_note =
-			if sp.kind == "power" "threshold watts"
+			if (sp.kind == "power") "threshold watts"
 			# the withheld months are the honest gaps: a month where under a
 			# third of the sessions carry sets is a biased sample, and the view
 			# refuses to draw it (the rule lives in monthly_threshold's
 			# tonnage arm; a refused month bridges with dashes like any
 			# unmeasured one)
-			else if sp.kind == "tonnage" "monthly tonnage (kg lifted; thin months bridge as gaps)"
+			else if (sp.kind == "tonnage") "monthly tonnage (kg lifted; thin months bridge as gaps)"
 			else "threshold pace${Sports.pace_label_for(model.units, sp.fam)}"
-		switch_note = if nspines > 1 "   F  next sport" else ""
-		subtitle = if sp.fam == "" "career - every month since the first session" else "career - ${Str.with_ascii_lowercased(sp.fam)} ${unit_note}${switch_note}"
+		switch_note = if (nspines > 1) "   F  next sport" else ""
+		subtitle = if (sp.fam == "") "career - every month since the first session" else "career - ${Str.with_ascii_lowercased(sp.fam)} ${unit_note}${switch_note}"
 		Text.from(subtitle, model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		# ── the character sheet: level and streak, earned by the same
 		# career the chart below tells. The XP bar eases in with the sweep.
@@ -220,13 +226,15 @@ Career :: [].{
 			# (Workout counts as WeightTraining, GravelRide as Ride). The captions
 			# carry the family for the same reason: a scoped number under an
 			# unscoped word is the confusion, not the fix.
-			scoped = if sp.fam == "" (model.career_sports) else List.keep_if(model.career_sports, |s| Sports.canonical(s.sport) == sp.fam)
-			fam_cap = if sp.fam == "" "" else " - ${Str.with_ascii_lowercased(sp.fam)}"
+			scoped = if (sp.fam == "") (model.career_sports) else List.keep_if(model.career_sports, |s| Sports.canonical(s.sport) == sp.fam)
+			fam_cap = if (sp.fam == "") "" else " - ${Str.with_ascii_lowercased(sp.fam)}"
 			tot = List.fold(scoped, { h10: 0.I64, m: 0.0.F64, ss: 0.I64 }, |a, s| { h10: a.h10 + s.hours10, m: a.m + s.dist_m, ss: a.ss + s.sessions })
 			# metres held until here; the card is the last moment (core.Units)
 			dist_whole = (Units.dist_value(model.units, tot.m)).round_to_i64_try().ok_or(0)
-			ease_i = |v| match F32.to_i64_try(I64.to_f32(v) * p) { Ok(x) => x
-				Err(_) => v }
+			ease_i = |v| match F32.to_i64_try(I64.to_f32(v) * p) {
+				Ok(x) => x
+				Err(_) => v
+			}
 			cw = 196.0
 			gap = (win_w - 72.0 - cw * 4.0) / 3.0
 			cx0 = |i| 36.0 + I64.to_f32(i) * (cw + gap)
@@ -234,7 +242,7 @@ Career :: [].{
 			# a family that records no distance says so rather than showing a
 			# zero: 0 km under a lifting arc reads as a measurement that came
 			# back empty, when the sport simply does not carry the quantity
-			dist_card = if tot.m <= 0.0 "-" else "${I64.to_str(ease_i(dist_whole))} ${Units.dist_unit(model.units)}"
+			dist_card = if (tot.m <= 0.0) "-" else "${I64.to_str(ease_i(dist_whole))} ${Units.dist_unit(model.units)}"
 			card!(frame, model.font, cx0(1), 96.0, dist_card, "distance${fam_cap}")
 			card!(frame, model.font, cx0(2), 96.0, I64.to_str(ease_i(tot.ss)), "sessions${fam_cap}")
 			# months TRAINED, not months elapsed: the axis spans every month
@@ -243,9 +251,9 @@ Career :: [].{
 			# must not count as trained.
 			trained =
 				if sp.fam == "" {
-					List.fold(months, 0.I64, |a, m| if m.load > 0 (a + 1) else a)
+					List.fold(months, 0.I64, |a, m| if (m.load > 0) (a + 1) else a)
 				} else {
-					List.fold(model.career_fam_months, 0.I64, |a, fm| if fm.fam == sp.fam and fm.sessions > 0 (a + 1) else a)
+					List.fold(model.career_fam_months, 0.I64, |a, fm| if (fm.fam == sp.fam and fm.sessions > 0) (a + 1) else a)
 				}
 			card!(frame, model.font, cx0(3), 96.0, I64.to_str(ease_i(trained)), "months trained${fam_cap}")
 
@@ -266,28 +274,35 @@ Career :: [].{
 			# window at one bar per screen.
 			shown = (nf * p).max(8.0).min(nf)
 			xf = |i| plot_l + (U64.to_f32(i) + 0.5) / shown * plot_w
-			head_x = plot_l + (if shown >= nf (p) else 1.0) * plot_w
+			head_x = plot_l + (if (shown >= nf) (p) else 1.0) * plot_w
 
 			# spine scale from the measured points only; 0 means that family had
 			# no scored session that month
-			fmax = List.fold(months, 0.I64, |a, m| if m.ftp10 > a m.ftp10 else a)
-			fmin = List.fold(months, fmax, |a, m| if m.ftp10 > 0 and m.ftp10 < a m.ftp10 else a)
+			fmax = List.fold(months, 0.I64, |a, m| if (m.ftp10 > a) m.ftp10 else a)
+			fmin = List.fold(months, fmax, |a, m| if (m.ftp10 > 0 and m.ftp10 < a) m.ftp10 else a)
 			frange = (I64.to_f32(fmax - fmin)).max(10.0)
 			yf = |f10| line_bot - (I64.to_f32(f10 - fmin) / frange) * (line_bot - line_top)
-			lmax = List.fold(months, 1.I64, |a, m| if m.load > a m.load else a)
+			lmax = List.fold(months, 1.I64, |a, m| if (m.load > a) m.load else a)
 
 			# faint gridlines at the quarter marks, labeled in the family's units.
 			# No labels on an unmeasured scale (fmax 0, the withheld-spine state):
 			# five identical zero labels would caption a ruler with nothing on it
-			List.for_each!([0.0, 0.25, 0.5, 0.75, 1.0], |q| {
-				gy = line_bot - q * (line_bot - line_top)
-				frame.line!({ start: { x: plot_l, y: gy }, end: { x: plot_r, y: gy }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 40), 1) })
-				if fmax > 0 {
-					w = fmin + (match F32.to_i64_try(q * I64.to_f32(fmax - fmin)) { Ok(v) => v
-						Err(_) => 0 })
-					Text.from(spine_label(model.units, w, sp.kind, sp.fam), model.font).size(10).draw!(frame, { pos: { x: plot_l - 8.0, y: gy - 5.0 }, color: ink_faint, align: (Top, Right) })
-				}
-			})
+			List.for_each!(
+				[0.0, 0.25, 0.5, 0.75, 1.0],
+				|q| {
+					gy = line_bot - q * (line_bot - line_top)
+					frame.line!({ start: { x: plot_l, y: gy }, end: { x: plot_r, y: gy }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 40), 1) })
+					if fmax > 0 {
+						w = fmin + (
+							match F32.to_i64_try(q * I64.to_f32(fmax - fmin)) {
+								Ok(v) => v
+								Err(_) => 0
+							}
+						)
+						Text.from(spine_label(model.units, w, sp.kind, sp.fam), model.font).size(10).draw!(frame, { pos: { x: plot_l - 8.0, y: gy - 5.0 }, color: ink_faint, align: (Top, Right) })
+					}
+				},
+			)
 
 			# what the withheld spine is waiting for, said where the arc would be
 			_ = if !spine_ready {
@@ -300,16 +315,19 @@ Career :: [].{
 				# its own dot, labelled, on a zero-based scale so the heights
 				# compare honestly. Read from cur.rows, not months: the gate
 				# zeroes the latter, which is what silences every other reader.
-				rmax = List.fold(cur.rows, 0.I64, |a, m| if m.ftp10 > a m.ftp10 else a)
+				rmax = List.fold(cur.rows, 0.I64, |a, m| if (m.ftp10 > a) m.ftp10 else a)
 				if rmax > 0 {
 					dot_bot = line_bot - 24.0
 					dot_top = line_top + 72.0
-					List.for_each!(List.map_with_index(cur.rows, |m, i| { m, i }), |x|
-						if x.m.ftp10 > 0 and head_x >= xf(x.i) {
-							dy = dot_bot - (I64.to_f32(x.m.ftp10) / I64.to_f32(rmax)) * (dot_bot - dot_top)
-							frame.circle!({ center: { x: xf(x.i), y: dy }, radius: 4.0, style: Draw.filled(Theme.sport_color(sp.fam)) })
-							Text.from(spine_label(model.units, x.m.ftp10, sp.kind, sp.fam), model.font).size(11).draw!(frame, { pos: { x: xf(x.i), y: dy - 20.0 }, color: Theme.sport_color(sp.fam), align: (Top, Center) })
-						})
+					List.for_each!(
+						List.map_with_index(cur.rows, |m, i| { m, i }),
+						|x|
+							if x.m.ftp10 > 0 and head_x >= xf(x.i) {
+								dy = dot_bot - (I64.to_f32(x.m.ftp10) / I64.to_f32(rmax)) * (dot_bot - dot_top)
+								frame.circle!({ center: { x: xf(x.i), y: dy }, radius: 4.0, style: Draw.filled(Theme.sport_color(sp.fam)) })
+								Text.from(spine_label(model.units, x.m.ftp10, sp.kind, sp.fam), model.font).size(11).draw!(frame, { pos: { x: xf(x.i), y: dy - 20.0 }, color: Theme.sport_color(sp.fam), align: (Top, Center) })
+							},
+					)
 				}
 			} else {
 				{}
@@ -320,59 +338,80 @@ Career :: [].{
 			# early year (a first December alone) does not collide with the
 			# January beside it - the tick still rises, only the text is held.
 			idx = List.map_with_index(months, |m, i| { m, i })
-			_ = List.fold_try!(idx, -999.0, |last_x, x| {
-				yr = Str.from_utf8_lossy(List.take_first(Str.to_utf8(x.m.month), 4))
-				prev_yr = match List.get(months, (if x.i == 0 0 else x.i - 1)) {
-					Ok(pm) => Str.from_utf8_lossy(List.take_first(Str.to_utf8(pm.month), 4))
-					Err(_) => ""
-				}
-				if x.i == 0 or yr != prev_yr {
-					bx = xf(x.i) - 0.5 / nf * plot_w
-					reached = head_x >= bx
-					rise = if p >= 1.0 (1.0) else if reached ((((head_x - bx) / plot_w) * 6.0).min(1.0)) else 0.0
-					if rise > 0.0 {
-						frame.line!({ start: { x: bx, y: bars_bot + 4.0 }, end: { x: bx, y: bars_bot + 4.0 - 10.0 * rise }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 120), 1) })
-						if bx - last_x >= 42.0 {
-							Text.from(yr, model.font).size(10).draw!(frame, { pos: { x: bx + 4.0, y: bars_bot + 8.0 }, color: Color.with_alpha(ink_muted, (match F32.to_u8_try(200.0 * rise) { Ok(a) => a
-								Err(_) => 200 })), align: (Top, Left) })
-							Ok(bx)
+			_ = List.fold_try!(
+				idx,
+				-999.0,
+				|last_x, x| {
+					yr = Str.from_utf8_lossy(List.take_first(Str.to_utf8(x.m.month), 4))
+					prev_yr = match List.get(months, (if (x.i == 0) 0 else x.i - 1)) {
+						Ok(pm) => Str.from_utf8_lossy(List.take_first(Str.to_utf8(pm.month), 4))
+						Err(_) => ""
+					}
+					if x.i == 0 or yr != prev_yr {
+						bx = xf(x.i) - 0.5 / nf * plot_w
+						reached = head_x >= bx
+						rise = if (p >= 1.0) (1.0) else if (reached) ((((head_x - bx) / plot_w) * 6.0).min(1.0)) else 0.0
+						if rise > 0.0 {
+							frame.line!({ start: { x: bx, y: bars_bot + 4.0 }, end: { x: bx, y: bars_bot + 4.0 - 10.0 * rise }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 120), 1) })
+							if bx - last_x >= 42.0 {
+								Text.from(yr, model.font).size(10).draw!(
+									frame,
+									{
+										pos: { x: bx + 4.0, y: bars_bot + 8.0 },
+										color: Color.with_alpha(
+											ink_muted,
+											(
+												match F32.to_u8_try(200.0 * rise) {
+													Ok(a) => a
+													Err(_) => 200
+												}
+											),
+										),
+										align: (Top, Left),
+									},
+								)
+								Ok(bx)
+							} else Ok(last_x)
 						} else Ok(last_x)
 					} else Ok(last_x)
-				} else Ok(last_x)
-			})
+				},
+			)
 
 			# ── monthly load: the recessive ground. partial renders as a dim
 			# fill under a bright top edge - a month in progress must never
 			# read as a collapse
 			bw = (plot_w / nf - 1.5).max(1.0)
-			List.for_each!(idx, |x| {
-				bx = xf(x.i) - bw / 2.0
-				reached = head_x >= bx
-				rise = if p >= 1.0 (1.0) else if reached ((((head_x - bx) / plot_w) * 5.0).min(1.0)) else 0.0
-				bh = (I64.to_f32(x.m.load) / I64.to_f32(lmax)) * (bars_bot - bars_top) * rise
-				if bh > 0.5 {
-					if x.m.partial {
-						frame.rectangle!({ x: bx, y: bars_bot - bh, width: bw, height: bh, style: Draw.filled(Color.with_alpha(Theme.ctl_c, 45)) })
-						frame.line!({ start: { x: bx, y: bars_bot - bh }, end: { x: bx + bw, y: bars_bot - bh }, stroke: Draw.stroke(Color.with_alpha(Theme.ctl_c, 200), 2) })
-					} else {
-						frame.rectangle!({ x: bx, y: bars_bot - bh, width: bw, height: bh, style: Draw.filled(Color.with_alpha(Theme.ctl_c, 90)) })
-					}
-					# the SELECTED family's share of that month, filled from the
-					# baseline in the family's own identity colour. The ground bar
-					# pools every sport, so without this a family whose threshold
-					# history is thin puts nothing of its own on the chart and the
-					# arc reads as a career that never happened. Scaled on the same
-					# lmax as the bar it sits inside, so the two are comparable
-					# rather than each normalised to itself.
-					if sp.fam != "" {
-						fl = List.fold(model.career_fam_months, 0.I64, |a, fm| if fm.fam == sp.fam and fm.month == x.m.month (fm.load) else a)
-						fh = (I64.to_f32(fl) / I64.to_f32(lmax)) * (bars_bot - bars_top) * rise
-						if fh > 0.5 {
-							frame.rectangle!({ x: bx, y: bars_bot - fh, width: bw, height: fh, style: Draw.filled(Color.with_alpha(Theme.sport_color(sp.fam), 210)) })
+			List.for_each!(
+				idx,
+				|x| {
+					bx = xf(x.i) - bw / 2.0
+					reached = head_x >= bx
+					rise = if (p >= 1.0) (1.0) else if (reached) ((((head_x - bx) / plot_w) * 5.0).min(1.0)) else 0.0
+					bh = (I64.to_f32(x.m.load) / I64.to_f32(lmax)) * (bars_bot - bars_top) * rise
+					if bh > 0.5 {
+						if x.m.partial {
+							frame.rectangle!({ x: bx, y: bars_bot - bh, width: bw, height: bh, style: Draw.filled(Color.with_alpha(Theme.ctl_c, 45)) })
+							frame.line!({ start: { x: bx, y: bars_bot - bh }, end: { x: bx + bw, y: bars_bot - bh }, stroke: Draw.stroke(Color.with_alpha(Theme.ctl_c, 200), 2) })
+						} else {
+							frame.rectangle!({ x: bx, y: bars_bot - bh, width: bw, height: bh, style: Draw.filled(Color.with_alpha(Theme.ctl_c, 90)) })
+						}
+						# the SELECTED family's share of that month, filled from the
+						# baseline in the family's own identity colour. The ground bar
+						# pools every sport, so without this a family whose threshold
+						# history is thin puts nothing of its own on the chart and the
+						# arc reads as a career that never happened. Scaled on the same
+						# lmax as the bar it sits inside, so the two are comparable
+						# rather than each normalised to itself.
+						if sp.fam != "" {
+							fl = List.fold(model.career_fam_months, 0.I64, |a, fm| if (fm.fam == sp.fam and fm.month == x.m.month) (fm.load) else a)
+							fh = (I64.to_f32(fl) / I64.to_f32(lmax)) * (bars_bot - bars_top) * rise
+							if fh > 0.5 {
+								frame.rectangle!({ x: bx, y: bars_bot - fh, width: bw, height: fh, style: Draw.filled(Color.with_alpha(Theme.sport_color(sp.fam), 210)) })
+							}
 						}
 					}
-				}
-			})
+				},
+			)
 
 			# ── the spine: month-close FTP, drawn only between measured
 			# neighbors - a gap is the engine saying "not measured", and a
@@ -389,61 +428,77 @@ Career :: [].{
 			# while staying visibly NOT the curve: dashes carry no value, and
 			# the eye does not read a level off them. Drawn first, so the solid
 			# spine covers it wherever both would fall.
-			_ = List.fold_try!(List.map_with_index(pts, |pt, i| { pt, i }), { lx: -1.0, ly: 0.0 }, |acc, e|
-				if !e.pt.ok Ok(acc)
-				else if acc.lx < 0.0 Ok({ lx: e.pt.x, ly: e.pt.y })
-				else {
-					# adjacent months are the curve's job; only a real gap bridges
-					span = e.pt.x - acc.lx
-					step = plot_w / nf
-					_ = if span > step * 1.5 {
-						dashes = 14.U64
-						List.for_each!([0.U64, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], |dsh|
-							if dsh % 2 == 0 {
-								t0 = U64.to_f32(dsh) / U64.to_f32(dashes)
-								t1 = (U64.to_f32(dsh) + 0.8) / U64.to_f32(dashes)
-								ax = acc.lx + span * t0
-								bx = acc.lx + span * t1
-								if bx <= head_x {
-									frame.line!({ start: { x: ax, y: acc.ly + (e.pt.y - acc.ly) * t0 }, end: { x: bx, y: acc.ly + (e.pt.y - acc.ly) * t1 }, stroke: Draw.stroke(Color.with_alpha(Theme.ctl_c, 60), 1) })
-								}
-							})
-					}
-					Ok({ lx: e.pt.x, ly: e.pt.y })
-				})
-			List.for_each!(List.map_with_index(pts, |pt, i| { pt, i }), |e| {
-				nxt = match List.get(pts, e.i + 1) { Ok(v) => v
-					Err(_) => { x: 0.0, y: 0.0, ok: Bool.False } }
-				if e.pt.ok and nxt.ok {
-					m0 = tangent(pts, e.i)
-					m1 = tangent(pts, e.i + 1)
-					dx = nxt.x - e.pt.x
-					# this stdlib has no List.range; the sample count is small and
-					# fixed, so the steps are a literal
-					_ = List.fold_try!([1.U64, 2, 3, 4, 5, 6, 7, 8, 9, 10], { px: e.pt.x, py: e.pt.y }, |acc, s| {
-						tt = U64.to_f32(s) / U64.to_f32(steps)
-						t2 = tt * tt
-						t3 = t2 * tt
-						h00 = 2.0 * t3 - 3.0 * t2 + 1.0
-						h10 = t3 - 2.0 * t2 + tt
-						h01 = -2.0 * t3 + 3.0 * t2
-						h11 = t3 - t2
-						cy = h00 * e.pt.y + h10 * m0 + h01 * nxt.y + h11 * m1
-						cx = e.pt.x + dx * tt
-						if cx <= head_x {
-							frame.line!({ start: { x: acc.px, y: acc.py }, end: { x: cx, y: cy }, stroke: Draw.stroke(Theme.ctl_c, 2) })
+			_ = List.fold_try!(
+				List.map_with_index(pts, |pt, i| { pt, i }),
+				{ lx: -1.0, ly: 0.0 },
+				|acc, e|
+					if (!e.pt.ok) Ok(acc)
+					else if (acc.lx < 0.0) Ok({ lx: e.pt.x, ly: e.pt.y })
+					else {
+						# adjacent months are the curve's job; only a real gap bridges
+						span = e.pt.x - acc.lx
+						step = plot_w / nf
+						_ = if span > step * 1.5 {
+							dashes = 14.U64
+							List.for_each!(
+								[0.U64, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+								|dsh|
+									if dsh % 2 == 0 {
+										t0 = U64.to_f32(dsh) / U64.to_f32(dashes)
+										t1 = (U64.to_f32(dsh) + 0.8) / U64.to_f32(dashes)
+										ax = acc.lx + span * t0
+										bx = acc.lx + span * t1
+										if bx <= head_x {
+											frame.line!({ start: { x: ax, y: acc.ly + (e.pt.y - acc.ly) * t0 }, end: { x: bx, y: acc.ly + (e.pt.y - acc.ly) * t1 }, stroke: Draw.stroke(Color.with_alpha(Theme.ctl_c, 60), 1) })
+										}
+									},
+							)
 						}
-						Ok({ px: cx, py: cy })
-					})
-				}
-			})
+						Ok({ lx: e.pt.x, ly: e.pt.y })
+					},
+			)
+			List.for_each!(
+				List.map_with_index(pts, |pt, i| { pt, i }),
+				|e| {
+					nxt = match List.get(pts, e.i + 1) {
+						Ok(v) => v
+						Err(_) => { x: 0.0, y: 0.0, ok: Bool.False }
+					}
+					if e.pt.ok and nxt.ok {
+						m0 = tangent(pts, e.i)
+						m1 = tangent(pts, e.i + 1)
+						dx = nxt.x - e.pt.x
+						# this stdlib has no List.range; the sample count is small and
+						# fixed, so the steps are a literal
+						_ = List.fold_try!(
+							[1.U64, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+							{ px: e.pt.x, py: e.pt.y },
+							|acc, s| {
+								tt = U64.to_f32(s) / U64.to_f32(steps)
+								t2 = tt * tt
+								t3 = t2 * tt
+								h00 = 2.0 * t3 - 3.0 * t2 + 1.0
+								h10 = t3 - 2.0 * t2 + tt
+								h01 = -2.0 * t3 + 3.0 * t2
+								h11 = t3 - t2
+								cy = h00 * e.pt.y + h10 * m0 + h01 * nxt.y + h11 * m1
+								cx = e.pt.x + dx * tt
+								if cx <= head_x {
+									frame.line!({ start: { x: acc.px, y: acc.py }, end: { x: cx, y: cy }, stroke: Draw.stroke(Theme.ctl_c, 2) })
+								}
+								Ok({ px: cx, py: cy })
+							},
+						)
+					}
+				},
+			)
 
 			# ── milestones: the valley, the peak, and today, each punching in
 			# as the head passes. The ring and the late arrival are staging;
 			# the positions and the watts are data.
-			last_known = List.fold(idx, { i: 0.U64, f: 0.I64 }, |a, x| if x.m.ftp10 > 0 { i: x.i, f: x.m.ftp10 } else a)
-			valley = List.fold(idx, { i: 0.U64, f: fmax }, |a, x| if x.m.ftp10 > 0 and x.m.ftp10 <= a.f { i: x.i, f: x.m.ftp10 } else a)
-			peak = List.fold(idx, { i: 0.U64, f: 0.I64 }, |a, x| if x.m.ftp10 >= a.f and x.m.ftp10 > 0 { i: x.i, f: x.m.ftp10 } else a)
+			last_known = List.fold(idx, { i: 0.U64, f: 0.I64 }, |a, x| if (x.m.ftp10 > 0) { i: x.i, f: x.m.ftp10 } else a)
+			valley = List.fold(idx, { i: 0.U64, f: fmax }, |a, x| if (x.m.ftp10 > 0 and x.m.ftp10 <= a.f) { i: x.i, f: x.m.ftp10 } else a)
+			peak = List.fold(idx, { i: 0.U64, f: 0.I64 }, |a, x| if (x.m.ftp10 >= a.f and x.m.ftp10 > 0) { i: x.i, f: x.m.ftp10 } else a)
 			mark! = |mi, mf, col, tag| {
 				mx = xf(mi)
 				if mx <= head_x and mf > 0 {
@@ -451,15 +506,28 @@ Career :: [].{
 					# faded) on settle, or a milestone near the right edge - the
 					# head never travels far past it - keeps a permanent halo
 					age_past = ((head_x - mx) / plot_w) * dur
-					ring = if p >= 1.0 (1.0) else (age_past / 14.0).min(1.0)
-					frame.circle!({ center: { x: mx, y: yf(mf) }, radius: 3.0 + 9.0 * ring, style: Draw.filled(Color.with_alpha(col, (match F32.to_u8_try(90.0 * (1.0 - ring)) { Ok(a) => a
-						Err(_) => 0 }))) })
+					ring = if (p >= 1.0) (1.0) else (age_past / 14.0).min(1.0)
+					frame.circle!({
+						center: { x: mx, y: yf(mf) },
+						radius: 3.0 + 9.0 * ring,
+						style: Draw.filled(
+							Color.with_alpha(
+								col,
+								(
+									match F32.to_u8_try(90.0 * (1.0 - ring)) {
+										Ok(a) => a
+										Err(_) => 0
+									}
+								),
+							),
+						),
+					})
 					frame.circle!({ center: { x: mx, y: yf(mf) }, radius: 3.5, style: Draw.filled(col) })
 					# a peak label goes ABOVE and a valley label BELOW, far enough
 					# that the stroke and its own halo clear the glyphs - the
 					# curve rises steeply into its extremes, so a tight offset
 					# puts the text on the line it is naming
-					lift = if tag == "valley" (26.0) else -34.0
+					lift = if (tag == "valley") (26.0) else -34.0
 					Text.from(spine_label(model.units, mf, sp.kind, sp.fam), model.font).size(13).draw!(frame, { pos: { x: mx, y: yf(mf) + lift }, color: col, align: (Top, Center) })
 				}
 			}
@@ -469,12 +537,14 @@ Career :: [].{
 			# stay teal: the party is for now, not for 2024.
 			peak_is_now = peak.i == last_known.i and peak.f > 0
 			mark!(valley.i, valley.f, Theme.alarm_c, "valley")
-			mark!(peak.i, peak.f, if peak_is_now (Theme.gold_c) else Theme.tsb_c, "peak")
+			mark!(peak.i, peak.f, if (peak_is_now) (Theme.gold_c) else Theme.tsb_c, "peak")
 			if peak_is_now and p >= 1.0 {
 				gt = model.tick % 40
-				gtri = (if gt < 20 (U64.to_f32(gt)) else U64.to_f32(40 - gt)) / 20.0
-				halo_a = match F32.to_u8_try(40.0 + gtri * 50.0) { Ok(ga) => ga
-					Err(_) => 40 }
+				gtri = (if (gt < 20) (U64.to_f32(gt)) else U64.to_f32(40 - gt)) / 20.0
+				halo_a = match F32.to_u8_try(40.0 + gtri * 50.0) {
+					Ok(ga) => ga
+					Err(_) => 40
+				}
 				frame.circle!({ center: { x: xf(peak.i), y: yf(peak.f) }, radius: 8.0 + gtri * 3.0, style: Draw.filled(Color.with_alpha(Theme.gold_c, halo_a)) })
 				# a full line-height of clearance above the size-13 value label
 				# at lift -34, which itself clears the dot and halo
@@ -487,7 +557,7 @@ Career :: [].{
 			# ── the comet: a bright head riding the spine, halo fading behind
 			# it. Gone when settled - the finished view is a chart, not a show.
 			if p < 1.0 {
-				head_f = List.fold(idx, 0.I64, |a, x| if x.m.ftp10 > 0 and xf(x.i) <= head_x x.m.ftp10 else a)
+				head_f = List.fold(idx, 0.I64, |a, x| if (x.m.ftp10 > 0 and xf(x.i) <= head_x) x.m.ftp10 else a)
 				if head_f > 0 {
 					hy = yf(head_f)
 					frame.circle!({ center: { x: head_x, y: hy }, radius: 10.0, style: Draw.filled(Color.with_alpha(Color.white, 26)) })
@@ -523,26 +593,32 @@ Career :: [].{
 			comp_fams = fold_families(model.career_sports)
 			tot_ss = List.fold(comp_fams, 0.I64, |a, s| a + s.sessions)
 			if tot_ss > 0 {
-				hovered = List.fold_try!(List.map_with_index(comp_fams, |s, i| { s, i }), { x0: 36.0, hit: { sport: "", sessions: 0.I64, pct: 0.I64, cx: 0.0 } }, |st, y| {
-					seg = I64.to_f32(y.s.sessions) / I64.to_f32(tot_ss) * comp_w * p
-					col = Theme.sport_color(y.s.sport)
-					x0 = st.x0
-					# the FULL segment width for hit-testing (not the 1.5px-inset
-					# draw width), so even a one-pixel sliver is hoverable
-					over = model.mouse_y >= comp_y and model.mouse_y <= comp_y + 12.0 and model.mouse_x >= x0 and model.mouse_x < x0 + seg
-					hit2 = if over and seg > 0.5 { sport: y.s.sport, sessions: y.s.sessions, pct: (I64.to_f32(y.s.sessions) / I64.to_f32(tot_ss) * 100.0).round_to_i64_try().ok_or(0), cx: x0 + seg / 2.0 } else st.hit
-					if seg > 1.0 {
-						frame.rounded_rectangle!({ x: x0, y: comp_y, width: (seg - 1.5).max(1.0), height: 12.0, radius: 3.0, segments: 3, style: Draw.filled(Color.with_alpha(col, 190)) })
-						if seg > 64.0 {
-							Text.from("${y.s.sport} ${I64.to_str(y.s.sessions)}", model.font).size(10).draw!(frame, { pos: { x: x0 + 6.0, y: comp_y + 15.0 }, color: Color.with_alpha(col, 235), align: (Top, Left) })
+				hovered = List.fold_try!(
+					List.map_with_index(comp_fams, |s, i| { s, i }),
+					{ x0: 36.0, hit: { sport: "", sessions: 0.I64, pct: 0.I64, cx: 0.0 } },
+					|st, y| {
+						seg = I64.to_f32(y.s.sessions) / I64.to_f32(tot_ss) * comp_w * p
+						col = Theme.sport_color(y.s.sport)
+						x0 = st.x0
+						# the FULL segment width for hit-testing (not the 1.5px-inset
+						# draw width), so even a one-pixel sliver is hoverable
+						over = model.mouse_y >= comp_y and model.mouse_y <= comp_y + 12.0 and model.mouse_x >= x0 and model.mouse_x < x0 + seg
+						hit2 = if (over and seg > 0.5) { sport: y.s.sport, sessions: y.s.sessions, pct: (I64.to_f32(y.s.sessions) / I64.to_f32(tot_ss) * 100.0).round_to_i64_try().ok_or(0), cx: x0 + seg / 2.0 } else st.hit
+						if seg > 1.0 {
+							frame.rounded_rectangle!({ x: x0, y: comp_y, width: (seg - 1.5).max(1.0), height: 12.0, radius: 3.0, segments: 3, style: Draw.filled(Color.with_alpha(col, 190)) })
+							if seg > 64.0 {
+								Text.from("${y.s.sport} ${I64.to_str(y.s.sessions)}", model.font).size(10).draw!(frame, { pos: { x: x0 + 6.0, y: comp_y + 15.0 }, color: Color.with_alpha(col, 235), align: (Top, Left) })
+							}
 						}
-					}
-					Ok({ x0: x0 + seg, hit: hit2 })
-				})
+						Ok({ x0: x0 + seg, hit: hit2 })
+					},
+				)
 				# the tooltip for whatever segment the pointer is on, drawn ABOVE
 				# the bar so it never hides the thing it describes
-				h = match hovered { Ok(v) => v.hit
-					Err(_) => { sport: "", sessions: 0.I64, pct: 0.I64, cx: 0.0 } }
+				h = match hovered {
+					Ok(v) => v.hit
+					Err(_) => { sport: "", sessions: 0.I64, pct: 0.I64, cx: 0.0 }
+				}
 				if h.sport != "" {
 					label = "${h.sport}  ${I64.to_str(h.sessions)} sessions  ${I64.to_str(h.pct)}%"
 					tw = 8.0 * U64.to_f32(Str.count_utf8_bytes(label)) + 20.0

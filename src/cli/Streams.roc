@@ -112,7 +112,12 @@ expect Streams.decode_streams(Null).failed == False
 expect {
 	d = Streams.decode_streams(NotNull("{\"time\":{\"data\":[0,1,2]},\"heartrate\":{\"data\":[100,null,120]}}"))
 	pairs = Streams.stream_pairs(d.streams.time, d.streams.heartrate)
-	!(d.failed) and List.len(pairs) == 2 and (match List.last(pairs) { Ok(p) => p.t == 2  Err(_) => False })
+	!(d.failed) and List.len(pairs) == 2 and (
+		match List.last(pairs) {
+			Ok(p) => p.t == 2
+			Err(_) => False
+		}
+	)
 }
 
 # distance + altitude decode and pair by index for grade-adjusted pace

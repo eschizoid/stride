@@ -18,11 +18,15 @@ Wrap :: [].{
 	wrap = |s, n| {
 		words = List.keep_if(Str.split_on(s, " "), |w| w != "")
 		pieces = List.keep_if(List.join_map(words, |w| chunk(w, n)), |p| p != "")
-		folded = List.fold(pieces, { lines: [], cur: "" }, |acc, w|
-			if acc.cur == "" { lines: acc.lines, cur: w }
-			else if Str.count_utf8_bytes(acc.cur) + 1 + Str.count_utf8_bytes(w) <= n { lines: acc.lines, cur: "${acc.cur} ${w}" }
-			else { lines: List.append(acc.lines, acc.cur), cur: w })
-		if folded.cur == "" folded.lines else List.append(folded.lines, folded.cur)
+		folded = List.fold(
+			pieces,
+			{ lines: [], cur: "" },
+			|acc, w|
+				if (acc.cur == "") { lines: acc.lines, cur: w }
+				else if (Str.count_utf8_bytes(acc.cur) + 1 + Str.count_utf8_bytes(w) <= n) { lines: acc.lines, cur: "${acc.cur} ${w}" }
+				else { lines: List.append(acc.lines, acc.cur), cur: w },
+		)
+		if (folded.cur == "") folded.lines else List.append(folded.lines, folded.cur)
 	}
 
 	# a word as pieces of at most n bytes, each ending on a code point
@@ -32,13 +36,13 @@ Wrap :: [].{
 	chunk : Str, U64 -> List(Str)
 	chunk = |w, n| {
 		bytes = Str.to_utf8(w)
-		step = if n == 0 1 else n
-		if List.len(bytes) <= step [w]
+		step = if (n == 0) 1 else n
+		if (List.len(bytes) <= step) [w]
 		else {
 			at0 = boundary(bytes, step)
 			# a first code point wider than the budget is taken whole: a
 			# line must carry at least one glyph to make progress
-			at = if at0 == 0 (first_point_len(bytes)) else at0
+			at = if (at0 == 0) (first_point_len(bytes)) else at0
 			List.prepend(chunk(Str.from_utf8_lossy(List.drop_first(bytes, at)), step), Str.from_utf8_lossy(List.take_first(bytes, at)))
 		}
 	}
@@ -49,20 +53,24 @@ Wrap :: [].{
 	# when the first code point alone is wider than `at`
 	boundary : List(U8), U64 -> U64
 	boundary = |bytes, at|
-		List.fold(List.map_with_index(List.repeat({}, at + 1), |_u, k| at - k), at + 1, |acc, i|
-			if acc != at + 1 acc
-			else if i == 0 0
-			else match List.get(bytes, i) {
-				Ok(b) => if b >= 128 and b < 192 acc else i
-				Err(_) => i
-			})
+		List.fold(
+			List.map_with_index(List.repeat({}, at + 1), |_u, k| at - k),
+			at + 1,
+			|acc, i|
+				if (acc != at + 1) acc
+				else if (i == 0) 0
+				else match List.get(bytes, i) {
+					Ok(b) => if (b >= 128 and b < 192) acc else i
+					Err(_) => i
+				},
+		)
 
 	# the UTF-8 lead-byte table: a code point is 1 byte below 0x80, 2 below
 	# 0xE0, 3 below 0xF0, else 4
 	first_point_len : List(U8) -> U64
 	first_point_len = |bytes|
 		match List.first(bytes) {
-			Ok(b) => if b < 128 1 else if b < 224 2 else if b < 240 3 else 4
+			Ok(b) => if (b < 128) 1 else if (b < 224) 2 else if (b < 240) 3 else 4
 			Err(_) => 1
 		}
 
@@ -70,8 +78,10 @@ Wrap :: [].{
 	# floors at 24 so a tiny window still wraps instead of over-packing
 	cols_for : F32, F32 -> U64
 	cols_for = |px, adv|
-		match F32.to_u64_try((px / adv).max(24.0)) { Ok(c) => c
-			Err(_) => 24 }
+		match F32.to_u64_try((px / adv).max(24.0)) {
+			Ok(c) => c
+			Err(_) => 24
+		}
 
 	# the wrapped lines, at most k of them. Past the cap the last kept line
 	# is cut on a code point boundary and ends in "...", still within its
@@ -81,16 +91,18 @@ Wrap :: [].{
 	fit : Str, U64, U64 -> List(Str)
 	fit = |s, cols, k| {
 		lines = wrap(s, cols)
-		keep = if k == 0 1 else k
-		if List.len(lines) <= keep lines
+		keep = if (k == 0) 1 else k
+		if (List.len(lines) <= keep) lines
 		else {
 			kept = List.take_first(lines, keep)
-			last = match List.last(kept) { Ok(l) => l
-				Err(_) => "" }
+			last = match List.last(kept) {
+				Ok(l) => l
+				Err(_) => ""
+			}
 			# bytes the last line may keep beside the three-dot tail
-			room = if cols > 3 (cols - 3) else 0
+			room = if (cols > 3) (cols - 3) else 0
 			lb = Str.to_utf8(last)
-			cut = if List.len(lb) <= room last else Str.from_utf8_lossy(List.take_first(lb, boundary(lb, room)))
+			cut = if (List.len(lb) <= room) last else Str.from_utf8_lossy(List.take_first(lb, boundary(lb, room)))
 			List.append(List.drop_last(kept, 1), "${cut}...")
 		}
 	}

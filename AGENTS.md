@@ -42,6 +42,7 @@ creates a sequencing constraint, is where rot begins.
 just test      # THE entry point: pure expects → fresh build → offline e2e. NOT all of CI.
 just build     # the binary, --opt=dev (see below); STRIDE_LINKER= is an escape hatch
 just install   # build + symlink to ~/.local/bin/stride
+just fmt       # roc fmt over src/ and tests/; CI fails any .roc file not in this form
 ```
 
 `tests/e2e.roc` rides basic-webserver 0.19.0, which builds at zero warnings on the
@@ -54,6 +55,7 @@ except `issue-claims`, which reads the tracker:
 
 ```bash
 roc check src/cli/main.roc      # CI runs this on three OSes before anything else
+just fmt-check             # every .roc file is in `roc fmt` form
 just e2e-sync              # mock-backed sync/skips/stops/notes drivers; no network
 sh tools/skill-shapes.sh   # the coach skill's payload keys vs schemas/v3
 sh tools/blob-safety.sh    # every TEXT decode is projected through CAST(... AS TEXT)
@@ -340,12 +342,15 @@ These are measured toolchain behaviors, not style opinions.
 
 ### Style
 
-- **If/else brace style** (`roc fmt` is blocked by #27, so hold this by hand):
-  braceless when both branches are single short expressions
-  (`if stamp == 0 Null else Integer(stamp)`); braces the moment a branch has a
-  local binding, spans lines, or nests another if/match. Matches what fmt emits
-  where it works, so the eventual repo-wide fmt commit stays small. Normalize
-  existing code only as touched — no style-only sweeps while fmt is broken.
+- **Layout is `roc fmt`'s.** Run `just fmt` before committing; CI's `fmt` job runs
+  `roc fmt --check src tests` and fails the PR on any file it would rewrite. A
+  gate or e2e probe that greps source must not anchor on indentation, on where a
+  string literal starts, or on whether an `if` condition has parentheses: the
+  formatter decides all three.
+- **If/else brace style:** braceless when both branches are single short
+  expressions (`if (stamp == 0) Null else Integer(stamp)`; `roc fmt` adds the
+  condition's parentheses); braces the moment a branch has a local binding,
+  spans lines, or nests another if/match.
 
 ## Product invariants (enforced by code and/or e2e — keep them true)
 
