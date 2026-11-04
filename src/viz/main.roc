@@ -729,10 +729,11 @@ ticks_per_second : U64
 ticks_per_second = 60
 
 tick_at : Time.Cycle -> U64
-tick_at = |t| t.simulation_nanos / (1_000_000_000 / ticks_per_second)
+tick_at = |t| t.simulation_nanos * ticks_per_second / 1_000_000_000
 
 expect tick_at({ ..Time.first_cycle, simulation_nanos: 0 }) == 0
-expect tick_at({ ..Time.first_cycle, simulation_nanos: 990_000_000 }) == 59
+expect tick_at({ ..Time.first_cycle, simulation_nanos: 999_999_999 }) == 59
+expect tick_at({ ..Time.first_cycle, simulation_nanos: 1_000_000_000 }) == 60
 expect tick_at({ ..Time.first_cycle, simulation_nanos: 2_000_000_000 }) == 120
 
 # A periodic action fires on the cycle whose tick crosses a multiple of its
@@ -1801,7 +1802,7 @@ update! = |model0, program_input, io| {
 			_ => acc9
 		},
 	)
-	cap_step = capture_step(model.pending_capture, { shot: shot_done, rec: program_input.capture, settled: view_settled({ view_anim: model.view_anim, tick: model.tick, trace_loading: model.trace_loading, ghost_loading: model.ghost_loading, reloading: model.reloading }), tick: model.tick })
+	cap_step = capture_step(model.pending_capture, { shot: shot_done, rec: program_input.capture, settled: view_settled({ view_anim: model.view_anim, tick, trace_loading: model.trace_loading, ghost_loading: model.ghost_loading, reloading: model.reloading }), tick })
 	pending1 = cap_step.next
 	_ = match cap_step.act {
 		Nothing => {}

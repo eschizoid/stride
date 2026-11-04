@@ -127,8 +127,8 @@ Ui :: [].{
 		# it; "" when it did not, and a capture's path is then relative
 		cwd : Str,
 		tick : U64,
-		# the tick of the athlete's last input: the window keeps its full frame
-		# rate for a moment after it
+		# the tick of the last activity, the athlete's input or a directive from
+		# the coach: the window keeps its full frame rate for a moment after it
 		last_active : U64,
 		view_anim : U64,
 		last_focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, detail_day : Str, sport : Str, family : Str },
