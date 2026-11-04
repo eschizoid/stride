@@ -228,8 +228,8 @@ and the seconds held. A hold adds no tonnage, and its seconds never count as rep
 `{exercises: [{exercise, measure, points: [{date, top_kg, kg_reps, top_reps, total_reps, top_hold_s, total_hold_s}]}], monthly: [{month, kg, tonnage_known, covered, total}], sessions: {total, with_sets, pasted_unparsed}}`.
 Exercises match by exact name; points are per day. `measure: "hold"` is an exercise's
 holds, a separate entry from its rep sets of the same name: it progresses in `top_hold_s`
-(the longest hold) and `total_hold_s` (the day's summed hold time) at `top_kg` (the
-heaviest weight held), and its rep and `kg_reps` figures are 0. The hold fields are 0 on
+(the longest hold) and `total_hold_s` (the day's summed hold time) at `top_kg` (that
+longest hold's weight), and its rep and `kg_reps` figures are 0. The hold fields are 0 on
 every other entry. `measure: "kg"` exercises progress in
 `top_kg` (heaviest weight one rep moved) and `kg_reps` (the day's volume). `measure:
 "reps"` means every point moved 0 kg (a bodyweight move or a weightless set from an

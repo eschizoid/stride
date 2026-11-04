@@ -38,23 +38,44 @@ ReportStrength :: [].{
 		# however its reps move, and reps are the only progression it has.
 		# Holds group apart from rep sets of the same name, one entry each:
 		# a hold's progression is how long it was held (the longest hold and
-		# the day's summed hold time), at the heaviest weight held, and a
-		# rep set's is its weight and reps, so mixing them would set a
-		# held weight against a lifted one.
+		# the day's summed hold time), and a rep set's is its weight and
+		# reps, so mixing them would set a held weight against a lifted one.
+		# A hold's top_kg is the weight of that day's LONGEST hold (the
+		# heaviest, when several share that time), so the time and the
+		# weight shown together come from one hold, never a long light hold
+		# paired with a short heavy one.
 		points = Sql.query_many!({
 			path: Path.utf8(path),
-			query: \\SELECT CAST(s.exercise AS TEXT) AS ex,
-				\\       CASE WHEN COALESCE(s.hold_s, 0) > 0 THEN 1 ELSE 0 END AS held,
-				\\       substr(CAST(a.start_local AS TEXT), 1, 10) AS day,
-				\\       CAST(MAX(s.weight_kg) AS REAL) AS top_kg,
-				\\       CAST(SUM(s.sets * s.reps * s.weight_kg) AS REAL) AS kg_reps,
-				\\       MAX(s.reps) AS top_reps,
-				\\       SUM(s.sets * s.reps) AS total_reps,
-				\\       MAX(COALESCE(s.hold_s, 0)) AS top_hold_s,
-				\\       SUM(s.sets * COALESCE(s.hold_s, 0)) AS total_hold_s
-				\\FROM strength_sets s JOIN activities a ON a.id = s.activity_id
-				\\GROUP BY CAST(s.exercise AS TEXT), CASE WHEN COALESCE(s.hold_s, 0) > 0 THEN 1 ELSE 0 END, substr(CAST(a.start_local AS TEXT), 1, 10)
-				\\ORDER BY CAST(s.exercise AS TEXT), CASE WHEN COALESCE(s.hold_s, 0) > 0 THEN 1 ELSE 0 END, substr(CAST(a.start_local AS TEXT), 1, 10)
+			query: \\WITH r AS (
+				\\  SELECT CAST(s.exercise AS TEXT) AS ex,
+				\\         CASE WHEN COALESCE(s.hold_s, 0) > 0 THEN 1 ELSE 0 END AS held,
+				\\         substr(CAST(a.start_local AS TEXT), 1, 10) AS day,
+				\\         s.sets AS sets, s.reps AS reps, s.weight_kg AS weight_kg,
+				\\         COALESCE(s.hold_s, 0) AS hold_s
+				\\  FROM strength_sets s JOIN activities a ON a.id = s.activity_id
+				\\), g AS (
+				\\  SELECT ex, held, day,
+				\\         MAX(weight_kg) AS top_w,
+				\\         SUM(sets * reps * weight_kg) AS kg_reps,
+				\\         MAX(reps) AS top_reps,
+				\\         SUM(sets * reps) AS total_reps,
+				\\         MAX(hold_s) AS top_hold_s,
+				\\         SUM(sets * hold_s) AS total_hold_s
+				\\  FROM r GROUP BY ex, held, day
+				\\)
+				\\SELECT CAST(g.ex AS TEXT) AS ex,
+				\\       g.held AS held,
+				\\       CAST(g.day AS TEXT) AS day,
+				\\       CAST(CASE WHEN g.held = 1
+				\\                 THEN (SELECT MAX(r.weight_kg) FROM r WHERE r.ex = g.ex AND r.held = 1 AND r.day = g.day AND r.hold_s = g.top_hold_s)
+				\\                 ELSE g.top_w END AS REAL) AS top_kg,
+				\\       CAST(g.kg_reps AS REAL) AS kg_reps,
+				\\       g.top_reps AS top_reps,
+				\\       g.total_reps AS total_reps,
+				\\       g.top_hold_s AS top_hold_s,
+				\\       g.total_hold_s AS total_hold_s
+				\\FROM g
+				\\ORDER BY g.ex, g.held, g.day
 			,
 			bindings: [],
 			rows: |cols| |stmt| {
@@ -71,8 +92,9 @@ ReportStrength :: [].{
 			},
 		})?
 		# rows arrive sorted by (exercise, held, day); fold adjacent runs into
-		# one entry per exercise and kind. Prepend + reverse, never
-		# concat-in-fold.
+		# one entry per exercise and kind. Entries and their points are both
+		# prepended and reversed once, never appended or concatenated in the
+		# fold.
 		grouped = List.fold(
 			points,
 			[],
@@ -80,7 +102,7 @@ ReportStrength :: [].{
 				pt = { date: p.day, top_kg: p.top_kg, kg_reps: p.kg_reps, top_reps: p.top_reps, total_reps: p.total_reps, top_hold_s: p.top_hold_s, total_hold_s: p.total_hold_s }
 				match acc {
 					[head, .. as rest] if head.exercise == p.ex and head.held == p.held =>
-						List.prepend(rest, { exercise: head.exercise, held: head.held, points: List.append(head.points, pt) })
+						List.prepend(rest, { exercise: head.exercise, held: head.held, points: List.prepend(head.points, pt) })
 					_ =>
 						List.prepend(acc, { exercise: p.ex, held: p.held, points: [pt] })
 				}
@@ -100,7 +122,7 @@ ReportStrength :: [].{
 					} else {
 						"kg"
 					}
-				{ exercise: e.exercise, measure, points: e.points }
+				{ exercise: e.exercise, measure, points: Render.reverse_list(e.points) }
 			},
 		)
 		# every strength month, from the COVERAGE view — not the spine view,
@@ -236,7 +258,7 @@ ReportStrength :: [].{
 
 	# a top set as its measure reads it: a mass for a weighted exercise, the
 	# most reps in one set for one measured in reps, and the longest hold,
-	# with the heaviest weight held when it carried one, for a hold
+	# with that hold's weight when it carried one, for a hold
 	top_set : [Metric, Imperial], Str, { date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64, top_hold_s : I64, total_hold_s : I64 } -> Str
 	top_set = |units, measure, pt|
 		if measure == "reps" {

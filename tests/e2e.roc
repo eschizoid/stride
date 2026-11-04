@@ -363,7 +363,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1333)?
+	checks_ran_exactly!(1334)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7366,8 +7366,11 @@ b_strength_import! = |ctx| {
 	check!("...while the Curls lifted for reps keep their kg entry", strjq!(ctx, ["strength"], "[.data.exercises[] | select(.exercise == \"Curl\") | .measure] | join(\",\")") == "kg,hold")?
 	check!("strength conforms to its schema with a hold in it", validate_schema!(ctx, "strength", "strength") == "")?
 	# a second hold day, held longer, makes the hold a repeated exercise the
-	# human table shows first and latest
-	_ = sh!("printf '%s' '{\"activity_id\":\"9726\",\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"9.1 kg\"},\"duration\":{\"value\":\"1m 15s\"}}]}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - >/dev/null")
+	# human table shows first and latest. A shorter, heavier hold beside the
+	# longest one must not lend it its weight: the time and the weight shown
+	# together come from one hold.
+	_ = sh!("printf '%s' '{\"activity_id\":\"9726\",\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"9.1 kg\"},\"duration\":{\"value\":\"1m 15s\"}},{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"15 kg\"},\"duration\":{\"value\":\"20s\"}}]}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - >/dev/null")
+	check!("a hold day's top weight is its longest hold's, not a shorter heavier one's", strjq!(ctx, ["strength"], "[.data.exercises[] | select(.exercise == \"Curl\" and .measure == \"hold\") | .points[] | select(.date == \"2018-07-12\") | [.top_hold_s, .total_hold_s, (.top_kg * 10 | round)]] | tojson") == "[[75,95,91]]")?
 	held = stride_human!(ctx.bin, ctx.home, ["strength"])
 	check!("...and the human table names the hold with its first and latest time", Str.contains(held, "Curl (hold)") and Str.contains(held, "2018-07-10  60 s @ 9.1 kg") and Str.contains(held, "2018-07-12  75 s @ 9.1 kg"))?
 	# only a STORED workout claims its activity, in either order: an empty one

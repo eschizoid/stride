@@ -130,7 +130,7 @@ EXPECT_DECODES=85
 # count that nothing computed and nothing checked, so it drifted from the truth without
 # anything failing. A number a gate prints on every green run has to be a number the gate
 # enforces — which is why no historical value is quoted here either.
-EXPECT_SITES=140  # matched `... AS <alias>` projection expressions, not decoder call sites
+EXPECT_SITES=142  # matched `... AS <alias>` projection expressions, not decoder call sites
 if [ "$decodes" != "$EXPECT_DECODES" ]; then
   echo "blob-safety: inspected $decodes (file, alias) decode pairs, expected $EXPECT_DECODES."
   echo "blob-safety: if that change is intended, update the number in the same commit;"

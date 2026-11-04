@@ -74,7 +74,7 @@
               "reps",
               "hold"
             ],
-            "description": "what the exercise progresses in. \"hold\" for an entry of holds: its reps, total_reps and kg_reps are 0 (a hold adds no tonnage), top_kg is the heaviest weight held, and top_hold_s and total_hold_s are its progression. Otherwise \"reps\" when every point moved 0 kg, as a bodyweight exercise does (push ups, assisted chin ups and the like count 0 kg toward tonnage, imported or pasted) and as an imported set logged with no weight does: its top_kg and kg_reps are then 0, so top_reps and total_reps are its progression. \"kg\" when any point moved weight."
+            "description": "what the exercise progresses in. \"hold\" for an entry of holds: its reps, total_reps and kg_reps are 0 (a hold adds no tonnage), top_kg is the weight of that day's longest hold (the heaviest, when several share that time), and top_hold_s and total_hold_s are its progression. Otherwise \"reps\" when every point moved 0 kg, as a bodyweight exercise does (push ups, assisted chin ups and the like count 0 kg toward tonnage, imported or pasted) and as an imported set logged with no weight does: its top_kg and kg_reps are then 0, so top_reps and total_reps are its progression. \"kg\" when any point moved weight."
           }
         }
       }
