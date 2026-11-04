@@ -12,9 +12,9 @@ import Config
 Db :: [].{
 	# ── paths ────────────────────────────────────────────────────────────
 
-	# home directory, cross-platform: HOME on unix, USERPROFILE on Windows (where HOME
-	# is usually unset). Without this every command would fail on Windows before opening
-	# the db, even though we now target it.
+	# home directory, cross-platform: HOME on unix, USERPROFILE on Windows
+	# (where HOME is usually unset). Without the fallback every command fails on
+	# Windows before opening the db.
 	home_dir! : {} => Try(Str, _)
 	home_dir! = |{}|
 		match Env.var_str!(OsStr.from_str("HOME")) {
@@ -27,9 +27,10 @@ Db :: [].{
 		home = home_dir!({})?
 		Ok("${home}/.stride/db.sqlite")
 	}
-	# owner-only permissions on the credential store. basic-cli has no mode API (checked through 0.22),
-	# so shell out; best-effort (never fails the command — a platform without chmod
-	# just doesn't get hardened, and we don't claim it did). Sidecars may not exist.
+	# owner-only permissions on the credential store. basic-cli has no file-mode
+	# API, so shell out; best-effort (never fails the command — a platform
+	# without chmod just doesn't get hardened, and nothing claims it did).
+	# Sidecars may not exist.
 	secure_perms! : Str => Try({}, _)
 	secure_perms! = |dir| {
 		# dir is the sh -c positional $1 (double-quoted), never interpolated, so a path
@@ -44,15 +45,14 @@ Db :: [].{
 	config_get! = |path, key|
 		Sql.query!({
 			path: Path.utf8(path),
-			# CAST(... AS TEXT), and the reason is a real divergence rather than defensive
-			# habit. `value` is declared TEXT, and TEXT affinity converts INTEGER and REAL
-			# but NOT blobs — so a blob written by a hand-edit or a partial corruption
-			# survives in the column, and a bare `Sql.str` decode then answers
-			# `UnexpectedType(Bytes)`, which `config get` reports as `internal_error`:
-			# "this is a bug, not the data and not the invocation", about a fault that is
-			# entirely the data. It also made this path disagree with bare `config`, which
-			# asks SQL whether a row holds a value and would list a key `config get` then
-			# refused. One rule, decided in one place.
+			# CAST(... AS TEXT): `value` is declared TEXT, and TEXT affinity converts
+			# INTEGER and REAL but NOT blobs, so a blob written by a hand-edit or a
+			# partial corruption survives in the column. A bare `Sql.str` decode then
+			# answers `UnexpectedType(Bytes)`, which `config get` would report as
+			# `internal_error` — "this is a bug" — about a fault that is entirely the
+			# data. Bare `config` asks SQL whether a row holds a value, so a bare decode
+			# here would also refuse a key that `config` lists. One rule, decided in one
+			# place.
 			query: "SELECT COALESCE(CAST(value AS TEXT), '') AS value FROM config WHERE key = :key",
 			bindings: [{ name: ":key", value: String(key) }],
 			row: Sql.str("value"),
@@ -86,19 +86,15 @@ Db :: [].{
 			Ok(NotFound) => Ok(Metric)
 			Err(other) => Err(other)
 		}
-	# Remove a config row outright. Used by `config unset <key>` (#254, #276), which is
-	# the way out for a row the engine no longer reads.
+	# Remove a config row outright. Used by `config unset <key>` (#254, #276),
+	# the way out for a row the engine does not read.
 	#
-	# DELETE and not `value = ''`, which is worse than doing nothing for the family
-	# that most needs this. `Analyze.load_config!` requires every key
-	# starting `hr_z` to parse as F64, so one empty zone row kills `analyze` outright — and
-	# the misspelled zone keys are exactly the population #254's tightened `zone_shape`
-	# created. The write also could not reach them: `numeric_key` classifies `hr_z*` as
-	# Decimal, so the empty value was refused with `bad_value` before it got there.
-	#
-	# It is also the argument this repo already made once, in the e2e comment beside the
-	# timezone fixture: delete the row rather than storing '', "because an absent row is
-	# the state a fresh install is actually in".
+	# DELETE and not `value = ''`: `Analyze.load_config!` requires every key
+	# starting `hr_z` to parse as F64, so one empty zone row stops `analyze`
+	# outright, and a misspelled zone key is exactly the row an athlete needs to
+	# remove. Storing '' could not reach it anyway: `numeric_key` classifies
+	# `hr_z*` as Decimal, so an empty value is refused with `bad_value`. An
+	# absent row is the state a fresh install is actually in.
 	config_delete! : Str, Str => Try({}, _)
 	config_delete! = |path, key|
 		Sql.execute!({
@@ -157,8 +153,9 @@ Db :: [].{
 	}
 	resolve_time_mode! : Str => TimeMode
 	resolve_time_mode! = |path| {
-		# An unreadable value is NOT NoFixed and NOT zero: those both mean "carry on",
-		# and carrying on is what made #206 silent. Keep the raw text so doctor can name it.
+		# An unreadable value is NOT NoFixed and NOT zero: those both mean "carry
+		# on", and carrying on would hide the typo. Keep the raw text so doctor can
+		# name it.
 		fixed : Try(I64, [NoFixed, Unreadable(Str)])
 		fixed =
 			match config_get!(path, "utc_offset_minutes") {
@@ -261,13 +258,12 @@ Db :: [].{
 	# bump when the schema changes; ensure_schema! re-runs migrations when the db's
 	# PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 	# that post-date the original CREATE statements in Schema.roc.)
-	schema_version = 40
+	schema_version = 41
 
 	run_migrations! : Str => Try({}, _)
 	run_migrations! = |path| {
-		# v5: prescriptions => planned_sessions ("a coach plans sessions" — the
-		# medical word is gone). MUST run before the CREATEs below, or an empty
-		# planned_sessions would shadow the old data.
+		# v5: prescriptions => planned_sessions. MUST run before the CREATEs below,
+		# or an empty planned_sessions would shadow the old data.
 		rename_table_if_exists!(path, "prescriptions", "planned_sessions")?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.activities, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.metrics, bindings: [] })?
@@ -278,16 +274,18 @@ Db :: [].{
 		Sql.execute!({ path: Path.utf8(path), query: Schema.streams, bindings: [] })?
 		# v39: per-activity count of stream fetches that would not decode
 		Sql.execute!({ path: Path.utf8(path), query: Schema.stream_retries, bindings: [] })?
-		# ...and a retry row for every stored body that is not JSON at all. Earlier
-		# versions stored any UTF-8 body, and analyze reports one only when it
-		# rescores the activity, which a converged row never needs; without this a
-		# body stored before v39 would never be fetched again. OR IGNORE keeps the
+		# ...and a retry row for every stored body that is not JSON at all. A
+		# database from before v39 can hold one, and analyze reports such a body
+		# only when it rescores the activity, which a converged row never needs;
+		# without this the body would never be fetched again. OR IGNORE keeps the
 		# count of a row that exists, so re-running the migration re-arms nothing.
 		Sql.execute!({ path: Path.utf8(path), query: Schema.seed_stream_retries, bindings: [] })?
 		# v34 (#478): strength notes (mirror) + parsed set rows (computed) —
 		# created before the views below, which read strength_sets
 		Sql.execute!({ path: Path.utf8(path), query: Schema.strength_notes, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.strength_sets, bindings: [] })?
+		# v41: a hold's seconds; the next analyze rebuilds every row with it
+		alter_add_column!(path, "ALTER TABLE strength_sets ADD COLUMN hold_s INTEGER NOT NULL DEFAULT 0")?
 		# v38: structured strength logs imported from Strava's connector (mirror)
 		Sql.execute!({ path: Path.utf8(path), query: Schema.strength_logs, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.ratings, bindings: [] })?
@@ -297,7 +295,7 @@ Db :: [].{
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_20min_w REAL")?
 		# v21: which signal produced decoupling_pct — provenance stored at analyze
 		# time (like load_model), because re-deriving it at render time from the
-		# stream mislabels estimated-watts sessions and re-pull windows (#142 retro)
+		# stream mislabels estimated-watts sessions and re-pull windows (#142)
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN decoupling_signal TEXT")?
 		# v22: a skip can name the activity that replaced the plan (#144) —
 		# judgment-tier provenance; a substitution is NOT a completion
@@ -305,17 +303,15 @@ Db :: [].{
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN ftp_used REAL")?
 		alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN status TEXT")?
 		alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN skipped_reason TEXT")?
-		# #274: what `complete` erased. Before this, an overwrite was REPORTED — `#258` made
-		# the payload name `replaced_activity` and the human line print the command that
-		# restores it — but the record lived in one line of stdout, once. `week` and `plan`
-		# show the new `completed_activity_id`; the old one was gone from the row, so an
-		# athlete who notices a week later has shell scrollback and nothing else. That is
-		# the scenario the original report opens with, a typo'd session id.
+		# superseded_activity_id (#274): the completion a later `complete` replaced.
+		# `week` and `plan` show the new `completed_activity_id`, and the payload's
+		# `replaced_activity` names the old one only once, on stdout; this column
+		# keeps it on the row, so an athlete who notices a mistyped session id a
+		# week later can restore it.
 		#
-		# The narrow form deliberately: LAST value only, on the row. An audit table would
-		# also cover repeated overwrites and the cross-session `ReleasedFrom` case, at the
-		# cost of a table nothing else reads. One column is enough for the typo, and #258's
-		# invertibility argument is already scoped to "this session's completion".
+		# LAST value only, on the row: one column covers the mistyped id, while an
+		# audit table, which would also cover repeated overwrites and the
+		# cross-session `ReleasedFrom` case, would be a table nothing else reads.
 		alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN superseded_activity_id INTEGER")?
 		# v26 (#198, ADR 0014): optional structured target beside the prose — coach-written
 		# judgment-tier numbers, all three NULL for a prose-only session. `target_watts`
@@ -336,17 +332,17 @@ Db :: [].{
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN avg_hr_stream REAL")?
 		# v6: metrics record WHICH ladder rung scored them (load provenance)
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN load_model TEXT")?
-		# v8: drop load_confidence — it was a pure function of load_model (v7), so storing
-		# it was redundant denormalization. Confidence is now derived from load_model at
-		# read time (doctor). The drop cleans up dbs that got the v7 column.
+		# v8: drop load_confidence. Confidence is a pure function of load_model,
+		# derived at read time (doctor), so a stored copy could only disagree with
+		# it.
 		drop_column_if_exists!(path, "ALTER TABLE activity_metrics DROP COLUMN load_confidence")?
 		# v9: time-in-intensity from POWER (easy/moderate/hard seconds), judged against the
 		# sport's own FTP — the truer "how hard" for power sports than HR zones
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN pi_easy_s INTEGER")?
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN pi_moderate_s INTEGER")?
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN pi_hard_s INTEGER")?
-		# v10: FTP is now per-sport under `ftp_<sport>` (uniform, no special cycling key).
-		# Move the old cycling `ftp` value to `ftp_ride` if it hasn't been set already.
+		# v10: move a cycling `ftp` value to the per-sport key `ftp_ride` when that
+		# is not set already.
 		Sql.execute!({ path: Path.utf8(path), query: "UPDATE config SET key = 'ftp_ride' WHERE key = 'ftp' AND (SELECT COUNT(*) FROM config WHERE key = 'ftp_ride') = 0", bindings: [] })?
 		# v11: synced_at stamps each activity with the sync run that last saw it, so a
 		# sync can prune activities deleted on Strava — any row in the pulled window not
@@ -385,10 +381,10 @@ Db :: [].{
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN hr_samples_dropped INTEGER")?
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN watts_samples_total INTEGER")?
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN watts_samples_dropped INTEGER")?
-		# v17: the activity-input signature a metrics row was computed from, compared on
-		# every analyze (same contract as ftp_used) so a changed activity rescores itself.
-		# This is what lets `sync` stop deleting metrics — invalidating there wiped a month
-		# of metrics per run, since sync cannot tell an edit from a no-op.
+		# v17: the activity-input signature a metrics row was computed from,
+		# compared on every analyze (same contract as ftp_used) so a changed
+		# activity rescores itself. This is what lets `sync` leave metrics alone: it
+		# re-lists a 30-day window every run and cannot tell an edit from a no-op.
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN mt_used INTEGER")?
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN dist_used INTEGER")?
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN elev_used INTEGER")?
@@ -400,13 +396,14 @@ Db :: [].{
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN sport_used TEXT")?
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN start_used TEXT")?
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN stream_len_used INTEGER")?
-		# v19: aerobic decoupling / Pw:HR drift (#94). NULLABLE on purpose — 0.0 is a
-		# legitimate PERFECT result (no drift), so a 0 default would make an ideal ride
-		# and a session with no power meter indistinguishable. NULL means "not computable
+		# v19: aerobic decoupling / Pw:HR drift (#94). NULLABLE: 0.0 is a legitimate
+		# PERFECT result (no drift), so a 0 default would make an ideal ride and a
+		# session with no power meter indistinguishable. NULL means "not computable
 		# for this activity"; a stored 0.0 means "computed, and it was flat".
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN decoupling_pct REAL")?
-		# v2: index the column every date-range filter and the activities sort use
-		# (queries now compare a.start_local directly — sargable — instead of substr)
+		# v2: index the column every date-range filter and the activities sort use;
+		# queries compare a.start_local directly, which the index serves, rather
+		# than a substr of it
 		Sql.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_local)", bindings: [] })?
 		# v14: period_threshold_sql, the pace-side twin of period_ftp_sql, filters on sport_type AND start_local
 		# together, once per row being scored. start_local alone leaves a scan over every
@@ -415,11 +412,11 @@ Db :: [].{
 		# v15: NULL = Strava never said (pre-flag rows, CSV imports); 1 = real meter; 0 =
 		# estimated. Estimated watts must not outrank honest fallbacks (#73).
 		alter_add_column!(path, "ALTER TABLE activities ADD COLUMN device_watts INTEGER")?
-		# v18: backfill the v17 signature so upgrading does not rescore the entire history.
-		# Sound because the code this replaced deleted the metrics row on every upsert: a
-		# surviving metrics row belongs to an activity unwritten since it was computed, so
-		# its current values ARE the values it was scored from. Touches only NULL rows, so
-		# the re-run (a db stuck at 17 pre-backfill) is a safe no-op.
+		# v18: backfill the v17 signature so upgrading does not rescore the entire
+		# history. Sound because before v17 every activity upsert deleted its
+		# metrics row: a surviving metrics row belongs to an activity unwritten
+		# since it was computed, so its current values ARE the values it was scored
+		# from. Touches only NULL rows, so re-running it is a safe no-op.
 		Sql.execute!({
 			path: Path.utf8(path),
 			query: \\UPDATE activity_metrics SET
@@ -444,11 +441,12 @@ Db :: [].{
 			,
 			bindings: [],
 		})?
-		# v23 (#151): the FTP population is the sport FAMILY, stored as a column so the
-		# period-FTP subqueries stay sargable (the CASE inline measured 8.5x slower). The
-		# backfill rewrites ALL rows so a Sports.families edit ships as edit + version bump;
-		# triggers keep future writes current — fixtures and CSV imports write activities
-		# directly, so sync-side code cannot be the keeper.
+		# v23 (#151): the FTP population is the sport FAMILY, stored as a column so
+		# the period-FTP subqueries stay sargable, which a CASE inline is not. The
+		# backfill rewrites ALL rows so a Sports.families edit ships as edit +
+		# version bump; triggers keep future writes current, because fixtures and
+		# CSV imports write activities directly and sync-side code cannot be the
+		# keeper.
 		alter_add_column!(path, "ALTER TABLE activities ADD COLUMN sport_family TEXT")?
 		Sql.execute!({ path: Path.utf8(path), query: "UPDATE activities SET sport_family = ${Sports.sql_canonical_case("sport_type")}", bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_family_start ON activities(sport_family, start_local)", bindings: [] })?
@@ -464,11 +462,11 @@ Db :: [].{
 			query: "CREATE TRIGGER activities_family_au AFTER UPDATE OF sport_type ON activities BEGIN UPDATE activities SET sport_family = ${Sports.sql_canonical_case("NEW.sport_type")} WHERE id = NEW.id; END",
 			bindings: [],
 		})?
-		# v29: shared-semantics views (plan dedupe, week alignment) — DROP +
-		# CREATE so an edited definition always wins; the viz reads these too.
-		# LAST in the migration, deliberately: plan_current references the
-		# status column, which the ALTERs above add on databases that predate
-		# it — a fresh or old db must gain the column before the view names it.
+		# v29: shared-semantics views (plan dedupe, week alignment) — DROP + CREATE
+		# so an edited definition always wins; the viz reads these too. LAST in the
+		# migration: plan_current references the status column, which the ALTERs
+		# above add on databases that predate it, so a database must gain the column
+		# before the view names it.
 		Sql.execute!({ path: Path.utf8(path), query: Schema.plan_current_drop, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.plan_current, bindings: [] })?
 		# v37: the series clock BEFORE week_bounds, which reads it
@@ -553,18 +551,20 @@ Db :: [].{
 			Err(other) => Err(other)
 
 		}
-	# Reads back the journal mode actually in force. `PRAGMA journal_mode = WAL` does NOT
-	# error when it cannot switch — on a filesystem without WAL's shared-memory primitives
-	# it silently returns the mode it kept, and discarding that answer would leave the
-	# engine believing it has concurrency it does not (the silent-fallback trap `time_ok`
-	# closes for timezones). Reported by doctor, not fatal: stride works without WAL, and
-	# busy_timeout still turns most contention into a wait.
+	# Reads back the journal mode actually in force. `PRAGMA journal_mode = WAL`
+	# does NOT error when it cannot switch — on a filesystem without WAL's
+	# shared-memory primitives it silently returns the mode it kept, and
+	# discarding that answer would leave the engine believing it has concurrency
+	# it does not (the silent-fallback trap `time_ok` closes for timezones).
+	# Reported by doctor, not fatal: stride works without WAL, and busy_timeout
+	# still turns most contention into a wait.
 	#
-	# Why WAL: analyze rebuilds daily_load in one transaction (a partial day-walk would
-	# read as a valid truncated series), which under the rollback journal locks the whole
-	# db — and busy_timeout defaults to 0, so a concurrent `stride week` aborted a running
-	# analyze outright. WAL is a persistent property of the file; readers proceed against
-	# the one long writer.
+	# Why WAL: analyze rebuilds daily_load in one transaction (a partial
+	# day-walk would read as a valid truncated series), which under the rollback
+	# journal locks the whole db — and busy_timeout defaults to 0, so a
+	# concurrent `stride week` would abort a running analyze outright. WAL is a
+	# persistent property of the file; readers proceed against the one long
+	# writer.
 	journal_mode! : Str => Try(Str, _)
 	journal_mode! = |path| {
 		# Best-effort for real: a `?` here would abort doctor on a Busy or unopenable db,
@@ -588,10 +588,10 @@ Db :: [].{
 		Ok(Str.with_ascii_lowercased(List.first(modes).ok_or("unknown")))
 	}
 	configure_concurrency! = |path| {
-		# busy_timeout FIRST, and not as a style preference: switching journal mode takes a
-		# write lock, so with the default timeout of 0 the very statement meant to enable
-		# WAL is itself the one that fails instantly against a busy database — leaving the
-		# engine in the exact rollback-journal mode it was trying to escape.
+		# busy_timeout FIRST: switching journal mode takes a write lock, so with the
+		# default timeout of 0 the very statement meant to enable WAL is itself the
+		# one that fails instantly against a busy database, leaving the engine in
+		# the rollback-journal mode it was trying to escape.
 		_ = Sql.query_many!({
 			path: Path.utf8(path),
 			query: "PRAGMA busy_timeout = 5000",

@@ -32,14 +32,22 @@ Peloton :: [].{
 	# Units: lbs (Peloton's default) converted through Units.lb_kg; kg as-is.
 	#
 	# A bodyweight exercise (`Adapter.is_bodyweight`) keeps its sets and
-	# reps at 0 kg when its set line names a weight, which can be the
-	# athlete's own mass. A set line with no weight carries no bullet, so it
-	# yields no row. A timed set line (`3 × 30 sec • 20 lbs`) yields no row
-	# either: its R is a duration, and a duration times a weight is not
-	# tonnage. A line that is only a set count (`S × R`, optionally followed
-	# by one word from `count_units`, with or without a refused weight or a
-	# timed one) is never an exercise name, so the name above it stays
-	# current.
+	# reps, or its hold, at 0 kg when its set line names a weight, which can
+	# be the athlete's own mass. A set line with no weight carries no
+	# bullet, so it yields no row.
+	#
+	# A TIMED set line (`3 × 30 sec • 20 lbs`, R followed by one of
+	# `time_units`) is a HOLD: S holds of R seconds or minutes at the
+	# weight, stored as a row with 0 reps and the held seconds in `hold_s`,
+	# so it adds no tonnage and its duration is never read as reps. Side
+	# semantics follow the rep rule above with the hold standing in for the
+	# rep: time/side is each side held in turn, so the set count doubles
+	# and, with weight/side, each hold carries ONE side's mass; weight/side
+	# alone is both sides held at once (2 × W).
+	#
+	# A line that is only a set count (`S × R`, optionally followed by one
+	# word from `count_units`, with or without a refused weight) is never an
+	# exercise name, so the name above it stays current.
 	#
 	# Pure, expects below; the effectful skin (storing rows at analyze) lives
 	# in Analyze.roc.
@@ -61,7 +69,7 @@ Peloton :: [].{
 						if acc.exercise == "" {
 							acc
 						} else {
-							{ exercise: acc.exercise, rows: List.append(acc.rows, { exercise: acc.exercise, sets: s.sets, reps: s.reps, weight_kg: if (Adapter.is_bodyweight(acc.exercise)) 0.0 else s.weight_kg }) }
+							{ exercise: acc.exercise, rows: List.append(acc.rows, { exercise: acc.exercise, sets: s.sets, reps: s.reps, hold_s: s.hold_s, weight_kg: if (Adapter.is_bodyweight(acc.exercise)) 0.0 else s.weight_kg }) }
 						}
 					Err(_) =>
 						if line == "" or Str.starts_with(line, "Block ") or is_set_shaped(line) {
@@ -115,28 +123,31 @@ Peloton :: [].{
 	time_units = ["s", "sec", "secs", "seconds", "min", "mins", "minutes"]
 
 	# one set line, or Err for anything else. The bullet is the discriminator:
-	# no prose line in the share format carries ` • `.
-	parse_set_line : Str -> Try({ sets : I64, reps : I64, weight_kg : F64 }, [NotASetLine])
+	# no prose line in the share format carries ` • `. A timed line is a hold:
+	# 0 reps and the held seconds in `hold_s`.
+	parse_set_line : Str -> Try({ sets : I64, reps : I64, hold_s : I64, weight_kg : F64 }, [NotASetLine])
 	parse_set_line = |line|
 		match Str.split_on(line, " • ") {
 			[left, right] => {
 				lr = parse_sets_reps(left)?
-				# a held duration is not reps, and seconds × weight is not tonnage
-				if lr.timed {
-					return Err(NotASetLine)
-				}
 				w = parse_weight(right)?
-				# weight/side with per-side reps is single-side work: one side's
-				# mass per rep, reps doubled. weight/side with total reps is both
-				# hands at once: double the mass. Plain numbers are totals.
+				# weight/side with per-side reps (or holds) is single-side work: one
+				# side's mass each, the count doubled. weight/side with total reps is
+				# both hands at once: double the mass. Plain numbers are totals.
 				weight_kg =
 					if w.per_side and !(lr.per_side) {
 						w.kg * 2.0
 					} else {
 						w.kg
 					}
-				reps = if (lr.per_side) lr.reps * 2 else lr.reps
-				Ok({ sets: lr.sets, reps, weight_kg })
+				if lr.timed {
+					hold_s = Adapter.read_seconds("${lr.reps.to_str()} ${lr.unit}").map_err(|_| NotASetLine)?
+					sets = if (lr.per_side) lr.sets * 2 else lr.sets
+					Ok({ sets, reps: 0, hold_s, weight_kg })
+				} else {
+					reps = if (lr.per_side) lr.reps * 2 else lr.reps
+					Ok({ sets: lr.sets, reps, hold_s: 0, weight_kg })
+				}
 			}
 			_ => Err(NotASetLine)
 		}
@@ -145,8 +156,9 @@ Peloton :: [].{
 	# tolerated, since a re-typed paste is one keyboard away from the
 	# multiplication sign. `timed` says the word after R is one of
 	# `time_units` (through `unit_word`, so in any case and with or without
-	# `/side`), so R counts seconds or minutes, not reps.
-	parse_sets_reps : Str -> Try({ sets : I64, reps : I64, per_side : Bool, timed : Bool }, [NotASetLine])
+	# `/side`), so R counts seconds or minutes, not reps; `unit` is that word
+	# without its `/side`, "" on a line that is not timed.
+	parse_sets_reps : Str -> Try({ sets : I64, reps : I64, per_side : Bool, timed : Bool, unit : Str }, [NotASetLine])
 	parse_sets_reps = |left| {
 		parts =
 			match Str.split_on(left, " × ") {
@@ -165,12 +177,12 @@ Peloton :: [].{
 		if sets <= 0 or reps <= 0 {
 			Err(NotASetLine)
 		} else {
-			timed =
+			unit =
 				match List.keep_if(reps_tokens, |t| t != "") {
-					[_, unit, ..] => List.contains(time_units, unit_word(unit))
-					_ => False
+					[_, word, ..] => if (List.contains(time_units, unit_word(word))) unit_word(word) else ""
+					_ => ""
 				}
-			Ok({ sets, reps, per_side: Str.contains(Str.with_ascii_lowercased(reps_part), "/side"), timed })
+			Ok({ sets, reps, per_side: Str.contains(Str.with_ascii_lowercased(reps_part), "/side"), timed: unit != "", unit })
 		}
 	}
 
@@ -320,23 +332,41 @@ expect {
 	}
 }
 
-# a timed set line with a weight yields no row, in any case of its unit, and
-# does not take over the name: the next set line still belongs to the move
-# above it, while a rep-counted line beside it keeps its tonnage
+# a timed set line with a weight is a hold, in any case of its unit: its
+# sets and weight at 0 reps with the held seconds, so it adds no tonnage and
+# keeps the name for the rep line after it
 expect {
 	rows = Peloton.parse("Weighted Plank\n3 × 30 sec • 20 lbs\n3 × 1 Min • 20 lbs\n3 × 6 • 20 lbs\nCurl\n3 × 10 • 20 lbs")
 	match rows {
-		[a, b] => a.exercise == "Weighted Plank" and a.reps == 6 and b.exercise == "Curl" and b.sets == 3 and b.reps == 10 and (b.weight_kg - 9.0718474).abs() < 0.001
+		[a, b, c, d] =>
+			a.exercise == "Weighted Plank" and a.sets == 3 and a.reps == 0 and a.hold_s == 30 and (a.weight_kg - 9.0718474).abs() < 0.001
+				and b.exercise == "Weighted Plank" and b.sets == 3 and b.reps == 0 and b.hold_s == 60
+				and c.exercise == "Weighted Plank" and c.reps == 6 and c.hold_s == 0
+				and d.exercise == "Curl" and d.sets == 3 and d.reps == 10 and d.hold_s == 0 and (d.weight_kg - 9.0718474).abs() < 0.001
 		_ => False
 	}
 }
 
-# a per-side timed hold is timed too, and a bare per-side count is skipped
-# like any other: neither counts seconds as reps or takes over the name
+# per-side holds: time/side doubles the hold count, with one side's mass
+# under weight/side and the stated mass under a plain weight; weight/side
+# alone is both sides held at once. A bare per-side count is skipped.
 expect {
-	rows = Peloton.parse("Suitcase Hold\n3 × 30 sec/side • 20 lbs\n3 × 30 Sec/Side\n3 × 8 reps/side • 20 lbs/side")
+	rows = Peloton.parse("Suitcase Hold\n3 × 30 sec/side • 20 lbs\n3 × 30 Sec/Side\n3 × 45 sec/side • 20 lbs/side\nFarmer Hold\n2 × 1 min • 20 lbs/side\n3 × 8 reps/side • 20 lbs/side")
 	match rows {
-		[a] => a.exercise == "Suitcase Hold" and a.reps == 16 and (a.weight_kg - 9.0718474).abs() < 0.001
+		[a, b, c, d] =>
+			a.exercise == "Suitcase Hold" and a.sets == 6 and a.reps == 0 and a.hold_s == 30 and (a.weight_kg - 9.0718474).abs() < 0.001
+				and b.sets == 6 and b.hold_s == 45 and (b.weight_kg - 9.0718474).abs() < 0.001
+				and c.exercise == "Farmer Hold" and c.sets == 2 and c.hold_s == 60 and (c.weight_kg - 18.1436948).abs() < 0.001
+				and d.reps == 16 and d.hold_s == 0
+		_ => False
+	}
+}
+
+# a bodyweight hold that names a weight keeps its hold at 0 kg
+expect {
+	rows = Peloton.parse("Plank\n3 × 60 sec • 175 lbs")
+	match rows {
+		[a] => a.exercise == "Plank" and a.sets == 3 and a.hold_s == 60 and a.weight_kg == 0.0
 		_ => False
 	}
 }

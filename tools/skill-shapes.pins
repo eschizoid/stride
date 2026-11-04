@@ -68,7 +68,7 @@ strength-import.json	exercise,reason,set	exercise,reason,set	doc	properties.skip
 strength-import.json	exercise,recorded,set	exercise,recorded,set	doc	properties.imported.items.properties.zeroed.items
 strength-import.json	imported,skipped	imported,skipped	doc	$
 strength.json	covered,kg,month,tonnage_known,total	covered,kg,month,tonnage_known,total	doc	properties.monthly.items
-strength.json	date,kg_reps,top_kg,top_reps,total_reps	date,kg_reps,top_kg,top_reps,total_reps	doc	properties.exercises.items.properties.points.items
+strength.json	date,kg_reps,top_hold_s,top_kg,top_reps,total_hold_s,total_reps	date,kg_reps,top_hold_s,top_kg,top_reps,total_hold_s,total_reps	doc	properties.exercises.items.properties.points.items
 strength.json	exercise,measure,points	exercise,measure,points	doc	properties.exercises.items
 strength.json	exercises,monthly,sessions	exercises,monthly,sessions	doc	$
 strength.json	pasted_unparsed,total,with_sets	pasted_unparsed,total,with_sets	doc	properties.sessions

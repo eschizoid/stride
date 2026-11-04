@@ -183,7 +183,7 @@ two sources and parses both into the same per-set rows:
    (an exercise line, then `3 × 8 • 30 lbs/side`; `/side` variants resolved to the mass
    actually moved); no other paste format is read. A bodyweight line is kept only when
    it names a weight above zero in lb or kg, and then counts 0 kg like an imported
-   one, with no `zeroed` report. A timed line (`3 × 30 sec • 20 lbs`) yields no row.
+   one, with no `zeroed` report. A timed line (`3 × 30 sec • 20 lbs`) is a hold (below).
    Sync fetches strength-family descriptions after the stream queue empties and
    re-reads them inside the 30-day window, so a paste the same evening lands on the
    next sync. Unrecognised text yields nothing and is never an error.
@@ -193,8 +193,10 @@ two sources and parses both into the same per-set rows:
    `activity_id` and `null` fields are fine) from a file or on stdin with `-`. It returns
    `{imported: [{activity_id, rows, sets, dropped: [{set, exercise, reason}], zeroed: [{set, exercise, recorded}]}], skipped: [{activity_id, reason, dropped}]}`.
    - `dropped` lists every set left out, by 1-based position, with reason
-     `no_exercise_name`, `no_reps` (timed sets included), `bad_reps` (`8-10`, `0`),
-     `unknown_weight_unit` (no kg/lb/lbs) or `bad_weight` (unparseable or negative).
+     `no_exercise_name`, `no_reps` (neither reps nor a duration), `bad_reps` (`8-10`,
+     `0`), `bad_duration` (a duration that is not text, has no unit such as `60`, or
+     is not positive), `unknown_weight_unit` (no kg/lb/lbs) or `bad_weight`
+     (unparseable or negative).
      **Tell the athlete about every dropped set**: tonnage does not include it. A set
      with no weight at all is kept at 0 kg.
    - `zeroed` lists bodyweight sets (push up, pull up, chin up, dip, plank, sit up and
@@ -219,9 +221,17 @@ its sets). The log is stored verbatim. Its weights are kept as entered (pounds c
 to kg), never doubled for dumbbells: the log does not say whether a weight is one dumbbell
 or the pair, so ask the athlete before reading it as a total.
 
+**Holds.** A set with a duration and no reps (an isometric hold: a weight held still, a
+plank, a dead hang) is kept as a hold, from either source: its sets and weight, 0 reps,
+and the seconds held. A hold adds no tonnage, and its seconds never count as reps.
+
 `stride strength --json` reads both:
-`{exercises: [{exercise, measure, points: [{date, top_kg, kg_reps, top_reps, total_reps}]}], monthly: [{month, kg, tonnage_known, covered, total}], sessions: {total, with_sets, pasted_unparsed}}`.
-Exercises match by exact name; points are per day. `measure: "kg"` exercises progress in
+`{exercises: [{exercise, measure, points: [{date, top_kg, kg_reps, top_reps, total_reps, top_hold_s, total_hold_s}]}], monthly: [{month, kg, tonnage_known, covered, total}], sessions: {total, with_sets, pasted_unparsed}}`.
+Exercises match by exact name; points are per day. `measure: "hold"` is an exercise's
+holds, a separate entry from its rep sets of the same name: it progresses in `top_hold_s`
+(the longest hold) and `total_hold_s` (the day's summed hold time) at `top_kg` (that
+longest hold's weight), and its rep and `kg_reps` figures are 0. The hold fields are 0 on
+every other entry. `measure: "kg"` exercises progress in
 `top_kg` (heaviest weight one rep moved) and `kg_reps` (the day's volume). `measure:
 "reps"` means every point moved 0 kg (a bodyweight move or a weightless set from an
 imported log), so its kg figures are 0 by construction and it progresses in `top_reps`

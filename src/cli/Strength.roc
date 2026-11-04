@@ -38,8 +38,8 @@ Strength :: [].{
 		match ads {
 			[] => { source: "", rows: [] }
 			[a, .. as rest] => {
-				# parenthesized on purpose: `a.parse(text)` is method-call
-				# syntax for `parse(a, text)` in this compiler
+				# parenthesized: `a.parse(text)` is method-call syntax for `parse(a, text)`
+				# in this compiler
 				rows = (a.parse)(text)
 				if (List.is_empty(rows)) first_recognized(rest, text) else { source: a.name, rows }
 			}
@@ -54,6 +54,12 @@ Strength :: [].{
 expect {
 	p = Strength.parse("A\n3 × 8 • 30 lbs/side\nB\n3 × 8 reps/side • 25 lbs/side")
 	(Strength.tonnage_kg(p.rows) - 1197.4838568).abs() < 0.01
+}
+
+# a hold adds no tonnage: its seconds are never read as reps
+expect {
+	p = Strength.parse("Weighted Plank\n3 × 60 sec • 20 lbs\nCurl\n3 × 10 • 10 kg")
+	List.len(p.rows) == 2 and (Strength.tonnage_kg(p.rows) - 300.0).abs() < 0.001
 }
 
 # the dispatcher: the first adapter to yield rows names the provenance, and

@@ -20,19 +20,35 @@ StravaLog :: [].{
 	# Each element of exercise_sets is ONE set. `weight`, `reps` and
 	# `duration` are each absent when the athlete recorded none, and a JSON
 	# null reads the same as absent. The `unit` labels are wrong upstream
-	# ("Volume" on a mass, "Steps" on a count), so the unit is read from the
-	# value string instead: "13.6 kg", or "lb"/"lbs" converted through
-	# Units.lb_kg.
+	# ("Volume" on a mass, "Steps" on a count, "Time" on a duration), so the
+	# unit is read from the value string instead: "13.6 kg", or "lb"/"lbs"
+	# converted through Units.lb_kg, and "1m 0s" for a duration.
+	#
+	# A set with a rep count is a REP set, whatever duration it also
+	# carries. A set with no rep count and a duration is a HOLD: an
+	# isometric set, the weight held for that long. A hold row keeps its
+	# sets and weight, counts 0 reps and carries the held seconds in
+	# `hold_s`, so it adds no tonnage (sets × reps × weight) and a duration
+	# is never read as a rep count. A duration is whole and fractional
+	# numbers each followed by a unit, spaces optional ("1m 0s", "45s",
+	# "1h 2m", "30 sec", "1.5 min"); h/hr/hrs/hour/hours, m/min/mins/minute/
+	# minutes and s/sec/secs/second/seconds, in any case. Each set's
+	# duration is decoded on its own, apart from the rest of the workout: a
+	# duration that is not a `{ value: "<text>" }` object costs that set
+	# alone, which is left out as bad_duration, never the workout or another
+	# set's hold.
 	#
 	# A set becomes part of a row, or is LEFT OUT with a reason that `read`
 	# returns beside the rows, so a caller can say what it did not store:
 	#   no_exercise_name     the set names no exercise;
-	#   no_reps              no rep count, timed (duration-only) sets
-	#                        included: a row with no rep count has no tonnage
-	#                        and no progression point, and inventing a count
-	#                        would be a confident wrong number;
+	#   no_reps              neither a rep count nor a duration: a row with
+	#                        neither has no measure at all, and inventing
+	#                        one would be a confident wrong number;
 	#   bad_reps             a rep count that is not a positive whole number
 	#                        ("8-10", "0");
+	#   bad_duration         a duration-only set whose duration is not
+	#                        text, names no unit ("60"), does not parse, or
+	#                        is not positive;
 	#   unknown_weight_unit  a weight whose value names no kg/lb/lbs unit
 	#                        ("44 stone", a bare "20"): an unknown mass is not
 	#                        a zero mass;
@@ -42,16 +58,16 @@ StravaLog :: [].{
 	# the honest reading of "nothing recorded" is zero added load.
 	#
 	# A BODYWEIGHT exercise (`Adapter.is_bodyweight`) counts 0 kg, whatever
-	# weight the log carries, and keeps its sets and reps; the shipped
-	# sample's Push Up records 79.4 kg, the athlete's own mass. The set's
-	# weight is never read, so an unreadable one does not drop it. `read`
-	# returns each such set that carried a nonzero weight in `zeroed`, so a
-	# caller can say what it did not count; the stored log keeps the
-	# recorded weight, so changing the rule needs no re-import.
+	# weight the log carries, and keeps its sets and reps or its hold; the
+	# shipped sample's Push Up records 79.4 kg, the athlete's own mass. The
+	# set's weight is never read, so an unreadable one does not drop it.
+	# `read` returns each such set that carried a nonzero weight in
+	# `zeroed`, so a caller can say what it did not count; the stored log
+	# keeps the recorded weight, so changing the rule needs no re-import.
 	#
-	# Consecutive kept sets of the same exercise at the same reps and weight
-	# fold into one row whose `sets` is their count, and a change of reps or
-	# weight starts a new row, the shape strength_sets stores for every
+	# Consecutive kept sets of the same exercise at the same reps, hold and
+	# weight fold into one row whose `sets` is their count, and a change of
+	# any of them starts a new row, the shape strength_sets stores for every
 	# adapter.
 	#
 	# Every other weight is stored as Strava recorded it. Strava's log holds
@@ -84,13 +100,20 @@ StravaLog :: [].{
 
 	Body : { exercise_sets : List(LoggedSet) }
 
+	# one set's duration alone, decoded from that set's own text
+	Timed : { duration : Try(Measure, [Missing]) }
+
+	# a set's duration: none recorded, its text, or one that did not decode
+	Duration : [Absent, Written(Str), Unreadable]
+
 	# the connector writes activity_id as digits in a string; a bare number
 	# is accepted too, so the id has two decoders and no other field does
 	IdText : { activity_id : Try(Str, [Missing]) }
 	IdNumber : { activity_id : Try(I64, [Missing]) }
 
-	# one decoded workout; activity_id is "" when the object carries none
-	Workout : { activity_id : Str, exercise_sets : List(LoggedSet) }
+	# one decoded workout; activity_id is "" when the object carries none.
+	# `durations` holds each set's duration by position.
+	Workout : { activity_id : Str, exercise_sets : List(LoggedSet), durations : List(Duration) }
 
 	# a set left out of the rows: its 1-based position in exercise_sets, its
 	# exercise name ("" when it had none), and the reason
@@ -113,8 +136,93 @@ StravaLog :: [].{
 		body : Try(Body, _)
 		body = Json.parse(clean)
 		b = body.map_err(|_| Undecodable)?
-		Ok({ activity_id: activity_id_of(text), exercise_sets: b.exercise_sets })
+		durations = List.map(set_texts(clean), duration_of)
+		Ok({ activity_id: activity_id_of(text), exercise_sets: b.exercise_sets, durations })
 	}
+
+	duration_of : Str -> Duration
+	duration_of = |set_text| {
+		timed : Try(Timed, _)
+		timed = Json.parse(set_text)
+		match timed {
+			Ok(t) =>
+				match t.duration {
+					Ok(m) => Written(Str.trim(m.value))
+					Err(_) => Absent
+				}
+			Err(_) => Unreadable
+		}
+	}
+
+	# the text of each element of the object's top-level `exercise_sets`
+	# list, in order; [] when the object has no such list
+	set_texts : Str -> List(Str)
+	set_texts = |clean| {
+		bytes = Str.to_utf8(clean)
+		key = Str.to_utf8("\"exercise_sets\"")
+		match key_at_depth_one(bytes, key) {
+			Ok(at) => {
+				after = drop_colon(List.drop_first(bytes, at + List.len(key)))
+				if List.first(after).ok_or(0) == 91 {
+					s = scan(after)
+					if s.closed {
+						split_input(Str.from_utf8(List.take_first(after, s.end + 1)).ok_or("[]")).ok_or([])
+					} else {
+						[]
+					}
+				} else {
+					[]
+				}
+			}
+			Err(_) => []
+		}
+	}
+
+	# where `key` (a quoted name) opens a member of the outermost object,
+	# reading only JSON's bracket and string structure
+	key_at_depth_one : List(U8), List(U8) -> Try(U64, [NotFound])
+	key_at_depth_one = |bytes, key| {
+		found = List.fold_with_index(
+			bytes,
+			{ depth: 0, in_str: False, esc: False, hit: False, at: 0 },
+			|st, b, i|
+				if st.hit {
+					st
+				} else if st.in_str {
+					if st.esc {
+						{ ..st, esc: False }
+					} else if b == 92 {
+						{ ..st, esc: True }
+					} else if b == 34 {
+						{ ..st, in_str: False }
+					} else {
+						st
+					}
+				} else if b == 34 {
+					if st.depth == 1 and List.take_first(List.drop_first(bytes, i), List.len(key)) == key {
+						{ ..st, hit: True, at: i }
+					} else {
+						{ ..st, in_str: True }
+					}
+				} else if b == 123 or b == 91 {
+					{ ..st, depth: st.depth + 1 }
+				} else if b == 125 or b == 93 {
+					{ ..st, depth: st.depth - 1 }
+				} else {
+					st
+				},
+		)
+		if (found.hit) Ok(found.at) else Err(NotFound)
+	}
+
+	# the bytes after a member's name, without the whitespace and colon
+	# before its value
+	drop_colon : List(U8) -> List(U8)
+	drop_colon = |bs|
+		match List.first(bs) {
+			Ok(b) if is_ws(b) or b == 58 => drop_colon(List.drop_first(bs, 1))
+			_ => bs
+		}
 
 	# the object's activity_id as text, whether written as a string or a
 	# bare whole number; "" when absent, null, or neither. Readable even
@@ -151,7 +259,7 @@ StravaLog :: [].{
 			{ rows: [], dropped: [], zeroed: [] },
 			|acc, s, i| {
 				pos = i.to_i64_wrap() + 1
-				match read_set(s) {
+				match read_set(s, List.get(w.durations, i).ok_or(Absent)) {
 					Ok(one) => {
 						recorded = Str.trim((s.weight.map_ok(|m| m.value)).ok_or(""))
 						counted_nothing =
@@ -175,24 +283,25 @@ StravaLog :: [].{
 			},
 		)
 
-	reason_code : [NoExerciseName, NoReps, BadReps, UnknownWeightUnit, BadWeight] -> Str
+	reason_code : [NoExerciseName, NoReps, BadReps, BadDuration, UnknownWeightUnit, BadWeight] -> Str
 	reason_code = |why|
 		match why {
 			NoExerciseName => "no_exercise_name"
 			NoReps => "no_reps"
 			BadReps => "bad_reps"
+			BadDuration => "bad_duration"
 			UnknownWeightUnit => "unknown_weight_unit"
 			BadWeight => "bad_weight"
 		}
 
-	# a set extends the last row when it repeats that row's exercise, reps
-	# and weight, and opens a new row otherwise
-	fold_in : List(Adapter.SetRow), { exercise : Str, reps : I64, weight_kg : F64 } -> List(Adapter.SetRow)
+	# a set extends the last row when it repeats that row's exercise, reps,
+	# hold and weight, and opens a new row otherwise
+	fold_in : List(Adapter.SetRow), { exercise : Str, reps : I64, hold_s : I64, weight_kg : F64 } -> List(Adapter.SetRow)
 	fold_in = |acc, one| {
-		fresh = List.append(acc, { exercise: one.exercise, sets: 1, reps: one.reps, weight_kg: one.weight_kg })
+		fresh = List.append(acc, { exercise: one.exercise, sets: 1, reps: one.reps, hold_s: one.hold_s, weight_kg: one.weight_kg })
 		match List.last(acc) {
 			Ok(prev) =>
-				if prev.exercise == one.exercise and prev.reps == one.reps and (prev.weight_kg - one.weight_kg).abs() < 0.000001 {
+				if prev.exercise == one.exercise and prev.reps == one.reps and prev.hold_s == one.hold_s and (prev.weight_kg - one.weight_kg).abs() < 0.000001 {
 					List.append(List.drop_last(acc, 1), { ..prev, sets: prev.sets + 1 })
 				} else {
 					fresh
@@ -201,31 +310,42 @@ StravaLog :: [].{
 		}
 	}
 
-	read_set : LoggedSet -> Try({ exercise : Str, reps : I64, weight_kg : F64 }, [NoExerciseName, NoReps, BadReps, UnknownWeightUnit, BadWeight])
-	read_set = |s| {
+	# one set, given its duration: a rep set when it has a rep count, a hold
+	# when it has only a duration
+	read_set : LoggedSet, Duration -> Try({ exercise : Str, reps : I64, hold_s : I64, weight_kg : F64 }, [NoExerciseName, NoReps, BadReps, BadDuration, UnknownWeightUnit, BadWeight])
+	read_set = |s, duration| {
 		exercise = Str.trim(s.exercise_name.ok_or(""))
 		if exercise == "" {
 			Err(NoExerciseName)
 		} else {
-			reps_m = s.reps.map_err(|_| NoReps)?
-			reps = I64.from_str(Str.trim(reps_m.value)).map_err(|_| BadReps)?
-			if reps <= 0 {
-				Err(BadReps)
-			} else {
-				weight_kg =
-					if Adapter.is_bodyweight(exercise) {
-						0.0
-					} else {
-						match s.weight {
-							Ok(m) => read_mass(m.value)?
-							Err(_) => 0.0
-						}
+			(reps, hold_s) =
+				match s.reps {
+					Ok(reps_m) => {
+						n = I64.from_str(Str.trim(reps_m.value)).map_err(|_| BadReps)?
+						if (n <= 0) Err(BadReps) else Ok((n, 0))
 					}
-				Ok({ exercise, reps, weight_kg })
-			}
+					Err(_) =>
+						match duration {
+							Absent => Err(NoReps)
+							Unreadable => Err(BadDuration)
+							Written(t) => {
+								secs = Adapter.read_seconds(t).map_err(|_| BadDuration)?
+								Ok((0, secs))
+							}
+						}
+				}?
+			weight_kg =
+				if Adapter.is_bodyweight(exercise) {
+					0.0
+				} else {
+					match s.weight {
+						Ok(m) => read_mass(m.value)?
+						Err(_) => 0.0
+					}
+				}
+			Ok({ exercise, reps, hold_s, weight_kg })
 		}
 	}
-
 	# "13.6 kg", "30 lbs", "30 lb", spacing optional and case ignored. "lbs"
 	# is tested before "lb", which is its suffix.
 	read_mass : Str -> Try(F64, [UnknownWeightUnit, BadWeight])
@@ -480,7 +600,7 @@ expect {
 			r = StravaLog.read(w)
 			got = List.map(r.dropped, |d| "${d.set.to_str()}:${d.exercise}:${d.reason}")
 			List.len(r.rows) == 1
-				and got == ["2:Curl:unknown_weight_unit", "3:Plank:no_reps", "4:Curl:bad_reps", "5:Curl:bad_reps", "6::no_exercise_name", "7:Curl:bad_weight", "8:Curl:bad_weight", "9:Curl:unknown_weight_unit"]
+				and got == ["2:Curl:unknown_weight_unit", "3:Plank:bad_duration", "4:Curl:bad_reps", "5:Curl:bad_reps", "6::no_exercise_name", "7:Curl:bad_weight", "8:Curl:bad_weight", "9:Curl:unknown_weight_unit"]
 		}
 		Err(_) => False
 	}
@@ -597,5 +717,43 @@ expect {
 				and List.map(r.zeroed, |z| "${z.set.to_str()}:${z.recorded}") == ["1:79.4 kg", "2:79.4 kg"]
 		}
 		Err(_) => False
+	}
+}
+
+# a set with a duration and no reps is a hold: identical holds fold into one
+# row with 0 reps and the held seconds, a set with reps stays a rep set
+# whatever duration it carries, and a bodyweight hold counts 0 kg and is
+# reported as zeroed
+expect {
+	text = "{\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"9.1 kg\",\"unit\":\"Volume\"},\"duration\":{\"value\":\"1m 0s\",\"unit\":\"Time\"}},{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"9.1 kg\"},\"duration\":{\"value\":\"1m 0s\"}},{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"9.1 kg\"},\"duration\":{\"value\":\"45s\"}},{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"11.3 kg\"},\"reps\":{\"value\":\"12\"},\"duration\":{\"value\":\"40s\"}},{\"exercise_name\":\"Plank\",\"weight\":{\"value\":\"79.4 kg\"},\"duration\":{\"value\":\"1m 30s\"}}]}"
+	match StravaLog.decode_workout(text) {
+		Ok(w) => {
+			r = StravaLog.read(w)
+			got = List.map(r.rows, |row| "${row.exercise}:${row.sets.to_str()}x${row.reps.to_str()}:${row.hold_s.to_str()}s:${(row.weight_kg * 10.0).round_to_i64_try().ok_or(-1).to_str()}")
+			got == ["Curl:2x0:60s:91", "Curl:1x0:45s:91", "Curl:1x12:0s:113", "Plank:1x0:90s:0"]
+				and List.map(r.zeroed, |z| "${z.set.to_str()}:${z.recorded}") == ["5:79.4 kg"]
+				and List.is_empty(r.dropped)
+		}
+		Err(_) => False
+	}
+}
+
+# a duration-only set whose duration names no unit, does not parse or is
+# not positive is left out as bad_duration, and so is one whose duration is
+# not text: that set alone, while the workout stays readable and a string
+# duration beside it is still a hold
+expect {
+	text = "{\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"duration\":{\"value\":\"60\"}},{\"exercise_name\":\"Curl\",\"duration\":{\"value\":\"a while\"}},{\"exercise_name\":\"Curl\",\"duration\":{\"value\":\"0s\"}},{\"exercise_name\":\"Curl\",\"duration\":{\"value\":\"30s\"}}]}"
+	numeric = "{\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"reps\":{\"value\":\"10\"}},{\"exercise_name\":\"Plank\",\"duration\":{\"value\":60,\"unit\":\"Seconds\"}},{\"exercise_name\":\"Curl\",\"duration\":{\"value\":\"45s\"}}]}"
+	match (StravaLog.decode_workout(text), StravaLog.decode_workout(numeric)) {
+		(Ok(w), Ok(n)) => {
+			r = StravaLog.read(w)
+			rn = StravaLog.read(n)
+			List.map(r.dropped, |d| "${d.set.to_str()}:${d.reason}") == ["1:bad_duration", "2:bad_duration", "3:bad_duration"]
+				and List.map(r.rows, |row| row.hold_s) == [30]
+				and List.map(rn.dropped, |d| "${d.set.to_str()}:${d.reason}") == ["2:bad_duration"]
+				and List.map(rn.rows, |row| row.hold_s) == [0, 45]
+		}
+		_ => False
 	}
 }

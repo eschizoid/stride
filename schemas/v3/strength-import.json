@@ -53,13 +53,14 @@
                 "reason": {
                   "type": "string",
                   "enum": [
+                    "bad_duration",
                     "bad_reps",
                     "bad_weight",
                     "no_exercise_name",
                     "no_reps",
                     "unknown_weight_unit"
                   ],
-                  "description": "no_exercise_name: the set names no exercise. no_reps: no rep count, timed (duration-only) sets included. bad_reps: a rep count that is not a positive whole number (\"8-10\", \"0\"). unknown_weight_unit: a weight whose value names no kg/lb/lbs unit (\"44 stone\", a bare \"20\"). bad_weight: a kg/lb weight whose number does not parse (\"20,5 kg\") or is negative. A set with no weight at all is kept at 0 kg, not dropped."
+                  "description": "no_exercise_name: the set names no exercise. no_reps: neither a rep count nor a duration; a set with a duration and no rep count is kept as a hold (0 reps, its seconds held, no tonnage). bad_duration: a duration-only set whose duration is not text, names no unit (\"60\"), does not parse, or is not positive. bad_reps: a rep count that is not a positive whole number (\"8-10\", \"0\"). unknown_weight_unit: a weight whose value names no kg/lb/lbs unit (\"44 stone\", a bare \"20\"). bad_weight: a kg/lb weight whose number does not parse (\"20,5 kg\") or is negative. A set with no weight at all is kept at 0 kg, not dropped."
                 }
               }
             }
@@ -142,6 +143,7 @@
                 "reason": {
                   "type": "string",
                   "enum": [
+                    "bad_duration",
                     "bad_reps",
                     "bad_weight",
                     "no_exercise_name",

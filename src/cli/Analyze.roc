@@ -26,8 +26,9 @@ Analyze :: [].{
 				# the very first moment of the command silent, which is where "it looks
 				# hung" starts.
 				Output.say!("checking what needs scoring…")?
-				# the denominator is read ONCE up front: this is the number whose absence
-				# made a healthy 72s rebuild look hung, and got it killed mid-transaction
+				# the denominator is read ONCE up front: without a denominator a long,
+				# healthy rebuild looks hung, and a rebuild killed as hung dies
+				# mid-transaction
 				goal = pending_metrics_count!(path, zb)?
 				# Close the bar's line before anything else prints, or the next line lands
 				# on the same terminal row as the final frame. The result is CAPTURED and
@@ -50,17 +51,17 @@ Analyze :: [].{
 				}
 				res = passes?
 				# distinct activities, and of those the ones whose stream has failed
-				# Strava.stream_attempt_cap fetches: a plain sync no longer asks for
-				# those, so they get their own line and their own count
+				# Strava.stream_attempt_cap fetches: a plain sync does not ask for those, so
+				# they get their own line and their own count
 				stream_errors = List.len(res.failed)
 				stream_errors_capped = Strava.count_capped_among!(path, res.failed)?
 				Output.say!("rebuilding daily load…")?
 				rebuild_daily_load!(path)?
 				rebuild_strength_sets!(path)?
-				# The last 10 days, not just today: the verdict now carries the weekly
-				# delta (#111), which needs the value 7 days back. query_many rather than
-				# query! because an empty daily_load is a normal state (nothing analyzed
-				# yet), and the empty list says so without an error to translate.
+				# The last 10 days, not just today: the verdict carries the weekly delta,
+				# which needs the value 7 days back. query_many rather than query! because
+				# an empty daily_load is a normal state (nothing analyzed yet), and the
+				# empty list says so without an error to translate.
 				form_rows = Sql.query_many!({
 					path: Path.utf8(path),
 					query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, CAST(tsb AS REAL) AS tsb FROM daily_load ORDER BY day DESC LIMIT 10",
@@ -103,23 +104,21 @@ Analyze :: [].{
 							}
 					}
 				# ANNOTATED Bool, not a bare `True`/`False` tag. The builtin JSON serializes
-				# an unconstrained tag as the STRING "True", and nothing here constrains it:
-				# this payload is ENCODE-ONLY. summary's identical expression is fine only
-				# because its payload is also RENDERED, and `Render.summary_screen` consumes
-				# the field as an `if` condition, which flows Bool back through the
-				# un-annotated renderer. Neighbouring Bool fields are irrelevant — record
-				# fields do not constrain each other, and `converged: Bool` sits two lines
-				# below this one while the bug shipped anyway.
+				# an unconstrained tag as the STRING "True", and this payload is
+				# ENCODE-ONLY, so nothing else constrains it. summary's identical expression
+				# is constrained only because `Render.summary_screen` consumes the field as
+				# an `if` condition. A neighbouring Bool field does not help: record fields
+				# do not constrain each other.
 				delta_known : Bool
 				delta_known = match form_delta {
 					Known(_) => True
 					Unknown => False
 				}
-				# form_tsb needs the same treatment as form_delta_7d: 0.0 TSB is a real and
-				# common value meaning "balanced", so an empty daily_load flattening to 0.0
-				# tells a machine consumer that form is balanced when the truth is that
-				# there is no form yet. The human branch already gets this right by printing
-				# nothing; this makes the JSON agree with it.
+				# form_tsb needs the same flag as form_delta_7d: 0.0 TSB is a real and
+				# common value meaning "balanced", so an empty daily_load flattened to 0.0
+				# would tell a machine consumer that form is balanced when there is no form
+				# yet. The human branch prints nothing in that case, and the flag makes the
+				# JSON say the same.
 				tsb_known : Bool
 				tsb_known = match tsb_opt {
 					Some(_) => True
@@ -180,10 +179,11 @@ Analyze :: [].{
 		}
 	}
 
-	# only the HR zones are required config — those are universal across sports. FTP is
-	# never configured; it is derived per sport, and for SCORING it is the value in force when
-	# the activity happened (ADR 0005). Db.sport_ftp! keeps today's-window semantics for the
-	# DISPLAY paths (zones, activity) — the two are deliberately different questions.
+	# only the HR zones are required config — those are universal across sports.
+	# FTP is never configured; it is derived per sport, and for SCORING it is
+	# the value in force when the activity happened (ADR 0005). Db.sport_ftp!
+	# keeps today's-window semantics for the DISPLAY paths (zones, activity),
+	# which ask a different question.
 	load_zone_config! : Str => Try(Metrics.ZoneBounds, _)
 	load_zone_config! = |path| {
 		z1 = config_f64!(path, "hr_z1_max")?
@@ -192,10 +192,9 @@ Analyze :: [].{
 		z4 = config_f64!(path, "hr_z4_max")?
 		Ok({ z1_max: z1, z2_max: z2, z3_max: z3, z4_max: z4 })
 	}
-	# ABSENT and UNREADABLE are different faults and get different errors. Reporting an
-	# unreadable value as MissingConfig told the athlete to set a key that `config get`
-	# was already echoing back at them -- the trap Config.is_derived's comment names,
-	# arrived at from the other side (#206).
+	# ABSENT and UNREADABLE are different faults and get different errors:
+	# reporting an unreadable value as MissingConfig would tell the athlete to
+	# set a key that `config get` already echoes back at them.
 	config_f64! : Str, Str => Try(F64, _)
 	config_f64! = |path, key|
 		match Db.config_opt!(path, key)? {
@@ -240,15 +239,16 @@ Analyze :: [].{
 		s_slen : I64,
 	}
 
-	# analyze runs compute_missing_metrics! to a FIXED POINT (bounded), not once. A batch can
-	# change a sport's DERIVED FTP (its best_20min_w gets populated), which invalidates rows
-	# the next pass must rescore; iterate until a pass computes 0 (converged) or fuel runs
-	# out. compute_missing_metrics! deliberately selects only 64 rows: account exports can
-	# hold millions of samples, so bounded batches avoid retaining the whole history's raw
-	# streams in memory. Re-querying also naturally revisits rows whose newly-derived FTP or
-	# pace threshold invalidated them.
-	# `converged: False` means fuel ran out with work remaining — the caller says so
-	# instead of presenting a partial recompute as a finished one.
+	# analyze runs compute_missing_metrics! to a FIXED POINT (bounded), not
+	# once. A batch can change a sport's DERIVED FTP (its best_20min_w gets
+	# populated), which invalidates rows the next pass must rescore; iterate
+	# until a pass computes 0 (converged) or fuel runs out.
+	# compute_missing_metrics! selects a bounded batch: account exports can hold
+	# millions of samples, so bounded batches avoid retaining the whole
+	# history's raw streams in memory. Re-querying also revisits rows whose
+	# newly derived FTP or pace threshold invalidated them. `converged: False`
+	# means fuel ran out with work remaining, and the caller says so instead of
+	# presenting a partial recompute as a finished one.
 	converge_metrics! : Str, Metrics.ZoneBounds, U64, { computed : U64, failed : List(I64) }, U64 => Try({ computed : U64, failed : List(I64), converged : Bool }, _)
 	converge_metrics! = |path, zb, fuel, acc, goal|
 		if fuel == 0 {
@@ -282,36 +282,32 @@ Analyze :: [].{
 
 	compute_missing_metrics! : Str, Metrics.ZoneBounds => Try({ computed : U64, failed : List(I64) }, _)
 	compute_missing_metrics! = |path, zb| {
-		# recompute a row when its stored ftp_used no longer matches the FTP that was in force
-		# WHEN IT HAPPENED (ADR 0005 — period_ftp_sql below), or the HR zones / metrics_rev
-		# changed. Because the period FTP is anchored to the row's own date, a new personal
-		# best no longer invalidates history: only rows whose own 60-day window moved.
-		# same story for the DERIVED per-sport threshold pace (speed): recompute a row when
-		# its stored threshold_pace_used no longer matches the threshold in force on its own
-		# date (period_threshold_sql below) — not against one global current threshold.
-		# read config ONCE, then resolve per-sport zones purely (see load_config! note)
+		# recompute a row when its stored ftp_used no longer matches the FTP that
+		# was in force WHEN IT HAPPENED (ADR 0005 — period_ftp_sql below), or the HR
+		# zones / metrics_rev changed. Because the period FTP is anchored to the
+		# row's own date, a new personal best does not invalidate history: only rows
+		# whose own 60-day window moved. The same holds for the DERIVED per-sport
+		# threshold pace (speed): recompute a row when its stored
+		# threshold_pace_used no longer matches the threshold in force on its own
+		# date (period_threshold_sql below), not one global current threshold.
+		# Config is read ONCE, then per-sport zones resolve purely (see the
+		# load_config! note).
 		cfg = load_config!(path)?
 		zone_sigs = sport_zone_sigs!(path, cfg, zb)?
 		zones_case = zones_case_from_sigs(zone_sigs, zb)
 		rows = Sql.query_many!({
 			path: Path.utf8(path),
-			query: \\-- COALESCE and NOT a guard, which is the opposite of what this file does
-				\\-- everywhere else, so it needs its reason stated. A NULL start_local
-				\\-- crashed the decode here with UnexpectedType(Null) — `internal_error`,
-				\\-- on the command every other error message names as the remedy (#249).
-				\\--
-				\\-- The obvious fix, a date sweep refusing before any scoring, was written
-				\\-- and reverted: it refuses UPSTREAM of rebuild_daily_load!, which is where
-				\\-- the deliberate policy lives — walk and write every day that CAN be read,
-				\\-- then refuse naming the row, so a readable series is not thrown away over
-				\\-- one bad date. e2e pins both halves of that, and the sweep silently
-				\\-- turned the partial write off. A poisoned date has always flowed this way;
-				\\-- a NULL now flows the same way rather than getting its own policy.
-				\\--
-				\\-- So the row IS scored, and `start_used` records the empty string it was
-				\\-- scored from. rebuild_daily_load! then meets it through the metrics join
-				\\-- it just wrote, drops it from the walk, and refuses naming it — which is
-				\\-- also what stops an unscored NULL-dated row slipping past both guards.
+			query: \\-- COALESCE, not a guard: a NULL start_local would fail this decode with
+				\\-- UnexpectedType(Null), an `internal_error` on the command every other
+				\\-- error message names as the remedy (#249). A date sweep refusing before
+				\\-- any scoring would sit upstream of rebuild_daily_load!, which walks and
+				\\-- writes every day that CAN be read and then refuses naming the bad row,
+				\\-- so one bad date does not cost a readable series; the e2e suite pins both
+				\\-- halves. So the row IS scored, and `start_used` records the empty string
+				\\-- it was scored from. rebuild_daily_load! then meets it through the
+				\\-- metrics join it just wrote, drops it from the walk, and refuses naming
+				\\-- it, which also stops an unscored NULL-dated row slipping past both
+				\\-- guards.
 				\\SELECT a.id AS id, COALESCE(CAST(a.start_local AS TEXT), '') AS start, a.moving_time AS mt,
 				\\       COALESCE(CAST(a.sport_type AS TEXT), '') AS sport,
 				\\       CAST(a.relative_effort AS REAL) AS re, CAST(a.avg_watts AS REAL) AS aw, CAST(a.avg_hr AS REAL) AS ahr,
@@ -490,16 +486,16 @@ Analyze :: [].{
 		\\${e_aw} AS s_aw, ${e_ahr} AS s_ahr, ${e_waw} AS s_waw,
 		\\${e_re} AS s_re, ${e_dw} AS s_dw, ${e_slen} AS s_slen
 
-	# The activity inputs a metrics row was computed from, compared VALUE BY VALUE —
-	# the same contract as `ftp_used`. A changed input rescores the row; this is why
-	# `sync` does NOT delete metrics (invalidating there wiped a month per run, since
-	# sync cannot tell an edit from a no-op).
+	# The activity inputs a metrics row was computed from, compared VALUE BY
+	# VALUE — the same contract as `ftp_used`. A changed input rescores the row,
+	# which is why `sync` does NOT delete metrics: it re-lists a 30-day window
+	# every run and cannot tell an edit from a no-op.
 	#
-	# A hash was tried and rejected: with additive coefficients a +7s duration and a
-	# -1m distance cancel exactly, so a real edit produced an identical signature and
-	# never rescored — silently. Values cannot collide, and a human debugging a stale
-	# row can read them. `synced_at` is deliberately absent: it changes every sync by
-	# design, so including it would mark every row stale.
+	# Values, not a hash: with additive coefficients a +7 s duration and a -1 m
+	# distance cancel exactly, so a hash can give a real edit an identical
+	# signature and never rescore it. Values cannot collide, and a human
+	# debugging a stale row can read them. `synced_at` is left out: it changes
+	# on every sync, so including it would mark every row stale.
 	inputs_changed_sql =
 		\\   COALESCE(m.mt_used,-1) <> ${e_mt}
 		\\OR COALESCE(m.dist_used,-1) <> ${e_dist}
@@ -513,10 +509,10 @@ Analyze :: [].{
 		\\OR COALESCE(m.start_used,'~') <> ${e_start}
 		\\OR COALESCE(m.stream_len_used,-1) <> ${e_slen}
 
-	# The "needs rescoring" predicate, shared by the batch SELECT and the COUNT that
-	# gives the progress bar its denominator. ONE definition on purpose: two copies of
-	# this would drift, and a denominator computed from a different predicate than the
-	# work is a bar that lies.
+	# The "needs rescoring" predicate, shared by the batch SELECT and the COUNT
+	# that gives the progress bar its denominator. ONE definition: two copies
+	# would drift, and a denominator computed from a different predicate than
+	# the work is a bar that lies.
 	#
 	# CALLERS MUST JOIN `activities a`, `activity_metrics m` AND `streams s` — the input
 	# comparison reads `s.raw_json` to notice a stream arriving, so omitting that join is
@@ -558,11 +554,11 @@ Analyze :: [].{
 	# Each sport's zone SIGNATURE is frozen for the invalidation CASE; per-row scoring
 	# re-resolves bounds from the same in-memory config.
 	#
-	# Validated at the LOAD boundary rather than at each read: `cfg_f64` is pure and
-	# total (an ABSENT per-sport key must fall back to the global ceiling), but an
-	# UNREADABLE one must not take that path — silently using the global value ignores
-	# the athlete's per-sport zones with nothing to see, the #206 trap. Checking here
-	# keeps the fallback total and still refuses the bad value.
+	# Validated at the LOAD boundary rather than at each read: `cfg_f64` is pure
+	# and total (an ABSENT per-sport key must fall back to the global ceiling),
+	# but an UNREADABLE one must not take that path — silently using the global
+	# value ignores the athlete's per-sport zones with nothing to see. Checking
+	# here keeps the fallback total and still refuses the bad value.
 	load_config! : Str => Try(List((Str, Str)), _)
 	load_config! = |path| {
 		pairs = load_config_raw!(path)?
@@ -642,17 +638,16 @@ Analyze :: [].{
 			},
 		)
 		# zero sports (fresh db, analyze before first sync): "CASE x ELSE y END"
-		# with no WHEN arms is a SQL syntax error, so emit the ELSE literal bare —
-		# found by the #154 e2e ""-arm check; without the bare ELSE, analyze crashes here
+		# with no WHEN arms is a SQL syntax error, so emit the ELSE literal bare;
+		# the e2e suite's ""-arm check holds this
 		if Str.is_empty(whens) {
 			"'${zones_sig(g)}'"
 		} else {
 			"CASE a.sport_type${whens} ELSE '${zones_sig(g)}' END"
 		}
 	}
-	# returns Bool: did the stored stream JSON fail to decode? (surfaced by analyze)
-	# (#69 briefly split this into a dispatcher over a wire format; its only producer —
-	# the Python export decoder — was reverted in #70, so every stored stream is JSON.)
+	# returns Bool: did the stored stream JSON fail to decode? (surfaced by
+	# analyze). Every stored stream is JSON.
 	compute_one! : Str, Metrics.ZoneBounds, List((Str, Str)), ActivityRow => Try(Bool, _)
 	compute_one! = |path, zb, cfg, row| {
 		decoded = Streams.decode_streams(row.raw)
@@ -675,30 +670,26 @@ Analyze :: [].{
 		watts_raw = if (row.dw) Streams.stream_pairs(streams.time, streams.watts) else []
 		watts_pairs = List.keep_if(watts_raw, |p| Metrics.valid_watts(p.v))
 
-		# The in-band mean of this session's HR stream — the number the SCORING lenses
-		# divide by when it exists (#311). `hr_pairs` is already `valid_hr`-filtered, so
-		# dropout and dead-sensor stretches are gone rather than averaged in (the failure
-		# this addresses: a session storing 86.4 whose own stream means 147.7).
+		# The in-band mean of this session's HR stream — the number the SCORING
+		# lenses divide by when it exists (#311). `hr_pairs` is already
+		# `valid_hr`-filtered, so dropout and dead-sensor stretches are left out
+		# rather than averaged in: a stored average computed from a lossy stream can
+		# be plausible and still wrong.
 		#
-		# NULL, never 0.0, when there is nothing to average: 0.0 is what `COALESCE(...,0)`
-		# produces at every read site, so a stored 0 would collide with "no stream".
-		# An UNWEIGHTED mean — `time_in_zones` gap-weights the same list; measured across
-		# all 672 streams the two differ by at most 2.58 bpm. The LOAD LADDER never sees
-		# this value: `tss_ladder` reads `input.avg_hr`, filled from the STORED summary
-		# (verified behaviourally — daily_load byte-identical across a full re-analyze).
+		# NULL, never 0.0, when there is nothing to average: 0.0 is what
+		# `COALESCE(...,0)` produces at every read site, so a stored 0 would collide
+		# with "no stream". An UNWEIGHTED mean, where `time_in_zones` gap-weights
+		# the same list. The LOAD LADDER never sees this value: `tss_ladder` reads
+		# `input.avg_hr`, filled from the STORED summary.
 		#
-		# ...and NULL unless the surviving samples SPAN at least half the session — a mean
-		# over unrepresentative samples is the same bug this column fixes, moved one table
-		# over. The worst dropout keeps a contiguous PREFIX (the warm-up before the strap
-		# died): one session kept samples spanning t=14..576 of 2700 s whose mean, 84.8,
-		# is plausible enough that no bound would question it. SPAN, not sample COUNT —
-		# a 5-second cadence keeps a fifth of the samples with a healthy strap, and 15 of
-		# the 17 rows a count ratio refuses are exactly that. The threshold sits in a
-		# measured gap: broken straps span 0.003-0.24, rescued sessions 0.58 up.
-		# The denominator is the LONGER of moving time and the stream's own extent:
-		# moving_time excludes stops while stream timestamps are elapsed, so a stop-heavy
-		# session would inflate the ratio (a minority of streams run longer than moving time,
-		# up to 1.198x).
+		# ...and NULL unless the surviving samples SPAN at least half the session: a
+		# mean over unrepresentative samples is the same fault one table over. A
+		# dead strap usually keeps a contiguous PREFIX (the warm-up before it died)
+		# whose mean is plausible enough that no bound would question it. SPAN, not
+		# sample COUNT: a 5-second cadence keeps a fifth of the samples with a
+		# healthy strap. The denominator is the LONGER of moving time and the
+		# stream's own extent: moving_time excludes stops while stream timestamps
+		# are elapsed, so a stop-heavy session would otherwise inflate the ratio.
 		hr_extent =
 			match (List.first(hr_raw), List.last(hr_raw)) {
 				(Ok(f), Ok(l)) => l.t - f.t
@@ -771,18 +762,17 @@ Analyze :: [].{
 				graded_triple
 		gas_1s_pairs = Metrics.graded_speed_1s(pace_triple.time, pace_triple.dist, pace_triple.alt)
 		# aerobic decoupling (#94/#134) — computed HERE, below the graded-speed
-		# derivation, precisely so the pace variant can reuse it instead of
-		# duplicating it (the reorder the old "POWER ONLY" comment was waiting for).
-		# Power wins when real watts exist; pace-routed sports (runs/swims) fall to
-		# graded speed vs HR — same drift arithmetic, same Known/Unknown honesty.
+		# derivation, so the pace variant reuses it instead of duplicating it. Power
+		# wins when real watts exist; pace-routed sports (runs/swims) fall to graded
+		# speed vs HR — same drift arithmetic, same Known/Unknown honesty.
 		# Everything else (meter-less rides, rows without watts) stays Unknown:
-		# terrain speed over HR is not an efficiency measurement.
-		# Signal provenance is three-valued and stored honestly: "power" (real
-		# watts), "pace" (grade-adjusted speed — a graded triple existed, or a swim
-		# where water is flat and grading is meaningless), or "speed" (raw speed —
-		# no altitude stream, so terrain effects are NOT normalized out; real runs
-		# without a barometer land here and deserve the number WITH the disclosure,
-		# not an amputated feature). Rides never reach the pace/speed arms at all.
+		# terrain speed over HR is not an efficiency measurement. Signal provenance
+		# is three-valued and stored: "power" (real watts), "pace" (grade-adjusted
+		# speed — a graded triple existed, or a swim, where water is flat and
+		# grading is meaningless), or "speed" (raw speed: no altitude stream, so
+		# terrain effects are NOT normalized out; a run without a barometer lands
+		# here and gets the number WITH the disclosure). Rides never reach the
+		# pace/speed arms.
 		decoupling =
 			if (!(List.is_empty(watts_pairs)))
 				Metrics.decoupling_pct(watts_pairs, hr_pairs, row.s_mt)
@@ -1113,9 +1103,9 @@ Analyze :: [].{
 		by_day = List.fold(
 			day_rows,
 			Dict.empty(),
-			# calls usable_date_days rather than restating it: a day excluded here but not counted
-			# `unusable` is dropped silently (the #243 bug itself), and one accepted here but
-			# counted `unusable` makes the run refuse over data it did use.
+			# calls usable_date_days rather than restating it: a day excluded here but
+			# not counted `unusable` would be dropped silently, and one accepted here
+			# but counted `unusable` would make the run refuse over data it did use.
 			|dict, r|
 				match Metrics.usable_date_days(r.day) {
 					Ok(d) => Dict.insert(dict, d, r.t)
@@ -1129,14 +1119,14 @@ Analyze :: [].{
 		unusable = List.keep_if(day_rows, |r| !(Metrics.is_usable_date(r.day)))
 		valid_days = Dict.keys(by_day)
 		walked = match List.first(valid_days) {
-			# Nothing to walk — but TWO different facts arrive here. `day_rows` EMPTY means
-			# nothing scored yet: clear and succeed (daily_load is a pure function of what was
-			# scored, and a stale series left behind is what let a poisoned row survive
-			# `analyze` while every reader refused on it, a loop at exit 0). `day_rows`
-			# NON-EMPTY with no parseable day is different: the engine holds scored
-			# activities, and answering `converged: true` would tell the athlete "no scored
-			# training days yet" while `stats` reports their sessions in the same breath — so
-			# it names the row instead.
+			# Nothing to walk — but TWO different facts arrive here. `day_rows` EMPTY
+			# means nothing scored yet: clear and succeed (daily_load is a pure function
+			# of what was scored, and a stale series left behind would let a poisoned
+			# row survive `analyze` while every reader refuses on it, at exit 0).
+			# `day_rows` NON-EMPTY with no parseable day is different: the engine holds
+			# scored activities, and answering `converged: true` would tell the athlete
+			# "no scored training days yet" while `stats` reports their sessions — so it
+			# names the row instead.
 			Err(_) => Sql.execute!({ path: Path.utf8(path), query: "DELETE FROM daily_load", bindings: [] })
 			Ok(seed) => {
 				bounds = List.fold(valid_days, { lo: seed, hi: seed }, |b, d| { lo: (b.lo).min(d), hi: (b.hi).max(d) })
@@ -1152,10 +1142,10 @@ Analyze :: [].{
 			}
 		}
 		walked?
-		# ...and only now, after the table holds everything that WAS readable, refuse if
-		# anything was not. Order matters: refusing first would leave daily_load stale, and
-		# every reader would keep answering confidently from a series whose inputs the
-		# engine cannot read — the silent wrong answer this whole change removes.
+		# ...and only now, after the table holds everything that WAS readable,
+		# refuse if anything was not. Order matters: refusing first would leave
+		# daily_load stale, and every reader would keep answering confidently from a
+		# series whose inputs the engine cannot read.
 		match List.first(unusable) {
 			Ok(r) => Err(BadActivityDate(r.day, r.example_id))
 			Err(_) => Ok({})
@@ -1258,13 +1248,14 @@ Analyze :: [].{
 				# so a career of mixed apps stays distinguishable and a reader
 				# can qualify a tonnage trend built on unequal sources
 				run!(
-					"INSERT OR REPLACE INTO strength_sets (activity_id, ordinal, exercise, sets, reps, weight_kg, source) VALUES (:aid, :ord, :ex, :sets, :reps, :w, :src)",
+					"INSERT OR REPLACE INTO strength_sets (activity_id, ordinal, exercise, sets, reps, hold_s, weight_kg, source) VALUES (:aid, :ord, :ex, :sets, :reps, :hold, :w, :src)",
 					[
 						{ name: ":aid", value: Integer(aid) },
 						{ name: ":ord", value: Integer(ord) },
 						{ name: ":ex", value: String(r.exercise) },
 						{ name: ":sets", value: Integer(r.sets) },
 						{ name: ":reps", value: Integer(r.reps) },
+						{ name: ":hold", value: Integer(r.hold_s) },
 						{ name: ":w", value: Real(r.weight_kg) },
 						{ name: ":src", value: String(source) },
 					],
@@ -1273,13 +1264,13 @@ Analyze :: [].{
 			}
 		}
 
-	# bump when the metric MATH changes (tss ladder, zone attribution, NP windowing,
-	# HR validity bounds, ...) so existing rows recompute — config inputs (ftp_used,
-	# zones_used) can't catch algorithm changes.
+	# bump when the metric MATH changes (tss ladder, zone attribution, NP
+	# windowing, HR validity bounds, ...) so existing rows recompute — config
+	# inputs (ftp_used, zones_used) can't catch algorithm changes.
 	#
-	# Bump for a new stored metric COLUMN too. A column added without a bump stays NULL
-	# on every row already in the db, so the feature reading it is inert for exactly the
-	# history that would make it useful — the whole activity archive. 33 adds the #188
-	# speed ladder (best_300s_speed / best_600s_speed).
+	# Bump for a new stored metric COLUMN too. A column added without a bump
+	# stays NULL on every row already in the db, so the feature reading it is
+	# inert for exactly the history that would make it useful — the whole
+	# activity archive.
 	metrics_rev = 37
 }
