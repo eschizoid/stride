@@ -38,8 +38,8 @@ Strength :: [].{
 		match ads {
 			[] => { source: "", rows: [] }
 			[a, .. as rest] => {
-				# parenthesized on purpose: `a.parse(text)` is method-call
-				# syntax for `parse(a, text)` in this compiler
+				# parenthesized: `a.parse(text)` is method-call syntax for `parse(a, text)`
+				# in this compiler
 				rows = (a.parse)(text)
 				if (List.is_empty(rows)) first_recognized(rest, text) else { source: a.name, rows }
 			}

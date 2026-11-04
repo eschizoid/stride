@@ -4,11 +4,10 @@ Schema :: [].{
 
 	# ── database schema (DDL only — pure strings, no decoders to drift from) ──
 	#
-	# These are the ORIGINAL CREATE statements. Columns added later live as additive
-	# ALTERs in Db.roc `run_migrations!` (weighted_avg_watts, best_20min_w, ftp_used,
-	# planned_sessions.status, planned_sessions.skipped_reason) — look there, not here, if a
-	# column seems missing. (`relative_effort` is REAL as of schema v2; read sites keep
-	# the CAST(... AS REAL) so pre-v2 dbs, where it was INTEGER, still decode.)
+	# These are the ORIGINAL CREATE statements. Every column added after them is
+	# an additive ALTER in Db.roc `run_migrations!`, so a column missing here is
+	# there. Read sites CAST `relative_effort` AS REAL because a database
+	# created before schema v2 stores it as INTEGER.
 
 	activities =
 		\\CREATE TABLE IF NOT EXISTS activities (
@@ -104,9 +103,9 @@ Schema :: [].{
 		\\  attempts    INTEGER NOT NULL
 		\\)
 
-	# queue every stored body that is not JSON at all, the bodies stride stored
-	# before it began refusing them; one that is JSON but not stream JSON is
-	# caught when analyze next rescores its activity
+	# queue every stored body that is not JSON at all, which a database from
+	# before v39 can hold; one that is JSON but not stream JSON is caught when
+	# analyze next rescores its activity
 	seed_stream_retries =
 		\\INSERT OR IGNORE INTO stream_retries (activity_id, attempts)
 		\\SELECT s.activity_id, 0 FROM streams s
@@ -182,11 +181,11 @@ Schema :: [].{
 		\\  rated_at     TEXT
 		\\)
 
-	# ── shared semantics as SQL views (#403's lesson): the CLI and the viz
-	# window must read the plan through the SAME rule, and the only channel
-	# they share is the database — so the rule lives here, as views. The
-	# engine re-creates them on every migration run (DROP + CREATE, so an
-	# edited definition always wins); readers just SELECT.
+	# ── shared semantics as SQL views: the CLI and the viz window must read the
+	# plan through the SAME rule, and the only channel they share is the
+	# database — so the rule lives here, as views. The engine re-creates them on
+	# every migration run (DROP + CREATE, so an edited definition always wins);
+	# readers just SELECT.
 
 	# exactly ONE row per planned date: the newest non-skipped row wins, and
 	# a skipped tombstone speaks only when nothing replaced it
@@ -365,8 +364,8 @@ Schema :: [].{
 	# quantity it is - 'power' (watts: cycling FTP, rowing erg threshold) or
 	# 'pace' (metres per second) - because a reader must format and label them
 	# differently and must never plot two kinds on one axis. Stored as SPEED
-	# rather than seconds-per-distance on purpose: higher is better for both
-	# kinds, so an improving athlete's line rises whatever the sport.
+	# rather than seconds-per-distance: higher is better for both kinds, so an
+	# improving athlete's line rises whatever the sport.
 	# how much of a month's strength work the parsed sets actually cover:
 	# tracked sessions carry a pasted breakdown or an imported log,
 	# instructor-led classes never do, so a month's tonnage is a SAMPLE of
@@ -439,25 +438,23 @@ Schema :: [].{
 		\\                AND fm2.fam = fm.fam
 		\\                AND fm2.month = fm.month
 		\\              ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)
-		\\-- tonnage is not a threshold: this view is the monthly SPINE series,
-		\\-- keyed by kind, and the strength arm sums a month's lifted mass
-		\\-- (kg) per family. The view keeps its threshold-era name because the
-		\\-- window's spine discovery query reads it by name across a second
-		\\-- binary and platform; the rename is deferred deliberately, not
-		\\-- forgotten.
-		\\-- A month under a THIRD coverage is refused rather than drawn:
-		\\-- tracked sessions carry sets, instructor-led classes never can, so
-		\\-- a thin month's total is a biased sample that reads as a decline
-		\\-- the athlete did not have — a missing point is honest where a
-		\\-- misleading one is not. A THIRD and not half, because an athlete
-		\\-- alternating tracked sessions with classes lives AT one-half, and
-		\\-- a bar there makes months flicker in and out of the chart with
-		\\-- which class they happened to book; one-third sits clear of that
-		\\-- band while still refusing the mostly-absent months. The rule
-		\\-- lives in the view so the CLI and the window cannot disagree about
-		\\-- which months exist, and a refused month renders exactly as an
-		\\-- unmeasured one: no row, which the career spine bridges with
-		\\-- dashes rather than a value.
+		\\-- tonnage is not a threshold: this view is the monthly SPINE series, keyed
+		\\-- by kind, and the strength arm sums a month's lifted mass (kg) per family.
+		\\-- The view keeps its threshold-era name because the window's spine discovery
+		\\-- query reads it by name from a second binary and platform, so a rename
+		\\-- changes both at once.
+		\\--
+		\\-- A month under a THIRD coverage is refused rather than drawn: tracked
+		\\-- sessions carry sets, instructor-led classes never can, so a thin month's
+		\\-- total is a biased sample that reads as a decline the athlete did not have
+		\\-- — a missing point is honest where a misleading one is not. A THIRD and not
+		\\-- half, because an athlete alternating tracked sessions with classes lives
+		\\-- AT one-half, and a bar there makes months flicker in and out of the chart
+		\\-- with which class they happened to book; one-third sits clear of that band
+		\\-- while still refusing the mostly-absent months. The rule lives in the view
+		\\-- so the CLI and the window cannot disagree about which months exist, and a
+		\\-- refused month renders exactly as an unmeasured one: no row, which the
+		\\-- career spine bridges with dashes rather than a value.
 		\\UNION ALL
 		\\SELECT fm.month AS month,
 		\\       fm.fam AS fam,
@@ -470,14 +467,12 @@ Schema :: [].{
 		\\GROUP BY fm.fam, fm.month
 
 	# the FTP the engine scored each month's LAST power-scored Ride-family
-	# activity with. Deliberately NOT season's ftp_end - that is a
-	# chronological per-day fold with family weighting and has its one body in
-	# ReportSeason - this is a different, simpler quantity with its own name:
-	# the threshold in force when the month closed. A correlated subquery with
-	# an id tie-break rather than a window function: the window's bundled
-	# SQLite must be able to read every shared view, and window functions are
-	# the one modern feature this repo does not assume. One database names
-	# one row either way.
+	# activity with: the threshold in force when the month closed. Not season's
+	# ftp_end, which is a chronological per-day fold with family weighting whose
+	# one body is in ReportSeason. A correlated subquery with an id tie-break
+	# rather than a window function: the window's bundled SQLite must be able to
+	# read every shared view, and window functions are the one modern feature
+	# this repo does not assume. One database names one row either way.
 	monthly_ride_ftp_drop =
 		\\DROP VIEW IF EXISTS monthly_ride_ftp
 	monthly_ride_ftp =

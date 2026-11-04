@@ -8,16 +8,16 @@
 # string decode with the projection producing its alias and fails on a bare column.
 #
 # Known limits: a projection split across source lines is read only from the
-# line holding ` AS <alias>`, so a bare column on an earlier line of it passes;
-# a comment quoting an old bare form above a wrapped projection is reported;
-# `${Interpolated} AS alias` and `AS ${alias}` are not understood; two
-# projections for one alias on one line keep only the last (grep -o is greedy).
-# Stated rather than fixed — each needs a real SQL parse, and a gate whose
-# limits are written down is one a reader can trust the rest of.
+# line holding ` AS <alias>`, so a bare column on an earlier line of it
+# passes; a comment quoting an old bare form above a wrapped projection is
+# reported; `${Interpolated} AS alias` and `AS ${alias}` are not understood;
+# two projections for one alias on one line keep only the last (grep -o is
+# greedy). Each needs a real SQL parse.
 #
-# Exactly two exemptions: `COUNT(` (integer) and `PRAGMA` (SQLite-generated). Every
-# wider entry tried (MAX/MIN/group_concat/CASE) was false over a TEXT column — MAX over
-# a mixed column PREFERS the blob (SQLite orders BLOB above TEXT).
+# Exactly two exemptions: `COUNT(` (integer) and `PRAGMA`
+# (SQLite-generated). A wider exemption (MAX/MIN/group_concat/CASE) is false
+# over a TEXT column: MAX over a mixed column PREFERS the blob (SQLite
+# orders BLOB above TEXT).
 set -eu
 export LC_ALL=C
 cd "$(dirname "$0")/.."
@@ -44,9 +44,9 @@ for f in src/cli/*.roc; do
     if [ ! -s "$tmp/exprs" ]; then
       # PRAGMA results are SQLite-generated — no blob can reach them.
       if grep -q "PRAGMA $alias" "$f" 2>/dev/null; then continue; fi
-      # Otherwise the alias IS the column, selected bare. Scoped to the selecting LINE
-      # and any table prefix: a file-wide grep let a neighbour's CAST vouch for a new
-      # bare projection, and a fixed prefix set misreported `s.`/`m.`/`rt.` wraps.
+      # Otherwise the alias IS the column, selected bare. Scoped to the selecting
+      # LINE and any table prefix, so a neighbour's CAST cannot vouch for a bare
+      # projection and any `x.` prefix wrap is read.
       grep -E "(SELECT|,) *$alias *(,| FROM)" "$f" 2>/dev/null > "$tmp/bareline" || true
       if [ -s "$tmp/bareline" ]; then
         grep -qE "CAST\(([a-z_][a-z_0-9]*\.)?$alias AS TEXT\)" "$tmp/bareline" ||
@@ -126,10 +126,8 @@ done
 # Asserted exactly, not as a floor — an enumeration that silently matches nothing
 # prints the same clean line a healthy tree prints.
 EXPECT_DECODES=85
-# Asserted, not printed-and-forgotten. The success line once carried a hardcoded site
-# count that nothing computed and nothing checked, so it drifted from the truth without
-# anything failing. A number a gate prints on every green run has to be a number the gate
-# enforces — which is why no historical value is quoted here either.
+# Asserted, not just printed: a number a gate prints on every green run has
+# to be a number the gate enforces.
 EXPECT_SITES=142  # matched `... AS <alias>` projection expressions, not decoder call sites
 if [ "$decodes" != "$EXPECT_DECODES" ]; then
   echo "blob-safety: inspected $decodes (file, alias) decode pairs, expected $EXPECT_DECODES."
