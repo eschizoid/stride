@@ -76,6 +76,9 @@ chmod +x "$C/MacOS/launcher" "$C/MacOS/stride-viz"
 VERSION=$(sed -n 's/^version = "stride \(.*\)".*/\1/p' src/cli/main.roc | head -1)
 [ -n "$VERSION" ] || VERSION="0.0.0-dev"
 
+# NSSupportsAutomaticGraphicsSwitching: on a Mac with two GPUs, an OpenGL app
+# without it holds the discrete GPU on for as long as it runs; with it the
+# window can stay on the integrated one
 cat > "$C/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -89,6 +92,7 @@ cat > "$C/Info.plist" <<PLIST
   <key>CFBundleIconFile</key><string>stride</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
 </dict></plist>
 PLIST
 sed -i '' "s/__VERSION__/$VERSION/g" "$C/Info.plist"

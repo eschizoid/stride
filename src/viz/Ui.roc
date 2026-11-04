@@ -127,6 +127,9 @@ Ui :: [].{
 		# it; "" when it did not, and a capture's path is then relative
 		cwd : Str,
 		tick : U64,
+		# the tick of the athlete's last input: the window keeps its full frame
+		# rate for a moment after it
+		last_active : U64,
 		view_anim : U64,
 		last_focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, detail_day : Str, sport : Str, family : Str },
 		# quitting is raised by the ESC frame, which spawns the focus-row clear;
@@ -149,9 +152,8 @@ Ui :: [].{
 		# outcome - a fresh model landing or the reload failing - so a failed
 		# fetch never strands the note on screen.
 		reloading : Bool,
-		# the brand mark as the authored PNG, loaded for the splash only -
-		# hand-drawn approximations of the logo kept drifting from the real
-		# artwork, so the splash renders the artwork itself
+		# the brand mark as the authored PNG, loaded for the splash only, so the
+		# splash shows the artwork itself rather than a drawing of it
 		logo : [NoLogo, Logo(Texture.Texture)],
 		font : Text.Font,
 		hint : Text.Prepared,
@@ -206,8 +208,8 @@ Ui :: [].{
 		last_directive : { id : I64, refused : Str, result : Str },
 		# the post-process pipeline: Unbuilt until update! allocates it, sized
 		# to the window. Unavailable remembers the size the GPU refused at, so
-		# a resize earns one fresh attempt; between refusals the app renders
-		# exactly as before the feature existed
+		# a resize earns one fresh attempt; while it is unavailable the window
+		# draws without the glow
 		glow : [Unbuilt, Unavailable({ gw : F32, gh : F32 }), Ready({ rt : Draw.RenderTexture, shader : Shader({ res_x : F32, res_y : F32 }), gw : F32, gh : F32 })],
 		glow_on : Bool,
 		mouse_in : Bool,

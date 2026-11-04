@@ -5,9 +5,8 @@
 ## init!, update!, and the view dispatch — view_basename enumerates the views
 ## and the nav list is their order.
 ##
-## The header carries its own compiler version, so `roc src/viz/main.roc` with a
-## matching nightly is the whole build. roc-ray declares that same compiler, so
-## the two apps and the platform all name one nightly.
+## The header names no compiler, and neither does roc-ray: the window builds on
+## the repo's one nightly pin, the same compiler the engine builds on.
 app [Model, program] { core: "../core/package.roc", rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.11.1/4NWnSt7bKCyVx4xDFH89pV11ekYbiGQ43kdjfZ9NBJQn.tar.zst" }
 
 import rr.App
@@ -22,6 +21,8 @@ import rr.Sqlite
 import rr.Task
 import rr.Text
 import rr.Texture
+import rr.Time
+import rr.Window
 import core.Bus
 import core.Series
 import core.Units
@@ -222,16 +223,13 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 			tm = Db.today_mod!(acc.io.commands(), db)
 			c = Db.load_curve!(db, curve_days, tm)
 			tids = Db.load_trace_ids!(db)
-			# ONLY the selected session is cached at boot. Caching the whole
-			# picker up front is what made the window take minutes to open on
-			# a real database: not the SQL (0.2s for the whole stream corpus)
-			# but the roc-ray SQLite binding, which marshals result rows one
-			# at a time - and each session's downsampled trace is hundreds of
-			# rows, so a hundred-odd sessions was ~100k rows before the first
-			# frame. A switch or ghost summon to an un-cached session falls
-			# through to the one-session load the cache-miss path already
-			# spawns (trace_task! / ghost_task!), so the cost is paid per
-			# session actually looked at, not for the whole picker at boot.
+			# ONLY the selected session is cached at boot. The roc-ray SQLite
+			# binding marshals result rows one at a time, and each session's
+			# downsampled trace is hundreds of rows, so caching the whole
+			# picker would hold the first frame for every session's rows. A
+			# switch or ghost summon to an uncached session falls through to
+			# the one-session load the cache-miss path spawns (trace_task! /
+			# ghost_task!), so the cost is paid per session looked at.
 			un = Db.units!(db)
 			tcache = load_tcache!(db, un, List.take_first(tids, 1))
 			tr = match List.first(tcache) {
@@ -418,6 +416,7 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 		stride_dir: acc.dir,
 		cwd,
 		tick: 0,
+		last_active: 0,
 		view_anim: 0,
 		last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "" },
 		day_notes: loaded.nts,
@@ -482,14 +481,10 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 	})
 }
 
-# The app spawns one kind of task: a screenshot, whose result it ignores —
-# a failed shot must not take the window down, and the file's absence is the
-# report. Was `[]` while nothing spawned.
-
 # The offscreen pipeline for the glow pass: a window-sized framebuffer, a
 # 25-tap bloom shader compiled from source (no asset to ship), and its two
-# resolution uniforms. Any refusal degrades to Unavailable - the app then
-# draws exactly as it did before the feature existed.
+# resolution uniforms. Any refusal degrades to Unavailable, and the window
+# then draws without the glow.
 glow_frag : Str
 glow_frag = Str.join_with(
 	[
@@ -594,16 +589,12 @@ detail_task! = |acc, units, day|
 		Ok(db) => DayDetail({ day, lines: Db.load_day_detail!(db, units, day) })
 	}
 
-# The coach's poll: read-and-consume the newest directive, every 60
-# frames (~1s at the capped rate; slower if frames are),
-# from a spawned task (Sqlite parks there).
-# every poll also refreshes the coach corner's note, so the plan view
-# shows the directive that actually arrived last, not launch-time state
-# `last_id` is the directive the window last applied: a row re-polled
-# before its acknowledgement landed carries that id, and re-reading the
-# picker for it would pay the query once per poll for as long as the
-# acknowledgement keeps losing the write, for a directive that will not be
-# applied again anyway.
+# The coach's poll: read and consume the newest directive once a second,
+# from a spawned task, where Sqlite may wait. Every poll also refreshes the
+# coach corner's note, so the plan view shows the directive that arrived
+# last rather than the one read at launch. `last_id` is the directive the
+# window last applied: a row polled again before its acknowledgement landed
+# carries that id, and is not applied again, so it needs no picker read.
 poll_task! : Access, I64 => Msg
 poll_task! = |acc, last_id|
 	if (acc.dir == "") DirectiveNone
@@ -625,10 +616,8 @@ poll_task! = |acc, last_id|
 		}
 	}
 
-# Every refusable field of a directive, named - a pure function rather than
-# an inline block: this nightly miscompiles a large conditional binding
-# captured by a task closure to its empty default (the #371 family), and a
-# call is the shape that survives.
+# A picker row: the session's id, day, name and sport, and the channel its
+# trace draws.
 TraceId : { id : I64, day : Str, name : Str, sport : Str, chan : Str }
 
 # An empty filter admits every sport, which is what makes "" the whole menu.
@@ -730,17 +719,78 @@ id_at = |ids, sel|
 expect id_at([{ id: 7, day: "d", name: "n", sport: "Ride", chan: "w" }], 0) == 7
 expect id_at([], 0) == -1
 
-# the focus heartbeat in frames: the app paces at 60 fps, so this is
-# Db.focus_beat_secs of wall clock, and the expect below holds the two together
-focus_beat_ticks : U64
-focus_beat_ticks = 60 * 30
+# The window's clock. A tick is a sixtieth of a second of the host's
+# simulation time, which follows the wall clock and, under a FixedStep
+# recording, advances by exactly one recorded frame's worth per cycle, so a
+# recording stays regenerable. Every duration and animation below counts
+# ticks, so none depends on how often the window draws, and the frame rate
+# is free to drop while the window idles.
+ticks_per_second : U64
+ticks_per_second = 60
 
-expect focus_beat_ticks == 60 * (
+tick_at : Time.Cycle -> U64
+tick_at = |t| t.simulation_nanos / (1_000_000_000 / ticks_per_second)
+
+expect tick_at({ ..Time.first_cycle, simulation_nanos: 0 }) == 0
+expect tick_at({ ..Time.first_cycle, simulation_nanos: 990_000_000 }) == 59
+expect tick_at({ ..Time.first_cycle, simulation_nanos: 2_000_000_000 }) == 120
+
+# A periodic action fires on the cycle whose tick crosses a multiple of its
+# period. One cycle can advance the clock by several ticks or by none, so a
+# test for an exact multiple would skip some periods and repeat others.
+crossed : U64, U64, U64 -> Bool
+crossed = |prev, now, period| now / period > prev / period
+
+expect crossed(59, 60, 60)
+expect crossed(55, 66, 60)
+expect !crossed(60, 60, 60)
+expect !crossed(60, 119, 60)
+expect crossed(0, 1800, 1800)
+
+# the focus heartbeat in ticks: Db.focus_beat_secs of wall clock, and the
+# expect below holds the two together
+focus_beat_ticks : U64
+focus_beat_ticks = ticks_per_second * 30
+
+expect focus_beat_ticks == ticks_per_second * (
 	match I64.to_u64_try(Db.focus_beat_secs) {
 		Ok(b) => b
 		Err(_) => 0
 	}
 )
+
+# The frame rate. Drawing every frame keeps the CPU and GPU busy even while
+# nothing on screen changes, so the window draws at full rate only while
+# something moves or the athlete is using it, and at the idle rate
+# otherwise. The idle rate still runs update! several times a second, which
+# is what lands a bus directive within about a second of its write. Input
+# keeps the full rate for linger_ticks after it stops, so the next move of a
+# hand that paused is answered at once. raylib ends each frame's wait with a
+# short spin that costs CPU at any frame rate, so an idle rate lower than
+# this one saves little more.
+full_fps : I32
+full_fps = 60
+
+idle_fps : I32
+idle_fps = 5
+
+linger_ticks : U64
+linger_ticks = 2 * ticks_per_second
+
+# how long a view switch animates: the longest arrival a view draws (the
+# career sweep), which also covers the crossfade and view_settled's wait
+view_anim_ticks : U64
+view_anim_ticks = 120
+
+expect U64.to_f32(view_anim_ticks) >= Career.dur
+
+frame_rate : { busy : Bool, tick : U64, last_active : U64 } -> I32
+frame_rate = |p| if (p.busy or p.tick - p.last_active < linger_ticks) full_fps else idle_fps
+
+expect frame_rate({ busy: Bool.True, tick: 1000, last_active: 0 }) == full_fps
+expect frame_rate({ busy: Bool.False, tick: 1000, last_active: 900 }) == full_fps
+expect frame_rate({ busy: Bool.False, tick: 1000, last_active: 880 }) == idle_fps
+expect idle_fps >= 2
 
 # A ghost is chosen against one selection and outlives it: stepping the
 # solid session, a directive, or a filter snap all move the live trace
@@ -1056,6 +1106,10 @@ capture_refusal_for = |kind, rec_active, cap_pending|
 		"; ",
 	)
 
+# Every refusable field of a directive, named. A pure function rather than an
+# inline block: on the pinned compiler, a large conditional binding captured
+# by a task closure compiles to its empty default (#371), and a call compiles
+# correctly.
 refusals_for : { has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, capture : Str }, I64, U64, U64, List(TraceId), Bool, Bool -> Str
 refusals_for = |dv, cdir, wsel, cur_sel, ids, rec_active, cap_pending| {
 	segs = List.keep_if(
@@ -1154,11 +1208,10 @@ capture_is_pending = |p|
 capture_path : Str, Str -> Str
 capture_path = |cwd, name| if (cwd == "") (Str.concat("captures/", name)) else Str.concat(cwd, Str.concat("/captures/", name))
 
-# 600 frames - ten seconds at the app's 60 fps pacing, longer while a recording
-# slows the frames: a host that has not answered a
-# capture by then never will, and the row closes rather than stays pending
+# a host that has not answered a capture within ten seconds never will, and
+# the row closes rather than stays pending
 capture_timeout_ticks : U64
-capture_timeout_ticks = 600
+capture_timeout_ticks = 10 * ticks_per_second
 
 # what one frame does about a pending capture: the host's screenshot answer
 # for the directive (not the S key's), the recorder's status, whether the
@@ -1176,7 +1229,7 @@ CaptureAction : [Nothing, TakeShot({ id : I64, name : Str }), Mark({ id : I64, r
 capture_step : Ui.PendingCapture, CaptureEvent -> { next : Ui.PendingCapture, act : CaptureAction }
 capture_step = |p, ev| {
 	timed_out = |c| ev.tick - c.since >= capture_timeout_ticks
-	give_up = |c, kind| { next: NoCapture, act: Mark({ id: c.id, refused: join_refusal(c.refused, "capture ${kind} failed: no answer from the host within 600 frames"), result: "" }) }
+	give_up = |c, kind| { next: NoCapture, act: Mark({ id: c.id, refused: join_refusal(c.refused, "capture ${kind} failed: no answer from the host within 10 seconds"), result: "" }) }
 	match p {
 		NoCapture => { next: NoCapture, act: Nothing }
 		ArmedShot(c) =>
@@ -1260,11 +1313,11 @@ rec_failure_text = |r|
 		Unknown => "the host gave no reason"
 	}
 
-# the view has settled when a view switch's crossfade and draw-in are over
-# (30 frames; the veil itself fades in 10), no trace or ghost fetch is in
-# flight, and no reload is
+# the view has settled when a view switch's crossfade and the form board's
+# draw-in are over (half a second), no trace or ghost fetch is in flight,
+# and no reload is
 view_settled : { view_anim : U64, tick : U64, trace_loading : Bool, ghost_loading : Bool, reloading : Bool } -> Bool
-view_settled = |m| (m.view_anim == 0 or m.tick - m.view_anim >= 30) and !m.trace_loading and !m.ghost_loading and !m.reloading
+view_settled = |m| (m.view_anim == 0 or m.tick - m.view_anim >= ticks_per_second / 2) and !m.trace_loading and !m.ghost_loading and !m.reloading
 
 expect {
 	m = [
@@ -1368,7 +1421,7 @@ expect {
 		and ok == { next: NoCapture, act: Mark({ id: 3, refused: "", result: "/h/captures/power.png" }) }
 		and bad == { next: NoCapture, act: Mark({ id: 3, refused: "range 45 not 30/60/90; capture png failed: the host is busy", result: "" }) }
 		and other == { next: AwaitingShot(c), act: Nothing }
-		and late == { next: NoCapture, act: Mark({ id: 3, refused: "capture png failed: no answer from the host within 600 frames", result: "" }) }
+		and late == { next: NoCapture, act: Mark({ id: 3, refused: "capture png failed: no answer from the host within 10 seconds", result: "" }) }
 }
 # a start marks on Active with the file, a Failed read at the tick the wait
 # began (the frame after the start, which is when the step first runs)
@@ -1389,7 +1442,7 @@ expect {
 		and stopped == { next: NoCapture, act: Mark({ id: 5, refused: "", result: "/h/captures/power.webm" }) }
 		and died == { next: NoCapture, act: Mark({ id: 5, refused: "capture webm_stop failed: the encoder failed", result: "" }) }
 		and waiting == { next: AwaitingStop(c), act: Nothing }
-		and gone == { next: NoCapture, act: Mark({ id: 5, refused: "capture webm_start failed: no answer from the host within 600 frames", result: "" }) }
+		and gone == { next: NoCapture, act: Mark({ id: 5, refused: "capture webm_start failed: no answer from the host within 10 seconds", result: "" }) }
 		and capture_is_pending(AwaitingStop(c)) and !capture_is_pending(NoCapture)
 		and capture_path("", "power.png") == "captures/power.png" and capture_path("/h", "power.png") == "/h/captures/power.png"
 		and view_settled({ view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
@@ -1410,16 +1463,15 @@ mark_task! = |acc, did, refused, result| {
 	did
 }
 
-# The frame after ESC leaves once the focus clear (and the mark of a capture
-# ESC closed) has landed, or once half
-# a second (30 frames at the app's 60 fps pacing) has passed without it - a
-# database that will not answer must not hold the window open. Ticks only
-# grow, so the difference cannot wrap.
+# After ESC the window leaves once the focus clear (and the mark of a
+# capture ESC closed) has landed, or once half a second has passed without
+# it: a database that will not answer must not hold the window open. Ticks
+# only grow, so the difference cannot wrap.
 exits_now : Bool, U64, U64 -> Bool
-exits_now = |cleared, tick, quit_tick| cleared or tick - quit_tick >= 30
+exits_now = |cleared, tick, quit_tick| cleared or tick - quit_tick >= ticks_per_second / 2
 
-# the clear landing ends the wait at once; without it the wait ends on the
-# 30th frame and not before
+# the clear landing ends the wait at once; without it the wait ends half a
+# second (30 ticks) after ESC and not before
 expect exits_now(Bool.True, 100, 100)
 expect !exits_now(Bool.False, 129, 100)
 expect exits_now(Bool.False, 130, 100)
@@ -1537,13 +1589,12 @@ Msg : [
 ]
 
 # ONE nav density: every pill carries its 12x12 vector mark beside the
-# label. A width-switched icon tier used to exist, and an information
-# tier that switches off by width goes dark for whole classes of windows
-# - at the 150% scale default its threshold asked for more logical width
-# than common laptop displays report - so the pill grew to hold both
-# instead. The constants are shared by the render and both hit-tests; at
-# the 980 logical floor nine pills span x 260-938, clear of the title
-# row's scale chip by ~15px at its widest rendering.
+# label. A tier that switches information off by window width goes dark for
+# whole classes of windows (at the 150% scale default, common laptop
+# displays report less logical width than such a threshold asks), so each
+# pill holds both. The constants are shared by the render and both
+# hit-tests, and at the minimum window width the nine pills clear the title
+# row's scale chip.
 nav_pitch : F32
 nav_pitch = 76.0
 
@@ -1571,15 +1622,15 @@ load_tcache! = |db, units, ids|
 		}
 	}
 
-# ONE view->basename map for every capture format: png and webm derive
-# from it, so the "named for the view" invariant cannot drift per-path
-# the focus row's view code, hoisted to a pure top-level function: a
-# multi-arm conditional built inline inside a task closure is the shape the
-# pinned compiler has miscompiled before - a call is the shape that survives.
+# the focus row's view code, a pure top-level function: on the pinned
+# compiler a multi-arm conditional built inline inside a task closure
+# miscompiles, and a call compiles correctly
 focus_view_code : U8 -> I64
 focus_view_code = |v|
 	if (v == 0) (0) else if (v == 1) (1) else if (v == 2) (2) else if (v == 3) (3) else if (v == 4) (4) else if (v == 5) (5) else if (v == 6) (6) else if (v == 7) (7) else 8
 
+# ONE view->basename map for every capture format: png and webm derive
+# from it, so a capture is named for its view in both
 view_basename : U8 -> Str
 view_basename = |v|
 	if (v == 0) "form-board" else if (v == 1) "power" else if (v == 2) "session-trace" else if (v == 3) "data-table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else "career"
@@ -1606,6 +1657,9 @@ caps_fields = [
 update! : Model, App.Input(Msg), App.Io => Try(Model, [Exit(I64)])
 update! = |model0, program_input, io| {
 	d = program_input.devices
+	# never behind the last cycle's tick: every age below is a U64 difference
+	# against a stamp taken from an earlier tick
+	tick = U64.max(tick_at(program_input.time), model0.tick)
 	# task answers land as messages; fold them in before this frame's input.
 	# A finished reload keeps the UI state the user has moved since spawning.
 	model = List.fold(
@@ -1687,7 +1741,7 @@ update! = |model0, program_input, io| {
 							}
 					}
 				Reloaded(fresh) => {
-					merged = { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending }
+					merged = { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_active: acc.last_active, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending }
 					# R reads the window it was pressed on, and it is the slow path.
 					# A chip clicked while it ran has since moved curve_days and
 					# landed its own curve for the window now on screen; when the
@@ -1721,9 +1775,9 @@ update! = |model0, program_input, io| {
 			},
 	)
 	# a re-delivered id means the mark was lost to a busy database (the row
-	# stayed pending and was re-polled): re-report the recorded outcome and
-	# apply NOTHING - re-applying fought the user's own input every second
-	# for as long as a CLI write transaction held the lock
+	# stayed pending and was polled again): re-report the recorded outcome
+	# and apply NOTHING, since applying it again would undo the athlete's own
+	# input every second for as long as a CLI write transaction held the lock
 	is_redelivery = directive0.has_d and directive0.id == model.last_directive.id
 	# ...unless the outcome is a capture's, still waiting on the host: the
 	# row stays pending until the file is known. The re-mark carries the
@@ -1767,8 +1821,10 @@ update! = |model0, program_input, io| {
 	last_directive1 = last_directive_after(model.last_directive, cap_step.act)
 	directive = if (is_redelivery) ({ has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }) else directive0
 	if model.quitting {
-		if (exits_now(model.focus_cleared and model.quit_mark_pending < 0, model.tick, model.quit_tick)) (Err(Exit(0)))
-		else Ok({ ..model, tick: model.tick + 1, pending_capture: pending1, last_directive: last_directive1 })
+		# the wait for the focus clear is short, and answered at full rate
+		Window.set_target_fps!(full_fps)
+		if (exits_now(model.focus_cleared and model.quit_mark_pending < 0, tick, model.quit_tick)) (Err(Exit(0)))
+		else Ok({ ..model, tick, pending_capture: pending1, last_directive: last_directive1 })
 	} else if d.key_pressed(KeyEscape) {
 		if (model.stride_dir == "") (Err(Exit(0)))
 		else {
@@ -1783,7 +1839,7 @@ update! = |model0, program_input, io| {
 				}
 				_ => -1.I64
 			}
-			Ok({ ..model, quitting: Bool.True, quit_tick: model.tick, tick: model.tick + 1, pending_capture: NoCapture, last_directive: last_directive1, quit_mark_pending: quit_mark })
+			Ok({ ..model, quitting: Bool.True, quit_tick: tick, tick, pending_capture: NoCapture, last_directive: last_directive1, quit_mark_pending: quit_mark })
 		}
 	} else {
 		pixels = { w: I32.to_f32(program_input.window.size.width), h: I32.to_f32(program_input.window.size.height) }
@@ -1865,20 +1921,19 @@ update! = |model0, program_input, io| {
 			else if (d.key_pressed(KeyRight)) (if (model.cursor <= 0) (-1) else model.cursor - 1)
 			else model.cursor
 		m = m0
-		# S writes a PNG of the CURRENT view into ./captures — #372's "session
-		# graphic for a training log". Spawned rather than called inline: a
-		# screenshot waits for the end of a frame, and update! is not one.
-		# The name carries the VIEW'S OWN NAME (docs: "named for the view") -
-		# view 1 is the power view, so its captures are power.png/power.webm,
-		# one basename per view across both formats. img/power-curve.png in the
-		# docs is a committed illustration, not a capture.
+		# S writes a PNG of the CURRENT view into ./captures. Spawned rather
+		# than called inline: a screenshot waits for the end of a frame, and
+		# update! is not one. The file carries the view's own name, so view 1,
+		# the power view, captures as power.png and power.webm.
+		# img/power-curve.png in the docs is a committed illustration, not a
+		# capture.
 		_ = if d.key_pressed(KeyS) {
 			shot_name = Str.concat(view_basename(view), ".png")
 			Task.spawn!(program_input, || Shot(io.capture().screenshot!(shot_name)))
 		}
 		# V toggles a recording of whatever is on screen: WebM, full scale,
-		# 30fps, FixedStep timing - the deterministic regenerable session
-		# graphic #372 promised. Named for the view it started on.
+		# 30fps, FixedStep timing, so the same session records the same
+		# frames every time. Named for the view it started on.
 		_ = if d.key_pressed(KeyV) {
 			match program_input.capture {
 				Active(_) => Task.spawn!(program_input, || RecCmd(io.capture().stop!()))
@@ -2005,11 +2060,11 @@ update! = |model0, program_input, io| {
 		# moving the mouse over the form board's plot un-parks the crosshair:
 		# the hover takes over while inside, and nothing lingers on the way
 		# out. Only a cursor NOT re-parked this same frame (arrow, directive,
-		# row click) clears - deliberate parks always win over drift. The
-		# scale-equality guard is load-bearing: last frame's mouse_x/y were
-		# computed at the PREVIOUS scale, so on a Ctrl +/- frame the same
-		# physical pointer yields different logical coordinates and a still
-		# mouse would read as drift - same hazard the trace drag guards below.
+		# row click) clears, so a deliberate park always wins over drift. The
+		# scale must also be unchanged: last frame's mouse_x/y were computed
+		# at the PREVIOUS scale, so on a Ctrl +/- frame the same physical
+		# pointer yields different logical coordinates and a still mouse
+		# would read as drift, the hazard the trace drag guards below too.
 		cursor3 =
 			if view2 == 0 and layout.scale == model.ui_scale and cursor2 == model.cursor and cursor2 >= 0 and (m.x != model.mouse_x or m.y != model.mouse_y) and m.y > Theme.pad_t + 56.0 and m.y < win.h - Theme.pad_b and m.x >= Theme.pad_l and m.x <= win.w - Theme.pad_r {
 				-1
@@ -2216,17 +2271,15 @@ update! = |model0, program_input, io| {
 			)
 		)
 		Mouse.set_cursor!(if (over_chip or over_row or over_nav) PointingHand else Default)
-		# a view switch stamps this frame; render fades the new view in from it
-		# a click settles the career sweep instantly - zero means "no animation"
-		# to every consumer of view_anim, so the twentieth arrival never pays
-		# the first arrival's price
 		# F cycles the career view's sport; harmless elsewhere
 		spine_idx = if (view == 8 and d.key_pressed(KeyF)) (model.spine_idx + 1) else model.spine_idx
-		view_anim = if (view != model.view) (model.tick + 1) else if (view == 8 and Mouse.button_pressed(d.mouse, Left)) (0) else model.view_anim
-		tick = model.tick + 1
-		# frame one of a boot: the window is already on screen showing the
-		# splash - kick the real load exactly once, the same task R runs
-		_ = if model.booting and model.tick == 0 {
+		# a view switch stamps this tick, and render fades the new view in
+		# from it; a click on the career view settles its sweep at once, since
+		# zero means "no animation" to every consumer of view_anim
+		view_anim = if (view != model.view) (tick) else if (view == 8 and Mouse.button_pressed(d.mouse, Left)) (0) else model.view_anim
+		# the first cycle of a boot: the window is already on screen showing
+		# the splash, so the real load starts here, once, as the task R runs
+		_ = if model.booting and program_input.time.cycle_count == 0 {
 			f0 = model.font
 			acc0r = { io, dir: model.stride_dir }
 			cwd0 = model.cwd
@@ -2283,11 +2336,11 @@ update! = |model0, program_input, io| {
 			sport: want_sport2,
 			family: Career.spine_at(model.career_spines, spine_idx).fam,
 		}
-		# written when what the human sees changed (throttled), and on a
-		# heartbeat regardless: updated_at is the coach's liveness signal, and a
-		# window idle on one view for an hour is still a window
+		# written when what the human sees changed, at most twice a second,
+		# and on a heartbeat regardless: updated_at is the coach's liveness
+		# signal, and a window idle on one view for an hour is still a window
 		last_focus =
-			if model.stride_dir != "" and ((focus_now != model.last_focus and tick % 30 == 0) or tick % focus_beat_ticks == 0) {
+			if model.stride_dir != "" and ((focus_now != model.last_focus and crossed(model.tick, tick, ticks_per_second / 2)) or crossed(model.tick, tick, focus_beat_ticks)) {
 				accf = { io, dir: model.stride_dir }
 				_ = Task.spawn!(program_input, || focus_task!(accf, focus_now))
 				focus_now
@@ -2327,12 +2380,11 @@ update! = |model0, program_input, io| {
 			else if (cap_ok and directive.capture == "webm_start") (AwaitingStart(wait9(Str.concat(cap_name, ".webm"), rec_path2)))
 			else if (cap_ok and directive.capture == "webm_stop") (AwaitingStop(wait9("", model.rec_path)))
 			else pending1
-		# no directory means no database means no bus - spawning would only
-		# manufacture failing tasks every tick, forever
-		# ...and no poll while a capture waits on the host, this frame's included:
-		# a newer row would
-		# supersede the one whose file is still being written
-		_ = if tick % 60 == 0 and model.stride_dir != "" and !capture_is_pending(pending2) {
+		# the bus poll, once a second. Without a directory there is no
+		# database and so no bus, and a poll would only fail. No poll runs
+		# while a capture waits on the host, this cycle's included: a newer
+		# row would supersede the one whose file is still being written
+		_ = if crossed(model.tick, tick, ticks_per_second) and model.stride_dir != "" and !capture_is_pending(pending2) {
 			accp = { io, dir: model.stride_dir }
 			lastp = model.last_directive.id
 			Task.spawn!(program_input, || poll_task!(accp, lastp))
@@ -2352,7 +2404,16 @@ update! = |model0, program_input, io| {
 				Unavailable(u9) => if (u9.gw == pixels.w and u9.gh == pixels.h) (model.glow) else build_glow!(pixels)
 			}
 		glow_on2 = if (d.key_pressed(KeyG)) (!model.glow_on) else model.glow_on
-		Ok({ ..model, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		# full rate while anything on screen still moves: the splash, a
+		# loading note, a view's arrival, a capture or a recording
+		busy = model.booting or reload_spawned or model.reloading or trace_fetch or model.trace_loading or ghost_loading2 or rec_active or capture_is_pending(pending2) or (view_anim > 0 and tick - view_anim < view_anim_ticks)
+		# the athlete at work: any key, click, wheel notch or pointer move,
+		# a resize, or a directive from the coach
+		pointer = d.mouse.delta()
+		used = !List.is_empty(d.events) or List.any(d.keys, |k| k != 0) or pointer.x != 0.0 or pointer.y != 0.0 or wheel.x != 0.0 or wheel.y != 0.0 or Mouse.button_down(d.mouse, Left) or Mouse.button_down(d.mouse, Right) or win.w != model.win.w or win.h != model.win.h or directive.has_d
+		last_active = if (used) tick else model.last_active
+		Window.set_target_fps!(frame_rate({ busy, tick, last_active }))
+		Ok({ ..model, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
@@ -2512,7 +2573,7 @@ scene! = |model, frame| {
 	# the XP rail rides the panel's left edge on every view - under the
 	# crossfade veil, so it arrives with the view rather than over it
 	Hud.rail!(model, frame)
-	# the crossfade: for ten frames after a switch, a panel-colored veil
+	# the crossfade: for ten ticks after a switch, a panel-colored veil
 	# fades off the incoming view - ease-out, cheap, and one rectangle
 	age = model.tick - model.view_anim
 	if model.view_anim > 0 and age < 10 {
@@ -2635,9 +2696,8 @@ splash_route! = |model, frame, cx, cy, pi, mixc| {
 			{ x: ex - 30.0 * (t - 0.90) / 0.10, y: ey - 28.0, t }
 		}
 	}
-	# reveal loops: 56 ticks of drawing, 34 of holding - frames run well below
-	# 60fps while the load task works, so a longer cycle would never finish
-	# inside the loading window and the mountain would never be seen
+	# the reveal loops, 56 ticks of drawing and 34 of holding: a cycle short
+	# enough to finish inside a quick load, so the mark is seen whole
 	cyc = model.tick % 90
 	p_raw = U64.to_f32(cyc) / 56.0
 	p1 = if (p_raw > 1.0) (1.0) else p_raw

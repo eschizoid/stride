@@ -12,32 +12,28 @@ rc=0
 out=$("${ROC:-roc}" "$@" 2>&1) || rc=$?
 printf '%s\n' "$out"
 
-# A test run gets two gates, and both run on the clean path - a wrapper that
-# returns early when roc succeeds is a wrapper whose pins never execute.
+# A test run gets two gates, and both run on the clean path, so the pins
+# execute whether roc succeeded or not.
 #
-# The first never reads roc's output at all: the SOURCE count of assertion
-# lines under src/viz - lines beginning with `expect` or `and ` (today every
-# one of the latter is an expect continuation) - must equal its pin. The
-# summary pin below counts the whole import graph, so alone it is satisfiable
-# by arithmetic (a deleted viz expect paid for by a new core expect leaves the
-# pinned count standing while the viz's own coverage shrinks), and a block
-# count alone is blind to a single assertion deleted from inside a multi-line
-# block; counting continuation lines is what makes one deleted `and` loud.
+# The first never reads roc's output: the SOURCE count of assertion lines
+# under src/viz, lines beginning with `expect` or `and `, must equal its pin.
+# The summary pin below counts the whole import graph, so on its own a deleted
+# viz expect paid for by a new core expect would leave it standing; and a
+# count of expect blocks alone is blind to one assertion deleted from inside a
+# multi-line block, which counting continuation lines catches.
 #
 # The second is the OUTPUT shape: a clean exit, an all-passed summary carrying
-# exactly the pinned count (parentheses LITERAL in the grep - a BRE, not a
-# capture group; the pin is the same reason e2e pins checks_ran_exactly!), and
-# not one failure marker. The marker clause is belt over the pins' braces:
-# every failure it would catch also breaks the pinned summary, and unlike the
-# other clauses it fails open if roc ever respells the glyph - a second net,
-# not a load-bearing one.
+# exactly the pinned count (the parentheses are literal in the grep, a BRE and
+# not a capture group), and no failure marker. Every failure the marker clause
+# catches also breaks the pinned summary; the clause is a second check that
+# fails open if roc ever changes the glyph.
 #
-# Every clause runs on every invocation - the EXPECT_* variables override the
-# pins for a one-off, never disable them. Adding or removing an assertion means
-# updating the matching pin ON PURPOSE.
+# Every clause runs on every invocation: the EXPECT_* variables override the
+# pins for a one-off and never disable them. Adding or removing an assertion
+# means updating the matching pin on purpose.
 case "${1:-}" in test)
-  want="${EXPECT_TESTS:-231}"
-  want_viz="${EXPECT_VIZ_ASSERTS:-282}"
+  want="${EXPECT_TESTS:-244}"
+  want_viz="${EXPECT_VIZ_ASSERTS:-295}"
   have_viz=$(grep -ch '^[[:space:]]*\(expect\|and \)' src/viz/*.roc 2>/dev/null | awk '{s+=$1} END {print s+0}')
   if [ "$have_viz" != "$want_viz" ]; then
     echo "roc-viz: src/viz declares $have_viz assertion lines (expect + and), the pin says $want_viz - update the pin ON PURPOSE or restore the assertion" >&2

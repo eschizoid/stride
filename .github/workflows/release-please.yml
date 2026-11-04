@@ -146,6 +146,9 @@ jobs:
           # the CLI gates its --version against the tag, so the app gates too
           got_v=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app/Contents/Info.plist")
           [ "$got_v" = "${TAG#v}" ] || { echo "::error::bundle says $got_v, tag is $TAG"; exit 1; }
+          # without this key a dual-GPU Mac keeps the discrete GPU on while the window runs
+          got_g=$(/usr/libexec/PlistBuddy -c "Print :NSSupportsAutomaticGraphicsSwitching" "$app/Contents/Info.plist")
+          [ "$got_g" = "true" ] || { echo "::error::bundle does not allow automatic graphics switching"; exit 1; }
 
       - name: Prove the launcher seeds a fresh machine
         run: |
