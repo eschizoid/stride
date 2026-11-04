@@ -194,8 +194,9 @@ two sources and parses both into the same per-set rows:
    `{imported: [{activity_id, rows, sets, dropped: [{set, exercise, reason}], zeroed: [{set, exercise, recorded}]}], skipped: [{activity_id, reason, dropped}]}`.
    - `dropped` lists every set left out, by 1-based position, with reason
      `no_exercise_name`, `no_reps` (neither reps nor a duration), `bad_reps` (`8-10`,
-     `0`), `bad_duration` (a duration with no unit, such as `60`, or not positive),
-     `unknown_weight_unit` (no kg/lb/lbs) or `bad_weight` (unparseable or negative).
+     `0`), `bad_duration` (a duration that is not text, has no unit such as `60`, or
+     is not positive), `unknown_weight_unit` (no kg/lb/lbs) or `bad_weight`
+     (unparseable or negative).
      **Tell the athlete about every dropped set**: tonnage does not include it. A set
      with no weight at all is kept at 0 kg.
    - `zeroed` lists bodyweight sets (push up, pull up, chin up, dip, plank, sit up and
