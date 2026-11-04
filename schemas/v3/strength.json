@@ -11,7 +11,7 @@
   "properties": {
     "exercises": {
       "type": "array",
-      "description": "One entry per exercise name the parsed sets contain, exact-name matched (Twisting Curl and Zottman Curl are distinct movements; nothing fuzzy). Points are per DAY: the heaviest weight one rep moved that day, and the day's summed kg·reps for the exercise — two numbers because when the weight drops and the reps rise, the product is the only one that says whether work went up.",
+      "description": "One entry per exercise name the parsed sets contain, exact-name matched (Twisting Curl and Zottman Curl are distinct movements; nothing fuzzy), and a second entry for the same name when it was also done as a hold (an isometric set: a weight held still for a time), told apart by `measure`. Points are per DAY: the heaviest weight one rep moved (or one hold held) that day, and the day's summed kg·reps for the exercise — two numbers because when the weight drops and the reps rise, the product is the only one that says whether work went up.",
       "items": {
         "type": "object",
         "required": [
@@ -33,7 +33,9 @@
                 "top_kg",
                 "kg_reps",
                 "top_reps",
-                "total_reps"
+                "total_reps",
+                "top_hold_s",
+                "total_hold_s"
               ],
               "additionalKeys": false,
               "properties": {
@@ -53,6 +55,14 @@
                 "total_reps": {
                   "type": "integer",
                   "description": "the day's summed reps for the exercise, sets times reps"
+                },
+                "top_hold_s": {
+                  "type": "integer",
+                  "description": "the longest hold that day, in seconds; 0 on an entry whose measure is not \"hold\""
+                },
+                "total_hold_s": {
+                  "type": "integer",
+                  "description": "the day's summed hold time for the exercise, sets times the seconds each was held; 0 on an entry whose measure is not \"hold\""
                 }
               }
             }
@@ -61,9 +71,10 @@
             "type": "string",
             "enum": [
               "kg",
-              "reps"
+              "reps",
+              "hold"
             ],
-            "description": "what the exercise progresses in. \"reps\" when every point moved 0 kg, as a bodyweight exercise does (push ups, assisted chin ups and the like count 0 kg toward tonnage, imported or pasted) and as an imported set logged with no weight does: its top_kg and kg_reps are then 0, so top_reps and total_reps are its progression. \"kg\" when any point moved weight."
+            "description": "what the exercise progresses in. \"hold\" for an entry of holds: its reps, total_reps and kg_reps are 0 (a hold adds no tonnage), top_kg is the heaviest weight held, and top_hold_s and total_hold_s are its progression. Otherwise \"reps\" when every point moved 0 kg, as a bodyweight exercise does (push ups, assisted chin ups and the like count 0 kg toward tonnage, imported or pasted) and as an imported set logged with no weight does: its top_kg and kg_reps are then 0, so top_reps and total_reps are its progression. \"kg\" when any point moved weight."
           }
         }
       }

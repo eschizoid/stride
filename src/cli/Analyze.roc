@@ -1258,13 +1258,14 @@ Analyze :: [].{
 				# so a career of mixed apps stays distinguishable and a reader
 				# can qualify a tonnage trend built on unequal sources
 				run!(
-					"INSERT OR REPLACE INTO strength_sets (activity_id, ordinal, exercise, sets, reps, weight_kg, source) VALUES (:aid, :ord, :ex, :sets, :reps, :w, :src)",
+					"INSERT OR REPLACE INTO strength_sets (activity_id, ordinal, exercise, sets, reps, hold_s, weight_kg, source) VALUES (:aid, :ord, :ex, :sets, :reps, :hold, :w, :src)",
 					[
 						{ name: ":aid", value: Integer(aid) },
 						{ name: ":ord", value: Integer(ord) },
 						{ name: ":ex", value: String(r.exercise) },
 						{ name: ":sets", value: Integer(r.sets) },
 						{ name: ":reps", value: Integer(r.reps) },
+						{ name: ":hold", value: Integer(r.hold_s) },
 						{ name: ":w", value: Real(r.weight_kg) },
 						{ name: ":src", value: String(source) },
 					],

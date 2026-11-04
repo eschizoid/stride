@@ -36,48 +36,70 @@ ReportStrength :: [].{
 		# most reps in one set and the day's total reps ride beside them: a
 		# bodyweight exercise is stored at 0 kg, so both kg figures read 0
 		# however its reps move, and reps are the only progression it has.
+		# Holds group apart from rep sets of the same name, one entry each:
+		# a hold's progression is how long it was held (the longest hold and
+		# the day's summed hold time), at the heaviest weight held, and a
+		# rep set's is its weight and reps, so mixing them would set a
+		# held weight against a lifted one.
 		points = Sql.query_many!({
 			path: Path.utf8(path),
 			query: \\SELECT CAST(s.exercise AS TEXT) AS ex,
+				\\       CASE WHEN COALESCE(s.hold_s, 0) > 0 THEN 1 ELSE 0 END AS held,
 				\\       substr(CAST(a.start_local AS TEXT), 1, 10) AS day,
 				\\       CAST(MAX(s.weight_kg) AS REAL) AS top_kg,
 				\\       CAST(SUM(s.sets * s.reps * s.weight_kg) AS REAL) AS kg_reps,
 				\\       MAX(s.reps) AS top_reps,
-				\\       SUM(s.sets * s.reps) AS total_reps
+				\\       SUM(s.sets * s.reps) AS total_reps,
+				\\       MAX(COALESCE(s.hold_s, 0)) AS top_hold_s,
+				\\       SUM(s.sets * COALESCE(s.hold_s, 0)) AS total_hold_s
 				\\FROM strength_sets s JOIN activities a ON a.id = s.activity_id
-				\\GROUP BY CAST(s.exercise AS TEXT), substr(CAST(a.start_local AS TEXT), 1, 10)
-				\\ORDER BY CAST(s.exercise AS TEXT), substr(CAST(a.start_local AS TEXT), 1, 10)
+				\\GROUP BY CAST(s.exercise AS TEXT), CASE WHEN COALESCE(s.hold_s, 0) > 0 THEN 1 ELSE 0 END, substr(CAST(a.start_local AS TEXT), 1, 10)
+				\\ORDER BY CAST(s.exercise AS TEXT), CASE WHEN COALESCE(s.hold_s, 0) > 0 THEN 1 ELSE 0 END, substr(CAST(a.start_local AS TEXT), 1, 10)
 			,
 			bindings: [],
 			rows: |cols| |stmt| {
 				ex = Sql.str("ex")(cols)(stmt)?
+				held = Sql.i64("held")(cols)(stmt)?
 				day = Sql.str("day")(cols)(stmt)?
 				top_kg = Sql.f64("top_kg")(cols)(stmt)?
 				kg_reps = Sql.f64("kg_reps")(cols)(stmt)?
 				top_reps = Sql.i64("top_reps")(cols)(stmt)?
 				total_reps = Sql.i64("total_reps")(cols)(stmt)?
-				Ok({ ex, day, top_kg, kg_reps, top_reps, total_reps })
+				top_hold_s = Sql.i64("top_hold_s")(cols)(stmt)?
+				total_hold_s = Sql.i64("total_hold_s")(cols)(stmt)?
+				Ok({ ex, held: held != 0, day, top_kg, kg_reps, top_reps, total_reps, top_hold_s, total_hold_s })
 			},
 		})?
-		# rows arrive sorted by (exercise, day); fold adjacent runs into one
-		# entry per exercise. Prepend + reverse, never concat-in-fold.
+		# rows arrive sorted by (exercise, held, day); fold adjacent runs into
+		# one entry per exercise and kind. Prepend + reverse, never
+		# concat-in-fold.
 		grouped = List.fold(
 			points,
 			[],
-			|acc, p|
+			|acc, p| {
+				pt = { date: p.day, top_kg: p.top_kg, kg_reps: p.kg_reps, top_reps: p.top_reps, total_reps: p.total_reps, top_hold_s: p.top_hold_s, total_hold_s: p.total_hold_s }
 				match acc {
-					[head, .. as rest] if head.exercise == p.ex =>
-						List.prepend(rest, { exercise: head.exercise, points: List.append(head.points, { date: p.day, top_kg: p.top_kg, kg_reps: p.kg_reps, top_reps: p.top_reps, total_reps: p.total_reps }) })
+					[head, .. as rest] if head.exercise == p.ex and head.held == p.held =>
+						List.prepend(rest, { exercise: head.exercise, held: head.held, points: List.append(head.points, pt) })
 					_ =>
-						List.prepend(acc, { exercise: p.ex, points: [{ date: p.day, top_kg: p.top_kg, kg_reps: p.kg_reps, top_reps: p.top_reps, total_reps: p.total_reps }] })
-				},
+						List.prepend(acc, { exercise: p.ex, held: p.held, points: [pt] })
+				}
+			},
 		)
-		# an exercise whose every point moved 0 kg is measured in reps: its
-		# kg figures are 0 by construction, so they cannot show a change
+		# a hold is measured in time; a rep exercise whose every point moved
+		# 0 kg is measured in reps, its kg figures 0 by construction, so they
+		# cannot show a change
 		exercises = List.map(
 			Render.reverse_list(grouped),
 			|e| {
-				measure = if (List.all(e.points, |pt| pt.top_kg <= 0.0)) "reps" else "kg"
+				measure =
+					if e.held {
+						"hold"
+					} else if List.all(e.points, |pt| pt.top_kg <= 0.0) {
+						"reps"
+					} else {
+						"kg"
+					}
 				{ exercise: e.exercise, measure, points: e.points }
 			},
 		)
@@ -125,14 +147,14 @@ ReportStrength :: [].{
 		})?
 		# ANNOTATED and closed: the renderer below infers an open record, and
 		# a new key would otherwise ship undeclared in schemas/v3 (ADR §9c)
-		payload : { exercises : List({ exercise : Str, measure : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64 }) }), monthly : List({ month : Str, kg : F64, tonnage_known : Bool, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } }
+		payload : { exercises : List({ exercise : Str, measure : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64, top_hold_s : I64, total_hold_s : I64 }) }), monthly : List({ month : Str, kg : F64, tonnage_known : Bool, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } }
 		payload = { exercises, monthly, sessions: counts }
 		Output.out!(payload, |p| screen(units, p))
 	}
 
 	# numbers in tables, meaning in legends — and no verdict line at all:
 	# progression is exactly the number a coach must not have pre-judged
-	screen : [Metric, Imperial], { exercises : List({ exercise : Str, measure : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64 }) }), monthly : List({ month : Str, kg : F64, tonnage_known : Bool, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } } -> Str
+	screen : [Metric, Imperial], { exercises : List({ exercise : Str, measure : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64, top_hold_s : I64, total_hold_s : I64 }) }), monthly : List({ month : Str, kg : F64, tonnage_known : Bool, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } } -> Str
 	screen = |units, p| {
 		if p.sessions.total == 0 {
 			"no strength sessions yet — they arrive with `stride sync` like every other activity"
@@ -144,10 +166,11 @@ ReportStrength :: [].{
 			prog_rows = List.map(
 				repeated,
 				|e| {
-					first = List.first(e.points).ok_or({ date: "", top_kg: 0.0, kg_reps: 0.0, top_reps: 0, total_reps: 0 })
-					last = List.last(e.points).ok_or({ date: "", top_kg: 0.0, kg_reps: 0.0, top_reps: 0, total_reps: 0 })
+					none = { date: "", top_kg: 0.0, kg_reps: 0.0, top_reps: 0, total_reps: 0, top_hold_s: 0, total_hold_s: 0 }
+					first = List.first(e.points).ok_or(none)
+					last = List.last(e.points).ok_or(none)
 					[
-						e.exercise,
+						if (e.measure == "hold") "${e.exercise} (hold)" else e.exercise,
 						(List.len(e.points)).to_str(),
 						"${first.date}  ${top_set(units, e.measure, first)}",
 						"${last.date}  ${top_set(units, e.measure, last)}",
@@ -212,8 +235,15 @@ ReportStrength :: [].{
 	}
 
 	# a top set as its measure reads it: a mass for a weighted exercise, the
-	# most reps in one set for one measured in reps
-	top_set : [Metric, Imperial], Str, { date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64 } -> Str
+	# most reps in one set for one measured in reps, and the longest hold,
+	# with the heaviest weight held when it carried one, for a hold
+	top_set : [Metric, Imperial], Str, { date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64, top_hold_s : I64, total_hold_s : I64 } -> Str
 	top_set = |units, measure, pt|
-		if (measure == "reps") "${pt.top_reps.to_str()} ${if (pt.top_reps == 1) "rep" else "reps"}" else Units.mass_label(units, pt.top_kg)
+		if measure == "reps" {
+			"${pt.top_reps.to_str()} ${if (pt.top_reps == 1) "rep" else "reps"}"
+		} else if measure == "hold" {
+			if (pt.top_kg > 0.0) "${pt.top_hold_s.to_str()} s @ ${Units.mass_label(units, pt.top_kg)}" else "${pt.top_hold_s.to_str()} s"
+		} else {
+			Units.mass_label(units, pt.top_kg)
+		}
 }

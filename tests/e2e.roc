@@ -363,7 +363,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1326)?
+	checks_ran_exactly!(1333)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7326,7 +7326,7 @@ b_strength_import! : Ctx => Try({}, _)
 b_strength_import! = |ctx| {
 	fx = "tests/fixtures/strava-strength-log.json"
 	paste = "Block 1\nDumbbell Crush Press\n3 × 8 • 30 lbs/side"
-	_ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance) VALUES (20590139628, 'connector lift', 'WeightTraining', '2018-06-04T07:00:00Z', 3600, 0), (20575593919, 'connector empty lift', 'WeightTraining', '2018-06-02T07:00:00Z', 3600, 0), (9713, 'pasted lift', 'WeightTraining', '2018-06-06T07:00:00Z', 3600, 0), (9714, 'unpasted lift', 'WeightTraining', '2018-06-08T07:00:00Z', 3600, 0), (9715, 'partly logged lift', 'WeightTraining', '2018-06-10T07:00:00Z', 3600, 0), (9716, 'unreadable lift', 'WeightTraining', '2018-06-12T07:00:00Z', 3600, 0), (9718, 'not a lift', 'Ride', '2018-06-14T07:00:00Z', 3600, 20000), (9719, 'twice-sent lift', 'WeightTraining', '2018-06-16T07:00:00Z', 3600, 0), (9721, 'push day', 'WeightTraining', '2018-07-01T07:00:00Z', 3600, 0), (9722, 'push day again', 'WeightTraining', '2018-07-04T07:00:00Z', 3600, 0), (9723, 'empty then logged', 'WeightTraining', '2018-07-06T07:00:00Z', 3600, 0), (9724, 'logged then empty', 'WeightTraining', '2018-07-08T07:00:00Z', 3600, 0); INSERT OR REPLACE INTO strength_notes (activity_id, description) VALUES (20590139628, '${paste}'), (9713, '${paste}'), (9718, '${paste}');")
+	_ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance) VALUES (20590139628, 'connector lift', 'WeightTraining', '2018-06-04T07:00:00Z', 3600, 0), (20575593919, 'connector empty lift', 'WeightTraining', '2018-06-02T07:00:00Z', 3600, 0), (9713, 'pasted lift', 'WeightTraining', '2018-06-06T07:00:00Z', 3600, 0), (9714, 'unpasted lift', 'WeightTraining', '2018-06-08T07:00:00Z', 3600, 0), (9715, 'partly logged lift', 'WeightTraining', '2018-06-10T07:00:00Z', 3600, 0), (9716, 'unreadable lift', 'WeightTraining', '2018-06-12T07:00:00Z', 3600, 0), (9718, 'not a lift', 'Ride', '2018-06-14T07:00:00Z', 3600, 20000), (9719, 'twice-sent lift', 'WeightTraining', '2018-06-16T07:00:00Z', 3600, 0), (9721, 'push day', 'WeightTraining', '2018-07-01T07:00:00Z', 3600, 0), (9722, 'push day again', 'WeightTraining', '2018-07-04T07:00:00Z', 3600, 0), (9723, 'empty then logged', 'WeightTraining', '2018-07-06T07:00:00Z', 3600, 0), (9724, 'logged then empty', 'WeightTraining', '2018-07-08T07:00:00Z', 3600, 0), (9725, 'hold day', 'WeightTraining', '2018-07-10T07:00:00Z', 3600, 0), (9726, 'longer hold day', 'WeightTraining', '2018-07-12T07:00:00Z', 3600, 0); INSERT OR REPLACE INTO strength_notes (activity_id, description) VALUES (20590139628, '${paste}'), (9713, '${paste}'), (9718, '${paste}');")
 	check!("strength import stores the workout with sets and skips the empty one", strjq!(ctx, ["strength", "import", fx], ".data | tojson") == "{\"imported\":[{\"activity_id\":20590139628,\"dropped\":[],\"rows\":3,\"sets\":9,\"zeroed\":[{\"exercise\":\"Push Up\",\"recorded\":\"79.4 kg\",\"set\":4},{\"exercise\":\"Push Up\",\"recorded\":\"79.4 kg\",\"set\":5},{\"exercise\":\"Push Up\",\"recorded\":\"79.4 kg\",\"set\":6}]}],\"skipped\":[{\"activity_id\":\"20575593919\",\"dropped\":[],\"reason\":\"no_sets\"}]}")?
 	check!("...as the folded rows, each naming strava as its source", Str.trim(sql!(ctx.db, "SELECT group_concat(ordinal || ':' || exercise || ':' || sets || 'x' || reps || '@' || weight_kg || ':' || source, '|') FROM (SELECT * FROM strength_sets WHERE activity_id = 20590139628 ORDER BY ordinal);")) == "0:Neutral Grip Dumbbell Bench Press:3x8@13.6:strava|1:Push Up:3x8@0.0:strava|2:Lateral Raise:3x12@5.9:strava")?
 	check!("...while the same paste still parses where no log exists, so the log won rather than the paste failing", Str.trim(sql!(ctx.db, "SELECT COUNT(*) || ':' || MIN(source) FROM strength_sets WHERE activity_id = 9713;")) == "1:peloton")?
@@ -7349,9 +7349,27 @@ b_strength_import! = |ctx| {
 	# second with more reps. Both store 0 kg, so only reps can show the gain.
 	pu = |aid, reps| "{\"activity_id\":\"${aid}\",\"exercise_sets\":[{\"exercise_name\":\"Push Up\",\"weight\":{\"value\":\"79.4 kg\"},\"reps\":{\"value\":\"${reps}\"}},{\"exercise_name\":\"Push Up\",\"weight\":{\"value\":\"79.4 kg\"},\"reps\":{\"value\":\"${reps}\"}},{\"exercise_name\":\"Push Up\",\"weight\":{\"value\":\"79.4 kg\"},\"reps\":{\"value\":\"${reps}\"}}]}"
 	_ = sh!("printf '%s' '[${pu("9721", "8")},${pu("9722", "12")}]' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - >/dev/null")
-	check!("a bodyweight exercise progresses in reps: top set and total per day, its kg figures 0", strjq!(ctx, ["strength"], "[.data.exercises[] | select(.exercise == \"Push Up\")] | tojson") == "[{\"exercise\":\"Push Up\",\"measure\":\"reps\",\"points\":[{\"date\":\"2018-07-01\",\"kg_reps\":0,\"top_kg\":0,\"top_reps\":8,\"total_reps\":24},{\"date\":\"2018-07-04\",\"kg_reps\":0,\"top_kg\":0,\"top_reps\":12,\"total_reps\":36}]}]")?
+	check!("a bodyweight exercise progresses in reps: top set and total per day, its kg figures 0", strjq!(ctx, ["strength"], "[.data.exercises[] | select(.exercise == \"Push Up\")] | tojson") == "[{\"exercise\":\"Push Up\",\"measure\":\"reps\",\"points\":[{\"date\":\"2018-07-01\",\"kg_reps\":0,\"top_hold_s\":0,\"top_kg\":0,\"top_reps\":8,\"total_hold_s\":0,\"total_reps\":24},{\"date\":\"2018-07-04\",\"kg_reps\":0,\"top_hold_s\":0,\"top_kg\":0,\"top_reps\":12,\"total_hold_s\":0,\"total_reps\":36}]}]")?
 	check!("...while a weighted exercise keeps its kg measure", strjq!(ctx, ["strength"], "[.data.exercises[] | select(.exercise == \"Curl\") | .measure] | unique | join(\",\")") == "kg")?
 	check!("...and the human table shows the bodyweight top set as reps", Str.contains(stride_human!(ctx.bin, ctx.home, ["strength"]), "2018-07-01  8 reps") and Str.contains(stride_human!(ctx.bin, ctx.home, ["strength"]), "2018-07-04  12 reps"))?
+	# holds: three one-minute Curl holds at 9.1 kg, logged with a duration and
+	# no reps, beside rep-counted Curls in the same workout. The holds fold into
+	# one row at 0 reps with their seconds, add no tonnage, and report as their
+	# own entry measured in time, apart from the Curls lifted for reps.
+	ch = "{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"9.1 kg\",\"unit\":\"Volume\"},\"duration\":{\"value\":\"1m 0s\",\"unit\":\"Time\"}}"
+	cr = "{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"11.3 kg\",\"unit\":\"Volume\"},\"reps\":{\"value\":\"12\",\"unit\":\"Steps\"}}"
+	holds = "{\"activity_id\":\"9725\",\"exercise_sets\":[${ch},${ch},${ch},${cr}]}"
+	check!("a duration-only set imports as a hold, not a dropped set", Str.trim(sh!("printf '%s' '${holds}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - | jq -c '.data.imported'")) == "[{\"activity_id\":9725,\"dropped\":[],\"rows\":2,\"sets\":4,\"zeroed\":[]}]")?
+	check!("...folded into one row at 0 reps carrying its held seconds", Str.trim(sql!(ctx.db, "SELECT group_concat(exercise || ':' || sets || 'x' || reps || ':' || hold_s || 's@' || weight_kg, '|') FROM (SELECT * FROM strength_sets WHERE activity_id = 9725 ORDER BY ordinal);")) == "Curl:3x0:60s@9.1|Curl:1x12:0s@11.3")?
+	check!("...adding no tonnage", Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(SUM(sets * reps * weight_kg) * 10) AS INTEGER) FROM strength_sets WHERE activity_id = 9725;")) == "1356")?
+	check!("...and reported as its own entry measured in time", strjq!(ctx, ["strength"], "[.data.exercises[] | select(.exercise == \"Curl\" and .measure == \"hold\") | .points[] | select(.date == \"2018-07-10\") | [.top_hold_s, .total_hold_s, .top_reps, .total_reps, .kg_reps, (.top_kg * 10 | round)]] | tojson") == "[[60,180,0,0,0,91]]")?
+	check!("...while the Curls lifted for reps keep their kg entry", strjq!(ctx, ["strength"], "[.data.exercises[] | select(.exercise == \"Curl\") | .measure] | join(\",\")") == "kg,hold")?
+	check!("strength conforms to its schema with a hold in it", validate_schema!(ctx, "strength", "strength") == "")?
+	# a second hold day, held longer, makes the hold a repeated exercise the
+	# human table shows first and latest
+	_ = sh!("printf '%s' '{\"activity_id\":\"9726\",\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"9.1 kg\"},\"duration\":{\"value\":\"1m 15s\"}}]}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - >/dev/null")
+	held = stride_human!(ctx.bin, ctx.home, ["strength"])
+	check!("...and the human table names the hold with its first and latest time", Str.contains(held, "Curl (hold)") and Str.contains(held, "2018-07-10  60 s @ 9.1 kg") and Str.contains(held, "2018-07-12  75 s @ 9.1 kg"))?
 	# only a STORED workout claims its activity, in either order: an empty one
 	# before a valid one claims nothing, and a stored one makes a later one a
 	# duplicate
@@ -7370,8 +7388,8 @@ b_strength_import! = |ctx| {
 	# a stored workout whose sets are partly unreadable: the kept set lands,
 	# and each left-out set is NAMED with its position and reason
 	partial = "{\"activity_id\":\"9715\",\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"20 kg\"},\"reps\":{\"value\":\"10\"}},{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"44 stone\"},\"reps\":{\"value\":\"10\"}},{\"exercise_name\":\"Plank\",\"duration\":{\"value\":\"60\",\"unit\":\"Seconds\"}}]}"
-	check!("a workout with unreadable sets lands its readable one and names each set it left out", Str.trim(sh!("printf '%s' '${partial}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - | jq -c '.data'")) == "{\"imported\":[{\"activity_id\":9715,\"dropped\":[{\"exercise\":\"Curl\",\"reason\":\"unknown_weight_unit\",\"set\":2},{\"exercise\":\"Plank\",\"reason\":\"no_reps\",\"set\":3}],\"rows\":1,\"sets\":1,\"zeroed\":[]}],\"skipped\":[]}")?
-	check!("...and the human answer says so too, in the singular where it is one", Str.trim(sh!("printf '%s' '${partial}' | HOME='${ctx.home}' STRIDE_FORMAT=human '${ctx.bin}' strength import -")) == "imported 9715: 1 row, 1 set\n  left out set 2 (Curl): unknown_weight_unit\n  left out set 3 (Plank): no_reps")?
+	check!("a workout with unreadable sets lands its readable one and names each set it left out", Str.trim(sh!("printf '%s' '${partial}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - | jq -c '.data'")) == "{\"imported\":[{\"activity_id\":9715,\"dropped\":[{\"exercise\":\"Curl\",\"reason\":\"unknown_weight_unit\",\"set\":2},{\"exercise\":\"Plank\",\"reason\":\"bad_duration\",\"set\":3}],\"rows\":1,\"sets\":1,\"zeroed\":[]}],\"skipped\":[]}")?
+	check!("...and the human answer says so too, in the singular where it is one", Str.trim(sh!("printf '%s' '${partial}' | HOME='${ctx.home}' STRIDE_FORMAT=human '${ctx.bin}' strength import -")) == "imported 9715: 1 row, 1 set\n  left out set 2 (Curl): unknown_weight_unit\n  left out set 3 (Plank): bad_duration")?
 	# one batch holding every way a workout can fail beside one that lands: a
 	# bare-number id with a null weight (lands), a non-object, a workout whose
 	# every set is unreadable, a Ride, and a second workout for the first id
@@ -7381,7 +7399,7 @@ b_strength_import! = |ctx| {
 	# 9718 also carries a parseable paste, so this holds only while the
 	# rebuild reads strength-family activities alone
 	check!("...and nothing is stored for the Ride, from its log or its pasted description", Str.trim(sql!(ctx.db, "SELECT (SELECT COUNT(*) FROM strength_logs WHERE activity_id = 9718) + (SELECT COUNT(*) FROM strength_sets WHERE activity_id = 9718);")) == "0")?
-	_ = sql!(ctx.db, "DELETE FROM strength_sets WHERE activity_id IN (20590139628, 20575593919, 9713, 9714, 9715, 9716, 9718, 9719, 9721, 9722, 9723, 9724); DELETE FROM strength_logs WHERE activity_id IN (20590139628, 20575593919, 9714, 9715, 9716, 9718, 9719, 9721, 9722, 9723, 9724); DELETE FROM strength_notes WHERE activity_id IN (20590139628, 9713, 9718); DELETE FROM activities WHERE id IN (20590139628, 20575593919, 9713, 9714, 9715, 9716, 9718, 9719, 9721, 9722, 9723, 9724);")
+	_ = sql!(ctx.db, "DELETE FROM strength_sets WHERE activity_id IN (20590139628, 20575593919, 9713, 9714, 9715, 9716, 9718, 9719, 9721, 9722, 9723, 9724, 9725, 9726); DELETE FROM strength_logs WHERE activity_id IN (20590139628, 20575593919, 9714, 9715, 9716, 9718, 9719, 9721, 9722, 9723, 9724, 9725, 9726); DELETE FROM strength_notes WHERE activity_id IN (20590139628, 9713, 9718); DELETE FROM activities WHERE id IN (20590139628, 20575593919, 9713, 9714, 9715, 9716, 9718, 9719, 9721, 9722, 9723, 9724, 9725, 9726);")
 	# a log and a description whose activity no longer exists: strength_sets
 	# references activities, so the rebuild must not read them, or analyze
 	# fails as a whole on the insert

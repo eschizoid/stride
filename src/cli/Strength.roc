@@ -56,6 +56,12 @@ expect {
 	(Strength.tonnage_kg(p.rows) - 1197.4838568).abs() < 0.01
 }
 
+# a hold adds no tonnage: its seconds are never read as reps
+expect {
+	p = Strength.parse("Weighted Plank\n3 × 60 sec • 20 lbs\nCurl\n3 × 10 • 10 kg")
+	List.len(p.rows) == 2 and (Strength.tonnage_kg(p.rows) - 300.0).abs() < 0.001
+}
+
 # the dispatcher: the first adapter to yield rows names the provenance, and
 # unrecognized text is "" with no rows — the honest-gap contract at the pack
 # level, not just per adapter. A share summary falls past the strava adapter

@@ -152,7 +152,9 @@ Schema :: [].{
 	# activity's strength_logs payload when it has one, else its
 	# strength_notes description. `weight_kg` is the mass one rep MOVES — the
 	# /side variants are resolved at parse time — so tonnage is
-	# sets * reps * weight_kg. `source` records provenance per row: the name
+	# sets * reps * weight_kg. A hold (an isometric set) is a row with 0
+	# reps and its held seconds in `hold_s`, so it adds no tonnage; `hold_s`
+	# is 0 on a rep row. `source` records provenance per row: the name
 	# of the ADAPTER that read the text ('strava' for a structured log,
 	# 'peloton' for a share summary) — the load_coverage discipline applied
 	# to sets, so a career of mixed apps and unequal sources stays
@@ -166,6 +168,7 @@ Schema :: [].{
 		\\  reps        INTEGER,
 		\\  weight_kg   REAL,
 		\\  source      TEXT,
+		\\  hold_s      INTEGER NOT NULL DEFAULT 0,
 		\\  PRIMARY KEY (activity_id, ordinal)
 		\\)
 
