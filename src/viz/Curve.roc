@@ -216,36 +216,69 @@ Curve :: [].{
 			# planned targets on the curve: a gold ring at the rep duration and the
 			# target watts, labelled with the day and the share of this window's
 			# best at that duration, so a prescription reads against what the
-			# athlete has done. Hovering a ring names the session and takes the
-			# tooltip line from the rungs.
+			# athlete has done. Targets whose rings would overlap share one ring
+			# with their labels stacked under it, and a ring whose labels would
+			# run into the previous ring's starts below them. Hovering a ring
+			# names every session in it, one line each, and takes the tooltip
+			# line from the rungs.
 			rung_secs = List.map(rungs, |r| r.pr.secs)
 			now_pts = List.map(rungs, |r| { secs: r.pr.secs, w: r.now_w })
 			tx = |t| {
 				p = rung_pos(rung_secs, t.dur_s)
 				if (nlast == 0) (pad_l + pw / 2.0) else pad_l + pw * p / U64.to_f32(nlast)
 			}
-			tgt_hover = List.find_first(ride_targets, |t| F32.abs(model.mouse_x - tx(t)) <= 8.0 and F32.abs(model.mouse_y - cy(I64.to_f32(t.watts))) <= 8.0)
+			marks = List.map(ride_targets, |t| { x: tx(t), y: cy(I64.to_f32(t.watts)) })
+			rings = List.map(
+				cluster_marks(marks, ring_merge),
+				|idxs| {
+					# targets load in date order, so input order stacks a ring's
+					# labels by date
+					in_order = List.sort_with(idxs, |a, b| if (a < b) Before else if (a > b) After else Same)
+					ts = List.keep_oks(in_order, |i| List.get(ride_targets, i))
+					ps = List.keep_oks(in_order, |i| List.get(marks, i))
+					n = F32.max(1.0, U64.to_f32(List.len(ps)))
+					{ ts, x: List.fold(ps, 0.0, |a, p| a + p.x) / n, y: List.fold(ps, 0.0, |a, p| a + p.y) / n }
+				},
+			)
+			ring_rows = List.map2(rings, label_rows(List.map(rings, |g| { x: g.x, lines: List.len(g.ts) }), ring_label_w), |g, base| { g, base })
+			tgt_hover = List.find_first(rings, |g| F32.abs(model.mouse_x - g.x) <= 8.0 and F32.abs(model.mouse_y - g.y) <= 8.0)
 			tgt_hovering = match tgt_hover {
 				Ok(_) => Bool.True
 				Err(_) => Bool.False
 			}
 			List.for_each!(
-				List.map_with_index(ride_targets, |t, i| { t, i }),
+				ring_rows,
 				|x| {
-					mx = tx(x.t)
-					my = cy(I64.to_f32(x.t.watts))
-					best = best_at(now_pts, x.t.dur_s)
-					frame.circle!({ center: { x: mx, y: my }, radius: 6.0, style: Draw.filled(Color.with_alpha(Theme.gold_c, 200)) })
-					frame.circle!({ center: { x: mx, y: my }, radius: 3.0, style: Draw.filled(Theme.bg) })
-					lbl = target_label(x.t, best)
-					lw = model.font.measure({ text: lbl, size: 10.0, spacing: Text.default_spacing }).width
-					Text.from(lbl, model.font).size(10).draw!(frame, { pos: { x: label_center_within(mx, lw / 2.0, pad_l, pad_l + pw - label_inset), y: my + 10.0 + U64.to_f32(x.i % 2) * 12.0 }, color: Theme.gold_c, align: (Top, Center) })
+					frame.circle!({ center: { x: x.g.x, y: x.g.y }, radius: 6.0, style: Draw.filled(Color.with_alpha(Theme.gold_c, 200)) })
+					frame.circle!({ center: { x: x.g.x, y: x.g.y }, radius: 3.0, style: Draw.filled(Theme.bg) })
+					List.for_each!(
+						List.map_with_index(x.g.ts, |t, k| { t, k }),
+						|e| {
+							lbl = target_label(e.t, best_at(now_pts, e.t.dur_s))
+							lw = model.font.measure({ text: lbl, size: 10.0, spacing: Text.default_spacing }).width
+							Text.from(lbl, model.font).size(10).draw!(frame, { pos: { x: label_center_within(x.g.x, lw / 2.0, pad_l, pad_l + pw - label_inset), y: x.g.y + 10.0 + (x.base + U64.to_f32(e.k)) * 12.0 }, color: Theme.gold_c, align: (Top, Center) })
+						},
+					)
 				},
 			)
 			match tgt_hover {
-				Ok(t) => Text.from(target_tip(t, best_at(now_pts, t.dur_s)), model.font).size(12).draw!(frame, { pos: { x: 36.0, y: 92.0 }, color: Color.white, align: (Top, Left) })
+				Ok(g) =>
+					List.for_each!(
+						List.map_with_index(g.ts, |t, k| { t, k }),
+						|e| Text.from(target_tip(e.t, best_at(now_pts, e.t.dur_s)), model.font).size(12).draw!(frame, { pos: { x: 36.0, y: 92.0 + U64.to_f32(e.k) * 14.0 }, color: Color.white, align: (Top, Left) }),
+					)
 				Err(_) => {}
 			}
+			# the this-window and previous-window lines as segments, for the
+			# deltas to keep clear of
+			seg_list = |ys| List.keep_oks(
+				List.map_with_index(ys, |y, i| { y, i }),
+				|e| match List.get(ys, e.i + 1) {
+					Ok(ny) => if (e.y > 0 and ny > 0) (Ok({ x0: cx(e.i), y0: cy(I64.to_f32(e.y)), x1: cx(e.i + 1), y1: cy(I64.to_f32(ny)) })) else Err(Gap)
+					Err(_) => Err(Gap)
+				},
+			)
+			segs = List.concat(seg_list(List.map(rungs, |r| r.now_w)), seg_list(List.map(rungs, |r| r.prev_w)))
 			# a record set in the last seven calendar days is NEWS: the rung
 			# earns a pulsing gold ring. Heat carries one row per day, so its
 			# last seven entries ARE the last seven days.
@@ -303,8 +336,12 @@ Curve :: [].{
 							if d_txt != "" {
 								d_col = if (r.now_w > r.prev_w) tsb_c else Theme.alarm_c
 								d_w = model.font.measure({ text: d_txt, size: 10.0, spacing: Text.default_spacing }).width
-								d_top = delta_top((cy(I64.to_f32(r.prev_w)) + now_y) / 2.0 - 6.0)
-								Text.from(d_txt, model.font).size(10).draw!(frame, { pos: { x: delta_left_x(cx(r.i), d_w, pad_l + pw - label_inset), y: d_top }, color: d_col, align: (Top, Left) })
+								prev_y = cy(I64.to_f32(r.prev_w))
+								d_mid = (prev_y + now_y) / 2.0 - 6.0
+								# the first rung's delta keeps to its side of the introductions;
+								# every other one takes the first spot clear of both lines
+								spot = if (r.i == 0.U64) ({ left: delta_left_x(cx(r.i), d_w, pad_l + pw - label_inset), top: delta_top(d_mid) }) else delta_spot({ x: cx(r.i), w: d_w, h: 10.0, mid: d_mid, upper: F32.min(prev_y, now_y), lower: F32.max(prev_y, now_y), hi: pad_l + pw - label_inset }, segs)
+								Text.from(d_txt, model.font).size(10).draw!(frame, { pos: { x: spot.left, y: spot.top }, color: d_col, align: (Top, Left) })
 							}
 						}
 					}
@@ -320,11 +357,17 @@ Curve :: [].{
 					}
 				},
 			)
-			# the window's unpushed durations, at the right under the chips,
-			# clear of the axis labels, the rung labels and the fit caption
+			# the window's unpushed durations, at the right of the tooltip line
+			# between the chips and the plot, so no gridline runs through it. A
+			# tooltip owns that line while one shows; the hovered rung's own
+			# tooltip already says whether it was pushed.
 			unp_txt = unpushed_caption(List.map(rungs, |r| r.pr.rung), List.map(rungs, |r| r.now_unp), model.curve_days)
-			if unp_txt != "" {
-				Text.from(unp_txt, model.font).size(11).draw!(frame, { pos: { x: win_w - 40.0, y: 112.0 }, color: ink_faint, align: (Top, Right) })
+			rung_hovering = match rung_at(model.mouse_x, model.mouse_y, win_w, win_h, List.len(model.prs)) {
+				Ok(_) => Bool.True
+				Err(_) => Bool.False
+			}
+			if unp_txt != "" and !rung_hovering and !tgt_hovering {
+				Text.from(unp_txt, model.font).size(11).draw!(frame, { pos: { x: win_w - 40.0, y: pad_t - 18.0 }, color: ink_faint, align: (Top, Right) })
 			}
 		}
 		model.curve_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
@@ -413,6 +456,57 @@ Curve :: [].{
 					},
 				)
 		}
+
+	# Target rings that would overlap merge: a mark joins a cluster when it
+	# lies within ring_merge pixels of the cluster's first mark on both axes,
+	# the ring's diameter plus a pixel each side. Marks are taken in x then y
+	# order, so clusters come out left to right; each cluster lists indices
+	# into the input.
+	ring_merge : F32
+	ring_merge = 14.0
+
+	cluster_marks : List({ x : F32, y : F32 }), F32 -> List(List(U64))
+	cluster_marks = |pts, th| {
+		order = List.sort_with(
+			List.map_with_index(pts, |p, i| { p, i }),
+			|a, b| if (a.p.x < b.p.x) Before else if (a.p.x > b.p.x) After else if (a.p.y < b.p.y) Before else if (a.p.y > b.p.y) After else if (a.i < b.i) Before else After,
+		)
+		grouped = List.fold(
+			order,
+			[],
+			|acc, e| match List.last(acc) {
+				Ok(c) =>
+					if (F32.abs(e.p.x - c.x) <= th and F32.abs(e.p.y - c.y) <= th) (List.append(List.drop_last(acc, 1), { ..c, members: List.append(c.members, e.i) }))
+					else List.append(acc, { x: e.p.x, y: e.p.y, members: [e.i] })
+				Err(_) => List.append(acc, { x: e.p.x, y: e.p.y, members: [e.i] })
+			},
+		)
+		List.map(grouped, |c| c.members)
+	}
+
+	# a target label's width at the 10px label size, generous for the
+	# widest "MM-DD NNNW NNN%" form
+	ring_label_w : F32
+	ring_label_w = 90.0
+
+	# the first label row of each ring, left to right: a ring closer than a
+	# label's width to the one before it starts below that ring's labels, and
+	# one far enough away starts at the top row again
+	label_rows : List({ x : F32, lines : U64 }), F32 -> List(F32)
+	label_rows = |groups, w| {
+		placed = List.fold(
+			groups,
+			[],
+			|acc, g| {
+				base = match List.last(acc) {
+					Ok(p) => if (F32.abs(g.x - p.x) < w) (p.base + U64.to_f32(p.lines)) else 0.0
+					Err(_) => 0.0
+				}
+				List.append(acc, { x: g.x, lines: g.lines, base })
+			},
+		)
+		List.map(placed, |p| p.base)
+	}
 
 	# a planned target's marker label: its day, watts, and its share of the
 	# window's best at the rep duration (omitted when the window has none)
@@ -535,6 +629,47 @@ Curve :: [].{
 	# sits just beyond it) it sits 10px left of the rung instead, ending there
 	delta_left_x : F32, F32, F32 -> F32
 	delta_left_x = |x, w, hi| if (x + 10.0 + w <= hi) (x + 10.0) else x - 10.0 - w
+
+	# A line segment between two rungs, in screen pixels.
+	Seg : { x0 : F32, y0 : F32, x1 : F32, y1 : F32 }
+
+	# a label box crosses a segment when the segment's y-span over the
+	# box's columns meets the box's rows; a segment beside the box, or a
+	# vertical one, does not cross it
+	box_crosses : F32, F32, F32, F32, List(Seg) -> Bool
+	box_crosses = |left, w, top, h, segs|
+		List.any(
+			segs,
+			|s| {
+				lo_x = F32.max(left, F32.min(s.x0, s.x1))
+				hi_x = F32.min(left + w, F32.max(s.x0, s.x1))
+				if (lo_x > hi_x or s.x1 == s.x0) Bool.False
+				else {
+					ya = s.y0 + (s.y1 - s.y0) * (lo_x - s.x0) / (s.x1 - s.x0)
+					yb = s.y0 + (s.y1 - s.y0) * (hi_x - s.x0) / (s.x1 - s.x0)
+					F32.min(ya, yb) < top + h and F32.max(ya, yb) > top
+				}
+			},
+		)
+
+	# where a delta sits: between its two dots, right of the rung and then
+	# left of it; failing both, above the upper dot or below the lower one,
+	# right side first. The first spot clear of every line wins. A right
+	# spot that would run past hi is never tried, and with no spot clear the
+	# delta takes delta_left_x's spot between the dots.
+	delta_spot : { x : F32, w : F32, h : F32, mid : F32, upper : F32, lower : F32, hi : F32 }, List(Seg) -> { left : F32, top : F32 }
+	delta_spot = |d, segs| {
+		right = d.x + 10.0
+		sides = if (right + d.w <= d.hi) [right, d.x - 10.0 - d.w] else [d.x - 10.0 - d.w]
+		cands = List.concat(
+			List.map(sides, |l| { left: l, top: d.mid }),
+			List.join(List.map(sides, |l| [{ left: l, top: d.upper - d.h - 6.0 }, { left: l, top: d.lower + 6.0 }])),
+		)
+		match List.find_first(cands, |c| !box_crosses(c.left, d.w, c.top, d.h, segs)) {
+			Ok(c) => c
+			Err(_) => { left: delta_left_x(d.x, d.w, d.hi), top: d.mid }
+		}
+	}
 
 	# the first rung's introductions laid out in the order of the dots they
 	# name: a label crossing one placed before it goes below that one.
@@ -682,3 +817,38 @@ expect !Curve.stale_best(15, 30) and Curve.stale_best(16, 30) and !Curve.stale_b
 # keeps its chip lit and names the way back
 expect Curve.family_chip_at(1000.0 + 176.0, 1000.0) == "Ride" and Curve.family_chip_at(1000.0 + 276.0, 1000.0) == "Rowing" and Curve.family_chip_at(1000.0 + 100.0, 1000.0) == ""
 expect Curve.empty_note("Rowing") == "no rowing power yet - the bike chip shows ride power" and Curve.empty_note("Ride") == "no ride power yet"
+# two targets at the same duration a few watts apart share one ring; targets
+# at different durations, or the same duration far apart in watts, keep their
+# own; clusters come out left to right with input indices
+expect Curve.cluster_marks([{ x: 500.0, y: 300.0 }, { x: 500.0, y: 292.0 }], 14.0) == [[1, 0]]
+expect Curve.cluster_marks([{ x: 500.0, y: 300.0 }, { x: 400.0, y: 300.0 }], 14.0) == [[1], [0]]
+expect Curve.cluster_marks([{ x: 500.0, y: 300.0 }, { x: 500.0, y: 260.0 }], 14.0) == [[1], [0]]
+expect Curve.cluster_marks([{ x: 500.0, y: 300.0 }, { x: 500.0, y: 286.0 }], 14.0) == [[1, 0]] and Curve.cluster_marks([{ x: 500.0, y: 300.0 }, { x: 500.0, y: 285.0 }], 14.0) == [[1], [0]]
+expect Curve.cluster_marks([], 14.0) == []
+# a ring within a label's width of the one before it starts below that ring's
+# labels; a far one starts at the top row
+expect Curve.label_rows([{ x: 100.0, lines: 2 }, { x: 150.0, lines: 1 }, { x: 400.0, lines: 1 }], 90.0) == [0.0, 2.0, 0.0]
+# a box crosses a segment that passes through its rows over its columns, and
+# not one that passes above, below or beside it
+expect {
+	s = { x0: 0.0, y0: 100.0, x1: 100.0, y1: 200.0 }
+	Curve.box_crosses(40.0, 20.0, 145.0, 10.0, [s]) and !Curve.box_crosses(40.0, 20.0, 170.0, 10.0, [s]) and !Curve.box_crosses(40.0, 20.0, 120.0, 10.0, [s]) and !Curve.box_crosses(120.0, 20.0, 150.0, 10.0, [s]) and !Curve.box_crosses(40.0, 20.0, 145.0, 10.0, [])
+}
+# a delta keeps its spot right of the rung between the dots when that is clear;
+# a line through it sends it left, and lines on both sides send it above the
+# upper dot
+expect {
+	d = { x: 100.0, w: 20.0, h: 10.0, mid: 150.0, upper: 145.0, lower: 165.0, hi: 400.0 }
+	through_right = { x0: 100.0, y0: 155.0, x1: 200.0, y1: 155.0 }
+	through_left = { x0: 0.0, y0: 155.0, x1: 100.0, y1: 155.0 }
+	Curve.delta_spot(d, []) == { left: 110.0, top: 150.0 }
+		and Curve.delta_spot(d, [through_right]) == { left: 70.0, top: 150.0 }
+		and Curve.delta_spot(d, [through_right, through_left]) == { left: 110.0, top: 129.0 }
+}
+# a delta that cannot fit right of the rung never tries the right side, and
+# with every spot crossed it falls back between the dots
+expect {
+	d = { x: 390.0, w: 20.0, h: 10.0, mid: 150.0, upper: 145.0, lower: 165.0, hi: 400.0 }
+	wall = { x0: 300.0, y0: 0.0, x1: 400.0, y1: 400.0 }
+	Curve.delta_spot(d, []) == { left: 360.0, top: 150.0 } and Curve.delta_spot({ ..d, x: 100.0, hi: 400.0 }, [{ x0: 0.0, y0: 0.0, x1: 200.0, y1: 400.0 }, { x0: 0.0, y0: 400.0, x1: 200.0, y1: 0.0 }, { x0: 0.0, y0: 130.0, x1: 200.0, y1: 130.0 }, { x0: 0.0, y0: 175.0, x1: 200.0, y1: 175.0 }]) == { left: 110.0, top: 150.0 } and !Curve.box_crosses(0.0, 1.0, 0.0, 1.0, [wall])
+}
