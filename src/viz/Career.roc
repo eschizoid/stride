@@ -10,16 +10,16 @@ import Theme
 import Ui
 
 Career :: [].{
-	# The whole story: every month since the first session, assembled in the
-	# order it happened. The spine is the month-close threshold of whichever
-	# family the athlete trains most (monthly_threshold) - watts for a power
-	# family, metres per second for a pace one, so the line rises with fitness
-	# either way and only its LABELS change. Deliberately not season's ftp_end,
-	# which is a family-weighted daily fold with its own body in ReportSeason.
-	# The ground is monthly load; year bands give the axis its eras. A comet rides the spine on arrival and the header
-	# digits rack up beneath it - the reveal animates, the values never do:
-	# every drawn height and position is the datum, only WHEN it appears is
-	# staged. Tick-driven throughout so the V-key recording stays regenerable.
+	# The whole story: every month since the first session, in the order it
+	# happened. The spine is the month-close threshold of the selected family
+	# (monthly_threshold): watts for a power family, metres per second for a
+	# pace one, so the line rises with fitness either way and only its LABELS
+	# change. It is not season's ftp_end, which is a family-weighted daily fold
+	# with its own body in ReportSeason. The ground is monthly load, and year
+	# bands give the axis its eras. A comet rides the spine on arrival and the
+	# header digits rack up beneath it: the reveal animates, the values never
+	# do. Every drawn height and position is the datum; only WHEN it appears is
+	# staged. Tick-driven throughout, so a V-key recording is regenerable.
 	pad : F32
 	pad = 64.0
 
@@ -44,17 +44,6 @@ Career :: [].{
 		}
 	}
 
-	# a spine value in tenths, in its family's own units - and, for the
-	# kilometre family, the ATHLETE's units. Power reads as watts; pace
-	# converts the stored SPEED to time over the family's distance, which is
-	# what an athlete in that sport actually says. The km family goes through
-	# Units.pace_from_speed - the same body the CLI renders with, so the two
-	# surfaces cannot disagree on a label by a rounding mode or a constant -
-	# and the fixed-distance families round the same way beside it.
-	# Tonnage is mass lifted in a month (kg, from strength_sets): under a
-	# tonne it reads as whole kg, above as tonnes to one decimal - integer
-	# arithmetic on the tenths-of-kg value, so no float rounding mode can
-	# disagree between the axis and the peak label.
 	# the spine F has cycled to: the index wraps over the families the
 	# athlete has, so the renderer and the focus row name the same one at
 	# every press; none when the athlete has no family at all
@@ -67,6 +56,17 @@ Career :: [].{
 		}
 	}
 
+	# a spine value in tenths, in its family's own units - and, for the
+	# kilometre family, the ATHLETE's units. Power reads as watts; pace
+	# converts the stored SPEED to time over the family's distance, which is
+	# what an athlete in that sport actually says. The km family goes through
+	# Units.pace_from_speed - the same body the CLI renders with, so the two
+	# surfaces cannot disagree on a label by a rounding mode or a constant -
+	# and the fixed-distance families round the same way beside it.
+	# Tonnage is mass lifted in a month (kg, from strength_sets): under a
+	# tonne it reads as whole kg, above as tonnes to one decimal - integer
+	# arithmetic on the tenths-of-kg value, so no float rounding mode can
+	# disagree between the axis and the peak label.
 	spine_label : [Metric, Imperial], I64, Str, Str -> Str
 	spine_label = |units, v10, kind, fam|
 		if (kind == "power") "${I64.to_str(v10 // 10)}w"
@@ -112,8 +112,8 @@ Career :: [].{
 		# a missing neighbour makes this an endpoint of its run, so the
 		# tangent is one-sided. A FLAT neighbouring segment is different:
 		# Fritsch-Carlson requires a zero tangent there, or the cubic
-		# between two equal values bulges above a plateau (a two-month
-		# 271w top drew an apex the athlete never reached).
+		# between two equal values bulges above the plateau and draws an
+		# apex the athlete never reached.
 		if (!has_prev) (d_next)
 		else if (!has_next) (d_prev)
 		else if (d_prev == 0.0 or d_next == 0.0) (0.0)
@@ -146,6 +146,61 @@ Career :: [].{
 		)
 		List.sort_with(folded, |a, b| b.sessions.order_relative_to(a.sessions))
 	}
+
+	# the share of all sessions, in percent, under which a family is too
+	# narrow to read as its own segment of the composition strip
+	strip_min_pct : I64
+	strip_min_pct = 2
+
+	# the narrowest segment the strip draws, so the smallest family is still
+	# a swatch the pointer can find rather than a hairline
+	strip_min_w : F32
+	strip_min_w = 8.0
+
+	# the strip's segments: families at or above strip_min_pct keep their
+	# own segment in the order given; two or more below it fold into one
+	# `other` segment at the end. A single small family keeps its own name,
+	# since folding one family into `other` would only hide which it is.
+	strip_segments : List({ sport : Str, sessions : I64 }) -> List({ sport : Str, sessions : I64 })
+	strip_segments = |fams| {
+		total = List.fold(fams, 0.I64, |a, f| a + f.sessions)
+		small = |f| f.sessions * 100 < total * strip_min_pct
+		kept = List.keep_if(fams, |f| !small(f))
+		smalls = List.keep_if(fams, small)
+		if List.len(smalls) < 2 {
+			List.concat(kept, smalls)
+		} else {
+			List.append(kept, { sport: "other", sessions: List.fold(smalls, 0.I64, |a, f| a + f.sessions) })
+		}
+	}
+
+	# each segment's width across total_w: proportional to its sessions, never
+	# under strip_min_w, and the room the widened segments take comes off the
+	# others in proportion, so the strip still ends at total_w
+	strip_widths : List(I64), F32 -> List(F32)
+	strip_widths = |counts, total_w| {
+		tot = List.fold(counts, 0.I64, |a, c| a + c)
+		if tot <= 0 {
+			[]
+		} else {
+			raw = List.map(counts, |c| I64.to_f32(c) / I64.to_f32(tot) * total_w)
+			floor_sum = List.fold(raw, 0.0, |a, w| if (w < strip_min_w) (a + strip_min_w) else a)
+			wide_sum = List.fold(raw, 0.0, |a, w| if (w < strip_min_w) a else a + w)
+			scale = if (wide_sum <= 0.0) (1.0) else (total_w - floor_sum) / wide_sum
+			List.map(raw, |w| if (w < strip_min_w) strip_min_w else w * scale)
+		}
+	}
+
+	# a family's name on the strip: what the athlete does, not one of its
+	# Strava spellings. The strength family pools Workout and WeightTraining
+	# into one segment, and naming it after either reads as only that one.
+	family_name : Str -> Str
+	family_name = |head| if (List.contains(Sports.family("strength"), head)) "Strength" else head
+
+	# the monthly-bar legend shares the gutter under the curve with the
+	# valley's label, so it takes the half of the plot the valley is not on
+	legend_left : F32, F32, F32 -> Bool
+	legend_left = |valley_x, plot_l, plot_r| valley_x > (plot_l + plot_r) / 2.0
 
 	# one KPI card: a racked-up value, its unit, its caption
 	card! : Draw.Frame, Text.Font, F32, F32, Str, Str => {}
@@ -266,7 +321,9 @@ Career :: [].{
 			plot_r = win_w - Theme.pad_r
 			plot_w = plot_r - plot_l
 			line_top = 208.0
-			line_bot = win_h - 176.0
+			# the gutter between line_bot and bars_top is kept clear of both the
+			# curve and the bars: the valley's label and the bar legend live in it
+			line_bot = win_h - 196.0
 			bars_top = win_h - 168.0
 			bars_bot = win_h - 92.0
 			nf = U64.to_f32(n)
@@ -381,9 +438,11 @@ Career :: [].{
 				},
 			)
 
-			# ── monthly load: the recessive ground. partial renders as a dim
-			# fill under a bright top edge - a month in progress must never
-			# read as a collapse
+			# ── monthly load: the recessive ground. A month in progress is the
+			# same stack from the baseline in dimmer tints, so it reads as
+			# unfinished rather than as a collapse, and the legend names the
+			# tint. It carries no outline or top edge: a stroke rasterises
+			# offset from the fill and reads as a second shape on the bar.
 			bw = (plot_w / nf - 1.5).max(1.0)
 			List.for_each!(
 				idx,
@@ -393,12 +452,7 @@ Career :: [].{
 					rise = if (p >= 1.0) (1.0) else if (reached) ((((head_x - bx) / plot_w) * 5.0).min(1.0)) else 0.0
 					bh = (I64.to_f32(x.m.load) / I64.to_f32(lmax)) * (bars_bot - bars_top) * rise
 					if bh > 0.5 {
-						if x.m.partial {
-							frame.rectangle!({ x: bx, y: bars_bot - bh, width: bw, height: bh, style: Draw.filled(Color.with_alpha(Theme.ctl_c, 45)) })
-							frame.line!({ start: { x: bx, y: bars_bot - bh }, end: { x: bx + bw, y: bars_bot - bh }, stroke: Draw.stroke(Color.with_alpha(Theme.ctl_c, 200), 2) })
-						} else {
-							frame.rectangle!({ x: bx, y: bars_bot - bh, width: bw, height: bh, style: Draw.filled(Color.with_alpha(Theme.ctl_c, 90)) })
-						}
+						frame.rectangle!({ x: bx, y: bars_bot - bh, width: bw, height: bh, style: Draw.filled(Color.with_alpha(Theme.ctl_c, (if (x.m.partial) 50 else 90))) })
 						# the SELECTED family's share of that month, filled from the
 						# baseline in the family's own identity colour. The ground bar
 						# pools every sport, so without this a family whose threshold
@@ -410,10 +464,38 @@ Career :: [].{
 							fl = List.fold(model.career_fam_months, 0.I64, |a, fm| if (fm.fam == sp.fam and fm.month == x.m.month) (fm.load) else a)
 							fh = (I64.to_f32(fl) / I64.to_f32(lmax)) * (bars_bot - bars_top) * rise
 							if fh > 0.5 {
-								frame.rectangle!({ x: bx, y: bars_bot - fh, width: bw, height: fh, style: Draw.filled(Color.with_alpha(Theme.sport_color(sp.fam), 210)) })
+								frame.rectangle!({ x: bx, y: bars_bot - fh, width: bw, height: fh, style: Draw.filled(Color.with_alpha(Theme.sport_color(sp.fam), (if (x.m.partial) 120 else 210))) })
 							}
 						}
 					}
+				},
+			)
+
+			# ── the bars' legend, in the gutter: what the ground and the
+			# family's share are, and the in-progress mark when a month carries it
+			valley_x = List.fold(idx, { x: plot_l, f: fmax }, |a, x| if (x.m.ftp10 > 0 and x.m.ftp10 <= a.f) { x: xf(x.i), f: x.m.ftp10 } else a).x
+			keys = List.concat(
+				List.concat(
+					[{ label: "monthly load, every sport", fill: Color.with_alpha(Theme.ctl_c, 90), base: Color.with_alpha(Theme.ctl_c, 90), split: Bool.False }],
+					if (sp.fam == "") [] else [{ label: Str.with_ascii_lowercased(family_name(sp.fam)), fill: Color.with_alpha(Theme.sport_color(sp.fam), 210), base: Color.with_alpha(Theme.sport_color(sp.fam), 210), split: Bool.False }],
+				),
+				if (List.any(months, |m| m.partial)) [{ label: "month in progress", fill: Color.with_alpha(Theme.ctl_c, 50), base: if (sp.fam == "") Color.with_alpha(Theme.ctl_c, 50) else Color.with_alpha(Theme.sport_color(sp.fam), 120), split: Bool.True }] else [],
+			)
+			key_w = |k| 16.0 + model.font.measure({ text: k.label, size: 10.0, spacing: Text.default_spacing }).width
+			keys_w = List.fold(keys, 0.0, |a, k| a + key_w(k) + 18.0) - 18.0
+			key_y = bars_top - 16.0
+			_ = List.fold_try!(
+				keys,
+				if (legend_left(valley_x, plot_l, plot_r)) plot_l else plot_r - keys_w,
+				|kx, k| {
+					# a swatch is a small bar: the in-progress key shows the same
+					# dimmed ground over its dimmed share that the bar draws
+					frame.rectangle!({ x: kx, y: key_y + 1.0, width: 10.0, height: 10.0, style: Draw.filled(k.fill) })
+					if k.split {
+						frame.rectangle!({ x: kx, y: key_y + 6.0, width: 10.0, height: 5.0, style: Draw.filled(k.base) })
+					}
+					Text.from(k.label, model.font).size(10).draw!(frame, { pos: { x: kx + 16.0, y: key_y }, color: ink_faint, align: (Top, Left) })
+					Ok(kx + key_w(k) + 18.0)
 				},
 			)
 
@@ -527,11 +609,12 @@ Career :: [].{
 						),
 					})
 					frame.circle!({ center: { x: mx, y: yf(mf) }, radius: 3.5, style: Draw.filled(col) })
-					# a peak label goes ABOVE and a valley label BELOW, far enough
-					# that the stroke and its own halo clear the glyphs - the
-					# curve rises steeply into its extremes, so a tight offset
-					# puts the text on the line it is naming
-					lift = if (tag == "valley") (26.0) else -34.0
+					# a peak label goes ABOVE, far enough that the stroke and its
+					# halo clear the glyphs, since the curve rises steeply into its
+					# extremes. The valley is the scale's minimum, so it always sits
+					# on line_bot and its label goes BELOW into the gutter, which
+					# neither the curve nor the bars reach.
+					lift = if (tag == "valley") (10.0) else -34.0
 					Text.from(spine_label(model.units, mf, sp.kind, sp.fam), model.font).size(13).draw!(frame, { pos: { x: mx, y: yf(mf) + lift }, color: col, align: (Top, Center) })
 				}
 			}
@@ -572,46 +655,51 @@ Career :: [].{
 
 			# ── composition: one stacked bar of every sport by session count,
 			# widest first, filling as the sweep runs. Each segment wears its
-			# IDENTITY colour (Theme.sport_color) so the colour means the sport
-			# and nothing else — the bar used to recycle the intensity ramp,
-			# which made the colours meaningless and collided with the zone
-			# scale. A segment too narrow for its inline label loses the text
-			# but not the meaning: hover it and the tooltip names it, its count
-			# and its share, so the far-right slivers are readable instead of
-			# mute. Never a pie: an angle is harder to compare than a length.
+			# family's IDENTITY colour (Theme.sport_color), so the colour means
+			# the sport and nothing else. Never a pie: an angle is harder to
+			# compare than a length.
 			#
 			# Segments are FAMILIES, not raw sport_types: career_totals groups
 			# by sport_type, which splits one sport an athlete thinks of as one
-			# — a gravel ride from a road ride, a Workout from a WeightTraining
-			# — into neighbouring segments that share a colour, since the colour
-			# is the family's. Folding first makes each family one segment, and
-			# makes the bar's vocabulary the same as the spine's, which is what
-			# F cycles through. The fold pins a family to where its LARGEST
-			# member first appeared and only adds to it after, so a family
-			# split fairly evenly across two members can overtake one that sat
-			# between them and still be drawn behind it - the widest-first
-			# order is re-established by sorting the folded list, not inherited
-			# from career_totals.
+			# (a gravel ride from a road ride, a Workout from a WeightTraining)
+			# into neighbouring segments that share a colour. Folding first makes
+			# each family one segment and makes the bar's vocabulary the spine's,
+			# which is what F cycles through. Families too small to read fold
+			# into `other` (strip_segments), and every segment is at least
+			# strip_min_w wide (strip_widths), so nothing draws as a hairline.
+			#
+			# A label draws under its segment only when it fits inside the
+			# segment's width, so no label runs past the strip's end or onto a
+			# neighbour. A segment without one keeps its meaning through the
+			# hover tooltip: its name, its count and its share.
 			comp_y = win_h - 66.0
 			comp_w = plot_r - 36.0
-			comp_fams = fold_families(model.career_sports)
+			comp_fams = strip_segments(fold_families(model.career_sports))
+			comp_ws = strip_widths(List.map(comp_fams, |s| s.sessions), comp_w)
 			tot_ss = List.fold(comp_fams, 0.I64, |a, s| a + s.sessions)
 			if tot_ss > 0 {
 				hovered = List.fold_try!(
 					List.map_with_index(comp_fams, |s, i| { s, i }),
 					{ x0: 36.0, hit: { sport: "", sessions: 0.I64, pct: 0.I64, cx: 0.0 } },
 					|st, y| {
-						seg = I64.to_f32(y.s.sessions) / I64.to_f32(tot_ss) * comp_w * p
+						seg = (
+							match List.get(comp_ws, y.i) {
+								Ok(w) => w
+								Err(_) => 0.0
+							}
+						) * p
 						col = Theme.sport_color(y.s.sport)
 						x0 = st.x0
 						# the FULL segment width for hit-testing (not the 1.5px-inset
-						# draw width), so even a one-pixel sliver is hoverable
+						# draw width), so the narrowest segment is still hoverable
 						over = model.mouse_y >= comp_y and model.mouse_y <= comp_y + 12.0 and model.mouse_x >= x0 and model.mouse_x < x0 + seg
 						hit2 = if (over and seg > 0.5) { sport: y.s.sport, sessions: y.s.sessions, pct: (I64.to_f32(y.s.sessions) / I64.to_f32(tot_ss) * 100.0).round_to_i64_try().ok_or(0), cx: x0 + seg / 2.0 } else st.hit
 						if seg > 1.0 {
 							frame.rounded_rectangle!({ x: x0, y: comp_y, width: (seg - 1.5).max(1.0), height: 12.0, radius: 3.0, segments: 3, style: Draw.filled(Color.with_alpha(col, 190)) })
-							if seg > 64.0 {
-								Text.from("${y.s.sport} ${I64.to_str(y.s.sessions)}", model.font).size(10).draw!(frame, { pos: { x: x0 + 6.0, y: comp_y + 15.0 }, color: Color.with_alpha(col, 235), align: (Top, Left) })
+							lbl = "${family_name(y.s.sport)} ${Db.grouped(y.s.sessions)}"
+							lw = model.font.measure({ text: lbl, size: 10.0, spacing: Text.default_spacing }).width
+							if lw + 12.0 <= seg - 1.5 {
+								Text.from(lbl, model.font).size(10).draw!(frame, { pos: { x: x0 + 6.0, y: comp_y + 15.0 }, color: Color.with_alpha(col, 235), align: (Top, Left) })
 							}
 						}
 						Ok({ x0: x0 + seg, hit: hit2 })
@@ -624,7 +712,7 @@ Career :: [].{
 					Err(_) => { sport: "", sessions: 0.I64, pct: 0.I64, cx: 0.0 }
 				}
 				if h.sport != "" {
-					label = "${h.sport}  ${I64.to_str(h.sessions)} sessions  ${I64.to_str(h.pct)}%"
+					label = "${family_name(h.sport)}  ${Db.grouped(h.sessions)} sessions  ${I64.to_str(h.pct)}%"
 					tw = 8.0 * U64.to_f32(Str.count_utf8_bytes(label)) + 20.0
 					tx = F32.max(36.0, F32.min(h.cx - tw / 2.0, comp_w + 36.0 - tw))
 					frame.rounded_rectangle!({ x: tx, y: comp_y - 30.0, width: tw, height: 22.0, radius: 6.0, segments: 5, style: Draw.filled(Theme.card) })
@@ -686,3 +774,33 @@ expect {
 	two = [{ fam: "Ride", kind: "", rows: [] }, { fam: "Rowing", kind: "", rows: [] }]
 	Career.spine_at(two, 0).fam == "Ride" and Career.spine_at(two, 1).fam == "Rowing" and Career.spine_at(two, 2).fam == "Ride" and Career.spine_at(two, 7).fam == "Rowing" and Career.spine_at([], 3).fam == ""
 }
+
+# two or more families under the strip's minimum share fold into one `other`
+# segment at the end; the families above it keep their order
+expect {
+	got = Career.strip_segments([{ sport: "Ride", sessions: 500 }, { sport: "Rowing", sessions: 213 }, { sport: "WeightTraining", sessions: 70 }, { sport: "Run", sessions: 1 }, { sport: "Swim", sessions: 2 }])
+	got == [{ sport: "Ride", sessions: 500 }, { sport: "Rowing", sessions: 213 }, { sport: "WeightTraining", sessions: 70 }, { sport: "other", sessions: 3 }]
+}
+
+# a lone small family keeps its own name, and nothing folds when every family
+# clears the minimum
+expect Career.strip_segments([{ sport: "Ride", sessions: 500 }, { sport: "Run", sessions: 1 }]) == [{ sport: "Ride", sessions: 500 }, { sport: "Run", sessions: 1 }]
+expect Career.strip_segments([{ sport: "Ride", sessions: 60 }, { sport: "Rowing", sessions: 40 }]) == [{ sport: "Ride", sessions: 60 }, { sport: "Rowing", sessions: 40 }]
+
+# every segment is at least strip_min_w wide and the strip still spans its
+# whole width; proportional widths pass through when none is that narrow
+expect {
+	ws = Career.strip_widths([999, 1], 1000.0)
+	total = List.fold(ws, 0.0, |a, w| a + w)
+	List.len(ws) == 2 and List.all(ws, |w| w >= Career.strip_min_w) and (total - 1000.0).abs() < 0.01
+}
+expect Career.strip_widths([3, 1], 400.0) == [300.0, 100.0]
+expect Career.strip_widths([], 400.0) == []
+
+# the strength family is named for what it is, whichever spelling heads it;
+# other families keep their head
+expect Career.family_name("WeightTraining") == "Strength" and Career.family_name("Workout") == "Strength"
+expect Career.family_name("Ride") == "Ride" and Career.family_name("other") == "other"
+
+# the legend takes the half of the plot the valley label is not on
+expect Career.legend_left(900.0, 64.0, 1000.0) and !Career.legend_left(100.0, 64.0, 1000.0)
