@@ -1441,7 +1441,7 @@ Db :: [].{
 	# `stride project <date>` read for the board: the engine's own walk over
 	# the recorded plan, so the window shows exactly the numbers the command
 	# returns. `considered` is the open sessions in the window, `projected`
-	# the ones whose structured target contributed load.
+	# the ones whose target the engine priced into a load.
 	Projection : { ok : Bool, ctl : F32, tsb : F32, considered : I64, projected : I64 }
 
 	parse_projection : Str -> Projection

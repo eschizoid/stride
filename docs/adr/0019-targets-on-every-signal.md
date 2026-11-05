@@ -1,6 +1,6 @@
 # 0019. targets on every signal: heart rate, zone and pace beside power
 
-Accepted 2026-11-05 (#636). Amends ADR 0014 §2 and its first "Not doing" line.
+Accepted 2026-11-05 (#636). Amends ADR 0014 §2 and its first "Not doing" line. Amended 2026-11-05 (#636): session ratings and projected load.
 
 ## Context
 
@@ -52,10 +52,33 @@ Each of those forms has a literal athletes already write: `HR125-147`, `Z2`,
 4. **ADR 0014 §4 still holds.** Every field is a measurement. Stride never proposes,
    adjusts or evaluates a target, and the human line states numbers without a verdict.
 
+## Amendment, 2026-11-05: session ratings and projected load
+
+5. **A fifth signal, the session rating.** `<reps>x<rep>@RPE<n>`, n 1-10, valid for every
+   sport. It is the one target a session with no stream can carry (strength, yoga),
+   and `complete` reports the activity's stored rating beside it (`rpe_actual`,
+   `rpe_known`), or `no_rating` until one is stored.
+
+6. **Every kind projects a load.** `project`, `events` and the form board price each
+   open target on the rung analyze scores a finished session by:
+   - **power:** TSS against the ride family's FTP, as before.
+   - **pace:** rTSS against the threshold speed of the first family the unit names that
+     has one (best 20-minute speed over 60 days × 0.95, once two sessions carry it), at
+     that family's exponent. A distance rep's time comes from the target pace.
+   - **hr:** hrTSS at the per-zone rate of the zone the band's midpoint falls in, under
+     the athlete's global zones, because a planned session's sport is not known until
+     the day.
+   - **zone:** hrTSS at that zone's rate.
+   - **rpe:** session-RPE load, hours × RPE × 10.
+
+   A target its inputs cannot price (no FTP, no zones, no threshold pace for its
+   families) adds nothing, and `project` names it in `unprojected` with the reason,
+   beside every untargeted session. A projection never invents a load to fill the gap.
+
 ## Not doing
 
-- **Load estimates from non-power targets:** `project`, `events` and the form board still
-  count power targets only. A follow-up gives every kind a load estimate.
-- **RPE targets.**
 - **Per-rep comparison:** it stays out for the reason ADR 0014 gives. The pace
   comparison reads the detected work reps together, as the power one does.
+- **Sport-specific zones in a projection:** a planned session names no sport, so a
+  heart-rate target is priced under the global zones. Completion still reads the zones
+  in force for the activity's sport.

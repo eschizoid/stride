@@ -133,18 +133,20 @@ reason `--json` and still answers in JSON).
      - HR zone `1x90:00@Z2` (1-5, the athlete's configured zones; without them
        `missing_config`)
      - pace `5x4:00@4:10/km`, `3x10:00@6:45/mi`, `10x100m@1:40/100m`, `6x500m@1:55/500m`
+     - session rating `1x45:00@RPE6` (1-10, any sport; the target for strength, yoga and
+       any session without a stream)
 
      Reps are 1-99. A non-power rep may also be `h:mm:ss`, and only a pace rep may be a
      distance (`<n>m`, `<n>km`). The unit decides the sport family the pace is read
      for: /km and /mi run, walk and hike; /100m swim; /500m rowing. Malformed:
      `bad_target`. The echo and `plan`'s open sessions carry `target_known`,
-     `target_kind` (`power|hr|zone|pace`), `target_literal` (canonical: a non-power
+     `target_kind` (`power|hr|zone|pace|rpe`), `target_literal` (canonical: a non-power
      rep of an hour or more echoes as `h:mm:ss`, so `1x60:00@Z2` comes back as
      `1x1:00:00@Z2`, while power keeps `mm:ss`), `target_reps`, `target_dur_s` (0 for
      a distance rep), `target_dist_m`, `target_watts`, `target_hr_lo`, `target_hr_hi`, `target_zone`,
-     `target_pace_s` and `target_pace_unit`; a magnitude another kind carries stays 0
-     or "". `week` rows carry `target_kind` and `target_literal`. Projections
-     (`project`, `events`, the form board) still count power targets only.
+     `target_pace_s`, `target_pace_unit` and `target_rpe`; a magnitude another kind
+     carries stays 0 or "". `week` rows carry `target_kind` and `target_literal`. Every
+     kind counts in the projections (`project`, `events`, the form board).
    - Adding a session on a date that already has an open one REVISES it in place (same
      id) and replaces the whole prescription, so re-planning without the target clears
      it. Never `skip` to re-plan.
@@ -157,7 +159,8 @@ reason `--json` and still answers in JSON).
   `reps_delta`/`watts_pct` mean something only for a `power` target with
   `detected_known` true. `exec_known` says the activity carries the target's own signal;
   when false, `exec_reason` says why (`no_target`, `no_power_intervals`,
-  `no_hr_stream`, `no_hr_zones`, `pace_unit_mismatch`, `no_distance`). Per kind:
+  `no_hr_stream`, `no_hr_zones`, `pace_unit_mismatch`, `no_distance`, `no_rating`).
+  Per kind:
   - `hr`: `{hr_under_s, hr_in_s, hr_over_s, hr_mean}`: seconds below, inside and above
     the band, from the HR stream.
   - `zone`: `{zone_below_s, zone_in_s, zone_above_s}`: from the zone split analyze
@@ -168,6 +171,8 @@ reason `--json` and still answers in JSON).
     distance stream, not the detector's grade-adjusted signal), `whole` as distance over
     moving time. `pace_pct` is the speed relative to the target, so above 100 means
     faster.
+  - `rpe`: `{rpe_actual, rpe_known}`: the activity's stored rating; `no_rating` until
+    `stride rate` stores one.
 
   Whether the session was hit is your sentence. Completing a done session overwrites its link:
   `replaced_activity` names the old one (0 if none) and `plan_history_28d` keeps it as
@@ -192,17 +197,25 @@ reason `--json` and still answers in JSON).
   returns `{id, event_date, name, days_away}`; `stride event remove <id> --json` deletes
   it. `stride events --json` returns
   `{projected_from, baseline_known, ftp_known, events:[{id, event_date, name, days_away, ctl, atl, tsb, planned_in_window, sessions_projected}]}`:
-  CTL/ATL/TSB projected onto each event date over the open plan's structured targets,
-  window `(projected_from, event_date]`. Untargeted sessions contribute zero, so the gap
-  between `planned_in_window` and `sessions_projected` is how blind the projection is.
-  `baseline_known: false` means no computed history. A session dated on the baseline day
-  is excluded because the baseline already contains today. Negative `days_away` echoes
-  the current baseline, not a projection.
+  CTL/ATL/TSB projected onto each event date over the open plan's targets, window
+  `(projected_from, event_date]`. Each target kind is priced on the rung analyze scores
+  by: power as TSS against the ride FTP, pace as rTSS against its family's 60-day
+  threshold speed, a heart-rate band or zone as hrTSS (a band at its midpoint's zone,
+  under the global zones), a rating as session-RPE load. A session with no target, or
+  none its inputs can price, contributes zero, so the gap between `planned_in_window`
+  and `sessions_projected` is how blind the projection is. `ftp_known: false` means
+  power targets add nothing. `baseline_known: false` means no computed history. A
+  session dated on the baseline day is excluded because the baseline already contains
+  today. Negative `days_away` echoes the current baseline, not a projection.
 - `stride project <YYYY-MM-DD> ["<date>=<target>,..."] --json` returns
-  `{target_date, days_away, projected_from, baseline_known, ftp_known, plan_source, ctl, atl, tsb, sessions_considered, sessions_projected, hypothetical}`.
-  Bare, it walks the recorded plan; with pairs it walks your hypothetical plan instead,
-  echoed in `hypothetical` and never stored. Compare tapers by calling once per
-  candidate. Stride never solves for the plan that reaches a TSB; that is your call.
+  `{target_date, days_away, projected_from, baseline_known, ftp_known, plan_source, ctl, atl, tsb, sessions_considered, sessions_projected, unprojected, hypothetical}`.
+  Bare, it walks the recorded plan; with pairs (any target kind) it walks your
+  hypothetical plan instead, echoed in `hypothetical` as
+  `{date, target_kind, target_literal, reps, dur_s, watts}` and never stored.
+  `unprojected` lists each session in the window that added nothing as
+  `{date, target_literal, reason}`, reason `no_target`, `no_ftp`, `no_hr_zones` or
+  `no_threshold_pace`. Compare tapers by calling once per candidate. Stride never
+  solves for the plan that reaches a TSB; that is your call.
 
 ## Strength
 

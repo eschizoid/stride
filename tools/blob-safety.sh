@@ -125,10 +125,10 @@ done
 
 # Asserted exactly, not as a floor — an enumeration that silently matches nothing
 # prints the same clean line a healthy tree prints.
-EXPECT_DECODES=91
+EXPECT_DECODES=92
 # Asserted, not just printed: a number a gate prints on every green run has
 # to be a number the gate enforces.
-EXPECT_SITES=148  # matched `... AS <alias>` projection expressions, not decoder call sites
+EXPECT_SITES=149  # matched `... AS <alias>` projection expressions, not decoder call sites
 if [ "$decodes" != "$EXPECT_DECODES" ]; then
   echo "blob-safety: inspected $decodes (file, alias) decode pairs, expected $EXPECT_DECODES."
   echo "blob-safety: if that change is intended, update the number in the same commit;"

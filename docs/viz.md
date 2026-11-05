@@ -50,8 +50,10 @@ when none is planned. A long event name wraps to two lines rather than
 losing its end. Under the countdown the slot carries the projection: the
 fitness and form `stride project` returns for the last day the written plan
 reaches (open sessions after the series' last day), capped at the event, and
-how many of those sessions carry a structured target. Untargeted sessions
-contribute no load, so that count is how much of the projection is blind;
+how many of those sessions carry a load: every target kind is priced (power,
+pace, heart rate, session rating), and a session with no target or none its
+inputs can price adds nothing, so that count is how much of the projection is
+blind;
 past the plan's last day a projection is only decay, so the board names the
 day it stops ("plan to 11-08") and says "at event" only when the plan reaches
 it. The subtitle always carries the as-of day, and the TSB zero rule is
