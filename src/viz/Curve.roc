@@ -1,7 +1,10 @@
 import rr.Color
 import rr.Draw
 import rr.Text
+import core.Bus
 import core.Fmt
+import core.Sports
+import core.Units
 import Db
 import Theme
 import Ui
@@ -19,8 +22,10 @@ Curve :: [].{
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
 		win_w = model.win.w
-		# planned targets are ride power, so they ride on the ride curve only
-		ride_targets = if (model.curve_family == "Ride") model.plan_targets else []
+		curve = model.curve_family
+		units = model.units
+		# the planned targets this curve carries (marks_for says which)
+		plan_marks = marks_for(curve, model.plan_targets, model.pace_targets)
 		win_h = model.win.h
 		pad_l = Theme.pad_l
 		pad_r = Theme.pad_r
@@ -63,23 +68,22 @@ Curve :: [].{
 				x.s.chip.draw!(frame, { pos: { x: chx + 23.0, y: 68.0 }, color: if (on) Color.white else ink_muted, align: (Top, Center) })
 			},
 		)
-		# the family chips beside them: the lit one is the family on screen
+		# the curve chips and the power/pace pair beside the range chips: the
+		# lit ones are the curve on screen and its mode
 		List.for_each!(
-			family_chips,
+			curve_chips(win_w, model.curve_keys, curve),
 			|fc| {
-				fx = win_w - 420.0 + fc.dx
-				on = fc.fam == model.curve_family
-				hov = model.mouse_x >= fx and model.mouse_x <= fx + 46.0 and model.mouse_y >= chip_top and model.mouse_y <= chip_bottom
-				style = if (on) (Draw.filled(Color.with_alpha(Theme.tsb_c, 60))) else if (hov) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
-				frame.rounded_rectangle!({ x: fx, y: chip_top, width: 46.0, height: chip_bottom - chip_top, radius: 6.0, segments: 6, style })
-				Text.from(fc.label, model.font).size(12).draw!(frame, { pos: { x: fx + 23.0, y: 68.0 }, color: if (on) Color.white else ink_muted, align: (Top, Center) })
+				hov = model.mouse_x >= fc.x and model.mouse_x <= fc.x + chip_w and model.mouse_y >= chip_top and model.mouse_y <= chip_bottom
+				style = if (fc.on) (Draw.filled(Color.with_alpha(Theme.tsb_c, 60))) else if (hov) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
+				frame.rounded_rectangle!({ x: fc.x, y: chip_top, width: chip_w, height: chip_bottom - chip_top, radius: 6.0, segments: 6, style })
+				Text.from(fc.label, model.font).size(12).draw!(frame, { pos: { x: fc.x + chip_w / 2.0, y: 68.0 }, color: if (fc.on) Color.white else ink_muted, align: (Top, Center) })
 			},
 		)
 		# eight zero rungs IS the no-records state - the loader materializes
 		# every rung, so emptiness is the summed watts, not the list length
 		have = List.fold(model.prs, 0.I64, |a, pr| a + pr.w)
 		if List.is_empty(model.prs) or have == 0 {
-			Text.from(empty_note(model.curve_family), model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 130.0 }, color: ink_muted, align: (Top, Left) })
+			Text.from(empty_note(curve), model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 130.0 }, color: ink_muted, align: (Top, Left) })
 		} else {
 			pw = win_w - pad_l - pad_r
 			ph = win_h - pad_t - pad_b
@@ -124,24 +128,25 @@ Curve :: [].{
 					{ pr, now_w, prev_w, i, now_unp, prev_unp, src_txt, stale }
 				},
 			)
-			w_hi = F32.max(List.fold(rungs, 1.0, |a, r| F32.max(a, F32.max(I64.to_f32(r.pr.w), F32.max(I64.to_f32(r.now_w), I64.to_f32(r.prev_w))))), List.fold(ride_targets, 1.0, |a, t| F32.max(a, I64.to_f32(t.watts)))) * 1.08
+			w_hi = F32.max(List.fold(rungs, 1.0, |a, r| F32.max(a, F32.max(I64.to_f32(r.pr.w), F32.max(I64.to_f32(r.now_w), I64.to_f32(r.prev_w))))), List.fold(plan_marks, 1.0, |a, t| F32.max(a, I64.to_f32(t.val)))) * 1.08
 			nlast = List.len(rungs) - 1
 			cx = |i| if (nlast == 0) (pad_l + pw / 2.0) else pad_l + pw * U64.to_f32(i) / U64.to_f32(nlast)
 			cy = |w| pad_t + ph * (1.0 - w / w_hi)
-			# the watt grid: a faint rule and label every 100w; steps come from
+			# the grid: a faint rule and label every grid_step; steps come from
 			# the ceiling itself, so any scale gets its rules
-			grid_n = match F32.round_to_u64_try(F32.div_floor_by(w_hi, 100.0)) {
+			step = grid_step(curve, w_hi)
+			grid_n = match F32.round_to_u64_try(F32.div_floor_by(w_hi, step)) {
 				Ok(gn) => gn
 				Err(_) => 0.U64
 			}
 			List.for_each!(
-				List.map_with_index(List.repeat({}, grid_n), |_u, k| (U64.to_f32(k) + 1.0) * 100.0),
+				List.map_with_index(List.repeat({}, grid_n), |_u, k| (U64.to_f32(k) + 1.0) * step),
 				|gw|
 					if gw < w_hi {
 						frame.line!({ start: { x: pad_l, y: cy(gw) }, end: { x: win_w - pad_r, y: cy(gw) }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 36), 1) })
 						Text.from(
-							match F32.round_to_u64_try(gw) {
-								Ok(gi) => U64.to_str(gi)
+							match F32.round_to_i64_try(gw) {
+								Ok(gi) => axis_text(curve, units, gi)
 								Err(_) => ""
 							},
 							model.font,
@@ -224,14 +229,14 @@ Curve :: [].{
 				p = rung_pos(rung_secs, t.dur_s)
 				if (nlast == 0) (pad_l + pw / 2.0) else pad_l + pw * p / U64.to_f32(nlast)
 			}
-			marks = List.map(ride_targets, |t| { x: tx(t), y: cy(I64.to_f32(t.watts)) })
+			marks = List.map(plan_marks, |t| { x: tx(t), y: cy(I64.to_f32(t.val)) })
 			rings = List.map(
 				cluster_marks(marks, ring_merge),
 				|idxs| {
 					# targets load in date order, so input order stacks a ring's
 					# labels by date
 					in_order = List.sort_with(idxs, |a, b| if (a < b) Before else if (a > b) After else Same)
-					ts = List.keep_oks(in_order, |i| List.get(ride_targets, i))
+					ts = List.keep_oks(in_order, |i| List.get(plan_marks, i))
 					ps = List.keep_oks(in_order, |i| List.get(marks, i))
 					n = F32.max(1.0, U64.to_f32(List.len(ps)))
 					{ ts, x: List.fold(ps, 0.0, |a, p| a + p.x) / n, y: List.fold(ps, 0.0, |a, p| a + p.y) / n }
@@ -299,7 +304,7 @@ Curve :: [].{
 						Text.from("new record", model.font).size(11).draw!(frame, { pos: { x: label_center_within(cx(r.i), nr_half, pad_l, pad_l + pw - label_inset), y: rec_y - 34.0 }, color: Theme.gold_c, align: (Top, Center) })
 					}
 					if (r.pr.w == 0) {
-						# a rung never ridden keeps its label and rail, nothing else
+						# a rung with no effort on record keeps its label and rail, nothing else
 					} else if r.now_w >= r.pr.w and r.now_w > 0 {
 						# the window best IS the record: one teal dot - and the
 						# delta still prints, because a record rung's change is the
@@ -309,7 +314,7 @@ Curve :: [].{
 						frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 5.0, style: Draw.filled(tsb_c) })
 						pr_half = model.font.measure({ text: "pr", size: 10.0, spacing: Text.default_spacing }).width / 2.0
 						Text.from("pr", model.font).size(10).draw!(frame, { pos: { x: label_center_within(cx(r.i), pr_half, pad_l, pad_l + pw - label_inset), y: rec_y - 20.0 }, color: tsb_c, align: (Top, Center) })
-						dpr_txt = if (r.now_unp or r.prev_unp) "" else delta_label(r.now_w, r.prev_w)
+						dpr_txt = if (r.now_unp or r.prev_unp) "" else delta_for(curve, units, r.now_w, r.prev_w)
 						if dpr_txt != "" {
 							dpr_col = if (r.now_w > r.prev_w) tsb_c else Theme.alarm_c
 							dpr_w = model.font.measure({ text: dpr_txt, size: 10.0, spacing: Text.default_spacing }).width
@@ -329,7 +334,7 @@ Curve :: [].{
 							frame.circle!({ center: { x: cx(r.i), y: now_y }, radius: 4.0, style: Draw.filled(if (r.now_unp) (Color.with_alpha(ink_muted, 170)) else if (r.stale) (Color.with_alpha(ctl_c, 110)) else ctl_c) })
 							# the change against the PREVIOUS window, signed, right
 							# where it lives - green-teal going up, alarm going down
-							d_txt = if (r.now_unp or r.prev_unp) "" else delta_label(r.now_w, r.prev_w)
+							d_txt = if (r.now_unp or r.prev_unp) "" else delta_for(curve, units, r.now_w, r.prev_w)
 							if d_txt != "" {
 								d_col = if (r.now_w > r.prev_w) tsb_c else Theme.alarm_c
 								d_w = model.font.measure({ text: d_txt, size: 10.0, spacing: Text.default_spacing }).width
@@ -346,10 +351,10 @@ Curve :: [].{
 					# hover the rung's column: the full story under the title
 					half = if (nlast == 0) (pw / 2.0) else pw / U64.to_f32(nlast) / 2.0
 					if model.mouse_x >= cx(r.i) - half and model.mouse_x < cx(r.i) + half and model.mouse_y >= pad_t and model.mouse_y <= pad_t + ph and !tgt_hovering {
-						now_txt = if (r.now_w > 0) ("   now ${Db.num_unit(r.now_w, "w")}") else "   not ridden this window"
-						prev_txt = if (r.prev_w > 0) ("   prev ${Db.num_unit(r.prev_w, "w")}") else ""
+						now_txt = if (r.now_w > 0) ("   now ${val_text(curve, units, r.now_w)}") else "   no effort this window"
+						prev_txt = if (r.prev_w > 0) ("   prev ${val_text(curve, units, r.prev_w)}") else ""
 						quality = if (r.now_unp) "   not all-out" else if (r.stale) "   stale" else ""
-						tip = if (r.pr.w > 0) ("${r.pr.rung}   best ${Db.num_unit(r.pr.w, "w")} set ${r.pr.day}${now_txt}${r.src_txt}${quality}${prev_txt}") else "${r.pr.rung}   never ridden"
+						tip = if (r.pr.w > 0) ("${r.pr.rung}   best ${val_text(curve, units, r.pr.w)} set ${r.pr.day}${now_txt}${r.src_txt}${quality}${prev_txt}") else "${r.pr.rung}   no effort on record"
 						Text.from(tip, model.font).size(12).draw!(frame, { pos: { x: 36.0, y: 92.0 }, color: Color.white, align: (Top, Left) })
 					}
 				},
@@ -482,9 +487,9 @@ Curve :: [].{
 	}
 
 	# a target label's width at the 10px label size, generous for the
-	# widest "MM-DD NNNW NNN%" form
+	# widest form, a pace label such as "MM-DD M:SS/100m NNN%"
 	ring_label_w : F32
-	ring_label_w = 90.0
+	ring_label_w = 120.0
 
 	# the first label row of each ring, left to right: a ring closer than a
 	# label's width to the one before it starts below that ring's labels, and
@@ -505,22 +510,24 @@ Curve :: [].{
 		List.map(placed, |p| p.base)
 	}
 
-	# a planned target's marker label: its day, watts, and its share of the
-	# window's best at the rep duration (omitted when the window has none)
-	target_label : Db.Target, F32 -> Str
+	# a planned target's marker label: its day, its value, and its share of
+	# the window's best at the rep duration (omitted when the window has
+	# none). On a pace curve the share is of speed, so 95% is a target a
+	# little slower than the window's best.
+	target_label : Mark, F32 -> Str
 	target_label = |t, best| {
 		mmdd = Str.from_utf8_lossy(List.drop_first(Str.to_utf8(t.day), 5))
-		pct = if (best <= 0.0) "" else " ${Db.fmt_i(I64.to_f32(t.watts) / best * 100.0)}%"
-		"${mmdd} ${I64.to_str(t.watts)}W${pct}"
+		pct = if (best <= 0.0) "" else " ${Db.fmt_i(I64.to_f32(t.val) / best * 100.0)}%"
+		"${mmdd} ${t.val_txt}${pct}"
 	}
 
-	target_tip : Db.Target, F32 -> Str
+	target_tip : Mark, F32 -> Str
 	target_tip = |t, best| {
-		share = if (best <= 0.0) "no window best at that duration" else "${Db.fmt_i(I64.to_f32(t.watts) / best * 100.0)}% of this window's best at that duration"
-		"${t.day} ${t.typ}: ${I64.to_str(t.reps)}x${Fmt.mmss(t.dur_s)} @ ${I64.to_str(t.watts)}W - ${share}"
+		share = if (best <= 0.0) "no window best at that duration" else "${Db.fmt_i(I64.to_f32(t.val) / best * 100.0)}% of this window's best at that duration"
+		"${t.day} ${t.typ}: ${t.rep_txt} @ ${t.val_txt} - ${share}"
 	}
 
-	# ── the band above the plot. The range and family chips fill the top
+	# ── the band above the plot. The range and curve chips fill the top
 	# right from chip_top to chip_bottom; the row under them, caption_top,
 	# carries the unpushed caption or the loading note on the right and a
 	# rung tooltip on the left, and ends before the plot's first gridline at
@@ -546,22 +553,14 @@ Curve :: [].{
 			Err(_) => Bool.False
 		}
 
-	# ── the family chips: bike and row, to the right of the range chips, on
-	# the same row. chip0 is the first range chip's left edge.
-	family_chips : List({ fam : Str, label : Str, dx : F32 })
-	family_chips = [{ fam: "Ride", label: "bike", dx: 176.0 }, { fam: "Rowing", label: "row", dx: 230.0 }]
-
-	family_chip_at : F32, F32 -> Str
-	family_chip_at = |x, chip0|
-		match List.find_first(family_chips, |c| x >= chip0 + c.dx and x <= chip0 + c.dx + 46.0) {
-			Ok(c) => c.fam
-			Err(_) => ""
-		}
-
-	# what the view says when the chosen family has no power on record: the
-	# family is kept (the chip stays lit), and the note names the way back
+	# what the view says when the chosen curve has no data on record: the
+	# choice is kept, and the note says which kind of effort is missing
 	empty_note : Str -> Str
-	empty_note = |fam| if (fam == "Ride") "no ride power yet" else if (fam == "Rowing") "no rowing power yet - the bike chip shows ride power" else "no ${fam} power yet - the bike chip shows ride power"
+	empty_note = |curve|
+		match Bus.curve_key(curve) {
+			Pace(sp) => "no ${sport_name(sp)} pace on record yet"
+			Power(fam) => if (fam == "Ride") "no ride power on record yet" else "no ${chip_label(curve)} power on record yet"
+		}
 
 	# ── pushed and unpushed rungs. A maximal best at one duration stands
 	# clearly above the best at the next longer one; a best within
@@ -731,6 +730,230 @@ Curve :: [].{
 		}
 	}
 
+	# ── the signal a curve key draws. A family head draws power in watts; a
+	# pace key draws speed, carried through the rungs in millimetres per
+	# second and read aloud as pace in the sport's own unit, so the higher
+	# dot is the faster one either way.
+	is_pace : Str -> Bool
+	is_pace = |curve|
+		match Bus.curve_key(curve) {
+			Pace(_) => Bool.True
+			Power(_) => Bool.False
+		}
+
+	# the metres a pace curve reads its pace over, and how that reads aloud:
+	# rowing per 500m, swimming per 100m, the foot sports per kilometre or
+	# per mile as the athlete's units say
+	pace_unit_for : [Metric, Imperial], Str -> { m : F64, label : Str }
+	pace_unit_for = |units, sport| {
+		fam = Sports.canonical(sport)
+		label = Sports.pace_label_for(units, fam)
+		if (fam == "Rowing" or fam == "Swim") ({ m: I64.to_f64(Sports.pace_unit(fam).dist_m), label }) else { m: Units.split_len(units), label }
+	}
+
+	# a speed in millimetres per second as the pace it is, in seconds per
+	# unit; 0 for no speed
+	pace_secs : I64, F64 -> I64
+	pace_secs = |mmps, unit_m| if (mmps <= 0) 0 else (F64.round_to_i64_try(unit_m * 1000.0 / I64.to_f64(mmps)) ?? 0)
+
+	# what the key is called on screen: a chip's short label
+	chip_label : Str -> Str
+	chip_label = |curve|
+		match Bus.curve_key(curve) {
+			Power(fam) =>
+				if (fam == "Ride") "bike"
+				else match List.first(List.keep_if(Sports.families, |f| List.first(f.sports) == Ok(fam))) {
+					Ok(f) => (List.first(f.words)).ok_or(Str.with_ascii_lowercased(fam))
+					Err(_) => Str.with_ascii_lowercased(fam)
+				}
+			Pace(sp) =>
+				if (sp == "TrailRun") "trail"
+				else if (sp == "VirtualRun") "v-run"
+				else if (sp == "OpenWaterSwim") "open"
+				else if (sp == "VirtualRow") "v-row"
+				else if (sp == "Rowing") "row"
+				else Str.with_ascii_lowercased(sp)
+		}
+
+	# a pace sport spelled for a sentence
+	sport_name : Str -> Str
+	sport_name = |sp|
+		if (sp == "TrailRun") "trail run"
+		else if (sp == "VirtualRun") "virtual run"
+		else if (sp == "OpenWaterSwim") "open water swim"
+		else if (sp == "VirtualRow") "virtual row"
+		else Str.with_ascii_lowercased(sp)
+
+	# the view's title line
+	title_text : Str, I64 -> Str
+	title_text = |curve, days| {
+		what = match Bus.curve_key(curve) {
+			Pace(sp) => "${sport_name(sp)} pace"
+			Power(fam) => if (fam == "Ride") "power" else "${chip_label(curve)} power"
+		}
+		"${what} - this ${I64.to_str(days)}d vs the ${I64.to_str(days)}d before it"
+	}
+
+	# a value on the curve read aloud with its unit: watts, or the pace
+	val_text : Str, [Metric, Imperial], I64 -> Str
+	val_text = |curve, units, v|
+		match Bus.curve_key(curve) {
+			Power(_) => Db.num_unit(v, "w")
+			Pace(sp) => {
+				u = pace_unit_for(units, sp)
+				"${Fmt.mmss(pace_secs(v, u.m))}${u.label}"
+			}
+		}
+
+	# a gridline's label: plain watts, or the pace without its unit
+	axis_text : Str, [Metric, Imperial], I64 -> Str
+	axis_text = |curve, units, v|
+		match Bus.curve_key(curve) {
+			Power(_) => I64.to_str(v)
+			Pace(sp) => Fmt.mmss(pace_secs(v, (pace_unit_for(units, sp)).m))
+		}
+
+	# the gridline step: every 100 W on a power curve; on a speed curve the
+	# smallest 1-2-5 step that leaves at most six lines under the ceiling
+	grid_step : Str, F32 -> F32
+	grid_step = |curve, hi|
+		if (!is_pace(curve)) 100.0
+		else
+			List.fold(
+				[50.0, 100.0, 200.0, 250.0, 500.0, 1000.0, 2000.0],
+				2000.0,
+				|best, s| if (s < best and hi / s <= 6.0) s else best,
+			)
+
+	# the window-over-window change: watts with their sign on a power curve
+	# (delta_label), and on a pace curve the change in pace in seconds per
+	# unit, negative when the window got faster
+	delta_for : Str, [Metric, Imperial], I64, I64 -> Str
+	delta_for = |curve, units, now, prev|
+		match Bus.curve_key(curve) {
+			Power(_) => delta_label(now, prev)
+			Pace(sp) => {
+				m = (pace_unit_for(units, sp)).m
+				if (now <= 0 or prev <= 0) ""
+				else {
+					d = pace_secs(now, m) - pace_secs(prev, m)
+					if (d > 0) "+${I64.to_str(d)}s" else if (d < 0) "-${I64.to_str(-d)}s" else ""
+				}
+			}
+		}
+
+	# A critical-speed fit is usable on the same terms as a CP fit: r2 at the
+	# floor and D' inside a band that spans the foot, water and erg sports.
+	# Three 5-to-20-minute bests that are steady efforts rather than maximal
+	# ones still fit a line, with a D' far outside it.
+	d_prime_lo : F32
+	d_prime_lo = 10.0
+	d_prime_hi : F32
+	d_prime_hi = 600.0
+
+	fit_usable_for : Str, Db.Fit -> Bool
+	fit_usable_for = |curve, fit|
+		if (is_pace(curve)) (fit.ok and fit.r2 >= fit_r2_min and fit.w_prime >= d_prime_lo and fit.w_prime <= d_prime_hi)
+		else fit_usable(fit)
+
+	# the threshold line's height in the curve's own units, 0 when unusable
+	fit_line : Str, Db.Fit -> F32
+	fit_line = |curve, fit|
+		if (!fit_usable_for(curve, fit)) 0.0
+		else if (is_pace(curve)) (fit.cp * 1000.0)
+		else fit.cp
+
+	# the threshold line's label
+	fit_tag : Str, [Metric, Imperial], Db.Fit -> Str
+	fit_tag = |curve, units, fit|
+		match Bus.curve_key(curve) {
+			Power(_) => "CP ${Db.fmt_f(fit.cp)}W"
+			Pace(_) => "CS ${val_text(curve, units, F32.round_to_i64_try(fit.cp * 1000.0) ?? 0)}"
+		}
+
+	fit_caption_for : Str, [Metric, Imperial], Db.Fit, I64 -> Str
+	fit_caption_for = |curve, units, fit, best20_age|
+		if (!is_pace(curve)) fit_caption(fit, best20_age)
+		else if (!fit.ok) "CS fit unavailable - the engine did not answer"
+		else if (fit_usable_for(curve, fit)) "CS ${val_text(curve, units, F32.round_to_i64_try(fit.cp * 1000.0) ?? 0)} - D' ${Db.fmt_i(fit.w_prime)} m - fit r2 ${r2_str(fit.r2)} from ${Db.fmt_i(fit.points)} bests"
+		else {
+			why = if (fit.points < 2.0) "no CS fit (fewer than two bests in this window)" else "no usable CS fit (r2 ${r2_str(fit.r2)}, D' ${Db.fmt_i(fit.w_prime)} m)"
+			when = if (best20_age < 0) "no 20-min best in this window" else if (best20_age == 0) "20-min best set today" else if (best20_age == 1) "20-min best set 1 day ago" else "20-min best set ${I64.to_str(best20_age)} days ago"
+			"${why} - ${when}; an all-out 20 minutes would anchor it"
+		}
+
+	# ── planned targets as marks on the curve. A power target belongs on the
+	# ride curve, where every power prescription stride writes is ridden; a
+	# pace target belongs on every pace curve its unit fits (Sports
+	# pace_unit_families), at the speed its pace names and the duration one
+	# rep takes at that speed.
+	Mark : { day : Str, typ : Str, dur_s : I64, val : I64, val_txt : Str, rep_txt : Str }
+
+	marks_for : Str, List(Db.Target), List(Db.PaceTarget) -> List(Mark)
+	marks_for = |curve, power, pace|
+		match Bus.curve_key(curve) {
+			Power(fam) =>
+				if (fam != "Ride") []
+				else List.map(power, |t| { day: t.day, typ: t.typ, dur_s: t.dur_s, val: t.watts, val_txt: "${I64.to_str(t.watts)}W", rep_txt: "${I64.to_str(t.reps)}x${Fmt.mmss(t.dur_s)}" })
+			Pace(sp) =>
+				List.keep_oks(
+					pace,
+					|t|
+						if (!(List.contains(Sports.pace_unit_families(t.unit), Sports.canonical(sp)))) Err(OtherSport)
+						else {
+							mps = Db.pace_unit_m(t.unit) / I64.to_f64(t.pace_s)
+							dur = if (t.dist_m > 0) (F64.round_to_i64_try(I64.to_f64(t.dist_m) / mps) ?? 0) else t.dur_s
+							rep = if (t.dist_m > 0) "${I64.to_str(t.dist_m)}m" else Fmt.mmss(t.dur_s)
+							Ok({ day: t.day, typ: t.typ, dur_s: dur, val: F64.round_to_i64_try(mps * 1000.0) ?? 0, val_txt: "${Fmt.mmss(t.pace_s)}${t.unit}", rep_txt: "${I64.to_str(t.reps)}x${rep}" })
+						},
+				)
+		}
+
+	# ── the chips. The range chips (30d 60d 90d) keep the form board's spot
+	# from chip0 = win_w - 420. Right of them sit the mode chips, power and
+	# pace, when the athlete has curves of both kinds; left of them,
+	# right-aligned, the curve chips of the mode on screen, most-used first,
+	# as many as fit between the title and the range chips, the one on
+	# screen always among them.
+	Chip : { key : Str, label : Str, x : F32, on : Bool }
+
+	chip_w : F32
+	chip_w = 52.0
+
+	chip_pitch : F32
+	chip_pitch = 58.0
+
+	title_reserve : F32
+	title_reserve = 340.0
+
+	curve_chips : F32, Db.CurveKeys, Str -> List(Chip)
+	curve_chips = |win_w, keys, cur| {
+		chip0 = win_w - 420.0
+		pace_on = is_pace(cur)
+		modes =
+			if (List.is_empty(keys.power) or List.is_empty(keys.pace)) []
+			else [
+				{ key: if (pace_on) ((List.first(keys.power)).ok_or(cur)) else cur, label: "power", x: chip0 + 176.0, on: !pace_on },
+				{ key: if (pace_on) cur else (List.first(keys.pace)).ok_or(cur), label: "pace", x: chip0 + 234.0, on: pace_on },
+			]
+		mode_keys = if (pace_on) keys.pace else keys.power
+		room = chip0 - 14.0 + (chip_pitch - chip_w) - title_reserve
+		n_fit = if (room <= 0.0) 0 else (F32.round_to_u64_try(F32.div_floor_by(room, chip_pitch)) ?? 0)
+		first_n = List.take_first(mode_keys, n_fit)
+		shown = if (n_fit == 0 or List.contains(first_n, cur) or !(List.contains(mode_keys, cur))) first_n else List.append(List.drop_last(first_n, 1), cur)
+		n = List.len(shown)
+		sports = List.map_with_index(shown, |k, i| { key: k, label: chip_label(k), x: chip0 - 14.0 - U64.to_f32(n - i) * chip_pitch + (chip_pitch - chip_w), on: k == cur })
+		List.concat(sports, modes)
+	}
+
+	# the key under x on the chip row, or '' between and beside the chips
+	chip_at : List(Chip), F32 -> Str
+	chip_at = |chips, x|
+		match List.find_first(chips, |c| x >= c.x and x <= c.x + chip_w) {
+			Ok(c) => c.key
+			Err(_) => ""
+		}
+
 	# the window-over-window change, said in watts with its sign - the number
 	# this view argues with. Empty when either side is absent (a comparison
 	# with nothing is not a delta) and when equal (the dots already overlap,
@@ -821,9 +1044,34 @@ expect Curve.rung_pos([5, 15, 30, 60, 300, 600, 1200, 3600], 7200) == 7.0
 expect (Curve.best_at([{ secs: 600, w: 260 }, { secs: 1200, w: 254 }], 900) - 257.0).abs() < 0.001
 expect Curve.best_at([{ secs: 600, w: 0 }, { secs: 1200, w: 254 }], 900) == 0.0
 expect Curve.best_at([{ secs: 600, w: 260 }, { secs: 1200, w: 254 }], 1200) == 254.0
-expect Curve.target_label({ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }, 257.0) == "11-05 225W 88%"
-expect Curve.target_label({ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }, 0.0) == "11-05 225W"
-expect Curve.target_tip({ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }, 257.0) == "2026-11-05 threshold: 2x15:00 @ 225W - 88% of this window's best at that duration"
+# a power target reads in watts on the ride curve and nowhere else; its
+# label carries its share of the window's best at the rep duration
+expect {
+	ms = Curve.marks_for("Ride", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])
+	match ms {
+		[m] => Curve.target_label(m, 257.0) == "11-05 225W 88%" and Curve.target_label(m, 0.0) == "11-05 225W" and Curve.target_tip(m, 257.0) == "2026-11-05 threshold: 2x15:00 @ 225W - 88% of this window's best at that duration"
+		_ => Bool.False
+	}
+}
+expect Curve.marks_for("Rowing", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], []) == []
+# a pace target lands on every pace curve its unit fits, at the speed its
+# pace names; a distance rep takes the time that distance needs at that
+# pace, and a unit for another sport keeps it off the curve
+expect {
+	run = { day: "2026-11-10", typ: "threshold", reps: 5, dur_s: 240, dist_m: 0, pace_s: 402, unit: "/mi" }
+	swim = { day: "2026-11-11", typ: "threshold", reps: 10, dur_s: 0, dist_m: 100, pace_s: 100, unit: "/100m" }
+	match Curve.marks_for("pace:TrailRun", [], [run, swim]) {
+		[m] => m.val == 4003 and m.dur_s == 240 and m.val_txt == "6:42/mi" and m.rep_txt == "5x4:00" and Curve.target_label(m, 4210.0) == "11-10 6:42/mi 95%"
+		_ => Bool.False
+	}
+		and (
+			match Curve.marks_for("pace:Swim", [], [run, swim]) {
+				[m] => m.val == 1000 and m.dur_s == 100 and m.rep_txt == "10x100m"
+				_ => Bool.False
+			}
+		)
+		and Curve.marks_for("Ride", [], [run, swim]) == []
+}
 expect Curve.r2_str(0.84) == "0.84" and Curve.r2_str(0.9) == "0.90" and Curve.r2_str(0.05) == "0.05" and Curve.r2_str(1.0) == "1.00" and Curve.r2_str(0.899) == "0.89" and Curve.r2_str(0.8999) == "0.89" and Curve.r2_str(-0.253) == "-0.25"
 # a rung within 5% of the next longer one was not pushed: on the live 60-day
 # ladder the short rungs crowd the 20-minute best, while the 20-minute best
@@ -838,8 +1086,50 @@ expect Curve.unpushed_caption(["5s", "15s"], [Bool.False, Bool.False], 30) == ""
 expect !Curve.stale_best(15, 30) and Curve.stale_best(16, 30) and !Curve.stale_best(-1, 30)
 # the family chips sit right of the range chips; a family with no power
 # keeps its chip lit and names the way back
-expect Curve.family_chip_at(1000.0 + 176.0, 1000.0) == "Ride" and Curve.family_chip_at(1000.0 + 276.0, 1000.0) == "Rowing" and Curve.family_chip_at(1000.0 + 100.0, 1000.0) == ""
-expect Curve.empty_note("Rowing") == "no rowing power yet - the bike chip shows ride power" and Curve.empty_note("Ride") == "no ride power yet"
+# the curve chips: the curves of the mode on screen right-aligned against
+# the range chips, most-used first, as many as fit beside the title, the
+# one on screen always among them and lit; the power and pace pair right
+# of the range chips only when the athlete has both kinds
+expect {
+	keys = { power: ["Ride", "Rowing", "Run"], pace: ["pace:Rowing", "pace:Run", "pace:Swim", "pace:TrailRun", "pace:Walk"] }
+	wide = Curve.curve_chips(1400.0, keys, "Ride")
+	narrow = Curve.curve_chips(980.0, keys, "pace:TrailRun")
+	labels = |cs| List.map(cs, |c| c.label)
+	labels(wide) == ["bike", "row", "run", "power", "pace"]
+		and List.map(List.keep_if(wide, |c| c.on), |c| c.label) == ["bike", "power"]
+		and labels(narrow) == ["row", "run", "trail", "power", "pace"]
+		and List.map(List.keep_if(narrow, |c| c.on), |c| c.key) == ["pace:TrailRun", "pace:TrailRun"]
+		and List.all(narrow, |c| c.x >= Curve.title_reserve)
+		and Curve.chip_at(wide, 1400.0 - 420.0 + 234.0 + 10.0) == "pace:Rowing"
+		and Curve.chip_at(wide, 1400.0 - 420.0 + 176.0 + 10.0) == "Ride"
+		and Curve.chip_at(wide, 1400.0 - 420.0 - 2.0) == ""
+}
+# one kind of curve on record: no power and pace pair
+expect List.map(Curve.curve_chips(1400.0, { power: [], pace: ["pace:Swim", "pace:OpenWaterSwim"] }, "pace:Swim"), |c| c.label) == ["swim", "open"]
+# the chips' last right edge sits 14 px left of the first range chip
+expect {
+	cs = Curve.curve_chips(1400.0, { power: ["Ride", "Rowing"], pace: [] }, "Ride")
+	match List.last(cs) {
+		Ok(c) => c.x + Curve.chip_w == 1400.0 - 420.0 - 14.0
+		Err(_) => Bool.False
+	}
+}
+expect Curve.empty_note("Rowing") == "no row power on record yet" and Curve.empty_note("Ride") == "no ride power on record yet" and Curve.empty_note("pace:Swim") == "no swim pace on record yet"
+# speed reads as pace in the sport's own unit, the foot sports in the
+# athlete's units; the delta is the change in pace, negative when faster
+expect Curve.val_text("pace:Run", Metric, 4000) == "4:10/km" and Curve.val_text("pace:Run", Imperial, 4000) == "6:42/mi" and Curve.val_text("pace:Swim", Imperial, 1000) == "1:40/100m" and Curve.val_text("pace:VirtualRow", Metric, 4000) == "2:05/500m"
+expect Curve.val_text("Ride", Metric, 1234) == "1,234 w" and Curve.axis_text("Ride", Metric, 300) == "300" and Curve.axis_text("pace:Run", Metric, 4000) == "4:10"
+expect Curve.delta_for("pace:Run", Metric, 4000, 3846) == "-10s" and Curve.delta_for("pace:Run", Metric, 3846, 4000) == "+10s" and Curve.delta_for("pace:Run", Metric, 4000, 4000) == "" and Curve.delta_for("Ride", Metric, 354, 340) == "+14w"
+expect Curve.grid_step("Ride", 540.0) == 100.0 and Curve.grid_step("pace:Run", 4500.0) == 1000.0 and Curve.grid_step("pace:Swim", 1600.0) == 500.0
+expect Curve.title_text("Ride", 90) == "power - this 90d vs the 90d before it" and Curve.title_text("Rowing", 30) == "row power - this 30d vs the 30d before it" and Curve.title_text("pace:TrailRun", 60) == "trail run pace - this 60d vs the 60d before it"
+expect Curve.chip_label("Ride") == "bike" and Curve.chip_label("Run") == "run" and Curve.chip_label("WeightTraining") == "strength" and Curve.chip_label("Kayaking") == "kayaking" and Curve.chip_label("pace:OpenWaterSwim") == "open"
+# a CS fit is usable at the r2 floor with D' inside its band, and its line
+# sits at the critical speed in millimetres per second
+expect Curve.fit_usable_for("pace:Run", { cp: 4.0, w_prime: 200.0, r2: 0.95, points: 3.0, ok: Bool.True }) and !Curve.fit_usable_for("pace:Run", { cp: 4.0, w_prime: 2000.0, r2: 0.95, points: 3.0, ok: Bool.True }) and !Curve.fit_usable_for("pace:Run", { cp: 4.0, w_prime: 200.0, r2: 0.85, points: 3.0, ok: Bool.True })
+expect (Curve.fit_line("pace:Run", { cp: 4.0, w_prime: 200.0, r2: 0.95, points: 3.0, ok: Bool.True }) - 4000.0).abs() < 0.01 and Curve.fit_line("pace:Run", { cp: 4.0, w_prime: 2000.0, r2: 0.95, points: 3.0, ok: Bool.True }) == 0.0
+expect Curve.fit_caption_for("pace:Run", Metric, { cp: 4.0, w_prime: 200.0, r2: 0.95, points: 3.0, ok: Bool.True }, 3) == "CS 4:10/km - D' 200 m - fit r2 0.95 from 3 bests"
+expect Curve.fit_caption_for("pace:Swim", Metric, { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 1.0, ok: Bool.True }, -1) == "no CS fit (fewer than two bests in this window) - no 20-min best in this window; an all-out 20 minutes would anchor it"
+expect Curve.fit_tag("pace:Run", Metric, { cp: 4.0, w_prime: 200.0, r2: 0.95, points: 3.0, ok: Bool.True }) == "CS 4:10/km" and Curve.fit_tag("Ride", Metric, { cp: 247.3, w_prime: 9000.0, r2: 0.95, points: 3.0, ok: Bool.True }) == "CP 247.3W"
 # two targets at the same duration a few watts apart share one ring; targets
 # at different durations, or the same duration far apart in watts, keep their
 # own; clusters come out left to right with input indices

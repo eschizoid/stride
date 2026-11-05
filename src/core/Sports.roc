@@ -154,6 +154,13 @@ Sports :: [].{
 	# 100m pace the swim family, a 500m split the rowing family. A unit
 	# outside the four fits nothing. Rides are absent on purpose: cycling
 	# speed follows terrain, so a ride's effort is its power or its heart rate.
+	# every unit a pace target can be written in; none is a suffix of
+	# another, so a reader may match a literal by its ending
+	pace_target_units : List(Str)
+	pace_target_units = ["/100m", "/500m", "/km", "/mi"]
+
+	expect List.all(pace_target_units, |u| !(List.is_empty(pace_unit_families(u))))
+
 	pace_unit_families : Str -> List(Str)
 	pace_unit_families = |unit|
 		if (unit == "/km" or unit == "/mi") ["Run", "Walk"]

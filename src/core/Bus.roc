@@ -8,6 +8,8 @@
 # two can never disagree about what a directive's life is. ADR 0017 puts
 # cross-surface READ semantics in views; the lifecycle is writes, and a view
 # cannot hold an UPDATE, so its one definition is a pure module both import.
+import Sports
+
 Bus :: [].{
 	# the freshness window the poll enforces and the number the window
 	# publishes both read this, so the published contract cannot drift from
@@ -134,13 +136,46 @@ Bus :: [].{
 	capture_refusal : Str -> Str
 	capture_refusal = |c| if (c == "" or List.contains(capture_kinds, c)) "" else "capture ${c} not png/webm_start/webm_stop"
 
-	# the families the power view draws a curve for, and the refusal a
-	# directive's family earns before any window judges it: '' asks for no
-	# change, the two families pass, anything else is named with the vocabulary
-	curve_families : List(Str)
-	curve_families = ["Ride", "Rowing"]
+	# The curve a directive's `family` names: a sport family's head
+	# ('Ride', 'Rowing', 'Run', ...) asks for that family's POWER curve, and
+	# 'pace:' followed by a sport_type ('pace:Run', 'pace:Swim') asks for that
+	# sport's SPEED curve. Speed is keyed by the exact sport type because
+	# critical speed is fitted per sport: a pool swim and an open-water swim
+	# do not share a speed model. Only the families whose speed is their
+	# effort take a pace curve - a ride's speed follows the terrain.
+	pace_prefix : Str
+	pace_prefix = "pace:"
+
+	CurveKey : [Power(Str), Pace(Str)]
+
+	curve_key : Str -> CurveKey
+	curve_key = |k|
+		if (Str.starts_with(k, pace_prefix)) Pace(Str.drop_prefix(k, pace_prefix))
+		else Power(k)
+
+	pace_key : Str -> Str
+	pace_key = |sport_type| Str.concat(pace_prefix, sport_type)
+
+	# the family heads Sports names, and the sport types whose family reads
+	# its effort as pace
+	family_heads : List(Str)
+	family_heads = List.keep_oks(Sports.families, |f| List.first(f.sports))
+
+	pace_sport_types : List(Str)
+	pace_sport_types = List.keep_if(List.join(List.map(Sports.families, |f| f.sports)), |s| List.contains(["Run", "Walk", "Swim", "Rowing"], Sports.canonical(s)))
+
+	# the refusal a directive's family earns before any window judges it:
+	# '' asks for no change, a family head or a pace key over a pace sport
+	# passes, anything else is named with the vocabulary. Whether the
+	# athlete has data for a valid key is the window's judgement, since only
+	# it holds the data
 	family_refusal : Str -> Str
-	family_refusal = |f| if (f == "" or List.contains(curve_families, f)) "" else "family ${f} not Ride/Rowing"
+	family_refusal = |f|
+		if (f == "") ""
+		else match curve_key(f) {
+			Power(fam) => if (List.contains(family_heads, fam)) "" else "family ${f} not a sport family or pace:<sport>"
+			Pace(sp) => if (List.contains(pace_sport_types, sp)) "" else "family ${f} not a pace sport"
+		}
 
 	focus_upsert_sql : Str
 	focus_upsert_sql = "INSERT INTO viz_focus (id, updated_at, view, range, cursor_day, trace_day, ghost_day, trace_id, ghost_id, detail_day, sport, family, curve_family) VALUES (1, datetime('now'), :v, :rg, NULLIF(:cd, ''), NULLIF(:td, ''), NULLIF(:gd, ''), NULLIF(:ti, -1), NULLIF(:gi, -1), NULLIF(:dd, ''), NULLIF(:sp, ''), NULLIF(:fm, ''), NULLIF(:cf, '')) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, view = excluded.view, range = excluded.range, cursor_day = excluded.cursor_day, trace_day = excluded.trace_day, ghost_day = excluded.ghost_day, trace_id = excluded.trace_id, ghost_id = excluded.ghost_id, detail_day = excluded.detail_day, sport = excluded.sport, family = excluded.family, curve_family = excluded.curve_family"
@@ -201,8 +236,12 @@ expect Str.contains(Bus.mark_sql, "result = NULLIF(:r, '')") and Str.contains(Bu
 expect Bus.capture_refusal("") == "" and Bus.capture_refusal("png") == "" and Bus.capture_refusal("webm_start") == "" and Bus.capture_refusal("webm_stop") == ""
 expect Bus.capture_refusal("gif") == "capture gif not png/webm_start/webm_stop"
 
-# the family vocabulary: nothing asked, the two curve families, and anything
-# else refused by name; the winner reads what was asked for
-expect Bus.family_refusal("") == "" and Bus.family_refusal("Ride") == "" and Bus.family_refusal("Rowing") == ""
-expect Bus.family_refusal("Run") == "family Run not Ride/Rowing"
+# the family vocabulary: nothing asked, any family head, a pace key over a
+# pace sport, and anything else refused by name; the winner reads what was
+# asked for
+expect Bus.family_refusal("") == "" and Bus.family_refusal("Ride") == "" and Bus.family_refusal("Rowing") == "" and Bus.family_refusal("Run") == "" and Bus.family_refusal("Swim") == ""
+expect Bus.family_refusal("pace:Run") == "" and Bus.family_refusal("pace:OpenWaterSwim") == "" and Bus.family_refusal("pace:VirtualRow") == "" and Bus.family_refusal("pace:Hike") == ""
+expect Bus.family_refusal("Bike") == "family Bike not a sport family or pace:<sport>" and Bus.family_refusal("GravelRide") == "family GravelRide not a sport family or pace:<sport>"
+expect Bus.family_refusal("pace:Ride") == "family pace:Ride not a pace sport" and Bus.family_refusal("pace:") == "family pace: not a pace sport"
+expect Bus.curve_key("pace:Swim") == Pace("Swim") and Bus.curve_key("Ride") == Power("Ride") and Bus.pace_key("Run") == "pace:Run"
 expect Str.contains(Bus.winner_sql, "AS fm, ")

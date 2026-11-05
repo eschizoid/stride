@@ -315,6 +315,31 @@ Schema :: [].{
 		\\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '60min' AS rung, 3600 AS secs, m.best_3600s_w AS watts
 		\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_3600s_w, 0) > 0
 
+	# the speed twin of the power ladder: one row per activity per recorded
+	# speed rung, in m/s, keyed by the exact sport_type as well as the family
+	# - critical speed is fitted per sport, since a pool swim and an
+	# open-water swim do not share a speed model. The rung list stands beside
+	# it for the same reason power_ladder_rungs does, and the two are pinned
+	# equal by the e2e suite.
+	pace_ladder_rungs_drop =
+		\\DROP VIEW IF EXISTS pace_ladder_rungs
+	pace_ladder_rungs =
+		\\CREATE VIEW pace_ladder_rungs AS
+		\\SELECT '5min' AS rung, 300 AS secs UNION ALL SELECT '10min', 600 UNION ALL SELECT '20min', 1200
+
+	activity_pace_ladder_drop =
+		\\DROP VIEW IF EXISTS activity_pace_ladder
+	activity_pace_ladder =
+		\\CREATE VIEW activity_pace_ladder AS
+		\\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '5min' AS rung, 300 AS secs, m.best_300s_speed AS speed
+		\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_300s_speed, 0) > 0
+		\\UNION ALL
+		\\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '10min' AS rung, 600 AS secs, m.best_600s_speed AS speed
+		\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_600s_speed, 0) > 0
+		\\UNION ALL
+		\\SELECT a.id AS activity_id, substr(a.start_local, 1, 10) AS day, a.start_local AS start_local, a.sport_type AS sport_type, a.sport_family AS sport_family, '20min' AS rung, 1200 AS secs, m.best_20min_speed AS speed
+		\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id WHERE COALESCE(m.best_20min_speed, 0) > 0
+
 	# twelve Monday weeks of load and CTL slope: the week's TSS, its
 	# end-of-week CTL, and the ramp (CTL change vs the prior week's end).
 	# Anchored on week_bounds; empty weeks materialize as zero rows.

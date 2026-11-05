@@ -258,7 +258,7 @@ Db :: [].{
 	# bump when the schema changes; ensure_schema! re-runs migrations when the db's
 	# PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 	# that post-date the original CREATE statements in Schema.roc.)
-	schema_version = 42
+	schema_version = 43
 
 	run_migrations! : Str => Try({}, _)
 	run_migrations! = |path| {
@@ -494,6 +494,11 @@ Db :: [].{
 		Sql.execute!({ path: Path.utf8(path), query: Schema.power_ladder_rungs, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.activity_power_ladder_drop, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.activity_power_ladder, bindings: [] })?
+		# v43: the speed ladder and its rung list, the pace view's twin of the two above
+		Sql.execute!({ path: Path.utf8(path), query: Schema.pace_ladder_rungs_drop, bindings: [] })?
+		Sql.execute!({ path: Path.utf8(path), query: Schema.pace_ladder_rungs, bindings: [] })?
+		Sql.execute!({ path: Path.utf8(path), query: Schema.activity_pace_ladder_drop, bindings: [] })?
+		Sql.execute!({ path: Path.utf8(path), query: Schema.activity_pace_ladder, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.weekly_ramp_drop, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.weekly_ramp, bindings: [] })?
 		# v32: the career trio - totals per sport and month load here; the
