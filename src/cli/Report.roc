@@ -227,6 +227,32 @@ Report :: [].{
 		})?
 		Ok(n > 0)
 	}
+
+	# Strength-family activities from the last `strength_missing_window_days` local
+	# days that have no stored set rows, newest first. Strava's API never returns a
+	# strength log's sets, so these are the sessions a coach still has to import
+	# through `stride strength import` (or the athlete has to paste). The family is
+	# the same stored `sport_family` gate the set rebuild reads, so a sport counts
+	# here exactly when its sets would count anywhere else.
+	strength_missing_window_days : I64
+	strength_missing_window_days = 30
+
+	strength_without_sets_ids! : Str => Try(List(I64), _)
+	strength_without_sets_ids! = |path| {
+		cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - strength_missing_window_days)
+		fam = (List.first(Sports.family("strength"))).ok_or("")
+		Sql.query_many!({
+			path: Path.utf8(path),
+			query: \\SELECT a.id AS id FROM activities a
+				\\WHERE a.sport_family = :fam
+				\\  AND a.start_local >= :cutoff
+				\\  AND NOT EXISTS (SELECT 1 FROM strength_sets s WHERE s.activity_id = a.id)
+				\\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}, a.id DESC
+			,
+			bindings: [{ name: ":fam", value: String(fam) }, { name: ":cutoff", value: String(cutoff) }],
+			rows: Sql.i64("id"),
+		})
+	}
 	# The daily_load.day guard. BOTH halves — canonical and parseable — because the
 	# non-canonical day is the dangerous one: `ORDER BY day DESC` is a string sort,
 	# so "2026-3-05" beats every "2026-08-xx" and becomes `latest`.

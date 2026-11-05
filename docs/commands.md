@@ -80,7 +80,7 @@ _What were my best sessions?_ Ranks activities (default top 10) by a metric — 
 
 ### `stride doctor`
 
-_Can I trust my data?_ Coverage (HR/power/streams/ratings), how each activity was scored and the **measured-vs-estimated confidence split**, config gaps (HR zones), streams still pending, and the active time anchor. Every gap says what, why, and the fix.
+_Can I trust my data?_ Coverage (HR/power/streams/ratings), how each activity was scored and the **measured-vs-estimated confidence split**, config gaps (HR zones), streams still pending, strength sessions of the last 30 days with no sets yet (by id, so they can be imported), and the active time anchor. Every gap says what, why, and the fix.
 
 ### `stride zones` (alias `stride pz`)
 
@@ -155,7 +155,7 @@ The adaptation loop.
 
 ### `stride plan`
 
-_What should I do next?_ One call bundling `summary` + every open session + the last 14 days of activities — the complete planning context.
+_What should I do next?_ One call bundling `summary` + every open session + the last 14 days of activities — the complete planning context — plus what is still owed: activities awaiting metrics or streams, and recent strength sessions with no sets yet.
 
 ### `stride week` / `stride week all`
 

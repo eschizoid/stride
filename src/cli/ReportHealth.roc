@@ -142,26 +142,11 @@ ReportHealth :: [].{
 				\\       COALESCE(SUM(CASE WHEN s.activity_id IS NOT NULL AND s.raw_json <> '{}' THEN 1 ELSE 0 END), 0) AS with_streams,
 				\\       COALESCE(SUM(CASE WHEN m.activity_id IS NULL THEN 1 ELSE 0 END), 0) AS unanalyzed,
 				\\       COALESCE(SUM(CASE WHEN COALESCE(m.tss, 0) = 0 AND m.activity_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS zero_load,
-				\\       -- rows whose start_local cannot be read (#265). doctor is the
-				\\       -- command a stuck user reaches for, and it reported a clean engine
-				\\       -- on databases where analyze, summary, season, plan, stats and week
-				\\       -- all refused — every one of those messages naming a remedy the
-				\\       -- user has to apply BY ID, which doctor had and did not say.
-				\\       --
-				\\       -- TWO counts, because there are two populations and this file used to
-				\\       -- claim they were one. The comment here said "same predicate as the
-				\\       -- ORDER BY hoist in ReportSessions, and it has to be" — true when it
-				\\       -- was written, false from #255, which gave the hoist a TIME half the
-				\\       -- count never grew. A row like 2026-08-23T37:00:00Z was hoisted to the
-				\\       -- top of `activities` as needing repair while doctor reported zero
-				\\       -- undateable, so the listing led with a row the health report said
-				\\       -- nothing was wrong with (#282).
-				\\       --
-				\\       -- `undateable` keeps its narrow meaning, matching the published
-				\\       -- `date_known`; `unrankable` is the hoist's own predicate, so it
-				\\       -- counts exactly what `activities` leads with. Both are COUNTS and not
-				\\       -- verdicts — ADR 0012 puts "is this a problem?" on the coach's side —
-				\\       -- and the pointer to the ids is a command rather than a list here.
+				\\       -- two populations of rows the engine cannot place in time: `undateable`
+				\\       -- matches the published `date_known` (the date itself will not parse), and
+				\\       -- `unrankable` is the ORDER BY hoist's own predicate (date or clock unusable),
+				\\       -- a superset that counts exactly what `activities` lists first. Counts, not
+				\\       -- verdicts (ADR 0012); the ids come from `activities`.
 				\\       COALESCE(SUM(1 - ${Report.date_known_sql}), 0) AS undateable,
 				\\       COALESCE(SUM(CASE WHEN ${Report.rankable_sql} THEN 0 ELSE 1 END), 0) AS unrankable
 				\\FROM activities a
@@ -195,19 +180,9 @@ ReportHealth :: [].{
 			path: Path.utf8(path),
 			query: \\-- confidence tiers derived from load_model at read time (not stored): high =
 				\\-- measured power or distance-measured pace (rtss), medium = HR/RPE, low =
-				\\-- relative_effort, none = unscored. The e2e cross-checks the 'high' count
-				\\-- against this rung list, and all FOUR rungs are guarded: dropping any of
-				\\-- them fails the suite. That took one fixture row per rung reaching doctor
-				\\-- alive -- avg_watts was hidden by body ORDER, rtss by b_period_pace!
-				\\-- deleting its own pace-scored swims before doctor runs. Two earlier
-				\\-- versions of this comment guessed at causes instead (a missing fixture,
-				\\-- then an underivable threshold, then the wrong SQL arm); a threshold speed
-				\\-- derives from a single activity via period_threshold_sql's TRAILING-60-day
-				\\-- arm, whose `b2.start_local <= a.start_local` includes the activity's own
-				\\-- row -- not the cold-start forward-fill, which can be deleted outright with
-				\\-- the suite still green. Adding a rung here
-				\\-- needs a fixture row that SURVIVES to b_doctor!, or the guard silently
-				\\-- stops covering it.
+				\\-- relative_effort, none = unscored. The e2e cross-checks the high count against
+				\\-- this rung list with one fixture row per rung that survives to b_doctor!, so a
+				\\-- new rung here needs its own surviving fixture row or the guard stops covering it.
 				\\SELECT COALESCE(SUM(CASE WHEN load_model IN (${Report.high_models_sql}) THEN 1 ELSE 0 END),0) AS hi,
 				\\       COALESCE(SUM(CASE WHEN load_model IN (${Report.medium_models_sql}) THEN 1 ELSE 0 END),0) AS med,
 				\\       COALESCE(SUM(CASE WHEN load_model IN (${Report.low_models_sql}) THEN 1 ELSE 0 END),0) AS lo,
@@ -255,6 +230,7 @@ ReportHealth :: [].{
 		})?
 		strength_unrated = List.len(List.keep_if(sports, |r| Sports.class(r.sport) == StrengthLike and r.rated == 0))
 		rated_total = List.len(List.keep_if(sports, |r| r.rated == 1))
+		missing_sets = Report.strength_without_sets_ids!(path)?
 		# ── data-quality watchdog (#92): streaks and counts the engine already knows ──
 		# Anchored to the LOCAL day like every other window, not SQLite's `now`, so a user
 		# west of UTC does not get a window that ends tomorrow.
@@ -373,6 +349,8 @@ ReportHealth :: [].{
 			unrankable_activities: cov.unrankable,
 			rated: rated_total,
 			strength_unrated: strength_unrated.to_i64_wrap(),
+			strength_without_sets: (List.len(missing_sets)).to_i64_wrap(),
+			strength_without_sets_ids: missing_sets,
 			scored_by: models,
 			conf_high: conf.hi,
 			conf_medium: conf.med,
@@ -380,20 +358,15 @@ ReportHealth :: [].{
 			conf_none: conf.non,
 			pending_streams: pending,
 			streams_retry_capped: capped,
-			# What `analyze` would recompute right now, beside what it has never scored at all
-			# (#238): `unanalyzed` is `m.activity_id IS NULL`, right for a COVERAGE field, but
-			# it read 0 on a database where every row was due after a metrics_rev bump (735
-			# pending). Shares Analyze.pending_metrics_count! with `plan`, so the two commands
-			# cannot disagree and it is the same predicate `analyze` selects rows with.
+			# What `analyze` would recompute right now, beside `unanalyzed` (rows never scored):
+			# after a changed FTP or metrics_rev every row is due while `unanalyzed` stays 0.
+			# Shares Analyze.pending_metrics_count! with `plan` and with `analyze` itself, so
+			# the three cannot disagree; that predicate reads stream byte lengths, so its cost
+			# grows with stored streams.
 			awaiting_metrics: awaiting.count,
 			awaiting_metrics_known: awaiting.known,
-			# Measured ~89ms on a 735-activity db, roughly doubling doctor: LENGTH(s.raw_json)
-			# in the shared predicate scales with stream BYTES. Paid deliberately — a narrower
-			# predicate than `analyze` uses would forfeit the cannot-disagree property, and
-			# doctor is run by hand.
-			# WHY the count is unknown, which is the point of the DIAGNOSTIC command: `plan`
-			# degrades silently and correctly; a bare `known: false` would move the question
-			# here. "" when the count was computed.
+			# why the count is unknown, which `plan` cannot say because it degrades to
+			# `known: false`; "" when the count was computed
 			config_error: awaiting.problem,
 			ftp_derived_sports: cfg.derived_ftp_sports,
 			zones_set: cfg.zones_set >= 4,
@@ -420,22 +393,21 @@ ReportHealth :: [].{
 						["", "  → ${(p.strength_unrated).to_str()} strength-class sessions have no rating — `stride rate <id> <1-10>` scores them honestly"]
 					else
 						[]
-				# A LIST that is empty or one element, like `hint` above, rather than a string
-				# that is empty or a sentence — so `""` keeps meaning "deliberate section spacer"
-				# everywhere in this screen. The `else ""` + filter-empties version removed all
-				# SIX spacers and detached the footer, while every e2e check on this screen is a
-				# single-line Str.contains and stayed green.
+				missing_sets_hint =
+					if (p.strength_without_sets > 0)
+						["", "  → ${(p.strength_without_sets).to_str()} strength sessions in the last ${(Report.strength_missing_window_days).to_str()} days have no sets: ${Str.join_with(List.map(p.strength_without_sets_ids, |i| i.to_str()), ", ")} — paste the share summary into the description, or `stride strength import` the Strava log"]
+					else
+						[]
+				# a list of zero or one lines, like `hint` above, so `""` keeps meaning
+				# "deliberate section spacer" everywhere in this screen
 				undateable =
 					if (p.undateable_activities > 0)
 						["  activities with an unreadable date: ${(p.undateable_activities).to_str()} — `stride activities` lists them first; `stride sync --all` replaces each one Strava still lists"]
 					else
 						[]
-				# ...and the WIDER count on its own line: `activities` led with rows whose date
-				# parsed fine and whose clock did not, while this section read as "nothing else is
-				# wrong" (#282). Printed as the REMAINDER — the populations are nested, and 4
-				# under 3 invites subtraction. SELF-CONTAINED when it prints alone: the undateable
-				# line it would otherwise borrow the repair pointer from is suppressed at zero,
-				# and on the real database a lone bad-clock row is the ONLY path such a row can take.
+				# the activities with a readable date but an unusable clock, printed as the
+				# remainder over the undateable line because the two populations are nested;
+				# when it prints alone it carries the repair pointer itself
 				unrankable =
 					if (p.unrankable_activities > p.undateable_activities)
 						if (p.undateable_activities > 0)
@@ -492,13 +464,8 @@ ReportHealth :: [].{
 							},
 							"  streams still pending: ${(p.pending_streams).to_str()} — run `stride sync` to keep draining them",
 						],
-						# ONLY when there are any (#265). Every other line here reports a number
-						# that is meaningful at zero — "0 not yet analyzed" is a clean bill —
-						# but this one is a fault count, and printing "0 undateable" on every
-						# healthy run trains the eye to skip the row on the day it is not zero.
-						# That is the same argument `plan`'s freshness note makes for staying
-						# silent. Names the command rather than the ids, because `activities`
-						# now leads with these rows.
+						# fault counts, printed only when non-zero: a zero here is the healthy case
+						# and a row of zeros on every run trains the eye to skip it
 						undateable,
 						unrankable,
 						capped_line,
@@ -507,6 +474,7 @@ ReportHealth :: [].{
 							"  time: ${p.time}",
 						],
 						hint,
+						missing_sets_hint,
 					]),
 					"\n",
 				)

@@ -317,14 +317,15 @@
       }
     },
     "data_freshness": {
-      "description": "Whether the facts in this payload are current, as four measurements rather than a verdict — what counts as too stale depends on the question being asked, and ADR 0012 puts that judgement on the coach's side of the line. Present so a planning turn need not spend a second call on `doctor`.",
+      "description": "Whether the facts in this payload are current, and what work is still owed before they are: measurements rather than a verdict, since what counts as too stale depends on the question being asked and ADR 0012 puts that judgement on the coach's side of the line. Present so a planning turn need not spend a second call on `doctor`.",
       "type": "object",
       "required": [
         "newest_activity",
         "last_sync",
         "activities_awaiting_metrics",
         "activities_awaiting_metrics_known",
-        "activities_awaiting_streams"
+        "activities_awaiting_streams",
+        "strength_without_sets_ids"
       ],
       "additionalKeys": false,
       "properties": {
@@ -347,6 +348,13 @@
         "activities_awaiting_streams": {
           "type": "integer",
           "description": "How many activities `sync` would still fetch streams for. Same count doctor reports as pending_streams."
+        },
+        "strength_without_sets_ids": {
+          "type": "array",
+          "description": "Strength-family activities from the last 30 local days with no stored sets, newest first: the ids to fetch from the Strava app log and pass to `stride strength import`. The same list doctor reports as strength_without_sets_ids.",
+          "items": {
+            "type": "integer"
+          }
         }
       }
     }
