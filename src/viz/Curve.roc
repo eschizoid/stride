@@ -1,6 +1,8 @@
 import rr.Color
 import rr.Draw
 import rr.Text
+import core.Fmt
+import Db
 import Theme
 import Ui
 
@@ -96,7 +98,7 @@ Curve :: [].{
 					{ pr, now_w, prev_w, i }
 				},
 			)
-			w_hi = List.fold(rungs, 1.0, |a, r| F32.max(a, F32.max(I64.to_f32(r.pr.w), F32.max(I64.to_f32(r.now_w), I64.to_f32(r.prev_w))))) * 1.08
+			w_hi = F32.max(List.fold(rungs, 1.0, |a, r| F32.max(a, F32.max(I64.to_f32(r.pr.w), F32.max(I64.to_f32(r.now_w), I64.to_f32(r.prev_w))))), List.fold(model.plan_targets, 1.0, |a, t| F32.max(a, I64.to_f32(t.watts)))) * 1.08
 			nlast = List.len(rungs) - 1
 			cx = |i| if (nlast == 0) (pad_l + pw / 2.0) else pad_l + pw * U64.to_f32(i) / U64.to_f32(nlast)
 			cy = |w| pad_t + ph * (1.0 - w / w_hi)
@@ -121,13 +123,13 @@ Curve :: [].{
 					} else {},
 			)
 			# CP from the window's fit, dashed - the blue curve should flatten
-			# toward it, and a fit far from the long rungs is visibly wrong.
-			# A weak fit (r2 under 0.9) draws dimmed: the footer already admits
-			# the r2, and a confident stroke over a shaky fit would outrank it.
+			# toward it, and a fit far from the long rungs is visibly wrong. The
+			# loader zeroes fit_cp unless the fit is usable (fit_usable), and the
+			# footer then says why instead
 			if model.fit_cp > 0.0 and model.fit_cp < w_hi {
 				cpy = cy(model.fit_cp)
-				cp_a = if (model.fit_r2 < 0.9) (55) else 120
-				cp_lbl_c = if (model.fit_r2 < 0.9) (Color.with_alpha(tsb_c, 140)) else tsb_c
+				cp_a = 120
+				cp_lbl_c = tsb_c
 				List.for_each!(
 					List.map_with_index(List.repeat({}, 60), |_u, k| k),
 					|k| {
@@ -182,6 +184,39 @@ Curve :: [].{
 						Err(_) => {}
 					},
 			)
+			# planned targets on the curve: a gold ring at the rep duration and the
+			# target watts, labelled with the day and the share of this window's
+			# best at that duration, so a prescription reads against what the
+			# athlete has done. Hovering a ring names the session and takes the
+			# tooltip line from the rungs.
+			rung_secs = List.map(rungs, |r| r.pr.secs)
+			now_pts = List.map(rungs, |r| { secs: r.pr.secs, w: r.now_w })
+			tx = |t| {
+				p = rung_pos(rung_secs, t.dur_s)
+				if (nlast == 0) (pad_l + pw / 2.0) else pad_l + pw * p / U64.to_f32(nlast)
+			}
+			tgt_hover = List.find_first(model.plan_targets, |t| F32.abs(model.mouse_x - tx(t)) <= 8.0 and F32.abs(model.mouse_y - cy(I64.to_f32(t.watts))) <= 8.0)
+			tgt_hovering = match tgt_hover {
+				Ok(_) => Bool.True
+				Err(_) => Bool.False
+			}
+			List.for_each!(
+				List.map_with_index(model.plan_targets, |t, i| { t, i }),
+				|x| {
+					mx = tx(x.t)
+					my = cy(I64.to_f32(x.t.watts))
+					best = best_at(now_pts, x.t.dur_s)
+					frame.circle!({ center: { x: mx, y: my }, radius: 6.0, style: Draw.filled(Color.with_alpha(Theme.gold_c, 200)) })
+					frame.circle!({ center: { x: mx, y: my }, radius: 3.0, style: Draw.filled(Theme.bg) })
+					lbl = target_label(x.t, best)
+					lw = model.font.measure({ text: lbl, size: 10.0, spacing: Text.default_spacing }).width
+					Text.from(lbl, model.font).size(10).draw!(frame, { pos: { x: label_center_within(mx, lw / 2.0, pad_l, pad_l + pw - label_inset), y: my + 10.0 + U64.to_f32(x.i % 2) * 12.0 }, color: Theme.gold_c, align: (Top, Center) })
+				},
+			)
+			match tgt_hover {
+				Ok(t) => Text.from(target_tip(t, best_at(now_pts, t.dur_s)), model.font).size(12).draw!(frame, { pos: { x: 36.0, y: 92.0 }, color: Color.white, align: (Top, Left) })
+				Err(_) => {}
+			}
 			# a record set in the last seven calendar days is NEWS: the rung
 			# earns a pulsing gold ring. Heat carries one row per day, so its
 			# last seven entries ARE the last seven days.
@@ -247,7 +282,7 @@ Curve :: [].{
 					Text.from(r.pr.rung, model.font).size(12).draw!(frame, { pos: { x: cx(r.i), y: pad_t + ph - 18.0 }, color: ink_faint, align: (Top, Center) })
 					# hover the rung's column: the full story under the title
 					half = if (nlast == 0) (pw / 2.0) else pw / U64.to_f32(nlast) / 2.0
-					if model.mouse_x >= cx(r.i) - half and model.mouse_x < cx(r.i) + half and model.mouse_y >= pad_t and model.mouse_y <= pad_t + ph {
+					if model.mouse_x >= cx(r.i) - half and model.mouse_x < cx(r.i) + half and model.mouse_y >= pad_t and model.mouse_y <= pad_t + ph and !tgt_hovering {
 						now_txt = if (r.now_w > 0) ("   now ${I64.to_str(r.now_w)}w") else "   not ridden this window"
 						prev_txt = if (r.prev_w > 0) ("   prev ${I64.to_str(r.prev_w)}w") else ""
 						tip = if (r.pr.w > 0) ("${r.pr.rung}   best ${I64.to_str(r.pr.w)}w set ${r.pr.day}${now_txt}${prev_txt}") else "${r.pr.rung}   never ridden"
@@ -258,6 +293,104 @@ Curve :: [].{
 		}
 		model.curve_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 		Ok({})
+	}
+
+	# A CP fit is drawn only when it is usable: r2 at or above fit_r2_min and
+	# W' inside a physiologically plausible band. A fit through steady class
+	# bests rather than maximal ones returns a W' of a few kJ, far below any
+	# rider's anaerobic capacity, and a CP line drawn from it reads as a
+	# threshold the data does not support.
+	fit_r2_min : F32
+	fit_r2_min = 0.9
+	w_prime_lo : F32
+	w_prime_lo = 5000.0
+	w_prime_hi : F32
+	w_prime_hi = 40000.0
+
+	# r2 to two decimals, cut toward zero and signed: one decimal reads 0.95
+	# as 1.0, and rounding would show a fit just under the 0.9 floor as 0.90.
+	# An r2 below zero (a fit worse than the mean) keeps its sign. The 1e-4
+	# nudge keeps an F32 a hair under a two-decimal value (0.84 is stored as
+	# 0.8399999) from cutting down a whole hundredth.
+	r2_str : F32 -> Str
+	r2_str = |v| match F32.round_to_i64_try(F32.div_floor_by((if (v < 0.0) -v else v) * 100.0 + 0.0001, 1.0)) {
+		Ok(a) => {
+			sign = if (v < 0.0 and a > 0) "-" else ""
+			"${sign}${I64.to_str(a // 100)}.${if (a % 100 < 10) "0" else ""}${I64.to_str(a % 100)}"
+		}
+		Err(_) => "?"
+	}
+
+	fit_usable : Db.Fit -> Bool
+	fit_usable = |fit| fit.ok and fit.r2 >= fit_r2_min and fit.w_prime >= w_prime_lo and fit.w_prime <= w_prime_hi
+
+	# the footer under the curve: the fit's numbers when it is usable, and
+	# otherwise what is wrong with it and the effort that would fix it, with
+	# how long ago the window's 20-minute best was set (-1: none in the window)
+	fit_caption : Db.Fit, I64 -> Str
+	fit_caption = |fit, best20_age|
+		if (!fit.ok) "CP fit unavailable - the engine did not answer"
+		else if (fit_usable(fit)) "CP ${Db.fmt_f(fit.cp)} W - W' ${Db.fmt_f(fit.w_prime / 1000.0)} kJ - fit r2 ${r2_str(fit.r2)} from ${Db.fmt_i(fit.points)} bests"
+		else {
+			why = "no usable CP fit (r2 ${r2_str(fit.r2)}, W' ${Db.fmt_f(fit.w_prime / 1000.0)} kJ)"
+			when = if (best20_age < 0) "no 20-min best in this window" else if (best20_age == 0) "20-min best set today" else if (best20_age == 1) "20-min best set 1 day ago" else "20-min best set ${I64.to_str(best20_age)} days ago"
+			"${why} - ${when}; an all-out 20 minutes would anchor it"
+		}
+
+	# where a duration sits on the rung axis, as a fractional rung index:
+	# linear in seconds between the two rungs around it, clamped to the
+	# first and last rung
+	rung_pos : List(I64), I64 -> F32
+	rung_pos = |secs, d| {
+		n = List.len(secs)
+		first = List.first(secs) ?? 0
+		last = List.last(secs) ?? 0
+		if (n == 0) 0.0
+		else if (d <= first) 0.0
+		else if (d >= last) (U64.to_f32(n - 1))
+		else
+			List.fold(
+				List.map_with_index(secs, |s, i| { s, i }),
+				0.0,
+				|acc, x| match List.get(secs, x.i + 1) {
+					Ok(nx) => if (d >= x.s and d < nx) (U64.to_f32(x.i) + I64.to_f32(d - x.s) / I64.to_f32(nx - x.s)) else acc
+					Err(_) => acc
+				},
+			)
+	}
+
+	# the window's best at a duration between rungs: linear between the two
+	# rungs around it, and 0 when either has no value this window
+	best_at : List({ secs : I64, w : I64 }), I64 -> F32
+	best_at = |pts, d|
+		match List.find_first(pts, |p| p.secs == d) {
+			Ok(p) => I64.to_f32(p.w)
+			Err(_) =>
+				List.fold(
+					List.map_with_index(pts, |p, i| { p, i }),
+					0.0,
+					|acc, x| match List.get(pts, x.i + 1) {
+						Ok(nx) =>
+							if (d > x.p.secs and d < nx.secs and x.p.w > 0 and nx.w > 0) (I64.to_f32(x.p.w) + I64.to_f32(nx.w - x.p.w) * I64.to_f32(d - x.p.secs) / I64.to_f32(nx.secs - x.p.secs))
+							else acc
+						Err(_) => acc
+					},
+				)
+		}
+
+	# a planned target's marker label: its day, watts, and its share of the
+	# window's best at the rep duration (omitted when the window has none)
+	target_label : Db.Target, F32 -> Str
+	target_label = |t, best| {
+		mmdd = Str.from_utf8_lossy(List.drop_first(Str.to_utf8(t.day), 5))
+		pct = if (best <= 0.0) "" else " ${Db.fmt_i(I64.to_f32(t.watts) / best * 100.0)}%"
+		"${mmdd} ${I64.to_str(t.watts)}W${pct}"
+	}
+
+	target_tip : Db.Target, F32 -> Str
+	target_tip = |t, best| {
+		share = if (best <= 0.0) "no window best at that duration" else "${Db.fmt_i(I64.to_f32(t.watts) / best * 100.0)}% of this window's best at that duration"
+		"${t.day} ${t.typ}: ${I64.to_str(t.reps)}x${Fmt.mmss(t.dur_s)} @ ${I64.to_str(t.watts)}W - ${share}"
 	}
 
 	# a label keeps this much plot between itself and the right edge, so it
@@ -384,3 +517,30 @@ expect {
 		and pair(Curve.layout_intros([prev])) == [("previous window", 92.0)]
 		and Curve.top_clear(100.5, 10.0, [{ top: 100.0, bot: 111.0 }]) == 111.0
 }
+# a fit is usable at the r2 floor with a W' inside the band, and not a hair
+# below either edge; an unanswered fit never is
+expect Curve.fit_usable({ cp: 250.0, w_prime: 15000.0, r2: 0.9, points: 3.0, ok: Bool.True })
+expect !Curve.fit_usable({ cp: 250.0, w_prime: 15000.0, r2: 0.89, points: 3.0, ok: Bool.True })
+expect !Curve.fit_usable({ cp: 253.0, w_prime: 2980.0, r2: 0.95, points: 3.0, ok: Bool.True })
+expect !Curve.fit_usable({ cp: 250.0, w_prime: 40001.0, r2: 0.95, points: 3.0, ok: Bool.True })
+expect Curve.fit_usable({ cp: 250.0, w_prime: 5000.0, r2: 0.95, points: 3.0, ok: Bool.True })
+expect !Curve.fit_usable({ cp: 250.0, w_prime: 15000.0, r2: 0.95, points: 3.0, ok: Bool.False })
+# a weak fit's footer says what is wrong and when the 20-minute best was set
+expect Curve.fit_caption({ cp: 252.9, w_prime: 2980.0, r2: 0.84, points: 3.0, ok: Bool.True }, 9) == "no usable CP fit (r2 0.84, W' 3.0 kJ) - 20-min best set 9 days ago; an all-out 20 minutes would anchor it"
+expect Curve.fit_caption({ cp: 252.9, w_prime: 2980.0, r2: 0.84, points: 3.0, ok: Bool.True }, -1) == "no usable CP fit (r2 0.84, W' 3.0 kJ) - no 20-min best in this window; an all-out 20 minutes would anchor it"
+expect Curve.fit_caption({ cp: 250.0, w_prime: 15000.0, r2: 0.95, points: 3.0, ok: Bool.True }, 9) == "CP 250.0 W - W' 15.0 kJ - fit r2 0.95 from 3 bests"
+# a rep duration between rungs sits between them, linearly in seconds;
+# outside the ladder it clamps to the ends
+expect Curve.rung_pos([5, 15, 30, 60, 300, 600, 1200, 3600], 900) == 5.5
+expect Curve.rung_pos([5, 15, 30, 60, 300, 600, 1200, 3600], 1200) == 6.0
+expect Curve.rung_pos([5, 15, 30, 60, 300, 600, 1200, 3600], 2) == 0.0
+expect Curve.rung_pos([5, 15, 30, 60, 300, 600, 1200, 3600], 7200) == 7.0
+# the window best between two rungs is read off the line joining them, and
+# is absent when either rung has no value
+expect (Curve.best_at([{ secs: 600, w: 260 }, { secs: 1200, w: 254 }], 900) - 257.0).abs() < 0.001
+expect Curve.best_at([{ secs: 600, w: 0 }, { secs: 1200, w: 254 }], 900) == 0.0
+expect Curve.best_at([{ secs: 600, w: 260 }, { secs: 1200, w: 254 }], 1200) == 254.0
+expect Curve.target_label({ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }, 257.0) == "11-05 225W 88%"
+expect Curve.target_label({ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }, 0.0) == "11-05 225W"
+expect Curve.target_tip({ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }, 257.0) == "2026-11-05 threshold: 2x15:00 @ 225W - 88% of this window's best at that duration"
+expect Curve.r2_str(0.84) == "0.84" and Curve.r2_str(0.9) == "0.90" and Curve.r2_str(0.05) == "0.05" and Curve.r2_str(1.0) == "1.00" and Curve.r2_str(0.899) == "0.89" and Curve.r2_str(0.8999) == "0.89" and Curve.r2_str(-0.253) == "-0.25"

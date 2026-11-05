@@ -206,7 +206,7 @@ load_logo! = |acc, boot|
 # face, so a window that cannot reach the athlete's data says why.
 skeleton : Str -> _
 skeleton = |err|
-	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], ph: "", rw: [], csp: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric }
+	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], ph: "", b20: -1, tg: [], rw: [], csp: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric }
 
 # boot=True builds the instant skeleton the splash renders over: no database
 # and no engine call - the window opens on frame one and the real load runs
@@ -253,6 +253,8 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 			ht = Db.load_heat!(db)
 			hev = Db.load_event_days!(db)
 			zw = Db.load_zone_weeks!(db)
+			b20 = Db.load_best20_age!(db, curve_days, tm)
+			tg = Db.load_targets_at!(db, tm)
 			ph = Db.load_plan_horizon!(db)
 			sfs = Db.load_spine_fams!(db)
 			csp = Db.load_career_spines!(db, sfs, tm)
@@ -262,7 +264,7 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 			prs = Db.load_prs!(db)
 			nts = Db.load_day_notes!(db)
 			cpv = Db.load_curve_prev!(db, curve_days, tm)
-			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, ph, rw, csp, cs, cfm, prs, tcache, un }
+			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, ph, b20, tg, rw, csp, cs, cfm, prs, tcache, un }
 		}
 		Err(NoStrideDir) => skeleton("no stride directory — the launcher passes it as the first argument")
 		Err(Unreachable) => skeleton("cannot open ${acc.dir}/db.sqlite")
@@ -270,10 +272,7 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 	ev = Db.find_idx(loaded.s.days, loaded.e.day)
 	# the fit runs the engine; the skeleton cannot afford it
 	fit = if (boot) ({ cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }) else Db.load_fit!(acc.io.commands(), curve_days)
-	fit_text =
-		if (fit.ok)
-			"CP ${Db.fmt_f(fit.cp)} W · W' ${Db.fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${Db.fmt_f(fit.r2)} from ${Db.fmt_i(fit.points)} bests"
-		else "CP fit unavailable - the engine did not answer"
+	fit_text = Curve.fit_caption(fit, loaded.b20)
 	# the board projects as far as the written plan reaches, never past the
 	# next event (load_plan_horizon! caps it there), and reads the numbers
 	# from the engine's own walk
@@ -419,8 +418,8 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 		trace_cache: loaded.tcache,
 		segs: loaded.sg,
 		trace_dur: loaded.du,
-		fit_cp: if (fit.ok) (fit.cp) else 0.0,
-		fit_r2: if (fit.ok) (fit.r2) else 0.0,
+		fit_cp: if (Curve.fit_usable(fit)) (fit.cp) else 0.0,
+		plan_targets: loaded.tg,
 		cp_lbl: mkm!("CP ${Db.fmt_f(fit.cp)}W", 12)?,
 		data: loaded.s.data,
 		days: loaded.s.days,
@@ -1524,22 +1523,19 @@ focus_task! = |acc, f|
 # click through the full loader repeats, on every switch, the whole read
 # the boot pays once. This is the chip's own path; R still runs the full
 # loader, which is what R is for.
-CurveWindow : { days : I64, c : List(Db.CurvePt), cpv : List(Db.CurvePt), lbls : List({ p : Text.Prepared, d : I64 }), title : Text.Prepared, fit_lbl : Text.Prepared, cp_lbl : Text.Prepared, fit_cp : F32, fit_r2 : F32 }
+CurveWindow : { days : I64, c : List(Db.CurvePt), cpv : List(Db.CurvePt), lbls : List({ p : Text.Prepared, d : I64 }), title : Text.Prepared, fit_lbl : Text.Prepared, cp_lbl : Text.Prepared, fit_cp : F32 }
 
 load_curve_window! : Access, Text.Font, I64 => Try(CurveWindow, [ResourceLimit])
 load_curve_window! = |acc, font, curve_days| {
 	read = match open_db!(acc) {
 		Ok(db) => {
 			tm = Db.today_mod!(acc.io.commands(), db)
-			{ c: Db.load_curve!(db, curve_days, tm), cpv: Db.load_curve_prev!(db, curve_days, tm) }
+			{ c: Db.load_curve!(db, curve_days, tm), cpv: Db.load_curve_prev!(db, curve_days, tm), b20: Db.load_best20_age!(db, curve_days, tm) }
 		}
-		Err(_) => { c: [], cpv: [] }
+		Err(_) => { c: [], cpv: [], b20: -1 }
 	}
 	fit = Db.load_fit!(acc.io.commands(), curve_days)
-	fit_text =
-		if (fit.ok)
-			"CP ${Db.fmt_f(fit.cp)} W · W' ${Db.fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${Db.fmt_f(fit.r2)} from ${Db.fmt_i(fit.points)} bests"
-		else "CP fit unavailable - the engine did not answer"
+	fit_text = Curve.fit_caption(fit, read.b20)
 	# the same two faces the full loader prepares these labels with, so a
 	# window switch cannot re-set the curve in a different type
 	head = brand_font!(acc, "Quicksand-Medium.ttf", 24, font)
@@ -1561,8 +1557,7 @@ load_curve_window! = |acc, font, curve_days| {
 		title: mk!("power - this ${I64.to_str(curve_days)}d vs the ${I64.to_str(curve_days)}d before it", 15)?,
 		fit_lbl: mk!(Db.ascii_safe(fit_text), 14)?,
 		cp_lbl: mkm!("CP ${Db.fmt_f(fit.cp)}W", 12)?,
-		fit_cp: if (fit.ok) (fit.cp) else 0.0,
-		fit_r2: if (fit.ok) (fit.r2) else 0.0,
+		fit_cp: if (Curve.fit_usable(fit)) (fit.cp) else 0.0,
 	})
 }
 
@@ -1695,7 +1690,7 @@ update! = |model0, program_input, io| {
 				# request still owns
 				CurveReloaded(w) =>
 					if (w.days != acc.curve_days) acc
-					else { ..acc, curve: w.c, curve_prev: w.cpv, curve_lbls: w.lbls, curve_title: w.title, fit_lbl: w.fit_lbl, cp_lbl: w.cp_lbl, fit_cp: w.fit_cp, fit_r2: w.fit_r2, reloading: Bool.False }
+					else { ..acc, curve: w.c, curve_prev: w.cpv, curve_lbls: w.lbls, curve_title: w.title, fit_lbl: w.fit_lbl, cp_lbl: w.cp_lbl, fit_cp: w.fit_cp, reloading: Bool.False }
 				CurveReloadFailed(days) => if (days != acc.curve_days) acc else { ..acc, reloading: Bool.False }
 				# a failed fetch lowers the loading flag only if it was the current
 				# fetch: a failure for a superseded switch must not clear the flag
@@ -1762,7 +1757,7 @@ update! = |model0, program_input, io| {
 					# reloading flag stays the chip's too, since its request may
 					# still be in flight.
 					if (fresh.curve_days == acc.curve_days) merged
-					else { ..merged, curve: acc.curve, curve_prev: acc.curve_prev, curve_lbls: acc.curve_lbls, curve_title: acc.curve_title, curve_days: acc.curve_days, fit_lbl: acc.fit_lbl, cp_lbl: acc.cp_lbl, fit_cp: acc.fit_cp, fit_r2: acc.fit_r2, reloading: acc.reloading }
+					else { ..merged, curve: acc.curve, curve_prev: acc.curve_prev, curve_lbls: acc.curve_lbls, curve_title: acc.curve_title, curve_days: acc.curve_days, fit_lbl: acc.fit_lbl, cp_lbl: acc.cp_lbl, fit_cp: acc.fit_cp, reloading: acc.reloading }
 				}
 				# only the reply for the current trace generation lands: two switches
 				# faster than the first fetch resolves would otherwise let the first,

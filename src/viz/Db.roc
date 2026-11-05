@@ -217,6 +217,40 @@ Db :: [].{
 		}
 	}
 
+	# how many days before the athlete's today the window's best 20-minute
+	# ride power was set (the latest day holding that best), or -1 when the
+	# window has none
+	load_best20_age! : Sqlite.Db, I64, Str => I64
+	load_best20_age! = |db, days, today_mod|
+		match db.query!("SELECT CAST(julianday(date('now', '${today_mod}')) - julianday(substr(a.start_local, 1, 10)) AS INTEGER) AS ag FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_family = 'Ride' AND a.start_local >= date('now', '${today_mod}', '-' || :d || ' days') AND COALESCE(m.best_20min_w, 0) > 0 ORDER BY m.best_20min_w DESC, a.start_local DESC LIMIT 1", [{ name: ":d", value: Integer(days) }]) {
+			Err(_) => -1
+			Ok(rows) => match List.first(rows) {
+				Ok(r) => r.i64("ag") ?? -1
+				Err(_) => -1
+			}
+		}
+
+	# the open sessions from the athlete's today on that carry a structured
+	# target, earliest first: what the power view plots against the curve
+	Target : { day : Str, typ : Str, reps : I64, dur_s : I64, watts : I64 }
+	load_targets_at! : Sqlite.Db, Str => List(Target)
+	load_targets_at! = |db, today_mod|
+		match db.query!("SELECT CAST(target_date AS TEXT) AS tgd, CAST(COALESCE(session_type, '') AS TEXT) AS tgt, CAST(target_reps AS INTEGER) AS tgr, CAST(COALESCE(target_dur_s, 0) AS INTEGER) AS tgs, CAST(ROUND(COALESCE(target_watts, 0)) AS INTEGER) AS tgw FROM plan_current WHERE COALESCE(status, 'open') = 'open' AND COALESCE(target_reps, 0) > 0 AND target_date >= date('now', '${today_mod}') ORDER BY target_date, id", []) {
+			Err(_) => []
+			Ok(rows) =>
+				List.keep_oks(
+					rows,
+					|r| {
+						day = r.str("tgd") ? |_| "bad tgd"
+						typ = r.str("tgt") ? |_| "bad tgt"
+						reps = r.i64("tgr") ? |_| "bad tgr"
+						dur_s = r.i64("tgs") ? |_| "bad tgs"
+						w = r.i64("tgw") ? |_| "bad tgw"
+						Ok({ day, typ: ascii_safe(typ), reps, dur_s, watts: w })
+					},
+				)
+		}
+
 	# The most recent activity that HAS detected work blocks — the only kind this
 	# view can say anything about. Its id anchors both loaders below.
 	# one line per day: what was actually done, for tooltips and the table.

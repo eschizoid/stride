@@ -412,17 +412,26 @@ its delta printed beside it, since a record rung's change is the best
 news on the chart - and a record set in the last seven days still rings
 gold. Hovering a rung reads
 back the record, the day it was set, and both windows' values. The CP fit
-reports from the bottom-right status corner, its dashed line on the
-chart — dimmed when the fit's own r2 is under 0.9, so a shaky fit cannot
-outrank the footer that admits it.
+reports from the bottom-right status corner, its dashed line on the chart,
+only when the fit is usable: r2 at least 0.9 and W' between 5 and 40 kJ.
+A fit through steady class bests rather than maximal ones returns a W' of a
+few kJ, so otherwise the line is not drawn and the footer says why, how many
+days ago the window's 20-minute best was set, and that an all-out 20 minutes
+would anchor the fit.
+
+Every open session ahead with a structured target is a gold ring at its rep
+duration and target watts (between rungs, placed linearly in seconds),
+labelled with its day and the target's share of this window's best at that
+duration, read off the line between the rungs around it. Hovering a ring
+names the session: type, reps, duration and watts.
 The ladder itself - which columns, which family, that zero and NULL both mean unrecorded - is
 the `activity_power_ladder` view's, shared with the record book and the
 CLI's health report.
 
 The **points** come from the stored per-activity bests (`activity_metrics.best_*_w`),
 maxed over the window. `CAST(ROUND(...))` matters — a bare `CAST` truncates and
-draws the whole ladder a watt low, which was caught by diffing all seven rungs
-against `stride power-curve 90 Ride --json`.
+draws the whole ladder a watt low; rounded, every rung matches
+`stride power-curve 90 Ride --json`.
 
 **CP, W′ and r2 come from the engine**, not from a second regression here. The fit
 is `Metrics.hyperbolic_fit`'s job and a copy in the viz would drift from it, so the
@@ -432,7 +441,7 @@ window declares that program by name (`sh` is the one other, for the zone offset
 independently — key ORDER cannot silently break the parse, and a missing field
 shows "CP fit unavailable" rather than a fit of zeros.
 
-Rungs are spaced by INDEX rather than by duration: the ladder is a fixed 5s..20min
+Rungs are spaced by INDEX rather than by duration: the ladder is a fixed 5s..60min
 set, and a linear time axis piles the six short rungs onto the left edge.
 
 ## Session trace view (TAB)
