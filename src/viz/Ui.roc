@@ -113,10 +113,10 @@ Ui :: [].{
 		# instead of a task round-trip per keypress
 		trace_cache : List({ tr : List(F32), sg : List(Db.Seg), du : F32, un : Str, sp : List(Series.Split) }),
 		curve_days : I64,
+		# the window's CP, 0 when the fit is not usable (Curve.fit_usable)
 		fit_cp : F32,
-		# the fit's own quality, carried so the CP line can dim when the fit
-		# is too weak to deserve a confident stroke
-		fit_r2 : F32,
+		# open sessions ahead with a structured target, for the power view
+		plan_targets : List(Db.Target),
 		cp_lbl : Text.Prepared,
 		data : List(Db.Point),
 		days : List(Str),
