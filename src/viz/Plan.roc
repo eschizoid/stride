@@ -76,8 +76,8 @@ Plan :: [].{
 	watts_str : F64 -> Str
 	watts_str = |w| I64.to_str(w.round_to_i64_try().ok_or(0))
 
-	# detected mean work watts as a share of the target, to the nearest
-	# whole percent: the label `stride complete`'s watts_pct reads as
+	# the detected mean work watts as a share of the target watts, rounded
+	# to a whole percent: the quantity `stride complete` reports as watts_pct
 	pct_label : F64, F64 -> Str
 	pct_label = |detected, target|
 		if (target <= 0.0) "" else "${watts_str(detected / target * 100.0)}%"
