@@ -19,7 +19,9 @@
       "status_shown",
       "substitute_activity_id",
       "superseded_activity_id",
-      "target_date"
+      "target_date",
+      "target_kind",
+      "target_literal"
     ],
     "additionalKeys": false,
     "properties": {
@@ -74,6 +76,21 @@
       },
       "target_date": {
         "type": "string"
+      },
+      "target_kind": {
+        "type": "string",
+        "enum": [
+          "",
+          "power",
+          "hr",
+          "zone",
+          "pace"
+        ],
+        "description": "The signal of the session's structured target (ADR 0019); empty for a prose-only session and for unplanned rows."
+      },
+      "target_literal": {
+        "type": "string",
+        "description": "The structured target in its canonical spelling; empty when there is none."
       }
     }
   }

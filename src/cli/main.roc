@@ -122,9 +122,10 @@ help_text =
 	\\    plan                        planning bundle: summary + open sessions + 14d
 	\\    week                        this week's sessions (Mon-Sun, all statuses)
 	\\    week all                    upcoming + this week + last week
-	\\    week add <date> <type> <detail> <rationale> [RxMM:SS@WWWW]
-	\\                                add a planned session; the optional literal is a
-	\\                                structured target, e.g. 3x12:00@230W
+	\\    week add <date> <type> <detail> <rationale> [target]
+	\\                                add a planned session; the optional target is
+	\\                                3x12:00@230W, 1x60:00@HR125-147, 1x90:00@Z2,
+	\\                                5x4:00@4:10/km, 10x100m@1:40/100m or 6x500m@1:55/500m
 	\\    complete <session_id> [activity_id]
 	\\                                mark done (bare = rest day)
 	\\    complete latest             close the open session on the latest activity's

@@ -1,6 +1,7 @@
 # 0014. structured prescription targets: optional numbers beside the prose, never instead of it
 
-Accepted 2026-08-29 (#198). Amends ADR 0008 Decision 1 by its own escape hatch.
+Accepted 2026-08-29 (#198). Amends ADR 0008 Decision 1 by its own escape hatch. Amended by ADR 0019, which extends
+targets to heart rate, HR zone and pace.
 
 ## Context
 

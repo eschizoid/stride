@@ -1,6 +1,6 @@
 {
   "title": "complete",
-  "description": "Result of `stride complete <id> [activity]`. `rest` marks the bare form, allowed only for rest days. Both forms report what the call DESTROYED: `replaced_activity` and `released_substitute` are always present, 0 meaning nothing was. The ten target/detected fields appear on the with-activity path only (ADR 0014 §3): the recorded target beside the detected shape, both sides gated by their _known flags.",
+  "description": "Result of `stride complete <id> [activity]`. `rest` marks the bare form, allowed only for rest days. Both forms report what the call DESTROYED: `replaced_activity` and `released_substitute` are always present, 0 meaning nothing was. The target and execution fields appear on the with-activity path only (ADR 0014 §3, ADR 0019): the recorded target beside what the activity did on that target's own signal, each side gated by its _known flag.",
   "type": "object",
   "additionalKeys": false,
   "required": [
@@ -30,22 +30,9 @@
       "type": "integer",
       "description": "A DIFFERENT session whose display-dead substitute link this activity was stolen from. Optional, unlike the two above: it reports an incidental side effect on another row, meaningful only when it happened, and answers no question a consumer must ask on every completion."
     },
-    "target_known": {
-      "type": "boolean",
-      "description": "True when this session carries a structured target (ADR 0014). The three magnitudes are impossible-zero fields behind this flag (ADR 0009): reps 0 cannot be a real target."
-    },
-    "target_reps": {
-      "type": "integer"
-    },
-    "target_dur_s": {
-      "type": "integer"
-    },
-    "target_watts": {
-      "type": "number"
-    },
     "detected_known": {
       "type": "boolean",
-      "description": "True when the linked activity has detected power work segments to compare against. reps_delta and watts_pct are meaningful only when BOTH detected_known and target_known are true; otherwise they ride at 0 behind the flags (ADR 0009)."
+      "description": "True when the linked activity has detected power work segments. reps_delta and watts_pct are meaningful only when target_kind is power and detected_known is true; otherwise they ride at 0 behind the flags (ADR 0009)."
     },
     "detected_reps": {
       "type": "integer"
@@ -63,6 +50,137 @@
     "watts_pct": {
       "type": "number",
       "description": "detected_mean_watts as a percentage of target_watts."
+    },
+    "target_known": {
+      "type": "boolean",
+      "description": "True when this session carries a structured target on any signal (ADR 0014, ADR 0019); target_kind names the signal. Every magnitude is an impossible-zero field behind this flag (ADR 0009), and a magnitude another kind carries stays 0 or the empty string."
+    },
+    "target_kind": {
+      "type": "string",
+      "enum": [
+        "",
+        "power",
+        "hr",
+        "zone",
+        "pace"
+      ],
+      "description": "The signal the target is written on: power watts, a heart-rate band, an HR zone, or a pace. Empty when target_known is false."
+    },
+    "target_literal": {
+      "type": "string",
+      "description": "The target in its canonical spelling, e.g. 3x12:00@230W, 1x1:00:00@HR125-147, 1x1:30:00@Z2, 5x4:00@4:10/km, 10x100m@1:40/100m. Empty when target_known is false."
+    },
+    "target_reps": {
+      "type": "integer"
+    },
+    "target_dur_s": {
+      "type": "integer",
+      "description": "A timed rep's length in seconds; 0 for a distance rep."
+    },
+    "target_dist_m": {
+      "type": "number",
+      "description": "A distance rep's length in metres; 0 for a timed rep. Only a pace target carries one."
+    },
+    "target_watts": {
+      "type": "number",
+      "description": "Power targets only."
+    },
+    "target_hr_lo": {
+      "type": "integer",
+      "description": "The heart-rate band's floor in bpm; hr targets only."
+    },
+    "target_hr_hi": {
+      "type": "integer",
+      "description": "The heart-rate band's cap in bpm; hr targets only."
+    },
+    "target_zone": {
+      "type": "integer",
+      "description": "The HR zone, 1-5, under the athlete's configured zones; zone targets only."
+    },
+    "target_pace_s": {
+      "type": "number",
+      "description": "Seconds per target_pace_unit; pace targets only."
+    },
+    "target_pace_unit": {
+      "type": "string",
+      "enum": [
+        "",
+        "/km",
+        "/mi",
+        "/100m",
+        "/500m"
+      ],
+      "description": "The distance a pace reads over; pace targets only."
+    },
+    "exec_known": {
+      "type": "boolean",
+      "description": "True when the linked activity carries the target's own signal to compare: detected power work for power, an HR stream for hr, a zone split for zone, pace reps or a distance for pace. The kind's execution fields are meaningful only when this is true; otherwise they ride at 0 or empty (ADR 0009)."
+    },
+    "exec_reason": {
+      "type": "string",
+      "enum": [
+        "",
+        "no_target",
+        "no_power_intervals",
+        "no_hr_stream",
+        "no_hr_zones",
+        "pace_unit_mismatch",
+        "no_distance"
+      ],
+      "description": "Why exec_known is false; empty when it is true. pace_unit_mismatch: the activity's sport family is not one the target's pace unit is read over (/km and /mi: run, walk and hike; /100m: swim; /500m: rowing)."
+    },
+    "hr_under_s": {
+      "type": "integer",
+      "description": "hr targets: seconds below the band's floor."
+    },
+    "hr_in_s": {
+      "type": "integer",
+      "description": "hr targets: seconds inside the band, floor and cap included."
+    },
+    "hr_over_s": {
+      "type": "integer",
+      "description": "hr targets: seconds above the band's cap."
+    },
+    "hr_mean": {
+      "type": "number",
+      "description": "hr targets: the mean of the stream's valid (35-220 bpm) HR samples, in bpm."
+    },
+    "zone_below_s": {
+      "type": "integer",
+      "description": "zone targets: seconds in the zones below the target zone, from the zone split analyze stored for the activity."
+    },
+    "zone_in_s": {
+      "type": "integer",
+      "description": "zone targets: seconds in the target zone."
+    },
+    "zone_above_s": {
+      "type": "integer",
+      "description": "zone targets: seconds in the zones above the target zone."
+    },
+    "pace_basis": {
+      "type": "string",
+      "enum": [
+        "",
+        "detected",
+        "whole"
+      ],
+      "description": "pace targets: detected when the interval detector found pace work reps, whole when it did not. Both report the ACTUAL pace: on detected, the distance the stream covered inside the reps' windows over their time (the detector's own signal is grade-adjusted, so its average is not used); on whole, distance over moving time."
+    },
+    "pace_actual_s": {
+      "type": "number",
+      "description": "pace targets: the actual pace in seconds per target_pace_unit, on the basis pace_basis names."
+    },
+    "pace_pct": {
+      "type": "number",
+      "description": "pace targets: target_pace_s as a percentage of pace_actual_s, i.e. the execution's speed relative to the target's; above 100 is faster than the target."
+    },
+    "pace_reps": {
+      "type": "integer",
+      "description": "pace targets: the detected pace work reps; 0 on the whole basis."
+    },
+    "pace_reps_delta": {
+      "type": "integer",
+      "description": "pace targets: pace_reps minus target_reps on the detected basis; 0 otherwise. A measurement, not a verdict (ADR 0012)."
     }
   }
 }

@@ -1,16 +1,24 @@
 {
   "title": "week_add",
-  "description": "Result of `stride week add` — the id the coach links against later. Revising an existing open date returns the SAME id, and REPLACES the prescription wholesale: omitting the target on a re-plan clears it. Target fields per ADR 0014: magnitudes are impossible-zero behind target_known.",
+  "description": "Result of `stride week add` — the id the coach links against later. Revising an existing open date returns the SAME id, and REPLACES the prescription wholesale: omitting the target on a re-plan clears it. Target fields per ADR 0014 and ADR 0019: magnitudes are impossible-zero behind target_known, and target_kind names the signal.",
   "type": "object",
   "additionalKeys": false,
   "required": [
     "id",
     "session_type",
     "target_date",
+    "target_dist_m",
     "target_dur_s",
+    "target_hr_hi",
+    "target_hr_lo",
+    "target_kind",
     "target_known",
+    "target_literal",
+    "target_pace_s",
+    "target_pace_unit",
     "target_reps",
-    "target_watts"
+    "target_watts",
+    "target_zone"
   ],
   "properties": {
     "id": {
@@ -24,16 +32,64 @@
     },
     "target_known": {
       "type": "boolean",
-      "description": "True when this session carries a structured target (ADR 0014). The three magnitudes are impossible-zero fields behind this flag (ADR 0009): reps 0 cannot be a real target."
+      "description": "True when this session carries a structured target on any signal (ADR 0014, ADR 0019); target_kind names the signal. Every magnitude is an impossible-zero field behind this flag (ADR 0009), and a magnitude another kind carries stays 0 or the empty string."
+    },
+    "target_kind": {
+      "type": "string",
+      "enum": [
+        "",
+        "power",
+        "hr",
+        "zone",
+        "pace"
+      ],
+      "description": "The signal the target is written on: power watts, a heart-rate band, an HR zone, or a pace. Empty when target_known is false."
+    },
+    "target_literal": {
+      "type": "string",
+      "description": "The target in its canonical spelling, e.g. 3x12:00@230W, 1x1:00:00@HR125-147, 1x1:30:00@Z2, 5x4:00@4:10/km, 10x100m@1:40/100m. Empty when target_known is false."
     },
     "target_reps": {
       "type": "integer"
     },
     "target_dur_s": {
-      "type": "integer"
+      "type": "integer",
+      "description": "A timed rep's length in seconds; 0 for a distance rep."
+    },
+    "target_dist_m": {
+      "type": "number",
+      "description": "A distance rep's length in metres; 0 for a timed rep. Only a pace target carries one."
     },
     "target_watts": {
-      "type": "number"
+      "type": "number",
+      "description": "Power targets only."
+    },
+    "target_hr_lo": {
+      "type": "integer",
+      "description": "The heart-rate band's floor in bpm; hr targets only."
+    },
+    "target_hr_hi": {
+      "type": "integer",
+      "description": "The heart-rate band's cap in bpm; hr targets only."
+    },
+    "target_zone": {
+      "type": "integer",
+      "description": "The HR zone, 1-5, under the athlete's configured zones; zone targets only."
+    },
+    "target_pace_s": {
+      "type": "number",
+      "description": "Seconds per target_pace_unit; pace targets only."
+    },
+    "target_pace_unit": {
+      "type": "string",
+      "enum": [
+        "",
+        "/km",
+        "/mi",
+        "/100m",
+        "/500m"
+      ],
+      "description": "The distance a pace reads over; pace targets only."
     }
   }
 }

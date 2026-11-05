@@ -3,6 +3,7 @@ import Output
 import Strava
 import Report
 import Sql
+import Streams
 import pf.Stdout
 import pf.Path
 import Analyze
@@ -106,6 +107,8 @@ Plan :: [].{
 				\\       COALESCE(superseded_activity_id,0) AS superseded_activity_id,
 				\\       COALESCE(CAST(status AS TEXT),'open') AS status, COALESCE(CAST(skipped_reason AS TEXT),'') AS skipped_reason,
 				\\       COALESCE(substitute_activity_id,0) AS substitute_activity_id,
+				\\       COALESCE(target_reps, 0) AS target_reps, COALESCE(target_dur_s, 0) AS target_dur_s, CAST(COALESCE(target_watts, 0) AS REAL) AS target_watts,
+				\\       COALESCE(CAST(target_literal AS TEXT), '') AS target_literal,
 				\\       COALESCE(CAST((SELECT substr(a.start_local,1,10) FROM activities a WHERE a.id = planned_sessions.completed_activity_id) AS TEXT), '') AS done_date,
 				\\       CAST(COALESCE((SELECT dl.tss FROM daily_load dl WHERE dl.day = planned_sessions.target_date), 0) AS REAL) AS day_tss,
 				\\       CASE WHEN EXISTS (SELECT 1 FROM daily_load dl WHERE dl.day = planned_sessions.target_date) THEN 1 ELSE 0 END AS day_load_known
@@ -129,7 +132,12 @@ Plan :: [].{
 				done_date = Sql.str("done_date")(cols)(stmt)?
 				day_tss = Sql.f64("day_tss")(cols)(stmt)?
 				day_load_known = Sql.i64("day_load_known")(cols)(stmt)?
-				Ok({ id, created_at, target_date, session_type, detail, rationale, completed_activity_id, superseded_activity_id, status, skipped_reason, substitute_activity_id, done_date, day_tss, day_load_known })
+				treps = Sql.i64("target_reps")(cols)(stmt)?
+				tdur = Sql.i64("target_dur_s")(cols)(stmt)?
+				twatts = Sql.f64("target_watts")(cols)(stmt)?
+				tlit = Sql.str("target_literal")(cols)(stmt)?
+				tgt = Metrics.stored_target(tlit, treps, tdur, twatts)
+				Ok({ id, created_at, target_date, session_type, detail, rationale, completed_activity_id, superseded_activity_id, status, skipped_reason, substitute_activity_id, done_date, day_tss, day_load_known, tgt })
 			},
 		})?
 		# newest-first from SQL, flipped to calendar order for display. `Render.reverse_list`
@@ -167,6 +175,9 @@ Plan :: [].{
 				skipped_reason: p.skipped_reason,
 				substitute_activity_id: p.substitute_activity_id,
 				done_date: p.done_date,
+				# the structured target, in its canonical literal; "" for a prose-only session
+				target_kind: p.tgt.kind,
+				target_literal: Metrics.target_literal(p.tgt),
 				# A session completed by an activity from ANOTHER day would otherwise render
 				# exactly like one completed on time, so the plan would silently imply the
 				# work happened on the date it was prescribed for. Show the real day when
@@ -291,6 +302,8 @@ Plan :: [].{
 					skipped_reason: "",
 					substitute_activity_id: 0.I64,
 					done_date: "",
+					target_kind: "",
+					target_literal: "",
 					status_shown: "unlinked",
 				}
 			},
@@ -448,115 +461,125 @@ Plan :: [].{
 			match tgt {
 				NoTarget => plan_add_checked!(target_date, session_type, detail, rationale, NoT)
 				Target(lit) =>
-					match Metrics.parse_target(lit) {
+					match Metrics.parse_any_target(lit) {
 						Ok(t) => plan_add_checked!(target_date, session_type, detail, rationale, T(t))
-						Err(BadTarget) =>
-							Output.err_out!("bad_target", "a target is written <reps>x<mm:ss>@<watts>W, e.g. 3x12:00@230W — got '${lit}' (reps 1-99, rep at least 0:30, watts 1-2500)")
+						Err(BadTarget) => Output.err_out!("bad_target", target_grammar(lit))
 					}
 			}
 		}
 	}
-	plan_add_checked! : Str, Str, Str, Str, [NoT, T({ reps : I64, dur_s : I64, watts : F64 })] => Try({}, _)
+	# the one sentence naming every target form, for each surface that refuses one
+	target_grammar : Str -> Str
+	target_grammar = |lit|
+		"a target is <reps>x<rep>@<signal>: power 3x12:00@230W, heart rate 1x60:00@HR125-147, HR zone 1x90:00@Z2, or pace 5x4:00@4:10/km, 3x10:00@6:45/mi, 10x100m@1:40/100m, 6x500m@1:55/500m — got '${lit}' (reps 1-99, a timed rep at least 0:30; power keeps mm:ss, the others also take h:mm:ss; only a pace rep may be a distance)"
+	plan_add_checked! : Str, Str, Str, Str, [NoT, T(Metrics.Target)] => Try({}, _)
 	plan_add_checked! = |target_date, session_type, detail, rationale, pt| {
 		path = Db.open_db!({})?
-		# guard: one open planned session per date — skip or complete the old one first
-		existing = Sql.query!({
-			path: Path.utf8(path),
-			query: "SELECT COALESCE(MAX(id), 0) AS id FROM planned_sessions WHERE target_date = :date AND COALESCE(status, 'open') = 'open'",
-			bindings: [{ name: ":date", value: String(target_date) }],
-			row: Sql.i64("id"),
-		})?
-		if (existing > 0)
-		# re-planning a date REVISES its open session in place. Editing a future plan
-		# is not a "skip" (skip = a session that was going to happen and didn't), so
-		# revising keeps one row per date instead of stacking a skipped tombstone every
-		# time the week is re-planned — the root cause of the plan graveyard.
-			revise_planned_session!(path, existing, target_date, session_type, detail, rationale, pt)
-		else
-			insert_planned_session!(path, target_date, session_type, detail, rationale, pt)
+		# a zone target means the athlete's zones, so it needs them configured, like analyze
+		is_zone =
+			match pt {
+				T(t) => t.kind == "zone"
+				NoT => Bool.False
+			}
+		zones_ok =
+			if is_zone {
+				match Analyze.load_zone_config!(path) {
+					Ok(_) => Ok(Bool.True)
+					Err(MissingConfig) => Ok(Bool.False)
+					Err(other) => Err(other)
+				}
+			} else {
+				Ok(Bool.True)
+			}
+		if !(zones_ok?) {
+			Output.missing_config!({})
+		} else {
+			# guard: one open planned session per date — skip or complete the old one first
+			existing = Sql.query!({
+				path: Path.utf8(path),
+				query: "SELECT COALESCE(MAX(id), 0) AS id FROM planned_sessions WHERE target_date = :date AND COALESCE(status, 'open') = 'open'",
+				bindings: [{ name: ":date", value: String(target_date) }],
+				row: Sql.i64("id"),
+			})?
+			if (existing > 0)
+			# re-planning a date REVISES its open session in place. Editing a future plan
+			# is not a "skip" (skip = a session that was going to happen and didn't), so
+			# revising keeps one row per date instead of stacking a skipped tombstone every
+			# time the week is re-planned — the root cause of the plan graveyard.
+				revise_planned_session!(path, existing, target_date, session_type, detail, rationale, pt)
+			else
+				insert_planned_session!(path, target_date, session_type, detail, rationale, pt)
+		}
+	}
+	# The four target columns of a row. The literal carries every kind; the three
+	# power columns hold a power target's numbers and stay NULL for any other kind,
+	# so the readers that mean power (the projection, the window's curve) need no
+	# kind test to keep a heart-rate or pace target out.
+	target_bindings : [NoT, T(Metrics.Target)] -> List(Sql.Binding)
+	target_bindings = |pt| {
+		t =
+			match pt {
+				T(x) => x
+				NoT => Metrics.no_target
+			}
+		power = t.kind == "power"
+		[
+			{ name: ":treps", value: if (power) Integer(t.reps) else Null },
+			{ name: ":tdur", value: if (power) Integer(t.dur_s) else Null },
+			{ name: ":twatts", value: if (power) Real(t.watts) else Null },
+			{ name: ":tlit", value: if (t.kind == "") Null else String(Metrics.target_literal(t)) },
+		]
 	}
 	# a revise REPLACES the prescription wholesale — type, detail, rationale and target
 	# together, so omitting the target on a re-plan CLEARS it rather than silently
 	# keeping numbers the new prose no longer describes (ADR 0014 §5)
-	revise_planned_session! : Str, I64, Str, Str, Str, Str, [NoT, T({ reps : I64, dur_s : I64, watts : F64 })] => Try({}, _)
+	revise_planned_session! : Str, I64, Str, Str, Str, Str, [NoT, T(Metrics.Target)] => Try({}, _)
 	revise_planned_session! = |path, id, target_date, session_type, detail, rationale, pt| {
 		Sql.execute!({
 			path: Path.utf8(path),
-			query: "UPDATE planned_sessions SET session_type = :type, detail = :detail, rationale = :rationale, created_at = :at, target_reps = :treps, target_dur_s = :tdur, target_watts = :twatts WHERE id = :id",
-			bindings: [
-				{ name: ":type", value: String(session_type) },
-				{ name: ":detail", value: String(detail) },
-				{ name: ":rationale", value: String(rationale) },
-				{ name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
-				{
-					name: ":treps",
-					value: match pt {
-						T(t) => Integer(t.reps)
-						NoT => Null
-					},
-				},
-				{
-					name: ":tdur",
-					value: match pt {
-						T(t) => Integer(t.dur_s)
-						NoT => Null
-					},
-				},
-				{
-					name: ":twatts",
-					value: match pt {
-						T(t) => Real(t.watts)
-						NoT => Null
-					},
-				},
-				{ name: ":id", value: Integer(id) },
-			],
+			query: "UPDATE planned_sessions SET session_type = :type, detail = :detail, rationale = :rationale, created_at = :at, target_reps = :treps, target_dur_s = :tdur, target_watts = :twatts, target_literal = :tlit WHERE id = :id",
+			bindings: List.concat(
+				[
+					{ name: ":type", value: String(session_type) },
+					{ name: ":detail", value: String(detail) },
+					{ name: ":rationale", value: String(rationale) },
+					{ name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
+					{ name: ":id", value: Integer(id) },
+				],
+				target_bindings(pt),
+			),
 		})?
 		Output.out!(plan_echo(id, target_date, session_type, pt), |p| "revised #${(p.id).to_str()}: ${p.session_type} on ${p.target_date}${Render.target_note(pt)}")
 	}
 	# the ADR 0009 impossible-zero shape for the echo: reps 0 cannot be a real target,
-	# so the magnitudes ride at 0 behind target_known
-	plan_echo : I64, Str, Str, [NoT, T({ reps : I64, dur_s : I64, watts : F64 })] -> { id : I64, target_date : Str, session_type : Str, target_known : Bool, target_reps : I64, target_dur_s : I64, target_watts : F64 }
-	plan_echo = |id, target_date, session_type, pt|
-		match pt {
-			T(t) => { id, target_date, session_type, target_known: True, target_reps: t.reps, target_dur_s: t.dur_s, target_watts: t.watts }
-			NoT => { id, target_date, session_type, target_known: False, target_reps: 0, target_dur_s: 0, target_watts: 0.0 }
-		}
-	insert_planned_session! : Str, Str, Str, Str, Str, [NoT, T({ reps : I64, dur_s : I64, watts : F64 })] => Try({}, _)
+	# so the magnitudes ride at 0 behind target_known, and a magnitude another kind
+	# carries rides at 0 (or "") behind target_kind
+	plan_echo : I64, Str, Str, [NoT, T(Metrics.Target)] -> { id : I64, target_date : Str, session_type : Str, target_known : Bool, target_kind : Str, target_literal : Str, target_reps : I64, target_dur_s : I64, target_dist_m : F64, target_watts : F64, target_hr_lo : I64, target_hr_hi : I64, target_zone : I64, target_pace_s : F64, target_pace_unit : Str }
+	plan_echo = |id, target_date, session_type, pt| {
+		t =
+			match pt {
+				T(x) => x
+				NoT => Metrics.no_target
+			}
+		{ id, target_date, session_type, target_known: t.kind != "", target_kind: t.kind, target_literal: Metrics.target_literal(t), target_reps: t.reps, target_dur_s: t.dur_s, target_dist_m: t.dist_m, target_watts: t.watts, target_hr_lo: t.hr_lo, target_hr_hi: t.hr_hi, target_zone: t.zone, target_pace_s: t.pace_s, target_pace_unit: t.pace_unit }
+	}
+	insert_planned_session! : Str, Str, Str, Str, Str, [NoT, T(Metrics.Target)] => Try({}, _)
 	insert_planned_session! = |path, target_date, session_type, detail, rationale, pt| {
 		Sql.execute!({
 			path: Path.utf8(path),
-			query: \\INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status, target_reps, target_dur_s, target_watts)
-				\\VALUES (:at, :date, :type, :detail, :rationale, 'open', :treps, :tdur, :twatts)
+			query: \\INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status, target_reps, target_dur_s, target_watts, target_literal)
+				\\VALUES (:at, :date, :type, :detail, :rationale, 'open', :treps, :tdur, :twatts, :tlit)
 			,
-			bindings: [
-				{ name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
-				{ name: ":date", value: String(target_date) },
-				{ name: ":type", value: String(session_type) },
-				{ name: ":detail", value: String(detail) },
-				{ name: ":rationale", value: String(rationale) },
-				{
-					name: ":treps",
-					value: match pt {
-						T(t) => Integer(t.reps)
-						NoT => Null
-					},
-				},
-				{
-					name: ":tdur",
-					value: match pt {
-						T(t) => Integer(t.dur_s)
-						NoT => Null
-					},
-				},
-				{
-					name: ":twatts",
-					value: match pt {
-						T(t) => Real(t.watts)
-						NoT => Null
-					},
-				},
-			],
+			bindings: List.concat(
+				[
+					{ name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
+					{ name: ":date", value: String(target_date) },
+					{ name: ":type", value: String(session_type) },
+					{ name: ":detail", value: String(detail) },
+					{ name: ":rationale", value: String(rationale) },
+				],
+				target_bindings(pt),
+			),
 		})?
 		new_id = Sql.query!({
 			path: Path.utf8(path),
@@ -573,52 +596,195 @@ Plan :: [].{
 	session_not_found! = |session_id|
 		Output.err_out!("session_not_found", "no planned session #${(session_id).to_str()} — `stride plan` lists open ones, `stride week all` the whole log")
 
-	# ADR 0014 §3: the recorded target beside the detected shape of the linked
-	# activity — arithmetic on two structured records, each side gated by its own
-	# _known flag (ADR 0009) so an absent side is stated, never invented. Field names
-	# are measurements (reps_delta, watts_pct); no verdict words (ADR 0012).
-	target_match! : Str, I64, I64 => Try({ target_known : Bool, target_reps : I64, target_dur_s : I64, target_watts : F64, detected_known : Bool, detected_reps : I64, detected_mean_dur_s : I64, detected_mean_watts : F64, reps_delta : I64, watts_pct : F64 }, _)
+	# ADR 0014 §3 on every signal (ADR 0019): the recorded target beside what the
+	# linked activity did on THAT target's signal — arithmetic on two records, each
+	# side gated by its own _known flag (ADR 0009) so an absent side is stated, never
+	# invented. The power fields keep their meaning: detected power work against
+	# target watts. The exec_* block answers for the target's own signal, whatever
+	# its kind:
+	#   power  exec_known is detected_known
+	#   hr     seconds under, inside and over the band, and the mean of the stream's
+	#          valid (35-220 bpm) samples
+	#   zone   seconds below, inside and above the zone, from the zone split analyze
+	#          stored under the zones in force for that sport
+	#   pace   the ACTUAL pace, always: over the detector's work-rep windows when it
+	#          found pace reps (distance from the stream, since the detector's own
+	#          signal is grade-adjusted), else over the whole moving portion
+	#          (distance over moving time), as seconds per the target's unit
+	# exec_reason names why exec_known is false. Field names are measurements, never
+	# verdicts (ADR 0012).
+	TargetMatch : { target_known : Bool, target_kind : Str, target_literal : Str, target_reps : I64, target_dur_s : I64, target_dist_m : F64, target_watts : F64, target_hr_lo : I64, target_hr_hi : I64, target_zone : I64, target_pace_s : F64, target_pace_unit : Str, detected_known : Bool, detected_reps : I64, detected_mean_dur_s : I64, detected_mean_watts : F64, reps_delta : I64, watts_pct : F64, exec_known : Bool, exec_reason : Str, hr_under_s : I64, hr_in_s : I64, hr_over_s : I64, hr_mean : F64, zone_below_s : I64, zone_in_s : I64, zone_above_s : I64, pace_basis : Str, pace_actual_s : F64, pace_pct : F64, pace_reps : I64, pace_reps_delta : I64 }
+	target_match! : Str, I64, I64 => Try(TargetMatch, _)
 	target_match! = |path, session_id, activity_id| {
 		tgt = Sql.query!({
 			path: Path.utf8(path),
 			# `tgd`, not `td`: relabel! reads a TEXT `td` in this same file, and
 			# blob-safety joins (file, alias) — a shared name would put this INTEGER
 			# projection in the TEXT rule's population
-			query: "SELECT COALESCE(target_reps, 0) AS tgr, COALESCE(target_dur_s, 0) AS tgd, CAST(COALESCE(target_watts, 0) AS REAL) AS tgw FROM planned_sessions WHERE id = :id",
+			query: "SELECT COALESCE(target_reps, 0) AS tgr, COALESCE(target_dur_s, 0) AS tgd, CAST(COALESCE(target_watts, 0) AS REAL) AS tgw, COALESCE(CAST(target_literal AS TEXT), '') AS tgl FROM planned_sessions WHERE id = :id",
 			bindings: [{ name: ":id", value: Integer(session_id) }],
 			row: |cols| |stmt| {
 				tr = Sql.i64("tgr")(cols)(stmt)?
 				td = Sql.i64("tgd")(cols)(stmt)?
 				tw = Sql.f64("tgw")(cols)(stmt)?
-				Ok({ tr, td, tw })
+				tl = Sql.str("tgl")(cols)(stmt)?
+				Ok({ tr, td, tw, tl })
 			},
 		})?
-		det = Sql.query!({
-			path: Path.utf8(path),
-			query: "SELECT COUNT(*) AS dr, CAST(COALESCE(AVG(dur_s), 0) AS INTEGER) AS dd, CAST(COALESCE(AVG(avg_signal), 0) AS REAL) AS dw FROM activity_segments WHERE activity_id = :aid AND kind = 'work' AND signal = 'power'",
-			bindings: [{ name: ":aid", value: Integer(activity_id) }],
-			row: |cols| |stmt| {
-				dr = Sql.i64("dr")(cols)(stmt)?
-				dd = Sql.i64("dd")(cols)(stmt)?
-				dw = Sql.f64("dw")(cols)(stmt)?
-				Ok({ dr, dd, dw })
-			},
-		})?
-		target_known = tgt.tr > 0
+		t = Metrics.stored_target(tgt.tl, tgt.tr, tgt.td, tgt.tw)
+		seg! = |signal|
+			Sql.query!({
+				path: Path.utf8(path),
+				query: "SELECT COUNT(*) AS dr, CAST(COALESCE(AVG(dur_s), 0) AS INTEGER) AS dd, CAST(COALESCE(AVG(avg_signal), 0) AS REAL) AS dw FROM activity_segments WHERE activity_id = :aid AND kind = 'work' AND signal = :sig",
+				bindings: [{ name: ":aid", value: Integer(activity_id) }, { name: ":sig", value: String(signal) }],
+				row: |cols| |stmt| {
+					dr = Sql.i64("dr")(cols)(stmt)?
+					dd = Sql.i64("dd")(cols)(stmt)?
+					dw = Sql.f64("dw")(cols)(stmt)?
+					Ok({ dr, dd, dw })
+				},
+			})
+		det = seg!("power")?
+		power = t.kind == "power"
 		detected_known = det.dr > 0
-		both = target_known and detected_known
+		both = power and detected_known
+		ex = exec_for!(path, activity_id, t, detected_known)?
 		Ok({
-			target_known,
-			target_reps: tgt.tr,
-			target_dur_s: tgt.td,
-			target_watts: tgt.tw,
+			target_known: t.kind != "",
+			target_kind: t.kind,
+			target_literal: Metrics.target_literal(t),
+			target_reps: t.reps,
+			target_dur_s: t.dur_s,
+			target_dist_m: t.dist_m,
+			target_watts: t.watts,
+			target_hr_lo: t.hr_lo,
+			target_hr_hi: t.hr_hi,
+			target_zone: t.zone,
+			target_pace_s: t.pace_s,
+			target_pace_unit: t.pace_unit,
 			detected_known,
 			detected_reps: det.dr,
 			detected_mean_dur_s: det.dd,
 			detected_mean_watts: det.dw,
-			reps_delta: if (both) det.dr - tgt.tr else 0,
-			watts_pct: if (both and tgt.tw > 0.0) det.dw / tgt.tw * 100.0 else 0.0,
+			reps_delta: if (both) det.dr - t.reps else 0,
+			watts_pct: if (both and t.watts > 0.0) det.dw / t.watts * 100.0 else 0.0,
+			exec_known: ex.known,
+			exec_reason: ex.reason,
+			hr_under_s: ex.hr.under_s,
+			hr_in_s: ex.hr.in_s,
+			hr_over_s: ex.hr.over_s,
+			hr_mean: ex.hr_mean,
+			zone_below_s: ex.zone.below_s,
+			zone_in_s: ex.zone.in_s,
+			zone_above_s: ex.zone.above_s,
+			pace_basis: ex.pace.basis,
+			pace_actual_s: ex.pace.actual_s,
+			pace_pct: if (ex.pace.actual_s > 0.0) t.pace_s / ex.pace.actual_s * 100.0 else 0.0,
+			pace_reps: ex.pace.reps,
+			pace_reps_delta: if (ex.pace.basis == "detected") ex.pace.reps - t.reps else 0,
 		})
+	}
+
+	# the execution of one target on its own signal; every magnitude another kind
+	# would carry stays at 0 or ""
+	exec_for! : Str, I64, Metrics.Target, Bool => Try({ known : Bool, reason : Str, hr : { under_s : I64, in_s : I64, over_s : I64 }, hr_mean : F64, zone : { below_s : I64, in_s : I64, above_s : I64 }, pace : { basis : Str, actual_s : F64, reps : I64 } }, _)
+	exec_for! = |path, activity_id, t, power_detected| {
+		none = { known: Bool.False, reason: "", hr: { under_s: 0, in_s: 0, over_s: 0 }, hr_mean: 0.0, zone: { below_s: 0, in_s: 0, above_s: 0 }, pace: { basis: "", actual_s: 0.0, reps: 0 } }
+		if t.kind == "" {
+			Ok({ ..none, reason: "no_target" })
+		} else if t.kind == "power" {
+			Ok(if (power_detected) { ..none, known: Bool.True } else { ..none, reason: "no_power_intervals" })
+		} else if t.kind == "hr" {
+			s = stream_of!(path, activity_id)?
+			hr_pairs = List.keep_if(Streams.stream_pairs(s.time, s.heartrate), |p| Metrics.valid_hr(p.v))
+			if List.is_empty(hr_pairs) {
+				Ok({ ..none, reason: "no_hr_stream" })
+			} else {
+				band = Metrics.hr_band_seconds(hr_pairs, t.hr_lo, t.hr_hi)
+				mean = List.fold(hr_pairs, 0.0, |a, p| a + p.v) / (List.len(hr_pairs)).to_f64()
+				Ok({ ..none, known: Bool.True, hr: band, hr_mean: mean })
+			}
+		} else if t.kind == "zone" {
+			zs = Sql.query_many!({
+				path: Path.utf8(path),
+				query: "SELECT COALESCE(z1_s, 0) AS z1, COALESCE(z2_s, 0) AS z2, COALESCE(z3_s, 0) AS z3, COALESCE(z4_s, 0) AS z4, COALESCE(z5_s, 0) AS z5 FROM activity_metrics WHERE activity_id = :id AND COALESCE(hr_samples_total, 0) > 0",
+				bindings: [{ name: ":id", value: Integer(activity_id) }],
+				rows: |cols| |stmt| {
+					z1 = Sql.i64("z1")(cols)(stmt)?
+					z2 = Sql.i64("z2")(cols)(stmt)?
+					z3 = Sql.i64("z3")(cols)(stmt)?
+					z4 = Sql.i64("z4")(cols)(stmt)?
+					z5 = Sql.i64("z5")(cols)(stmt)?
+					Ok([z1, z2, z3, z4, z5])
+				},
+			})?
+			match List.first(zs) {
+				Err(_) => Ok({ ..none, reason: "no_hr_zones" })
+				Ok(z) => {
+					n = (t.zone - 1).to_u64_wrap()
+					below = List.sum(List.take_first(z, n))
+					inside = List.get(z, n).ok_or(0)
+					above = List.sum(List.drop_first(z, n + 1))
+					Ok({ ..none, known: Bool.True, zone: { below_s: below, in_s: inside, above_s: above } })
+				}
+			}
+		} else {
+			acts = Sql.query_many!({
+				path: Path.utf8(path),
+				query: "SELECT COALESCE(CAST(sport_type AS TEXT), '') AS sp, CAST(COALESCE(distance, 0) AS REAL) AS dist, COALESCE(moving_time, 0) AS mt FROM activities WHERE id = :id",
+				bindings: [{ name: ":id", value: Integer(activity_id) }],
+				rows: |cols| |stmt| {
+					sp = Sql.str("sp")(cols)(stmt)?
+					dist = Sql.f64("dist")(cols)(stmt)?
+					mt = Sql.i64("mt")(cols)(stmt)?
+					Ok({ sp, dist, mt })
+				},
+			})?
+			a = List.first(acts).ok_or({ sp: "", dist: 0.0, mt: 0 })
+			if !(List.contains(Sports.pace_unit_families(t.pace_unit), Sports.canonical(a.sp))) {
+				Ok({ ..none, reason: "pace_unit_mismatch" })
+			} else {
+				# the detector's work reps are found on grade-adjusted speed, so their
+				# own average is not the pace that was run; their ACTUAL pace is the
+				# distance the stream covered inside their windows, over their time
+				windows = Sql.query_many!({
+					path: Path.utf8(path),
+					query: "SELECT COALESCE(start_s, 0) AS ws, COALESCE(dur_s, 0) AS wd FROM activity_segments WHERE activity_id = :aid AND kind = 'work' AND signal = 'pace' ORDER BY ordinal",
+					bindings: [{ name: ":aid", value: Integer(activity_id) }],
+					rows: |cols| |stmt| {
+						ws = Sql.i64("ws")(cols)(stmt)?
+						wd = Sql.i64("wd")(cols)(stmt)?
+						Ok({ start_s: ws, dur_s: wd })
+					},
+				})?
+				rep_speed =
+					if List.is_empty(windows) {
+						0.0
+					} else {
+						s = stream_of!(path, activity_id)?
+						Metrics.windows_speed(Streams.stream_pairs(s.time, s.distance), windows)
+					}
+				if rep_speed > 0.0 {
+					Ok({ ..none, known: Bool.True, pace: { basis: "detected", actual_s: Metrics.pace_s_per_unit(rep_speed, t.pace_unit), reps: List.len(windows).to_i64_wrap() } })
+				} else if a.dist > 0.0 and a.mt > 0 {
+					Ok({ ..none, known: Bool.True, pace: { basis: "whole", actual_s: Metrics.pace_s_per_unit(a.dist / (a.mt).to_f64(), t.pace_unit), reps: 0 } })
+				} else {
+					Ok({ ..none, reason: "no_distance" })
+				}
+			}
+		}
+	}
+	# the activity's stored streams, decoded; all absent when it has none
+	stream_of! : Str, I64 => Try(Streams.StreamsResp, _)
+	stream_of! = |path, activity_id| {
+		raws = Sql.query_many!({
+			path: Path.utf8(path),
+			query: "SELECT COALESCE(CAST(raw_json AS TEXT), '') AS raw FROM streams WHERE activity_id = :id",
+			bindings: [{ name: ":id", value: Integer(activity_id) }],
+			rows: Sql.str("raw"),
+		})?
+		raw = List.first(raws).ok_or("")
+		Ok(if (raw == "") Streams.empty_streams else (Streams.decode_streams(NotNull(raw))).streams)
 	}
 	# `complete latest` is pure argument RESOLUTION in front of complete! - it
 	# resolves the two ids and hands them over as strings, so every guarantee
@@ -754,12 +920,12 @@ Plan :: [].{
 							replaced_note = if (replaced != 0) " (replacing activity ${I64.to_str(replaced)}, whose completion of this session is now gone — `stride complete ${I64.to_str(session_id)} ${I64.to_str(replaced)}` puts this session's completion back)" else ""
 							released_note = if (released != 0) " (dropping substitute activity ${I64.to_str(released)}, which no longer stands in for this session)" else ""
 							tm = target_match!(path, session_id, activity_id)?
-							tm_note = Render.target_match_note(tm)
+							tm_note = Render.target_match_note({ target_kind: tm.target_kind, target_literal: tm.target_literal, target_pace_unit: tm.target_pace_unit, detected_known: tm.detected_known, detected_reps: tm.detected_reps, detected_mean_dur_s: tm.detected_mean_dur_s, detected_mean_watts: tm.detected_mean_watts, exec_known: tm.exec_known, exec_reason: tm.exec_reason, hr_under_s: tm.hr_under_s, hr_in_s: tm.hr_in_s, hr_over_s: tm.hr_over_s, hr_mean: tm.hr_mean, zone_below_s: tm.zone_below_s, zone_in_s: tm.zone_in_s, zone_above_s: tm.zone_above_s, pace_basis: tm.pace_basis, pace_actual_s: tm.pace_actual_s, pace_reps: tm.pace_reps })
 							match steal_dead_links!(path, activity_id, session_id)? {
 								ReleasedFrom(holder) =>
-									Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, dropped_substitute: released, released_substitute_of: holder, target_known: tm.target_known, target_reps: tm.target_reps, target_dur_s: tm.target_dur_s, target_watts: tm.target_watts, detected_known: tm.detected_known, detected_reps: tm.detected_reps, detected_mean_dur_s: tm.detected_mean_dur_s, detected_mean_watts: tm.detected_mean_watts, reps_delta: tm.reps_delta, watts_pct: tm.watts_pct }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note}${tm_note} (released its old substitute link on session #${I64.to_str(o.released_substitute_of)})")
+									Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, dropped_substitute: released, released_substitute_of: holder, target_known: tm.target_known, target_kind: tm.target_kind, target_literal: tm.target_literal, target_reps: tm.target_reps, target_dur_s: tm.target_dur_s, target_dist_m: tm.target_dist_m, target_watts: tm.target_watts, target_hr_lo: tm.target_hr_lo, target_hr_hi: tm.target_hr_hi, target_zone: tm.target_zone, target_pace_s: tm.target_pace_s, target_pace_unit: tm.target_pace_unit, detected_known: tm.detected_known, detected_reps: tm.detected_reps, detected_mean_dur_s: tm.detected_mean_dur_s, detected_mean_watts: tm.detected_mean_watts, reps_delta: tm.reps_delta, watts_pct: tm.watts_pct, exec_known: tm.exec_known, exec_reason: tm.exec_reason, hr_under_s: tm.hr_under_s, hr_in_s: tm.hr_in_s, hr_over_s: tm.hr_over_s, hr_mean: tm.hr_mean, zone_below_s: tm.zone_below_s, zone_in_s: tm.zone_in_s, zone_above_s: tm.zone_above_s, pace_basis: tm.pace_basis, pace_actual_s: tm.pace_actual_s, pace_pct: tm.pace_pct, pace_reps: tm.pace_reps, pace_reps_delta: tm.pace_reps_delta }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note}${tm_note} (released its old substitute link on session #${I64.to_str(o.released_substitute_of)})")
 								NothingReleased =>
-									Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, dropped_substitute: released, target_known: tm.target_known, target_reps: tm.target_reps, target_dur_s: tm.target_dur_s, target_watts: tm.target_watts, detected_known: tm.detected_known, detected_reps: tm.detected_reps, detected_mean_dur_s: tm.detected_mean_dur_s, detected_mean_watts: tm.detected_mean_watts, reps_delta: tm.reps_delta, watts_pct: tm.watts_pct }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note}${tm_note}")
+									Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, dropped_substitute: released, target_known: tm.target_known, target_kind: tm.target_kind, target_literal: tm.target_literal, target_reps: tm.target_reps, target_dur_s: tm.target_dur_s, target_dist_m: tm.target_dist_m, target_watts: tm.target_watts, target_hr_lo: tm.target_hr_lo, target_hr_hi: tm.target_hr_hi, target_zone: tm.target_zone, target_pace_s: tm.target_pace_s, target_pace_unit: tm.target_pace_unit, detected_known: tm.detected_known, detected_reps: tm.detected_reps, detected_mean_dur_s: tm.detected_mean_dur_s, detected_mean_watts: tm.detected_mean_watts, reps_delta: tm.reps_delta, watts_pct: tm.watts_pct, exec_known: tm.exec_known, exec_reason: tm.exec_reason, hr_under_s: tm.hr_under_s, hr_in_s: tm.hr_in_s, hr_over_s: tm.hr_over_s, hr_mean: tm.hr_mean, zone_below_s: tm.zone_below_s, zone_in_s: tm.zone_in_s, zone_above_s: tm.zone_above_s, pace_basis: tm.pace_basis, pace_actual_s: tm.pace_actual_s, pace_pct: tm.pace_pct, pace_reps: tm.pace_reps, pace_reps_delta: tm.pace_reps_delta }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note}${tm_note}")
 							}
 						}
 					}
@@ -1446,7 +1612,7 @@ Plan :: [].{
 								\\       COALESCE(CAST(detail AS TEXT),'') AS detail, COALESCE(CAST(rationale AS TEXT),'') AS rationale,
 								\\       COALESCE(target_reps, 0) AS target_reps, COALESCE(target_dur_s, 0) AS target_dur_s,
 								\\       CAST(COALESCE(target_watts, 0) AS REAL) AS target_watts,
-								\\       CASE WHEN COALESCE(target_reps, 0) > 0 THEN 1 ELSE 0 END AS tk
+								\\       COALESCE(CAST(target_literal AS TEXT), '') AS target_literal
 								\\FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'
 								\\ORDER BY target_date, id
 							,
@@ -1457,13 +1623,14 @@ Plan :: [].{
 								session_type = Sql.str("session_type")(cols)(stmt)?
 								detail = Sql.str("detail")(cols)(stmt)?
 								rationale = Sql.str("rationale")(cols)(stmt)?
-								target_reps = Sql.i64("target_reps")(cols)(stmt)?
-								target_dur_s = Sql.i64("target_dur_s")(cols)(stmt)?
-								target_watts = Sql.f64("target_watts")(cols)(stmt)?
-								tk = Sql.i64("tk")(cols)(stmt)?
+								reps = Sql.i64("target_reps")(cols)(stmt)?
+								dur_s = Sql.i64("target_dur_s")(cols)(stmt)?
+								watts = Sql.f64("target_watts")(cols)(stmt)?
+								literal = Sql.str("target_literal")(cols)(stmt)?
+								t = Metrics.stored_target(literal, reps, dur_s, watts)
 								target_known : Bool
-								target_known = tk == 1
-								Ok({ id, target_date, session_type, detail, rationale, target_reps, target_dur_s, target_watts, target_known })
+								target_known = t.kind != ""
+								Ok({ id, target_date, session_type, detail, rationale, target_known, target_kind: t.kind, target_literal: Metrics.target_literal(t), target_reps: t.reps, target_dur_s: t.dur_s, target_dist_m: t.dist_m, target_watts: t.watts, target_hr_lo: t.hr_lo, target_hr_hi: t.hr_hi, target_zone: t.zone, target_pace_s: t.pace_s, target_pace_unit: t.pace_unit })
 							},
 						})?
 						# ── plan history (#158): planned-vs-actual as deterministic memory.

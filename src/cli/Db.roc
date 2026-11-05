@@ -258,7 +258,7 @@ Db :: [].{
 	# bump when the schema changes; ensure_schema! re-runs migrations when the db's
 	# PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 	# that post-date the original CREATE statements in Schema.roc.)
-	schema_version = 41
+	schema_version = 42
 
 	run_migrations! : Str => Try({}, _)
 	run_migrations! = |path| {
@@ -319,6 +319,11 @@ Db :: [].{
 		alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN target_reps INTEGER")?
 		alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN target_dur_s INTEGER")?
 		alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN target_watts REAL")?
+		# v42 (#636): the canonical target literal, on every signal (power, HR band, HR
+		# zone, pace). The three columns above stay the power target's numbers, which
+		# the projection and the window read; a row with no literal is a power target
+		# written before it, rebuilt from those columns.
+		alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN target_literal TEXT")?
 		# v3: metrics record the HR zone bounds they were computed with, so a zone-
 		# config change invalidates + recomputes (like ftp_used does for FTP)
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN zones_used TEXT")?

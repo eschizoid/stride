@@ -149,6 +149,28 @@ Sports :: [].{
 	expect Sports.pace_label_for(Imperial, "Rowing") == "/500m"
 	expect Sports.pace_label_for(Imperial, "Swim") == "/100m"
 
+	# The family heads a pace target can be written for, by the unit the
+	# literal names: a kilometre or mile pace fits the foot families, a
+	# 100m pace the swim family, a 500m split the rowing family. A unit
+	# outside the four fits nothing. Rides are absent on purpose: cycling
+	# speed follows terrain, so a ride's effort is its power or its heart rate.
+	pace_unit_families : Str -> List(Str)
+	pace_unit_families = |unit|
+		if (unit == "/km" or unit == "/mi") ["Run", "Walk"]
+		else if (unit == "/100m") ["Swim"]
+		else if (unit == "/500m") ["Rowing"]
+		else []
+
+	expect Sports.pace_unit_families("/km") == ["Run", "Walk"]
+	expect Sports.pace_unit_families("/mi") == ["Run", "Walk"]
+	expect Sports.pace_unit_families("/100m") == ["Swim"]
+	expect Sports.pace_unit_families("/500m") == ["Rowing"]
+	expect Sports.pace_unit_families("/furlong") == []
+	# every family a pace unit names is a real family head, and the swim and
+	# rowing units agree with the unit each family reads its own pace over
+	expect List.all(List.join(List.map(["/km", "/100m", "/500m"], pace_unit_families)), |h| canonical(h) == h and List.any(families, |f| List.first(f.sports) == Ok(h)))
+	expect pace_unit("Swim").label == "/100m" and pace_unit("Rowing").label == "/500m"
+
 	pace_tss_exponent : Str -> F64
 	pace_tss_exponent = |sport|
 		if (Str.contains(Str.with_ascii_lowercased(sport), "swim")) 3.0 else 2.0
