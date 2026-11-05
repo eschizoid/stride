@@ -24,6 +24,8 @@
     "sport_zone_overrides",
     "streams_retry_capped",
     "strength_unrated",
+    "strength_without_sets",
+    "strength_without_sets_ids",
     "time",
     "time_ok",
     "unanalyzed",
@@ -153,6 +155,17 @@
     },
     "zones_set": {
       "type": "boolean"
+    },
+    "strength_without_sets": {
+      "type": "integer",
+      "description": "How many strength-family activities from the last 30 local days have no stored set rows (neither a parsed description paste nor an imported Strava log). Equals the length of strength_without_sets_ids."
+    },
+    "strength_without_sets_ids": {
+      "type": "array",
+      "description": "The activity ids counted by strength_without_sets, newest first. Each is a session whose sets a coach can fetch from the Strava app log and pass to `stride strength import`, or that the athlete can paste into the description.",
+      "items": {
+        "type": "integer"
+      }
     }
   }
 }
