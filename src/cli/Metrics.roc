@@ -2044,6 +2044,222 @@ Metrics :: [].{
 				}
 		}
 
+	## A structured target on any signal (#636). `kind` names the signal the
+	## session is judged on: "power", "hr" (a bpm band), "zone" (an HR zone) or
+	## "pace". Magnitudes that do not belong to the kind ride at 0 or "" (ADR 0009
+	## impossible-zero), and a rep is a duration OR a distance: `dur_s` 0 means a
+	## distance rep, `dist_m` 0 a timed one.
+	Target : { kind : Str, reps : I64, dur_s : I64, dist_m : F64, watts : F64, hr_lo : I64, hr_hi : I64, zone : I64, pace_s : F64, pace_unit : Str }
+
+	no_target : Target
+	no_target = { kind: "", reps: 0, dur_s: 0, dist_m: 0.0, watts: 0.0, hr_lo: 0, hr_hi: 0, zone: 0, pace_s: 0.0, pace_unit: "" }
+
+	power_target : { reps : I64, dur_s : I64, watts : F64 } -> Target
+	power_target = |t| { ..no_target, kind: "power", reps: t.reps, dur_s: t.dur_s, watts: t.watts }
+
+	## The target literal on every signal, `<reps>x<rep>@<signal>`:
+	##   power  `3x12:00@230W` — exactly parse_target's grammar, unchanged
+	##   hr     `1x60:00@HR125-147` — a bpm band, 35-220, low below high
+	##   zone   `1x90:00@Z2` — HR zone 1-5 under the athlete's configured zones
+	##   pace   `5x4:00@4:10/km`, `/mi`, `10x100m@1:40/100m`, `6x500m@1:55/500m`
+	## A non-power rep is `mm:ss` or `h:mm:ss` (0:30 up to 23:59:59); only a pace
+	## rep may instead be a distance, `<n>m` or `<n>km`. Strict for the same reason
+	## parse_target is: a target that half-parses is one the athlete and the
+	## arithmetic disagree about.
+	parse_any_target : Str -> Try(Target, [BadTarget])
+	parse_any_target = |lit|
+		if Str.ends_with(lit, "W") {
+			(parse_target(lit)).map_ok(power_target)
+		} else {
+			match Str.split_first(lit, "x") {
+				Err(_) => Err(BadTarget)
+				Ok({ before: reps_s, after: rest }) =>
+					match (I64.from_str(reps_s), Str.split_first(rest, "@")) {
+						(Ok(reps), Ok({ before: rep_s, after: sig })) =>
+							if reps >= 1 and reps <= 99 {
+								signal_target(reps, rep_s, sig)
+							} else {
+								Err(BadTarget)
+							}
+						_ => Err(BadTarget)
+					}
+			}
+		}
+
+	signal_target : I64, Str, Str -> Try(Target, [BadTarget])
+	signal_target = |reps, rep_s, sig|
+		if Str.starts_with(sig, "HR") {
+			match (rep_duration(rep_s), Str.split_first(Str.replace_first(sig, "HR", ""), "-")) {
+				(Ok(dur_s), Ok({ before: lo_s, after: hi_s })) =>
+					match (I64.from_str(lo_s), I64.from_str(hi_s)) {
+						(Ok(lo), Ok(hi)) =>
+							if lo >= 35 and hi <= 220 and lo < hi {
+								Ok({ ..no_target, kind: "hr", reps, dur_s, hr_lo: lo, hr_hi: hi })
+							} else {
+								Err(BadTarget)
+							}
+						_ => Err(BadTarget)
+					}
+				_ => Err(BadTarget)
+			}
+		} else if Str.starts_with(sig, "Z") {
+			match (rep_duration(rep_s), I64.from_str(Str.replace_first(sig, "Z", ""))) {
+				(Ok(dur_s), Ok(z)) =>
+					if z >= 1 and z <= 5 {
+						Ok({ ..no_target, kind: "zone", reps, dur_s, zone: z })
+					} else {
+						Err(BadTarget)
+					}
+				_ => Err(BadTarget)
+			}
+		} else {
+			match Str.split_first(sig, "/") {
+				Err(_) => Err(BadTarget)
+				Ok({ before: pace_str, after: unit_s }) => {
+					unit = "/${unit_s}"
+					known_unit = List.contains(["/km", "/mi", "/100m", "/500m"], unit)
+					match (mmss_seconds(pace_str), rep_length(rep_s)) {
+						(Ok(pace_s), Ok(rep)) =>
+							if !known_unit or pace_s < 10 or pace_s > 3600 {
+								Err(BadTarget)
+							} else {
+								match rep {
+									Time(dur_s) => Ok({ ..no_target, kind: "pace", reps, dur_s, pace_s: (pace_s).to_f64(), pace_unit: unit })
+									Dist(dist_m) => Ok({ ..no_target, kind: "pace", reps, dist_m, pace_s: (pace_s).to_f64(), pace_unit: unit })
+								}
+							}
+						_ => Err(BadTarget)
+					}
+				}
+			}
+		}
+
+	# `mm:ss` with ss under 60, as whole seconds
+	mmss_seconds : Str -> Try(I64, [BadTarget])
+	mmss_seconds = |s|
+		match Str.split_first(s, ":") {
+			Ok({ before: mm_s, after: ss_s }) =>
+				match (I64.from_str(mm_s), I64.from_str(ss_s)) {
+					(Ok(mm), Ok(ss)) => if (mm >= 0 and mm <= 99 and ss >= 0 and ss < 60 and Str.count_utf8_bytes(ss_s) == 2) Ok(mm * 60 + ss) else Err(BadTarget)
+					_ => Err(BadTarget)
+				}
+			Err(_) => Err(BadTarget)
+		}
+
+	# a non-power rep's duration: `mm:ss` or `h:mm:ss`, at least 0:30, under a day
+	rep_duration : Str -> Try(I64, [BadTarget])
+	rep_duration = |s| {
+		secs =
+			match Str.split_first(s, ":") {
+				Err(_) => Err(BadTarget)
+				Ok({ before: h_s, after: rest }) =>
+					if Str.contains(rest, ":") {
+						match (I64.from_str(h_s), mmss_seconds(rest)) {
+							(Ok(h), Ok(ms)) => if (h >= 0 and h <= 23 and ms < 3600) Ok(h * 3600 + ms) else Err(BadTarget)
+							_ => Err(BadTarget)
+						}
+					} else {
+						mmss_seconds(s)
+					}
+			}
+		match secs {
+			Ok(n) => if (n >= 30) Ok(n) else Err(BadTarget)
+			Err(e) => Err(e)
+		}
+	}
+
+	# a pace rep: a duration, or a distance `<n>m` (25 m to 100 km) or `<n>km`
+	rep_length : Str -> Try([Time(I64), Dist(F64)], [BadTarget])
+	rep_length = |s|
+		if Str.ends_with(s, "km") {
+			match I64.from_str(Str.replace_last(s, "km", "")) {
+				Ok(n) => if (n >= 1 and n <= 100) Ok(Dist((n * 1000).to_f64())) else Err(BadTarget)
+				Err(_) => Err(BadTarget)
+			}
+		} else if Str.ends_with(s, "m") {
+			match I64.from_str(Str.replace_last(s, "m", "")) {
+				Ok(n) => if (n >= 25 and n <= 100000) Ok(Dist((n).to_f64())) else Err(BadTarget)
+				Err(_) => Err(BadTarget)
+			}
+		} else {
+			(rep_duration(s)).map_ok(|n| Time(n))
+		}
+
+	# a duration in the literal's own spelling: `m:ss`, or `h:mm:ss` from an hour
+	rep_dur_str : I64 -> Str
+	rep_dur_str = |secs| {
+		pad2 = |n| if (n < 10) "0${I64.to_str(n)}" else I64.to_str(n)
+		if secs >= 3600 {
+			"${I64.to_str(secs // 3600)}:${pad2((secs % 3600) // 60)}:${pad2(secs % 60)}"
+		} else {
+			"${I64.to_str(secs // 60)}:${pad2(secs % 60)}"
+		}
+	}
+
+	## The canonical spelling of a parsed target: what is stored and echoed, so
+	## two spellings of one target (`1000m`, `1km`) store as one. parse_any_target
+	## reads it back to the same Target.
+	target_literal : Target -> Str
+	target_literal = |t| {
+		rep =
+			if t.dist_m > 0.0 {
+				m = t.dist_m.round_to_i64_try().ok_or(0)
+				if (m % 1000 == 0) "${I64.to_str(m // 1000)}km" else "${I64.to_str(m)}m"
+			} else if t.kind == "power" {
+				# power keeps parse_target's `mm:ss`, which has no hour form
+				"${I64.to_str(t.dur_s // 60)}:${if (t.dur_s % 60 < 10) "0" else ""}${I64.to_str(t.dur_s % 60)}"
+			} else {
+				rep_dur_str(t.dur_s)
+			}
+		sig =
+			if t.kind == "power" {
+				"${I64.to_str(t.watts.round_to_i64_try().ok_or(0))}W"
+			} else if t.kind == "hr" {
+				"HR${I64.to_str(t.hr_lo)}-${I64.to_str(t.hr_hi)}"
+			} else if t.kind == "zone" {
+				"Z${I64.to_str(t.zone)}"
+			} else {
+				"${rep_dur_str(t.pace_s.round_to_i64_try().ok_or(0))}${t.pace_unit}"
+			}
+		if (t.kind == "") "" else "${I64.to_str(t.reps)}x${rep}@${sig}"
+	}
+
+	## A stored target row back to a Target: the canonical literal when the row has
+	## one, else the power-only columns a session written before #636 carries.
+	stored_target : Str, I64, I64, F64 -> Target
+	stored_target = |literal, reps, dur_s, watts|
+		match parse_any_target(literal) {
+			Ok(t) => t
+			Err(_) => if (reps > 0 and watts > 0.0) power_target({ reps, dur_s, watts }) else no_target
+		}
+
+	## Seconds of HR under, inside and over a bpm band [lo, hi], with the same
+	## capped-gap time walk the zone split uses (time_in_bands); samples outside
+	## the plausible HR range are skipped, not credited.
+	hr_band_seconds : List({ t : I64, v : F64 }), I64, I64 -> { under_s : I64, in_s : I64, over_s : I64 }
+	hr_band_seconds = |samples, lo, hi| {
+		lo_f = (lo).to_f64()
+		hi_f = (hi).to_f64()
+		b = time_in_bands(samples, |v| if (!(valid_hr(v))) Skip else if (v < lo_f) Easy else if (v <= hi_f) Moderate else Hard)
+		{ under_s: b.easy_s, in_s: b.moderate_s, over_s: b.hard_s }
+	}
+
+	## The metres a pace unit reads over; 0 for a unit no target can carry.
+	pace_unit_m : Str -> F64
+	pace_unit_m = |unit|
+		if (unit == "/km") 1000.0
+		else if (unit == "/mi") 1609.344
+		else if (unit == "/100m") 100.0
+		else if (unit == "/500m") 500.0
+		else 0.0
+
+	## Seconds per pace unit at a speed in m/s; 0 when either side is unknown.
+	pace_s_per_unit : F64, Str -> F64
+	pace_s_per_unit = |speed, unit| {
+		m = pace_unit_m(unit)
+		if (speed > 0.0 and m > 0.0) m / speed else 0.0
+	}
+
 	# "YYYY-MM" for a day number — the same key shape SQL's substr(day,1,7)
 	# produces, so a Roc-side grouping and a SQL-side one agree.
 	month_key : I64 -> Str
@@ -5120,6 +5336,62 @@ expect Metrics.parse_target("3x100:00@230W") == Err(BadTarget)
 expect Metrics.parse_target("-3x12:00@230W") == Err(BadTarget)
 expect Metrics.parse_target("threshold") == Err(BadTarget)
 expect Metrics.parse_target("") == Err(BadTarget)
+# parse_any_target: power is parse_target's grammar exactly, refusals included
+expect Metrics.parse_any_target("3x12:00@230W") == Ok(Metrics.power_target({ reps: 3, dur_s: 720, watts: 230.0 }))
+expect Metrics.parse_any_target("3x100:00@230W") == Err(BadTarget)
+expect Metrics.parse_any_target("3x12:00@2501W") == Err(BadTarget)
+# hr band: 35-220 bpm, low strictly below high, a timed rep only
+expect Metrics.parse_any_target("1x60:00@HR125-147") == Ok({ ..Metrics.no_target, kind: "hr", reps: 1, dur_s: 3600, hr_lo: 125, hr_hi: 147 })
+expect Metrics.parse_any_target("1x2:30:00@HR120-140") == Ok({ ..Metrics.no_target, kind: "hr", reps: 1, dur_s: 9000, hr_lo: 120, hr_hi: 140 })
+expect Metrics.parse_any_target("1x60:00@HR147-125") == Err(BadTarget)
+expect Metrics.parse_any_target("1x60:00@HR140-140") == Err(BadTarget)
+expect Metrics.parse_any_target("1x60:00@HR30-140") == Err(BadTarget)
+expect Metrics.parse_any_target("1x60:00@HR120-221") == Err(BadTarget)
+expect Metrics.parse_any_target("1x60:00@HR125") == Err(BadTarget)
+expect Metrics.parse_any_target("1x5km@HR125-147") == Err(BadTarget)
+# zone: 1-5
+expect Metrics.parse_any_target("1x90:00@Z2") == Ok({ ..Metrics.no_target, kind: "zone", reps: 1, dur_s: 5400, zone: 2 })
+expect Metrics.parse_any_target("4x8:00@Z5") == Ok({ ..Metrics.no_target, kind: "zone", reps: 4, dur_s: 480, zone: 5 })
+expect Metrics.parse_any_target("1x90:00@Z0") == Err(BadTarget)
+expect Metrics.parse_any_target("1x90:00@Z6") == Err(BadTarget)
+expect Metrics.parse_any_target("1x90:00@Zone2") == Err(BadTarget)
+# pace: timed or distance reps, four units, 0:10-60:00 per unit
+expect Metrics.parse_any_target("5x4:00@4:10/km") == Ok({ ..Metrics.no_target, kind: "pace", reps: 5, dur_s: 240, pace_s: 250.0, pace_unit: "/km" })
+expect Metrics.parse_any_target("3x1mi@6:45/mi") == Err(BadTarget)
+expect Metrics.parse_any_target("3x10:00@6:45/mi") == Ok({ ..Metrics.no_target, kind: "pace", reps: 3, dur_s: 600, pace_s: 405.0, pace_unit: "/mi" })
+expect Metrics.parse_any_target("10x100m@1:40/100m") == Ok({ ..Metrics.no_target, kind: "pace", reps: 10, dist_m: 100.0, pace_s: 100.0, pace_unit: "/100m" })
+expect Metrics.parse_any_target("6x500m@1:55/500m") == Ok({ ..Metrics.no_target, kind: "pace", reps: 6, dist_m: 500.0, pace_s: 115.0, pace_unit: "/500m" })
+expect Metrics.parse_any_target("4x1km@3:50/km") == Ok({ ..Metrics.no_target, kind: "pace", reps: 4, dist_m: 1000.0, pace_s: 230.0, pace_unit: "/km" })
+expect Metrics.parse_any_target("5x4:00@4:10/furlong") == Err(BadTarget)
+expect Metrics.parse_any_target("5x4:00@4:1/km") == Err(BadTarget)
+expect Metrics.parse_any_target("5x4:00@0:05/km") == Err(BadTarget)
+expect Metrics.parse_any_target("10x10m@1:40/100m") == Err(BadTarget)
+expect Metrics.parse_any_target("5x4:00@4:10") == Err(BadTarget)
+# reps, rep duration and shape refusals shared by every non-power kind
+expect Metrics.parse_any_target("0x60:00@Z2") == Err(BadTarget)
+expect Metrics.parse_any_target("100x60:00@Z2") == Err(BadTarget)
+expect Metrics.parse_any_target("1x0:20@Z2") == Err(BadTarget)
+expect Metrics.parse_any_target("1x24:00:00@Z2") == Err(BadTarget)
+expect Metrics.parse_any_target("1x1:60:00@Z2") == Err(BadTarget)
+expect Metrics.parse_any_target("easy") == Err(BadTarget)
+expect Metrics.parse_any_target("") == Err(BadTarget)
+# the canonical literal round-trips, and folds two spellings of one rep into one
+expect List.all(["3x12:00@230W", "1x60:00@230W", "1x1:00:00@HR125-147", "1x2:30:00@Z2", "5x4:00@4:10/km", "10x100m@1:40/100m", "6x500m@1:55/500m", "4x1km@3:50/km"], |l| (Metrics.parse_any_target(l)).map_ok(Metrics.target_literal) == Ok(l))
+expect (Metrics.parse_any_target("4x1000m@3:50/km")).map_ok(Metrics.target_literal) == Ok("4x1km@3:50/km")
+expect (Metrics.parse_any_target("1x60:00@HR125-147")).map_ok(Metrics.target_literal) == Ok("1x1:00:00@HR125-147")
+expect Metrics.target_literal(Metrics.no_target) == ""
+# a stored row: the literal wins, a pre-#636 power row rebuilds from its columns
+expect Metrics.stored_target("1x90:00@Z2", 1, 5400, 0.0).kind == "zone"
+expect Metrics.stored_target("", 3, 720, 230.0) == Metrics.power_target({ reps: 3, dur_s: 720, watts: 230.0 })
+expect Metrics.stored_target("", 0, 0, 0.0) == Metrics.no_target
+# hr_band_seconds: capped-gap time under, inside and over the band; junk HR skipped
+expect Metrics.hr_band_seconds([{ t: 0, v: 120.0 }, { t: 10, v: 120.0 }, { t: 20, v: 130.0 }, { t: 30, v: 150.0 }, { t: 40, v: 250.0 }, { t: 100, v: 140.0 }], 125, 147) == { under_s: 10, in_s: 40, over_s: 10 }
+expect Metrics.hr_band_seconds([], 125, 147) == { under_s: 0, in_s: 0, over_s: 0 }
+# pace per unit from m/s: 4.0 m/s is 4:10/km, 1:40/100m is 1.0 m/s
+expect (Metrics.pace_s_per_unit(4.0, "/km") - 250.0).abs() < 0.001
+expect (Metrics.pace_s_per_unit(1.0, "/100m") - 100.0).abs() < 0.001
+expect (Metrics.pace_s_per_unit(4.0, "/mi") - 402.336).abs() < 0.001
+expect Metrics.pace_s_per_unit(0.0, "/km") == 0.0 and Metrics.pace_s_per_unit(4.0, "/furlong") == 0.0
 
 # one hour of work AT ftp is 100 by construction, the anchor the TSS scale is built on
 expect (Metrics.tss_from_target({ reps: 1, dur_s: 3600, watts: 200.0, ftp: 200.0 }) - 100.0).abs() < 0.001
