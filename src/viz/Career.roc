@@ -207,7 +207,7 @@ Career :: [].{
 			if sk > 0 {
 				sx = lx - 110.0
 				frame.rounded_rectangle!({ x: sx, y: 62.0, width: 100.0, height: 26.0, radius: 7.0, segments: 6, style: Draw.filled(Theme.card) })
-				Hud.flame!(frame, sx + 14.0, 75.0, model.tick)
+				Hud.flame!(frame, sx + 14.0, 75.0)
 				Text.from("${I64.to_str(sk)} wk streak", model.font).size(11).draw!(frame, { pos: { x: sx + 26.0, y: 70.0 }, color: Theme.ember_c, align: (Top, Left) })
 			}
 		}
