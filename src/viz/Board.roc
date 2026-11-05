@@ -87,6 +87,60 @@ Board :: [].{
 		res.line
 	}
 
+	# the KPI band's height above the plot: the tiles and the header row. The
+	# board's plot and its pointer hit-test both start this far below pad_t.
+	band_h : F32
+	band_h = 72.0
+
+	tile_h : F32
+	tile_h = 78.0
+
+	# the event name in at most two lines of ev_room, words kept whole and
+	# greedily packed by the font's measure; a word wider than a line is cut
+	# by ev_line, and whatever does not fit in two lines ends the second in
+	# "..."
+	ev_lines : Text.Font, Str, F32 -> List(Str)
+	ev_lines = |font, name, size| {
+		fits = |line| font.measure({ text: line, size, spacing: Text.default_spacing }).width <= ev_room
+		st = List.fold(
+			Str.split_on(name, " "),
+			{ line: "", rest: [], full: Bool.False },
+			|acc, w|
+				if (acc.full) { ..acc, rest: List.append(acc.rest, w) }
+				else {
+					cand = if (acc.line == "") w else "${acc.line} ${w}"
+					if (fits(cand)) { ..acc, line: cand }
+					else if (acc.line == "") { ..acc, line: w, full: Bool.True }
+					else { ..acc, rest: [w], full: Bool.True }
+				},
+		)
+		first = if (fits(st.line)) st.line else ev_line(font, st.line, "", size)
+		if (List.is_empty(st.rest)) [first] else [first, ev_line(font, Str.join_with(st.rest, " "), "", size)]
+	}
+
+	# the board's projection, as two tile lines: where it ends (the event
+	# when the written plan reaches it, else the plan's last day) with the
+	# projected fitness and form, then how much of the window's plan carries
+	# a structured target - the rest contributes no load, so this count is
+	# how blind the projection is
+	proj_lines : Str, Str, Db.Projection -> List(Str)
+	proj_lines = |horizon, event_day, p| {
+		mmdd = Str.from_utf8_lossy(List.drop_first(Str.to_utf8(horizon), 5))
+		head = if (horizon == event_day) "at event" else "plan to ${mmdd}"
+		if (!p.ok or horizon == "") []
+		else ["${head}: fit ${Db.fmt_f(p.ctl)}, form ${Db.fmt_f(p.tsb)}", "${I64.to_str(p.projected)} of ${I64.to_str(p.considered)} sessions targeted"]
+	}
+
+	# true when no value falls inside [lo, hi]
+	clear_of : List(F32), F32, F32 -> Bool
+	clear_of = |vals, lo, hi| List.all(vals, |v| v < lo or v > hi)
+
+	# the end of the zero rule its "fresh above" caption sits at: the right,
+	# unless a series crosses the caption's band there and the left is clear
+	note_side : List(F32), List(F32), F32, F32 -> [Left, Right]
+	note_side = |left_vals, right_vals, lo, hi|
+		if (!clear_of(right_vals, lo, hi) and clear_of(left_vals, lo, hi)) Left else Right
+
 	clamp_idx : F32, U64 -> U64
 	clamp_idx = |raw, hi_idx|
 		if (raw <= 0.0) (0.U64)
@@ -101,8 +155,8 @@ Board :: [].{
 		win_h = model.win.h
 		pad_l = Theme.pad_l
 		pad_r = Theme.pad_r
-		# +56 makes room for the KPI tile row this view alone carries
-		pad_t = Theme.pad_t + 56.0
+		# band_h makes room for the KPI tile row this view alone carries
+		pad_t = Theme.pad_t + band_h
 		pad_b = Theme.pad_b
 		ink_muted = Theme.ink_muted
 		ink_faint = Theme.ink_faint
@@ -126,7 +180,7 @@ Board :: [].{
 			[0.U64, 1, 2, 3],
 			|i| {
 				cx0 = tile_x(i)
-				frame.rounded_rectangle!({ x: cx0, y: 88.0, width: tile_w, height: 62.0, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
+				frame.rounded_rectangle!({ x: cx0, y: 88.0, width: tile_w, height: tile_h, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
 			},
 		)
 		List.for_each!(
@@ -138,10 +192,17 @@ Board :: [].{
 				x.k.cap.draw!(frame, { pos: { x: tx0, y: 127.0 }, color: ink_faint, align: (Top, Left) })
 			},
 		)
-		model.ev_tile_top.draw!(frame, { pos: { x: tile_text_x(3), y: 96.0 }, color: ink_muted, align: (Top, Left) })
-		model.ev_tile_sub.draw!(frame, { pos: { x: tile_text_x(3), y: 122.0 }, color: ink_faint, align: (Top, Left) })
-		if model.ridden_found {
-			model.ridden_note.draw!(frame, { pos: { x: tile_text_x(3), y: 136.0 }, color: ink_faint, align: (Top, Left) })
+		# the event tile: the name in one line, or two smaller ones, then the
+		# date line, then the projection's two lines; a recent ridden event
+		# takes the projection's place when there is no projection to show
+		name_n = List.len(model.ev_tile_name)
+		List.for_each!(List.map_with_index(model.ev_tile_name, |t, i| { t, i }), |x|
+			x.t.draw!(frame, { pos: { x: tile_text_x(3), y: (if (name_n > 1) 93.0 else 96.0) + U64.to_f32(x.i) * 15.0 }, color: ink_muted, align: (Top, Left) }))
+		model.ev_tile_sub.draw!(frame, { pos: { x: tile_text_x(3), y: 124.0 }, color: ink_faint, align: (Top, Left) })
+		List.for_each!(List.map_with_index(model.ev_tile_proj, |t, i| { t, i }), |x|
+			x.t.draw!(frame, { pos: { x: tile_text_x(3), y: 140.0 + U64.to_f32(x.i) * 13.0 }, color: ink_faint, align: (Top, Left) }))
+		if model.ridden_found and List.is_empty(model.ev_tile_proj) {
+			model.ridden_note.draw!(frame, { pos: { x: tile_text_x(3), y: 140.0 }, color: ink_faint, align: (Top, Left) })
 		}
 		# which range is live: three chips, the active one filled
 		List.for_each!(
@@ -233,7 +294,16 @@ Board :: [].{
 					}
 				},
 			)
-			model.zero_note.draw!(frame, { pos: { x: win_w - pad_r - 6.0, y: yf(0.0) - 16.0 }, color: ink_faint, align: (Top, Right) })
+			# the caption sits in a band 18px above the zero rule and about 100px
+			# wide at one end; it takes the end no series crosses that band at
+			note_w = 100.0
+			px_per = ph / span
+			vals_where = |keep| List.join(List.map(List.keep_if(List.map_with_index(data, |p, i| { p, i }), |q| keep(xf(q.i))), |q| [q.p.ctl, q.p.atl, q.p.tsb]))
+			side = note_side(vals_where(|x| x <= pad_l + note_w + 6.0), vals_where(|x| x >= win_w - pad_r - note_w - 6.0), -2.0 / px_per, 18.0 / px_per)
+			match side {
+				Right => model.zero_note.draw!(frame, { pos: { x: win_w - pad_r - 6.0, y: yf(0.0) - 16.0 }, color: ink_faint, align: (Top, Right) })
+				Left => model.zero_note.draw!(frame, { pos: { x: pad_l + 6.0, y: yf(0.0) - 16.0 }, color: ink_faint, align: (Top, Left) })
+			}
 
 			# daily load (TSS) as a faint rug in its OWN scale along the bottom band,
 			# never on the fitness/form axis: load peaks well above 50 and would
@@ -413,3 +483,25 @@ expect {
 expect Board.end_tops([100.0, 98.0, 200.0], 15.0) == [113.0, 98.0, 200.0]
 expect Board.end_tops([50.0, 100.0, 150.0], 15.0) == [50.0, 100.0, 150.0]
 expect Board.end_tops([100.0, 100.0, 100.0], 15.0) == [100.0, 115.0, 130.0]
+
+# a name that fits stays one line; a longer one packs whole words into two
+# lines, each within ev_room, and only overflow past the second ends in "..."
+expect Board.ev_lines(Text.font_stub, "no event planned", 10.0) == ["no event planned"]
+expect {
+	ls = Board.ev_lines(Text.font_stub, "Tour de Chi (62/100/150mi options)", 10.0)
+	List.len(ls) == 2 and List.all(ls, |l| Text.font_stub.measure({ text: l, size: 10.0, spacing: Text.default_spacing }).width <= Board.ev_room)
+}
+expect Str.ends_with(Str.join_with(Board.ev_lines(Text.font_stub, "one two three four five six seven eight nine ten eleven twelve thirteen", 10.0), " "), "...")
+
+# the projection names where it ends - the event only when the plan reaches
+# it - and how many of the window's sessions carry a target
+expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.True, ctl: 46.0, tsb: 14.3, considered: 4, projected: 1 }) == ["plan to 11-08: fit 46.0, form 14.3", "1 of 4 sessions targeted"]
+expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 40, projected: 12 }) == ["at event: fit 52.5, form -3.2", "12 of 40 sessions targeted"]
+expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0 }) == []
+expect Board.proj_lines("", "", { ok: Bool.True, ctl: 1.0, tsb: 1.0, considered: 1, projected: 1 }) == []
+
+# the caption keeps the right end unless a series crosses its band there
+# and the left end is clear
+expect Board.note_side([-10.0, 40.0], [-10.0, 40.0], -1.0, 8.0) == Right
+expect Board.note_side([-10.0, 40.0], [0.1, 40.0], -1.0, 8.0) == Left
+expect Board.note_side([3.0, 40.0], [0.1, 40.0], -1.0, 8.0) == Right
