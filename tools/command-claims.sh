@@ -36,7 +36,7 @@ MIN_DOCS=9
 # a deleted globbed file simply leaves the expansion — the per-file readability guard
 # below never sees it, and every floor above has slack enough to absorb one file. A new
 # doc bumps this deliberately; a silent drop is the failure this exists to catch.
-EXPECTED_NFILES=26
+EXPECTED_NFILES=27
 
 # ...and the reference-heavy files carry their own floors, because the global MIN_REFS
 # has enough slack that a single file's coverage can collapse entirely inside it (a
