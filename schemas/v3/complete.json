@@ -62,9 +62,10 @@
         "power",
         "hr",
         "zone",
-        "pace"
+        "pace",
+        "rpe"
       ],
-      "description": "The signal the target is written on: power watts, a heart-rate band, an HR zone, or a pace. Empty when target_known is false."
+      "description": "The signal the target is written on: power watts, a heart-rate band, an HR zone, a pace, or a session rating (RPE). Empty when target_known is false."
     },
     "target_literal": {
       "type": "string",
@@ -125,9 +126,10 @@
         "no_hr_stream",
         "no_hr_zones",
         "pace_unit_mismatch",
-        "no_distance"
+        "no_distance",
+        "no_rating"
       ],
-      "description": "Why exec_known is false; empty when it is true. pace_unit_mismatch: the activity's sport family is not one the target's pace unit is read over (/km and /mi: run, walk and hike; /100m: swim; /500m: rowing)."
+      "description": "Why exec_known is false; empty when it is true. pace_unit_mismatch: the activity's sport family is not one the target's pace unit is read over (/km and /mi: run, walk and hike; /100m: swim; /500m: rowing). no_rating: an rpe target whose activity has no rating yet (stride rate)."
     },
     "hr_under_s": {
       "type": "integer",
@@ -181,6 +183,18 @@
     "pace_reps_delta": {
       "type": "integer",
       "description": "pace targets: pace_reps minus target_reps on the detected basis; 0 otherwise. A measurement, not a verdict (ADR 0012)."
+    },
+    "target_rpe": {
+      "type": "integer",
+      "description": "The session rating the target names, 1-10; rpe targets only."
+    },
+    "rpe_actual": {
+      "type": "number",
+      "description": "The activity's stored session rating; behind rpe_known (ADR 0009 impossible-zero: a rating is 1-10)."
+    },
+    "rpe_known": {
+      "type": "boolean",
+      "description": "True when the target is an rpe one and the activity carries a rating; rpe_actual is a measurement only then."
     }
   }
 }

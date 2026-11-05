@@ -593,7 +593,7 @@ Render :: [].{
 	## complete's target-vs-execution clause — numbers on both sides, no verdict:
 	## "did they hit it" is the coach's sentence (ADR 0012, ADR 0014 §4). Each kind
 	## states its own signal; an execution with no comparable signal names why.
-	target_match_note : { target_kind : Str, target_literal : Str, target_pace_unit : Str, detected_known : Bool, detected_reps : I64, detected_mean_dur_s : I64, detected_mean_watts : F64, exec_known : Bool, exec_reason : Str, hr_under_s : I64, hr_in_s : I64, hr_over_s : I64, hr_mean : F64, zone_below_s : I64, zone_in_s : I64, zone_above_s : I64, pace_basis : Str, pace_actual_s : F64, pace_reps : I64 } -> Str
+	target_match_note : { target_kind : Str, target_literal : Str, target_pace_unit : Str, target_rpe : I64, detected_known : Bool, detected_reps : I64, detected_mean_dur_s : I64, detected_mean_watts : F64, exec_known : Bool, exec_reason : Str, hr_under_s : I64, hr_in_s : I64, hr_over_s : I64, hr_mean : F64, zone_below_s : I64, zone_in_s : I64, zone_above_s : I64, pace_basis : Str, pace_actual_s : F64, pace_reps : I64, rpe_actual : F64 } -> Str
 	target_match_note = |tm| {
 		d = Metrics.rep_dur_str
 		pace = |s| "${Metrics.rep_dur_str(s.round_to_i64_try().ok_or(0))}${tm.target_pace_unit}"
@@ -606,12 +606,15 @@ Render :: [].{
 					else if (tm.exec_reason == "no_hr_zones") "no heart-rate zone split"
 					else if (tm.exec_reason == "pace_unit_mismatch") "this sport is not paced ${tm.target_pace_unit}"
 					else if (tm.exec_reason == "no_distance") "no distance recorded"
+					else if (tm.exec_reason == "no_rating") "no rating recorded (stride rate)"
 					else tm.exec_reason
 				"nothing to compare: ${reason}"
 			} else if tm.target_kind == "hr" {
 				"HR in band ${d(tm.hr_in_s)}, over ${d(tm.hr_over_s)}, under ${d(tm.hr_under_s)}, mean ${(tm.hr_mean.round_to_i64_try().ok_or(0)).to_str()} bpm"
 			} else if tm.target_kind == "zone" {
 				"in zone ${d(tm.zone_in_s)}, above ${d(tm.zone_above_s)}, below ${d(tm.zone_below_s)}"
+			} else if tm.target_kind == "rpe" {
+				"rated ${fmt1(tm.rpe_actual)}"
 			} else if tm.pace_basis == "detected" {
 				"detected ${(tm.pace_reps).to_str()} reps at ${pace(tm.pace_actual_s)}"
 			} else {
@@ -1521,7 +1524,7 @@ Render :: [].{
 
 	## taper projection (#189): one horizon, its numbers, and which plan produced
 	## them — no verdict, same rule as events_screen (ADR 0010/0012)
-	project_screen : { target_date : Str, days_away : I64, projected_from : Str, baseline_known : Bool, ftp_known : Bool, plan_source : Str, ctl : F64, atl : F64, tsb : F64, sessions_considered : U64, sessions_projected : U64, hypothetical : List({ date : Str, reps : I64, dur_s : I64, watts : F64 }) } -> Str
+	project_screen : { target_date : Str, days_away : I64, projected_from : Str, baseline_known : Bool, ftp_known : Bool, plan_source : Str, ctl : F64, atl : F64, tsb : F64, sessions_considered : U64, sessions_projected : U64, unprojected : List({ date : Str, target_literal : Str, reason : Str }), hypothetical : List({ date : Str, target_kind : Str, target_literal : Str, reps : I64, dur_s : I64, watts : F64 }) } -> Str
 	project_screen = |p| {
 		# a PAST horizon states the current baseline, not a projection — same arm
 		# events_screen carries, same wording convention
@@ -1533,12 +1536,25 @@ Render :: [].{
 		nums = "  ctl ${fmt1(p.ctl)}  atl ${fmt1(p.atl)}  tsb ${fmt1(p.tsb)}  (${(p.sessions_projected).to_str()} of ${(p.sessions_considered).to_str()} sessions in the window carry a projectable load)"
 		hyp =
 			if (List.is_empty(p.hypothetical)) ""
-			else Str.join_with(List.map(p.hypothetical, |h| "\n  hypothetical: ${h.date} ${I64.to_str(h.reps)}×${mmss(h.dur_s)} @ ${(h.watts.to_i64_wrap()).to_str()}W"), "")
+			else Str.join_with(List.map(p.hypothetical, |h| "\n  hypothetical: ${h.date} ${h.target_literal}"), "")
+		unpriced =
+			Str.join_with(List.map(p.unprojected, |u| "\n  no load: ${u.date} ${unprojected_reason(u.target_literal, u.reason)}"), "")
 		note =
 			if (!(p.baseline_known)) "\nno computed history to project from — the numbers are decay over zero; `stride analyze` first"
-			else if (!(p.ftp_known)) "\nno 60d best-20min power on file, so no session could contribute load — the projection is decay plus nothing"
 			else ""
-		"${head}\n${nums}${hyp}${note}"
+		"${head}\n${nums}${hyp}${unpriced}${note}"
+	}
+
+	# why a planned session adds no load to a projection, with its target when it has one
+	unprojected_reason : Str, Str -> Str
+	unprojected_reason = |lit, reason| {
+		why =
+			if (reason == "no_target") "no structured target"
+			else if (reason == "no_ftp") "no 60d best-20min power on file"
+			else if (reason == "no_hr_zones") "no HR zones configured"
+			else if (reason == "no_threshold_pace") "no 60d threshold pace for its sport on file"
+			else reason
+		if (lit == "") why else "${lit}: ${why}"
 	}
 
 	## event targets (#138): the projection as numbers in plain indented rows, its inputs
@@ -1562,10 +1578,9 @@ Render :: [].{
 			)
 			base_note =
 				if (!(p.baseline_known)) "\nno computed history to project from — every number above is decay over zero; `stride analyze` first"
-				else if (!(p.ftp_known)) "\nno 60d best-20min power on file, so targeted sessions could not contribute load — the projection is decay plus nothing"
 				else ""
 			body = Str.join_with(
-				List.concat(["projected CTL/ATL/TSB from ${p.projected_from} over the open plan's structured targets"], rows),
+				List.concat(["projected CTL/ATL/TSB from ${p.projected_from} over the open plan's targets"], rows),
 				"\n",
 			)
 			"${body}${base_note}"
@@ -2669,7 +2684,7 @@ expect {
 expect {
 	# the complete clause's input with nothing known: each target row below overrides
 	# only what its kind carries
-	tm_base = { target_kind: "", target_literal: "", target_pace_unit: "", detected_known: Bool.False, detected_reps: 0, detected_mean_dur_s: 0, detected_mean_watts: 0.0, exec_known: Bool.False, exec_reason: "", hr_under_s: 0, hr_in_s: 0, hr_over_s: 0, hr_mean: 0.0, zone_below_s: 0, zone_in_s: 0, zone_above_s: 0, pace_basis: "", pace_actual_s: 0.0, pace_reps: 0 }
+	tm_base = { target_kind: "", target_literal: "", target_pace_unit: "", target_rpe: 0, detected_known: Bool.False, detected_reps: 0, detected_mean_dur_s: 0, detected_mean_watts: 0.0, exec_known: Bool.False, exec_reason: "", hr_under_s: 0, hr_in_s: 0, hr_over_s: 0, hr_mean: 0.0, zone_below_s: 0, zone_in_s: 0, zone_above_s: 0, pace_basis: "", pace_actual_s: 0.0, pace_reps: 0, rpe_actual: 0.0 }
 	notes = [
 		Render.drain_note(Complete, 0),
 		Render.drain_note(Complete, 5),
@@ -2710,6 +2725,8 @@ expect {
 		Render.target_match_note({ ..tm_base, target_kind: "pace", target_literal: "10x100m@1:40/100m", target_pace_unit: "/100m", exec_known: True, pace_basis: "whole", pace_actual_s: 104.0 }),
 		Render.target_match_note({ ..tm_base, target_kind: "pace", target_literal: "6x500m@1:55/500m", target_pace_unit: "/500m", exec_reason: "pace_unit_mismatch" }),
 		Render.target_match_note({ ..tm_base, target_kind: "pace", target_literal: "5x4:00@4:10/km", target_pace_unit: "/km", exec_reason: "no_distance" }),
+		Render.target_match_note({ ..tm_base, target_kind: "rpe", target_literal: "1x45:00@RPE6", target_rpe: 6, exec_known: True, rpe_actual: 7.0 }),
+		Render.target_match_note({ ..tm_base, target_kind: "rpe", target_literal: "1x45:00@RPE6", target_rpe: 6, exec_reason: "no_rating" }),
 		Render.target_match_note(tm_base),
 		# events_screen (#138) joins on arrival: the empty state, a populated row, and
 		# both degraded-baseline notes — ADR 0010 warns "you are on track" would slip
@@ -2721,11 +2738,11 @@ expect {
 		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 12.0, atl: 3.0, tsb: 9.0, planned_in_window: 2, sessions_projected: 0 }] }),
 		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [{ id: 2, event_date: "2026-08-01", name: "Past Race", days_away: -29, ctl: 40.0, atl: 50.0, tsb: -10.0, planned_in_window: 0, sessions_projected: 0 }] }),
 		# project_screen (#189) joins on arrival: recorded, hypothetical, and both notes
-		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "recorded", ctl: 30.0, atl: 20.0, tsb: 10.0, sessions_considered: 3, sessions_projected: 2, hypothetical: [] }),
-		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "hypothetical", ctl: 30.0, atl: 20.0, tsb: 10.0, sessions_considered: 1, sessions_projected: 1, hypothetical: [{ date: "2026-09-15", reps: 3, dur_s: 720, watts: 230.0 }] }),
-		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: False, ftp_known: False, plan_source: "recorded", ctl: 0.0, atl: 0.0, tsb: 0.0, sessions_considered: 0, sessions_projected: 0, hypothetical: [] }),
-		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: False, plan_source: "recorded", ctl: 12.0, atl: 3.0, tsb: 9.0, sessions_considered: 2, sessions_projected: 0, hypothetical: [] }),
-		Render.project_screen({ target_date: "2020-01-01", days_away: -2433, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "recorded", ctl: 40.9, atl: 50.0, tsb: -9.1, sessions_considered: 0, sessions_projected: 0, hypothetical: [] }),
+		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "recorded", ctl: 30.0, atl: 20.0, tsb: 10.0, sessions_considered: 3, sessions_projected: 2, unprojected: [], hypothetical: [] }),
+		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "hypothetical", ctl: 30.0, atl: 20.0, tsb: 10.0, sessions_considered: 1, sessions_projected: 1, unprojected: [{ date: "2026-09-20", target_literal: "1x1:00:00@HR125-147", reason: "no_hr_zones" }, { date: "2026-09-21", target_literal: "", reason: "no_target" }], hypothetical: [{ date: "2026-09-15", target_kind: "power", target_literal: "3x12:00@230W", reps: 3, dur_s: 720, watts: 230.0 }] }),
+		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: False, ftp_known: False, plan_source: "recorded", ctl: 0.0, atl: 0.0, tsb: 0.0, sessions_considered: 0, sessions_projected: 0, unprojected: [], hypothetical: [] }),
+		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: False, plan_source: "recorded", ctl: 12.0, atl: 3.0, tsb: 9.0, sessions_considered: 2, sessions_projected: 0, unprojected: [], hypothetical: [] }),
+		Render.project_screen({ target_date: "2020-01-01", days_away: -2433, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "recorded", ctl: 40.9, atl: 50.0, tsb: -9.1, sessions_considered: 0, sessions_projected: 0, unprojected: [], hypothetical: [] }),
 	]
 	List.all(notes, |p| !(Metrics.has_coaching_language(p)))
 }

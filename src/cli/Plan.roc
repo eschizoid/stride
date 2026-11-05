@@ -471,7 +471,7 @@ Plan :: [].{
 	# the one sentence naming every target form, for each surface that refuses one
 	target_grammar : Str -> Str
 	target_grammar = |lit|
-		"a target is <reps>x<rep>@<signal>: power 3x12:00@230W, heart rate 1x60:00@HR125-147, HR zone 1x90:00@Z2, or pace 5x4:00@4:10/km, 3x10:00@6:45/mi, 10x100m@1:40/100m, 6x500m@1:55/500m — got '${lit}' (reps 1-99, a timed rep at least 0:30; power keeps mm:ss, the others also take h:mm:ss; only a pace rep may be a distance)"
+		"a target is <reps>x<rep>@<signal>: power 3x12:00@230W, heart rate 1x60:00@HR125-147, HR zone 1x90:00@Z2, session rating 1x45:00@RPE6, or pace 5x4:00@4:10/km, 3x10:00@6:45/mi, 10x100m@1:40/100m, 6x500m@1:55/500m — got '${lit}' (reps 1-99, a timed rep at least 0:30; power keeps mm:ss, the others also take h:mm:ss; only a pace rep may be a distance)"
 	plan_add_checked! : Str, Str, Str, Str, [NoT, T(Metrics.Target)] => Try({}, _)
 	plan_add_checked! = |target_date, session_type, detail, rationale, pt| {
 		path = Db.open_db!({})?
@@ -554,14 +554,14 @@ Plan :: [].{
 	# the ADR 0009 impossible-zero shape for the echo: reps 0 cannot be a real target,
 	# so the magnitudes ride at 0 behind target_known, and a magnitude another kind
 	# carries rides at 0 (or "") behind target_kind
-	plan_echo : I64, Str, Str, [NoT, T(Metrics.Target)] -> { id : I64, target_date : Str, session_type : Str, target_known : Bool, target_kind : Str, target_literal : Str, target_reps : I64, target_dur_s : I64, target_dist_m : F64, target_watts : F64, target_hr_lo : I64, target_hr_hi : I64, target_zone : I64, target_pace_s : F64, target_pace_unit : Str }
+	plan_echo : I64, Str, Str, [NoT, T(Metrics.Target)] -> { id : I64, target_date : Str, session_type : Str, target_known : Bool, target_kind : Str, target_literal : Str, target_reps : I64, target_dur_s : I64, target_dist_m : F64, target_watts : F64, target_hr_lo : I64, target_hr_hi : I64, target_zone : I64, target_pace_s : F64, target_pace_unit : Str, target_rpe : I64 }
 	plan_echo = |id, target_date, session_type, pt| {
 		t =
 			match pt {
 				T(x) => x
 				NoT => Metrics.no_target
 			}
-		{ id, target_date, session_type, target_known: t.kind != "", target_kind: t.kind, target_literal: Metrics.target_literal(t), target_reps: t.reps, target_dur_s: t.dur_s, target_dist_m: t.dist_m, target_watts: t.watts, target_hr_lo: t.hr_lo, target_hr_hi: t.hr_hi, target_zone: t.zone, target_pace_s: t.pace_s, target_pace_unit: t.pace_unit }
+		{ id, target_date, session_type, target_known: t.kind != "", target_kind: t.kind, target_literal: Metrics.target_literal(t), target_reps: t.reps, target_dur_s: t.dur_s, target_dist_m: t.dist_m, target_watts: t.watts, target_hr_lo: t.hr_lo, target_hr_hi: t.hr_hi, target_zone: t.zone, target_pace_s: t.pace_s, target_pace_unit: t.pace_unit, target_rpe: t.rpe }
 	}
 	insert_planned_session! : Str, Str, Str, Str, Str, [NoT, T(Metrics.Target)] => Try({}, _)
 	insert_planned_session! = |path, target_date, session_type, detail, rationale, pt| {
@@ -611,9 +611,11 @@ Plan :: [].{
 	#          found pace reps (distance from the stream, since the detector's own
 	#          signal is grade-adjusted), else over the whole moving portion
 	#          (distance over moving time), as seconds per the target's unit
+	#   rpe    the session's stored rating; rpe_known says the target is an RPE
+	#          one and a rating exists
 	# exec_reason names why exec_known is false. Field names are measurements, never
 	# verdicts (ADR 0012).
-	TargetMatch : { target_known : Bool, target_kind : Str, target_literal : Str, target_reps : I64, target_dur_s : I64, target_dist_m : F64, target_watts : F64, target_hr_lo : I64, target_hr_hi : I64, target_zone : I64, target_pace_s : F64, target_pace_unit : Str, detected_known : Bool, detected_reps : I64, detected_mean_dur_s : I64, detected_mean_watts : F64, reps_delta : I64, watts_pct : F64, exec_known : Bool, exec_reason : Str, hr_under_s : I64, hr_in_s : I64, hr_over_s : I64, hr_mean : F64, zone_below_s : I64, zone_in_s : I64, zone_above_s : I64, pace_basis : Str, pace_actual_s : F64, pace_pct : F64, pace_reps : I64, pace_reps_delta : I64 }
+	TargetMatch : { target_known : Bool, target_kind : Str, target_literal : Str, target_reps : I64, target_dur_s : I64, target_dist_m : F64, target_watts : F64, target_hr_lo : I64, target_hr_hi : I64, target_zone : I64, target_pace_s : F64, target_pace_unit : Str, target_rpe : I64, detected_known : Bool, detected_reps : I64, detected_mean_dur_s : I64, detected_mean_watts : F64, reps_delta : I64, watts_pct : F64, exec_known : Bool, exec_reason : Str, hr_under_s : I64, hr_in_s : I64, hr_over_s : I64, hr_mean : F64, zone_below_s : I64, zone_in_s : I64, zone_above_s : I64, pace_basis : Str, pace_actual_s : F64, pace_pct : F64, pace_reps : I64, pace_reps_delta : I64, rpe_actual : F64, rpe_known : Bool }
 	target_match! : Str, I64, I64 => Try(TargetMatch, _)
 	target_match! = |path, session_id, activity_id| {
 		tgt = Sql.query!({
@@ -662,6 +664,7 @@ Plan :: [].{
 			target_zone: t.zone,
 			target_pace_s: t.pace_s,
 			target_pace_unit: t.pace_unit,
+			target_rpe: t.rpe,
 			detected_known,
 			detected_reps: det.dr,
 			detected_mean_dur_s: det.dd,
@@ -682,18 +685,31 @@ Plan :: [].{
 			pace_pct: if (ex.pace.actual_s > 0.0) t.pace_s / ex.pace.actual_s * 100.0 else 0.0,
 			pace_reps: ex.pace.reps,
 			pace_reps_delta: if (ex.pace.basis == "detected") ex.pace.reps - t.reps else 0,
+			rpe_actual: ex.rpe,
+			rpe_known: t.kind == "rpe" and ex.known,
 		})
 	}
 
 	# the execution of one target on its own signal; every magnitude another kind
 	# would carry stays at 0 or ""
-	exec_for! : Str, I64, Metrics.Target, Bool => Try({ known : Bool, reason : Str, hr : { under_s : I64, in_s : I64, over_s : I64 }, hr_mean : F64, zone : { below_s : I64, in_s : I64, above_s : I64 }, pace : { basis : Str, actual_s : F64, reps : I64 } }, _)
+	exec_for! : Str, I64, Metrics.Target, Bool => Try({ known : Bool, reason : Str, hr : { under_s : I64, in_s : I64, over_s : I64 }, hr_mean : F64, zone : { below_s : I64, in_s : I64, above_s : I64 }, pace : { basis : Str, actual_s : F64, reps : I64 }, rpe : F64 }, _)
 	exec_for! = |path, activity_id, t, power_detected| {
-		none = { known: Bool.False, reason: "", hr: { under_s: 0, in_s: 0, over_s: 0 }, hr_mean: 0.0, zone: { below_s: 0, in_s: 0, above_s: 0 }, pace: { basis: "", actual_s: 0.0, reps: 0 } }
+		none = { known: Bool.False, reason: "", hr: { under_s: 0, in_s: 0, over_s: 0 }, hr_mean: 0.0, zone: { below_s: 0, in_s: 0, above_s: 0 }, pace: { basis: "", actual_s: 0.0, reps: 0 }, rpe: 0.0 }
 		if t.kind == "" {
 			Ok({ ..none, reason: "no_target" })
 		} else if t.kind == "power" {
 			Ok(if (power_detected) { ..none, known: Bool.True } else { ..none, reason: "no_power_intervals" })
+		} else if t.kind == "rpe" {
+			rated = Sql.query_many!({
+				path: Path.utf8(path),
+				query: "SELECT CAST(rpe AS REAL) AS rpe FROM ratings WHERE activity_id = :id",
+				bindings: [{ name: ":id", value: Integer(activity_id) }],
+				rows: Sql.f64("rpe"),
+			})?
+			match List.first(rated) {
+				Ok(r) => Ok({ ..none, known: Bool.True, rpe: r })
+				Err(_) => Ok({ ..none, reason: "no_rating" })
+			}
 		} else if t.kind == "hr" {
 			s = stream_of!(path, activity_id)?
 			hr_pairs = List.keep_if(Streams.stream_pairs(s.time, s.heartrate), |p| Metrics.valid_hr(p.v))
@@ -920,12 +936,12 @@ Plan :: [].{
 							replaced_note = if (replaced != 0) " (replacing activity ${I64.to_str(replaced)}, whose completion of this session is now gone — `stride complete ${I64.to_str(session_id)} ${I64.to_str(replaced)}` puts this session's completion back)" else ""
 							released_note = if (released != 0) " (dropping substitute activity ${I64.to_str(released)}, which no longer stands in for this session)" else ""
 							tm = target_match!(path, session_id, activity_id)?
-							tm_note = Render.target_match_note({ target_kind: tm.target_kind, target_literal: tm.target_literal, target_pace_unit: tm.target_pace_unit, detected_known: tm.detected_known, detected_reps: tm.detected_reps, detected_mean_dur_s: tm.detected_mean_dur_s, detected_mean_watts: tm.detected_mean_watts, exec_known: tm.exec_known, exec_reason: tm.exec_reason, hr_under_s: tm.hr_under_s, hr_in_s: tm.hr_in_s, hr_over_s: tm.hr_over_s, hr_mean: tm.hr_mean, zone_below_s: tm.zone_below_s, zone_in_s: tm.zone_in_s, zone_above_s: tm.zone_above_s, pace_basis: tm.pace_basis, pace_actual_s: tm.pace_actual_s, pace_reps: tm.pace_reps })
+							tm_note = Render.target_match_note({ target_kind: tm.target_kind, target_literal: tm.target_literal, target_pace_unit: tm.target_pace_unit, target_rpe: tm.target_rpe, detected_known: tm.detected_known, detected_reps: tm.detected_reps, detected_mean_dur_s: tm.detected_mean_dur_s, detected_mean_watts: tm.detected_mean_watts, exec_known: tm.exec_known, exec_reason: tm.exec_reason, hr_under_s: tm.hr_under_s, hr_in_s: tm.hr_in_s, hr_over_s: tm.hr_over_s, hr_mean: tm.hr_mean, zone_below_s: tm.zone_below_s, zone_in_s: tm.zone_in_s, zone_above_s: tm.zone_above_s, pace_basis: tm.pace_basis, pace_actual_s: tm.pace_actual_s, pace_reps: tm.pace_reps, rpe_actual: tm.rpe_actual })
 							match steal_dead_links!(path, activity_id, session_id)? {
 								ReleasedFrom(holder) =>
-									Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, dropped_substitute: released, released_substitute_of: holder, target_known: tm.target_known, target_kind: tm.target_kind, target_literal: tm.target_literal, target_reps: tm.target_reps, target_dur_s: tm.target_dur_s, target_dist_m: tm.target_dist_m, target_watts: tm.target_watts, target_hr_lo: tm.target_hr_lo, target_hr_hi: tm.target_hr_hi, target_zone: tm.target_zone, target_pace_s: tm.target_pace_s, target_pace_unit: tm.target_pace_unit, detected_known: tm.detected_known, detected_reps: tm.detected_reps, detected_mean_dur_s: tm.detected_mean_dur_s, detected_mean_watts: tm.detected_mean_watts, reps_delta: tm.reps_delta, watts_pct: tm.watts_pct, exec_known: tm.exec_known, exec_reason: tm.exec_reason, hr_under_s: tm.hr_under_s, hr_in_s: tm.hr_in_s, hr_over_s: tm.hr_over_s, hr_mean: tm.hr_mean, zone_below_s: tm.zone_below_s, zone_in_s: tm.zone_in_s, zone_above_s: tm.zone_above_s, pace_basis: tm.pace_basis, pace_actual_s: tm.pace_actual_s, pace_pct: tm.pace_pct, pace_reps: tm.pace_reps, pace_reps_delta: tm.pace_reps_delta }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note}${tm_note} (released its old substitute link on session #${I64.to_str(o.released_substitute_of)})")
+									Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, dropped_substitute: released, released_substitute_of: holder, target_known: tm.target_known, target_kind: tm.target_kind, target_literal: tm.target_literal, target_reps: tm.target_reps, target_dur_s: tm.target_dur_s, target_dist_m: tm.target_dist_m, target_watts: tm.target_watts, target_hr_lo: tm.target_hr_lo, target_hr_hi: tm.target_hr_hi, target_zone: tm.target_zone, target_pace_s: tm.target_pace_s, target_pace_unit: tm.target_pace_unit, target_rpe: tm.target_rpe, detected_known: tm.detected_known, detected_reps: tm.detected_reps, detected_mean_dur_s: tm.detected_mean_dur_s, detected_mean_watts: tm.detected_mean_watts, reps_delta: tm.reps_delta, watts_pct: tm.watts_pct, exec_known: tm.exec_known, exec_reason: tm.exec_reason, hr_under_s: tm.hr_under_s, hr_in_s: tm.hr_in_s, hr_over_s: tm.hr_over_s, hr_mean: tm.hr_mean, zone_below_s: tm.zone_below_s, zone_in_s: tm.zone_in_s, zone_above_s: tm.zone_above_s, pace_basis: tm.pace_basis, pace_actual_s: tm.pace_actual_s, pace_pct: tm.pace_pct, pace_reps: tm.pace_reps, pace_reps_delta: tm.pace_reps_delta, rpe_actual: tm.rpe_actual, rpe_known: tm.rpe_known }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note}${tm_note} (released its old substitute link on session #${I64.to_str(o.released_substitute_of)})")
 								NothingReleased =>
-									Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, dropped_substitute: released, target_known: tm.target_known, target_kind: tm.target_kind, target_literal: tm.target_literal, target_reps: tm.target_reps, target_dur_s: tm.target_dur_s, target_dist_m: tm.target_dist_m, target_watts: tm.target_watts, target_hr_lo: tm.target_hr_lo, target_hr_hi: tm.target_hr_hi, target_zone: tm.target_zone, target_pace_s: tm.target_pace_s, target_pace_unit: tm.target_pace_unit, detected_known: tm.detected_known, detected_reps: tm.detected_reps, detected_mean_dur_s: tm.detected_mean_dur_s, detected_mean_watts: tm.detected_mean_watts, reps_delta: tm.reps_delta, watts_pct: tm.watts_pct, exec_known: tm.exec_known, exec_reason: tm.exec_reason, hr_under_s: tm.hr_under_s, hr_in_s: tm.hr_in_s, hr_over_s: tm.hr_over_s, hr_mean: tm.hr_mean, zone_below_s: tm.zone_below_s, zone_in_s: tm.zone_in_s, zone_above_s: tm.zone_above_s, pace_basis: tm.pace_basis, pace_actual_s: tm.pace_actual_s, pace_pct: tm.pace_pct, pace_reps: tm.pace_reps, pace_reps_delta: tm.pace_reps_delta }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note}${tm_note}")
+									Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, dropped_substitute: released, target_known: tm.target_known, target_kind: tm.target_kind, target_literal: tm.target_literal, target_reps: tm.target_reps, target_dur_s: tm.target_dur_s, target_dist_m: tm.target_dist_m, target_watts: tm.target_watts, target_hr_lo: tm.target_hr_lo, target_hr_hi: tm.target_hr_hi, target_zone: tm.target_zone, target_pace_s: tm.target_pace_s, target_pace_unit: tm.target_pace_unit, target_rpe: tm.target_rpe, detected_known: tm.detected_known, detected_reps: tm.detected_reps, detected_mean_dur_s: tm.detected_mean_dur_s, detected_mean_watts: tm.detected_mean_watts, reps_delta: tm.reps_delta, watts_pct: tm.watts_pct, exec_known: tm.exec_known, exec_reason: tm.exec_reason, hr_under_s: tm.hr_under_s, hr_in_s: tm.hr_in_s, hr_over_s: tm.hr_over_s, hr_mean: tm.hr_mean, zone_below_s: tm.zone_below_s, zone_in_s: tm.zone_in_s, zone_above_s: tm.zone_above_s, pace_basis: tm.pace_basis, pace_actual_s: tm.pace_actual_s, pace_pct: tm.pace_pct, pace_reps: tm.pace_reps, pace_reps_delta: tm.pace_reps_delta, rpe_actual: tm.rpe_actual, rpe_known: tm.rpe_known }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note}${tm_note}")
 							}
 						}
 					}
@@ -1349,12 +1365,13 @@ Plan :: [].{
 				}
 		}
 	}
-	events! : {} => Try({}, _)
-	events! = |{}| {
-		path = Db.open_db!({})?
-		today = Db.local_today_days!(path)
-		# the projection's floor: the last COMPUTED day. Everything at or before it is
-		# measured history; everything after is the recurrence over planned targets.
+	# ── projection inputs: what each target kind is priced against ──────────────
+	# The projection's floor: the last COMPUTED day. Everything at or before it is
+	# measured history; everything after is the recurrence over planned targets.
+	# Never analyzed: project pure decay from zero, and SAY so — the flag is the
+	# reader's licence to ignore the numbers (ADR 0009).
+	projection_base! : Str, I64 => Try({ day : Str, ctl : F64, atl : F64, known : Bool }, _)
+	projection_base! = |path, today| {
 		base_rows = Sql.query_many!({
 			path: Path.utf8(path),
 			query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, CAST(COALESCE(ctl, 0) AS REAL) AS ctl, CAST(COALESCE(atl, 0) AS REAL) AS atl FROM daily_load ORDER BY day DESC LIMIT 1",
@@ -1366,20 +1383,81 @@ Plan :: [].{
 				Ok({ day, ctl, atl })
 			},
 		})?
-		base = match List.first(base_rows) {
-			Ok(b) => { day: b.day, ctl: b.ctl, atl: b.atl, known: True }
-			# never analyzed: project pure decay from zero, and SAY so — the flag is
-			# the reader's licence to ignore the numbers (ADR 0009)
-			Err(_) => { day: Metrics.days_to_date_str(today), ctl: 0.0, atl: 0.0, known: False }
-		}
-		base_days = (Metrics.date_str_to_days(base.day)).ok_or(today)
-		# the same 60d best-20min derivation the rest of the engine uses — the helper
-		# already existed; a re-inlined copy of its query is exactly the drift this
-		# repo gates elsewhere. Targets are power, so Ride's family FTP is the one
-		# the arithmetic needs.
+		Ok(
+			match List.first(base_rows) {
+				Ok(b) => { day: b.day, ctl: b.ctl, atl: b.atl, known: True }
+				Err(_) => { day: Metrics.days_to_date_str(today), ctl: 0.0, atl: 0.0, known: False }
+			},
+		)
+	}
+	# Thresholds as of today, by the derivations the rest of the engine uses: the
+	# ride family's FTP (a planned power target is ride power), the athlete's global
+	# HR zones (a session's sport is not known until the day), and each pace
+	# family's threshold speed. Absent zones are NoZones, which leaves an HR-band
+	# target unpriced; an unreadable zone value is the same fault analyze reports.
+	projection_inputs! : Str => Try(Metrics.ProjectionInputs, _)
+	projection_inputs! = |path| {
 		ftp = Db.derive_sport_ftp!(path, "Ride")?
+		zones =
+			(
+				match Analyze.load_zone_config!(path) {
+					Ok(zb) => Ok(Zones(zb))
+					Err(MissingConfig) => Ok(NoZones)
+					Err(other) => Err(other)
+				}
+			)?
+		pace_thresholds = List.map_try!(Sports.pace_target_families, |family| (Db.derive_family_threshold_speed!(path, family)).map_ok(|speed| { family, speed }))?
+		Ok({ ftp, zones, pace_thresholds })
+	}
+	# every open session's date and target, the target read back through
+	# stored_target so a row from before schema v42 keeps its power numbers
+	open_targets! : Str => Try(List({ date : Str, d : I64, target : Metrics.Target }), _)
+	open_targets! = |path| {
+		opens = Sql.query_many!({
+			path: Path.utf8(path),
+			query: \\SELECT COALESCE(CAST(target_date AS TEXT), '') AS target_date,
+				\\       COALESCE(target_reps, 0) AS treps, COALESCE(target_dur_s, 0) AS tdur,
+				\\       CAST(COALESCE(target_watts, 0) AS REAL) AS twatts,
+				\\       COALESCE(CAST(target_literal AS TEXT), '') AS tlit
+				\\FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'
+				\\ORDER BY target_date, id
+			,
+			bindings: [],
+			rows: |cols| |stmt| {
+				target_date = Sql.str("target_date")(cols)(stmt)?
+				treps = Sql.i64("treps")(cols)(stmt)?
+				tdur = Sql.i64("tdur")(cols)(stmt)?
+				twatts = Sql.f64("twatts")(cols)(stmt)?
+				tlit = Sql.str("tlit")(cols)(stmt)?
+				Ok({ target_date, treps, tdur, twatts, tlit })
+			},
+		})?
+		Ok(List.keep_oks(opens, |o| (Metrics.date_str_to_days(o.target_date)).map_ok(|d| { date: o.target_date, d, target: Metrics.stored_target(o.tlit, o.treps, o.tdur, o.twatts) })))
+	}
+	# price each session in a window: the (day, load) pairs the walk folds, and the
+	# sessions it could not price with the reason (ADR 0009: unpriced is stated,
+	# never a silent zero)
+	price_window : List({ date : Str, d : I64, target : Metrics.Target }), Metrics.ProjectionInputs -> { loads : List({ d : I64, tss : F64 }), unprojected : List({ date : Str, target_literal : Str, reason : Str }) }
+	price_window = |sessions, inp|
+		List.fold(
+			sessions,
+			{ loads: [], unprojected: [] },
+			|acc, s|
+				match Metrics.projected_load(s.target, inp) {
+					Load(x) => { ..acc, loads: List.append(acc.loads, { d: s.d, tss: x }) }
+					Unprojected(r) => { ..acc, unprojected: List.append(acc.unprojected, { date: s.date, target_literal: Metrics.target_literal(s.target), reason: r }) }
+				},
+		)
+
+	events! : {} => Try({}, _)
+	events! = |{}| {
+		path = Db.open_db!({})?
+		today = Db.local_today_days!(path)
+		base = projection_base!(path, today)?
+		base_days = (Metrics.date_str_to_days(base.day)).ok_or(today)
+		inp = projection_inputs!(path)?
 		ftp_known : Bool
-		ftp_known = ftp > 0.0
+		ftp_known = inp.ftp > 0.0
 		evs = Sql.query_many!({
 			path: Path.utf8(path),
 			query: "SELECT id AS id, COALESCE(CAST(event_date AS TEXT), '') AS event_date, COALESCE(CAST(name AS TEXT), '') AS name FROM events ORDER BY event_date, id",
@@ -1391,35 +1469,17 @@ Plan :: [].{
 				Ok({ id, event_date, name })
 			},
 		})?
-		opens = Sql.query_many!({
-			path: Path.utf8(path),
-			query: \\SELECT COALESCE(CAST(target_date AS TEXT), '') AS target_date,
-				\\       COALESCE(target_reps, 0) AS treps, COALESCE(target_dur_s, 0) AS tdur,
-				\\       CAST(COALESCE(target_watts, 0) AS REAL) AS twatts
-				\\FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'
-			,
-			bindings: [],
-			rows: |cols| |stmt| {
-				target_date = Sql.str("target_date")(cols)(stmt)?
-				treps = Sql.i64("treps")(cols)(stmt)?
-				tdur = Sql.i64("tdur")(cols)(stmt)?
-				twatts = Sql.f64("twatts")(cols)(stmt)?
-				Ok({ target_date, treps, tdur, twatts })
-			},
-		})?
-		open_days = List.keep_oks(opens, |o| (Metrics.date_str_to_days(o.target_date)).map_ok(|d| { d, treps: o.treps, tdur: o.tdur, twatts: o.twatts }))
+		opens = open_targets!(path)?
 		projected = List.map(
 			evs,
 			|ev| {
 				ev_days = (Metrics.date_str_to_days(ev.event_date)).ok_or(today)
-				in_window = List.keep_if(open_days, |o| o.d > base_days and o.d <= ev_days)
+				in_window = List.keep_if(opens, |o| o.d > base_days and o.d <= ev_days)
 				# the shared pure walk (#189 extracted it): loads materialized first, so the
 				# walk is arithmetic over (day, tss) with no per-day re-filtering
-				loads = List.keep_oks(in_window, |o|
-					if (o.treps > 0 and ftp_known) Ok({ d: o.d, tss: Metrics.tss_from_target({ reps: o.treps, dur_s: o.tdur, watts: o.twatts, ftp }) }) else Err(NoLoad))
-				proj = Metrics.project_walk({ ctl: base.ctl, atl: base.atl }, base_days, ev_days, loads)
-				sessions_projected = List.len(List.keep_if(in_window, |o| o.treps > 0 and ftp_known))
-				{ id: ev.id, event_date: ev.event_date, name: ev.name, days_away: ev_days - today, ctl: proj.ctl, atl: proj.atl, tsb: proj.tsb, planned_in_window: List.len(in_window), sessions_projected }
+				priced = price_window(in_window, inp)
+				proj = Metrics.project_walk({ ctl: base.ctl, atl: base.atl }, base_days, ev_days, priced.loads)
+				{ id: ev.id, event_date: ev.event_date, name: ev.name, days_away: ev_days - today, ctl: proj.ctl, atl: proj.atl, tsb: proj.tsb, planned_in_window: List.len(in_window), sessions_projected: List.len(priced.loads) }
 			},
 		)
 		Output.out!({ projected_from: base.day, baseline_known: base.known, ftp_known, events: projected }, |p| Render.events_screen(p))
@@ -1429,10 +1489,12 @@ Plan :: [].{
 	# Bare `project <date>` maps the RECORDED open plan to its consequences on that
 	# date — the same walk `events` runs, at an arbitrary horizon. With the literal,
 	# the walk runs over the CALLER's hypothetical plan INSTEAD: caller input, echoed
-	# back in the payload (dates verbatim, targets as parsed canonical fields), never stored, so the recorded plan stays the
-	# single source of adherence truth (ADR 0010). The direction rule holds whole:
-	# plan → consequences only; stride never solves for the plan that reaches a
-	# target TSB, even when the caller names one — that inverse is prescription.
+	# back in the payload (dates verbatim, targets as parsed canonical fields), never
+	# stored, so the recorded plan stays the single source of adherence truth (ADR
+	# 0010). Every target kind is priced (projected_load); one the inputs cannot
+	# price is listed in `unprojected` with its reason. The direction rule holds
+	# whole: plan → consequences only; stride never solves for the plan that reaches
+	# a target TSB, even when the caller names one — that inverse is prescription.
 	project! : Str, [Recorded, Hypothetical(Str)] => Try({}, _)
 	project! = |date_str, mode| {
 		path = Db.open_db!({})?
@@ -1454,59 +1516,27 @@ Plan :: [].{
 					}
 					match parsed {
 						Err(BadDatePart(bad)) => Output.err_out!("bad_date", "each hypothetical session is <YYYY-MM-DD>=<target> — the date half of '${bad}' does not parse")
-						Err(BadTargetPart(bad)) => Output.err_out!("bad_target", "each hypothetical session is <YYYY-MM-DD>=<reps>x<mm:ss>@<watts>W — the target half '${bad}' does not parse")
+						Err(BadTargetPart(bad)) => Output.err_out!("bad_target", "each hypothetical session is <YYYY-MM-DD>=<target>; ${target_grammar(bad)}")
 						Ok(plan_mode) => {
-							base_rows = Sql.query_many!({
-								path: Path.utf8(path),
-								query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, CAST(COALESCE(ctl, 0) AS REAL) AS ctl, CAST(COALESCE(atl, 0) AS REAL) AS atl FROM daily_load ORDER BY day DESC LIMIT 1",
-								bindings: [],
-								rows: |cols| |stmt| {
-									day = Sql.str("day")(cols)(stmt)?
-									ctl = Sql.f64("ctl")(cols)(stmt)?
-									atl = Sql.f64("atl")(cols)(stmt)?
-									Ok({ day, ctl, atl })
-								},
-							})?
-							base = match List.first(base_rows) {
-								Ok(b) => { day: b.day, ctl: b.ctl, atl: b.atl, known: True }
-								Err(_) => { day: Metrics.days_to_date_str(today), ctl: 0.0, atl: 0.0, known: False }
-							}
+							base = projection_base!(path, today)?
 							base_days = (Metrics.date_str_to_days(base.day)).ok_or(today)
-							ftp = Db.derive_sport_ftp!(path, "Ride")?
+							inp = projection_inputs!(path)?
 							ftp_known : Bool
-							ftp_known = ftp > 0.0
+							ftp_known = inp.ftp > 0.0
 							source = match plan_mode {
 								Recorded => {
-									opens = Sql.query_many!({
-										path: Path.utf8(path),
-										query: \\SELECT COALESCE(CAST(target_date AS TEXT), '') AS target_date,
-											\\       COALESCE(target_reps, 0) AS treps, COALESCE(target_dur_s, 0) AS tdur,
-											\\       CAST(COALESCE(target_watts, 0) AS REAL) AS twatts
-											\\FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'
-										,
-										bindings: [],
-										rows: |cols| |stmt| {
-											target_date = Sql.str("target_date")(cols)(stmt)?
-											treps = Sql.i64("treps")(cols)(stmt)?
-											tdur = Sql.i64("tdur")(cols)(stmt)?
-											twatts = Sql.f64("twatts")(cols)(stmt)?
-											Ok({ target_date, treps, tdur, twatts })
-										},
-									})?
-									in_w = List.keep_oks(opens, |o| (Metrics.date_str_to_days(o.target_date)).map_ok(|d| { d, treps: o.treps, tdur: o.tdur, twatts: o.twatts }))
-										.keep_if(|o| o.d > base_days and o.d <= horizon)
-									loads = List.keep_oks(in_w, |o|
-										if (o.treps > 0 and ftp_known) Ok({ d: o.d, tss: Metrics.tss_from_target({ reps: o.treps, dur_s: o.tdur, watts: o.twatts, ftp }) }) else Err(NoLoad))
-									{ loads, considered: List.len(in_w), projected: List.len(loads), label: "recorded", echo: [] }
+									opens = open_targets!(path)?
+									in_w = List.keep_if(opens, |o| o.d > base_days and o.d <= horizon)
+									{ in_w, label: "recorded", echo: [] }
 								}
 								Hypo(pairs) => {
-									in_w = List.keep_if(pairs, |p2| p2.days > base_days and p2.days <= horizon)
-									loads = List.keep_oks(in_w, |p2|
-										if (ftp_known) Ok({ d: p2.days, tss: Metrics.tss_from_target({ reps: p2.target.reps, dur_s: p2.target.dur_s, watts: p2.target.watts, ftp }) }) else Err(NoLoad))
-									{ loads, considered: List.len(in_w), projected: List.len(loads), label: "hypothetical", echo: List.map(pairs, |p2| { date: p2.date, reps: p2.target.reps, dur_s: p2.target.dur_s, watts: p2.target.watts }) }
+									sessions = List.map(pairs, |p2| { date: p2.date, d: p2.days, target: p2.target })
+									in_w = List.keep_if(sessions, |s| s.d > base_days and s.d <= horizon)
+									{ in_w, label: "hypothetical", echo: List.map(pairs, |p2| { date: p2.date, target_kind: p2.target.kind, target_literal: Metrics.target_literal(p2.target), reps: p2.target.reps, dur_s: p2.target.dur_s, watts: p2.target.watts }) }
 								}
 							}
-							proj = Metrics.project_walk({ ctl: base.ctl, atl: base.atl }, base_days, horizon, source.loads)
+							priced = price_window(source.in_w, inp)
+							proj = Metrics.project_walk({ ctl: base.ctl, atl: base.atl }, base_days, horizon, priced.loads)
 							Output.out!(
 								{
 									target_date: date_str,
@@ -1518,8 +1548,9 @@ Plan :: [].{
 									ctl: proj.ctl,
 									atl: proj.atl,
 									tsb: proj.tsb,
-									sessions_considered: source.considered,
-									sessions_projected: source.projected,
+									sessions_considered: List.len(source.in_w),
+									sessions_projected: List.len(priced.loads),
+									unprojected: priced.unprojected,
 									hypothetical: source.echo,
 								},
 								|p| Render.project_screen(p),
@@ -1630,7 +1661,7 @@ Plan :: [].{
 								t = Metrics.stored_target(literal, reps, dur_s, watts)
 								target_known : Bool
 								target_known = t.kind != ""
-								Ok({ id, target_date, session_type, detail, rationale, target_known, target_kind: t.kind, target_literal: Metrics.target_literal(t), target_reps: t.reps, target_dur_s: t.dur_s, target_dist_m: t.dist_m, target_watts: t.watts, target_hr_lo: t.hr_lo, target_hr_hi: t.hr_hi, target_zone: t.zone, target_pace_s: t.pace_s, target_pace_unit: t.pace_unit })
+								Ok({ id, target_date, session_type, detail, rationale, target_known, target_kind: t.kind, target_literal: Metrics.target_literal(t), target_reps: t.reps, target_dur_s: t.dur_s, target_dist_m: t.dist_m, target_watts: t.watts, target_hr_lo: t.hr_lo, target_hr_hi: t.hr_hi, target_zone: t.zone, target_pace_s: t.pace_s, target_pace_unit: t.pace_unit, target_rpe: t.rpe })
 							},
 						})?
 						# ── plan history (#158): planned-vs-actual as deterministic memory.

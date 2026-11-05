@@ -253,6 +253,19 @@ Db :: [].{
 		})?
 		Ok(Metrics.ftp_from_best_20min(best))
 	}
+	# a family's threshold SPEED (m/s) today, by the rule derive_sport_ftp! uses for
+	# power: the best 20-minute speed over the last 60 days × 0.95, once two sessions of
+	# the family carry one, else 0. The projection prices a planned pace target with it.
+	derive_family_threshold_speed! : Str, Str => Try(F64, _)
+	derive_family_threshold_speed! = |path, family| {
+		cutoff = Metrics.days_to_date_str(local_today_days!(path) - 60)
+		Sql.query!({
+			path: Path.utf8(path),
+			query: "SELECT CAST(COALESCE(CASE WHEN COUNT(NULLIF(m.best_20min_speed, 0)) >= 2 THEN MAX(m.best_20min_speed) * 0.95 END, 0) AS REAL) AS s FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_family = :fam AND a.start_local >= :cutoff",
+			bindings: [{ name: ":fam", value: String(Sports.canonical(family)) }, { name: ":cutoff", value: String(cutoff) }],
+			row: Sql.f64("s"),
+		})
+	}
 	# ── migrations ───────────────────────────────────────────────────────
 
 	# bump when the schema changes; ensure_schema! re-runs migrations when the db's
