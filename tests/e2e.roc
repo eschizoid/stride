@@ -364,7 +364,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1334)?
+	checks_ran_exactly!(1336)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7864,15 +7864,15 @@ b_viz_tick! = |ctx| {
 	_ = strjq!(ctx, ["viz", "tick"], ".data.found")
 	cols2 = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_directives');")
 	fcols = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")
-	check!("a bus from before the id columns gains them on the next tick, both tables", Str.contains(cols2, "capture") and Str.contains(cols2, "result") and Str.contains(cols2, "trace_id") and Str.contains(cols2, "ghost_id") and Str.contains(fcols, "trace_id") and Str.contains(fcols, "ghost_id") and Str.contains(fcols, "detail_day") and Str.contains(fcols, "sport") and Str.contains(fcols, "family"))?
-	# a focus table the previous build created - every column through the
-	# ids, none of the identity columns - gains the three on the next tick
-	_ = sql!(ctx.db, "ALTER TABLE viz_focus DROP COLUMN family; ALTER TABLE viz_focus DROP COLUMN sport; ALTER TABLE viz_focus DROP COLUMN detail_day;")
-	fcols1 = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")
-	check!("...the three are gone before the tick runs, so the gain below is the migration's", Str.contains(fcols1, "trace_id") and !Str.contains(fcols1, "detail_day") and !Str.contains(fcols1, "sport") and !Str.contains(fcols1, "family"))?
+	check!("a bus from before the id columns gains them on the next tick, both tables", Str.contains(cols2, "capture") and Str.contains(cols2, "result") and Str.contains(cols2, "trace_id") and Str.contains(cols2, "ghost_id") and Str.contains(fcols, "trace_id") and Str.contains(fcols, "ghost_id") and Str.contains(fcols, "detail_day") and Str.contains(fcols, "sport") and Str.contains(fcols, "family") and Str.contains(fcols, "curve_family") and Str.contains(cols2, " family"))?
+	# a focus table the previous builds created - every column through the
+	# ids, none of the identity columns - gains all four on the next tick
+	_ = sql!(ctx.db, "ALTER TABLE viz_focus DROP COLUMN curve_family; ALTER TABLE viz_focus DROP COLUMN family; ALTER TABLE viz_focus DROP COLUMN sport; ALTER TABLE viz_focus DROP COLUMN detail_day;")
+	fcols1 = Str.concat(" ", Str.trim(sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")))
+	check!("...the four are gone before the tick runs, so the gain below is the migration's", Str.contains(fcols1, " trace_id") and !Str.contains(fcols1, " detail_day") and !Str.contains(fcols1, " sport") and !Str.contains(fcols1, " family") and !Str.contains(fcols1, " curve_family"))?
 	_ = strjq!(ctx, ["viz", "tick"], ".data.found")
-	fcols2 = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")
-	check!("a focus table with the ids but none of the identity columns gains all three on the next tick", Str.contains(fcols2, "trace_id") and Str.contains(fcols2, "detail_day") and Str.contains(fcols2, "sport") and Str.contains(fcols2, "family"))?
+	fcols2 = Str.concat(" ", Str.trim(sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")))
+	check!("a focus table with the ids but none of the identity columns gains all four on the next tick", Str.contains(fcols2, " trace_id") and Str.contains(fcols2, " detail_day") and Str.contains(fcols2, " sport") and Str.contains(fcols2, " family") and Str.contains(fcols2, " curve_family"))?
 	# stale: a row older than the window closes as stale, applied by nobody,
 	# and a fresh row beside it is the winner
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, created_at) VALUES (3, datetime('now', '-1 hour'));")
@@ -7885,6 +7885,12 @@ b_viz_tick! = |ctx| {
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (5);")
 	check!("the newest of two fresh rows wins", strjq!(ctx, ["viz", "tick"], ".data.view") == "5")?
 	check!("...and the older closed as superseded", Str.trim(sql!(ctx.db, "SELECT status FROM viz_directives WHERE view = 4;")) == "superseded")?
+	# the power view's family: a directive naming Ride or Rowing is applied
+	# with it, and any other value is refused by name
+	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, family) VALUES (1, 'Rowing');")
+	check!("a directive naming a curve family is applied with it", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .family") == "applied/Rowing")?
+	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, family) VALUES (1, 'Run');")
+	check!("...and a family outside Ride/Rowing is refused by name", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/family Run not Ride/Rowing")?
 	# pending until reported: a cycle that does not ack leaves the winner
 	# pending, and the next cycle returns the SAME row - a crash between
 	# apply and report retries rather than loses the directive
