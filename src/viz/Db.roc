@@ -715,16 +715,19 @@ Db :: [].{
 	# week anchor from week_bounds and empty weeks materialized as zero rows.
 	# Zone seconds cover every activity; easy/moderate/hard cover only the
 	# activities the view marks `polarized`, the population every share reads.
-	ZoneWeek : { wk : Str, z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, easy : I64, moderate : I64, hard : I64 }
+	# `days` is how many of the week's seven days the series covers, through
+	# series_clock's today: 7 for every finished week, fewer for the current one.
+	ZoneWeek : { wk : Str, days : I64, z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, easy : I64, moderate : I64, hard : I64 }
 	load_zone_weeks! : Sqlite.Db => List(ZoneWeek)
 	load_zone_weeks! = |db|
-		match db.query!("WITH mondays(wk) AS (SELECT date(mon, '-77 days') FROM week_bounds UNION ALL SELECT date(wk, '+7 days') FROM mondays WHERE wk < (SELECT mon FROM week_bounds)), agg AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, SUM(z1_s) AS z1, SUM(z2_s) AS z2, SUM(z3_s) AS z3, SUM(z4_s) AS z4, SUM(z5_s) AS z5, SUM(CASE WHEN polarized = 1 THEN easy_s ELSE 0 END) AS easy, SUM(CASE WHEN polarized = 1 THEN moderate_s ELSE 0 END) AS moderate, SUM(CASE WHEN polarized = 1 THEN hard_s ELSE 0 END) AS hard FROM activity_intensity WHERE day >= (SELECT date(mon, '-77 days') FROM week_bounds) GROUP BY awk) SELECT CAST(m.wk AS TEXT) AS wk, CAST(COALESCE(a.z1, 0) AS INTEGER) AS z1, CAST(COALESCE(a.z2, 0) AS INTEGER) AS z2, CAST(COALESCE(a.z3, 0) AS INTEGER) AS z3, CAST(COALESCE(a.z4, 0) AS INTEGER) AS z4, CAST(COALESCE(a.z5, 0) AS INTEGER) AS z5, CAST(COALESCE(a.easy, 0) AS INTEGER) AS easy, CAST(COALESCE(a.moderate, 0) AS INTEGER) AS moderate, CAST(COALESCE(a.hard, 0) AS INTEGER) AS hard FROM mondays m LEFT JOIN agg a ON a.awk = m.wk ORDER BY m.wk ASC", []) {
+		match db.query!("WITH mondays(wk) AS (SELECT date(mon, '-77 days') FROM week_bounds UNION ALL SELECT date(wk, '+7 days') FROM mondays WHERE wk < (SELECT mon FROM week_bounds)), agg AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, SUM(z1_s) AS z1, SUM(z2_s) AS z2, SUM(z3_s) AS z3, SUM(z4_s) AS z4, SUM(z5_s) AS z5, SUM(CASE WHEN polarized = 1 THEN easy_s ELSE 0 END) AS easy, SUM(CASE WHEN polarized = 1 THEN moderate_s ELSE 0 END) AS moderate, SUM(CASE WHEN polarized = 1 THEN hard_s ELSE 0 END) AS hard FROM activity_intensity WHERE day >= (SELECT date(mon, '-77 days') FROM week_bounds) GROUP BY awk) SELECT CAST(m.wk AS TEXT) AS wk, CAST(MIN(7, MAX(0, julianday((SELECT today FROM series_clock)) - julianday(m.wk) + 1)) AS INTEGER) AS dys, CAST(COALESCE(a.z1, 0) AS INTEGER) AS z1, CAST(COALESCE(a.z2, 0) AS INTEGER) AS z2, CAST(COALESCE(a.z3, 0) AS INTEGER) AS z3, CAST(COALESCE(a.z4, 0) AS INTEGER) AS z4, CAST(COALESCE(a.z5, 0) AS INTEGER) AS z5, CAST(COALESCE(a.easy, 0) AS INTEGER) AS easy, CAST(COALESCE(a.moderate, 0) AS INTEGER) AS moderate, CAST(COALESCE(a.hard, 0) AS INTEGER) AS hard FROM mondays m LEFT JOIN agg a ON a.awk = m.wk ORDER BY m.wk ASC", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(
 					rows,
 					|r| {
 						wk = r.str("wk") ? |_| "bad"
+						dy7 = r.i64("dys") ? |_| "bad"
 						z1 = r.i64("z1") ? |_| "bad"
 						z2 = r.i64("z2") ? |_| "bad"
 						z3 = r.i64("z3") ? |_| "bad"
@@ -733,7 +736,7 @@ Db :: [].{
 						ez = r.i64("easy") ? |_| "bad"
 						mo = r.i64("moderate") ? |_| "bad"
 						hd = r.i64("hard") ? |_| "bad"
-						Ok({ wk, z1, z2, z3, z4, z5, easy: ez, moderate: mo, hard: hd })
+						Ok({ wk, days: dy7, z1, z2, z3, z4, z5, easy: ez, moderate: mo, hard: hd })
 					},
 				)
 		}
@@ -1328,6 +1331,45 @@ Db :: [].{
 	# `stride` in its grants, so no interpreter is handed an argument here. A
 	# field that does not parse is -1, and the view says the fit
 	# is unavailable rather than drawing a fit of zeros.
+	# The last day the written plan reaches beyond the series - the latest open
+	# session after series_clock's today - capped at the next event, or ""
+	# when nothing is planned ahead. Past that day a projection is the decay
+	# of an unwritten plan, so the board projects no further than this.
+	load_plan_horizon! : Sqlite.Db => Str
+	load_plan_horizon! = |db|
+		match db.query!("SELECT CAST(COALESCE(MIN(MAX(target_date), COALESCE((SELECT MIN(event_date) FROM events WHERE event_date >= (SELECT today FROM series_clock)), '9999-12-31')), '') AS TEXT) AS hz FROM planned_sessions WHERE COALESCE(status, 'open') = 'open' AND target_date > (SELECT today FROM series_clock)", []) {
+			Err(_) => ""
+			Ok(rows) => match List.first(rows) {
+				Ok(r) => r.str("hz") ?? ""
+				Err(_) => ""
+			}
+		}
+
+	# `stride project <date>` read for the board: the engine's own walk over
+	# the recorded plan, so the window shows exactly the numbers the command
+	# returns. `considered` is the open sessions in the window, `projected`
+	# the ones whose structured target contributed load.
+	Projection : { ok : Bool, ctl : F32, tsb : F32, considered : I64, projected : I64 }
+
+	parse_projection : Str -> Projection
+	parse_projection = |out| {
+		num = |key| F32.from_str(json_number(out, key))
+		int = |key| I64.from_str(json_number(out, key))
+		match (num("ctl"), num("tsb"), int("sessions_considered"), int("sessions_projected")) {
+			(Ok(c), Ok(t), Ok(sc), Ok(sp)) => if (Str.contains(out, "\"baseline_known\":true")) { ok: Bool.True, ctl: c, tsb: t, considered: sc, projected: sp } else { ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0 }
+			_ => { ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0 }
+		}
+	}
+
+	load_projection! : Cmd.Runner, Str => Projection
+	load_projection! = |runner, day| {
+		out = match runner.run_utf8!(Cmd.with_args(Cmd.new("stride"), ["project", day, "--json"])) {
+			Ok(o) => if (o.exit_code == 0) o.stdout else ""
+			Err(_) => ""
+		}
+		parse_projection(out)
+	}
+
 	load_fit! : Cmd.Runner, I64 => Fit
 	load_fit! = |runner, days| {
 		out = match runner.run_utf8!(Cmd.with_args(Cmd.new("stride"), ["power-curve", I64.to_str(days), "Ride", "--json"])) {
@@ -1389,3 +1431,12 @@ expect Db.json_number("{\"fit_r2\":-1.25e-3}", "fit_r2") == "-1.25e-3"
 expect Db.json_number("{\"cp\":243.5}", "fit_points") == ""
 # a key whose value is not a number yields "", never the text beside it
 expect Db.json_number("{\"model\":\"power_stream\",\"cp\":9}", "model") == ""
+
+# the engine's payload, as `stride project` prints it; a baseline it could
+# not measure, or output that is not the payload, projects nothing
+expect {
+	p = Db.parse_projection("{\"schema_version\":3,\"data\":{\"atl\":40.5,\"baseline_known\":true,\"ctl\":47.92,\"days_away\":4,\"ftp_known\":true,\"hypothetical\":[],\"plan_source\":\"recorded\",\"projected_from\":\"2026-11-04\",\"sessions_considered\":4,\"sessions_projected\":1,\"target_date\":\"2026-11-08\",\"tsb\":7.42}}")
+	p.ok and (p.ctl - 47.92).abs() < 0.001 and (p.tsb - 7.42).abs() < 0.001 and p.considered == 4 and p.projected == 1
+}
+expect !(Db.parse_projection("{\"schema_version\":3,\"data\":{\"atl\":0,\"baseline_known\":false,\"ctl\":0,\"sessions_considered\":0,\"sessions_projected\":0,\"tsb\":0}}").ok)
+expect !(Db.parse_projection("").ok)

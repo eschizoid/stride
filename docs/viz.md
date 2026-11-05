@@ -46,9 +46,18 @@ coasting, from the same TSB the teal line ends on).
 Big-number tiles carry the artifact's reading aids: fitness, fatigue and form
 with their one-line meanings, plus an event slot that counts down to the next
 event, says "ridden" for up to a week after one, and names the add command
-when none is planned. The subtitle always carries the as-of day, and the TSB
-zero rule is captioned "fresh above". The fourth TAB view is the artifact's
-data table, with as many rows as the window height holds.
+when none is planned. A long event name wraps to two lines rather than
+losing its end. Under the countdown the slot carries the projection: the
+fitness and form `stride project` returns for the last day the written plan
+reaches (open sessions after the series' last day), capped at the event, and
+how many of those sessions carry a structured target. Untargeted sessions
+contribute no load, so that count is how much of the projection is blind;
+past the plan's last day a projection is only decay, so the board names the
+day it stops ("plan to 11-08") and says "at event" only when the plan reaches
+it. The subtitle always carries the as-of day, and the TSB zero rule is
+captioned "fresh above", at whichever end of the rule no line crosses the
+caption. The fourth TAB view is the artifact's data table, with as many rows
+as the window height holds.
 
 ## The plan view
 
@@ -88,10 +97,12 @@ with view 5 opens it.
 
 Twelve Monday weeks of time in zone as stacked bars, each capped with that
 week's easy share - teal when it holds the 80/20 line, alarm red when it
-does not. One chart, one scale: the share reads across the row of caps, so
-no second panel is needed to plot it. The card names the latest week that
-carried training. The intensity classification comes from the
-`activity_intensity` view, which carries the same per-activity split
+does not. The current week, until the series covers all seven of its days,
+is judged by neither: its bar and cap are muted, the cap says "so far", and
+the card reads "easy so far". One chart, one scale: the share reads across
+the row of caps, so no second panel is needed to plot it. The card names the
+latest week that carried training. The intensity classification comes from
+the `activity_intensity` view, which carries the same per-activity split
 `stride summary` computes, so the window and the CLI share one definition
 of easy and hard. A bar holds every session's zone time, while its cap counts
 only the sessions polarization counts: a lifting session adds to the bar and

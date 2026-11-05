@@ -206,7 +206,7 @@ load_logo! = |acc, boot|
 # face, so a window that cannot reach the athlete's data says why.
 skeleton : Str -> _
 skeleton = |err|
-	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], rw: [], csp: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric }
+	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], ph: "", rw: [], csp: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric }
 
 # boot=True builds the instant skeleton the splash renders over: no database
 # and no engine call - the window opens on frame one and the real load runs
@@ -253,6 +253,7 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 			ht = Db.load_heat!(db)
 			hev = Db.load_event_days!(db)
 			zw = Db.load_zone_weeks!(db)
+			ph = Db.load_plan_horizon!(db)
 			sfs = Db.load_spine_fams!(db)
 			csp = Db.load_career_spines!(db, sfs, tm)
 			cs = Db.load_career_sports!(db)
@@ -261,7 +262,7 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 			prs = Db.load_prs!(db)
 			nts = Db.load_day_notes!(db)
 			cpv = Db.load_curve_prev!(db, curve_days, tm)
-			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, rw, csp, cs, cfm, prs, tcache, un }
+			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, ph, rw, csp, cs, cfm, prs, tcache, un }
 		}
 		Err(NoStrideDir) => skeleton("no stride directory — the launcher passes it as the first argument")
 		Err(Unreachable) => skeleton("cannot open ${acc.dir}/db.sqlite")
@@ -273,6 +274,10 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 		if (fit.ok)
 			"CP ${Db.fmt_f(fit.cp)} W · W' ${Db.fmt_f(fit.w_prime / 1000.0)} kJ · fit r2 ${Db.fmt_f(fit.r2)} from ${Db.fmt_i(fit.points)} bests"
 		else "CP fit unavailable - the engine did not answer"
+	# the board projects as far as the written plan reaches, never past the
+	# next event (load_plan_horizon! caps it there), and reads the numbers
+	# from the engine's own walk
+	proj = if (boot or loaded.ph == "") ({ ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0 }) else Db.load_projection!(acc.io.commands(), loaded.ph)
 	# Quicksand carries prose; JetBrains Mono carries data. Small labels
 	# use an atlas close to their displayed size: shrinking title-sized
 	# glyphs to captions loses thin strokes between samples. Titles and
@@ -324,6 +329,11 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 		} else {
 			{ top: "no event planned", sub: "stride event add <date> <name>" }
 		}
+	# the event name in one line at 14, or two at 12 when it needs them
+	ev_name = {
+		l14 = Board.ev_lines(head, ev_tile.top, 14.0)
+		if (List.len(l14) <= 1) { lines: l14, size: 14 } else { lines: Board.ev_lines(head, ev_tile.top, 12.0), size: 12 }
+	}
 	initial_layout = DisplayScale.layout(DisplayScale.default_percent, { w: I32.to_f32(Theme.win_w), h: I32.to_f32(Theme.win_h) })
 	Ok({
 		title: mk!("Stride", 30)?,
@@ -387,7 +397,8 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 			{ v: mkb!(Db.fmt1(loaded.s.last.a), 27)?, cap: mk!("fatigue - 7-day load avg", 11)?, sel: 1.U8 },
 			{ v: mkb!(Db.fmt1(loaded.s.last.t), 27)?, cap: mk!("form - fitness minus fatigue", 11)?, sel: 2.U8 },
 		],
-		ev_tile_top: mk!(Board.ev_line(head, ev_tile.top, "", 14.0), 14)?,
+		ev_tile_name: List.map_try!(ev_name.lines, |l| mk!(l, ev_name.size))?,
+		ev_tile_proj: List.map_try!(Board.proj_lines(loaded.ph, loaded.e.day, proj), |l| mk!(l, 10))?,
 		ev_tile_sub: mk!(ev_tile.sub, 11)?,
 		zero_note: mk!("fresh above", 11)?,
 		ridden_found: loaded.rd.ago >= 0 and loaded.rd.ago <= 7 and loaded.e.day != "",
@@ -2067,7 +2078,7 @@ update! = |model0, program_input, io| {
 		# pointer yields different logical coordinates and a still mouse
 		# would read as drift, the hazard the trace drag guards below too.
 		cursor3 =
-			if view2 == 0 and layout.scale == model.ui_scale and cursor2 == model.cursor and cursor2 >= 0 and (m.x != model.mouse_x or m.y != model.mouse_y) and m.y > Theme.pad_t + 56.0 and m.y < win.h - Theme.pad_b and m.x >= Theme.pad_l and m.x <= win.w - Theme.pad_r {
+			if view2 == 0 and layout.scale == model.ui_scale and cursor2 == model.cursor and cursor2 >= 0 and (m.x != model.mouse_x or m.y != model.mouse_y) and m.y > Theme.pad_t + Board.band_h and m.y < win.h - Theme.pad_b and m.x >= Theme.pad_l and m.x <= win.w - Theme.pad_r {
 				-1
 			} else cursor2
 		# reloads and trace switches SPAWN — Cmd panics in update!, and the
@@ -2414,7 +2425,7 @@ update! = |model0, program_input, io| {
 		used = !List.is_empty(d.events) or List.any(d.keys, |k| k != 0) or pointer.x != 0.0 or pointer.y != 0.0 or wheel.x != 0.0 or wheel.y != 0.0 or Mouse.button_down(d.mouse, Left) or Mouse.button_down(d.mouse, Right) or win.w != model.win.w or win.h != model.win.h or directive.has_d
 		last_active = if (used) tick else model.last_active
 		Window.set_target_fps!(frame_rate({ busy, tick, last_active }))
-		Ok({ ..model, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + 56.0) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
