@@ -32,18 +32,15 @@ Curve :: [].{
 		tsb_c = Theme.tsb_c
 		model.curve_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		# a chip click re-fetches the curve in the background; while that is in
-		# flight the note says so, so a click that takes a beat reads as working
-		# rather than dead (the clicked chip also highlights immediately). The
-		# old curve stays on screen underneath until the fresh one lands. The
-		# note sits in the chip band, just RIGHT of the last chip: the line
-		# below the title belongs to the rung tooltip, and two texts at one
-		# anchor overprint whenever a reload and a hover coincide. It names no
-		# window - the lit chip already does. Anchored to the chips' right it
-		# shares their anchor, so it can meet the title only at a width where
-		# the chips already have; the minimum size is a hint the window
-		# manager may ignore, and no anchor left of the chips survives that.
-		if model.reloading {
-			Text.from("loading...", model.font).size(12).draw!(frame, { pos: { x: win_w - 254.0, y: 68.0 }, color: Theme.gold_c, align: (Top, Left) })
+		# flight a note says so, so a click that takes a beat reads as working
+		# rather than dead. The old curve stays on screen until the fresh one
+		# lands. The note takes the caption slot: the row under the chips,
+		# right-aligned, which no chip reaches (caption_top sits below
+		# chip_bottom). The caption describes the curve being replaced, so it
+		# yields to the note. Like the caption, the note gives way to a rung or
+		# target tooltip, which owns the left of the same row.
+		if model.reloading and !(rung_hovered(model, win_w, win_h)) {
+			Text.from(loading_note, model.font).size(11).draw!(frame, { pos: { x: win_w - 40.0, y: caption_top }, color: ink_muted, align: (Top, Right) })
 		}
 		# one line above the hint row: the chips own the top-right band, and
 		# hint plus caption together outgrow a single bottom line
@@ -60,9 +57,9 @@ Curve :: [].{
 						Err(_) => -1
 					}
 				) == model.curve_days
-				hov = model.mouse_x >= chx and model.mouse_x <= chx + 46.0 and model.mouse_y >= 64.0 and model.mouse_y <= 86.0
+				hov = model.mouse_x >= chx and model.mouse_x <= chx + 46.0 and model.mouse_y >= chip_top and model.mouse_y <= chip_bottom
 				style = if (on) (Draw.filled(Color.with_alpha(ctl_c, 60))) else if (hov) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
-				frame.rounded_rectangle!({ x: chx, y: 64.0, width: 46.0, height: 22.0, radius: 6.0, segments: 6, style })
+				frame.rounded_rectangle!({ x: chx, y: chip_top, width: 46.0, height: chip_bottom - chip_top, radius: 6.0, segments: 6, style })
 				x.s.chip.draw!(frame, { pos: { x: chx + 23.0, y: 68.0 }, color: if (on) Color.white else ink_muted, align: (Top, Center) })
 			},
 		)
@@ -72,9 +69,9 @@ Curve :: [].{
 			|fc| {
 				fx = win_w - 420.0 + fc.dx
 				on = fc.fam == model.curve_family
-				hov = model.mouse_x >= fx and model.mouse_x <= fx + 46.0 and model.mouse_y >= 64.0 and model.mouse_y <= 86.0
+				hov = model.mouse_x >= fx and model.mouse_x <= fx + 46.0 and model.mouse_y >= chip_top and model.mouse_y <= chip_bottom
 				style = if (on) (Draw.filled(Color.with_alpha(Theme.tsb_c, 60))) else if (hov) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
-				frame.rounded_rectangle!({ x: fx, y: 64.0, width: 46.0, height: 22.0, radius: 6.0, segments: 6, style })
+				frame.rounded_rectangle!({ x: fx, y: chip_top, width: 46.0, height: chip_bottom - chip_top, radius: 6.0, segments: 6, style })
 				Text.from(fc.label, model.font).size(12).draw!(frame, { pos: { x: fx + 23.0, y: 68.0 }, color: if (on) Color.white else ink_muted, align: (Top, Center) })
 			},
 		)
@@ -366,8 +363,8 @@ Curve :: [].{
 				Ok(_) => Bool.True
 				Err(_) => Bool.False
 			}
-			if unp_txt != "" and !rung_hovering and !tgt_hovering {
-				Text.from(unp_txt, model.font).size(11).draw!(frame, { pos: { x: win_w - 40.0, y: pad_t - 18.0 }, color: ink_faint, align: (Top, Right) })
+			if unp_txt != "" and !rung_hovering and !tgt_hovering and !model.reloading {
+				Text.from(unp_txt, model.font).size(11).draw!(frame, { pos: { x: win_w - 40.0, y: caption_top }, color: ink_faint, align: (Top, Right) })
 			}
 		}
 		model.curve_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
@@ -522,6 +519,32 @@ Curve :: [].{
 		share = if (best <= 0.0) "no window best at that duration" else "${Db.fmt_i(I64.to_f32(t.watts) / best * 100.0)}% of this window's best at that duration"
 		"${t.day} ${t.typ}: ${I64.to_str(t.reps)}x${Fmt.mmss(t.dur_s)} @ ${I64.to_str(t.watts)}W - ${share}"
 	}
+
+	# ── the band above the plot. The range and family chips fill the top
+	# right from chip_top to chip_bottom; the row under them, caption_top,
+	# carries the unpushed caption or the loading note on the right and a
+	# rung tooltip on the left, and ends before the plot's first gridline at
+	# Theme.pad_t. Click and hover tests in main.roc use the same 64..86 band.
+	chip_top : F32
+	chip_top = 64.0
+
+	chip_bottom : F32
+	chip_bottom = 86.0
+
+	caption_top : F32
+	caption_top = Theme.pad_t - 18.0
+
+	loading_note : Str
+	loading_note = "loading..."
+
+	# whether the pointer sits on a rung column, where a tooltip owns the
+	# caption row
+	rung_hovered : Ui.Model, F32, F32 -> Bool
+	rung_hovered = |model, win_w, win_h|
+		match rung_at(model.mouse_x, model.mouse_y, win_w, win_h, List.len(model.prs)) {
+			Ok(_) => Bool.True
+			Err(_) => Bool.False
+		}
 
 	# ── the family chips: bike and row, to the right of the range chips, on
 	# the same row. chip0 is the first range chip's left edge.
@@ -852,3 +875,8 @@ expect {
 	wall = { x0: 300.0, y0: 0.0, x1: 400.0, y1: 400.0 }
 	Curve.delta_spot(d, []) == { left: 360.0, top: 150.0 } and Curve.delta_spot({ ..d, x: 100.0, hi: 400.0 }, [{ x0: 0.0, y0: 0.0, x1: 200.0, y1: 400.0 }, { x0: 0.0, y0: 400.0, x1: 200.0, y1: 0.0 }, { x0: 0.0, y0: 130.0, x1: 200.0, y1: 130.0 }, { x0: 0.0, y0: 175.0, x1: 200.0, y1: 175.0 }]) == { left: 110.0, top: 150.0 } and !Curve.box_crosses(0.0, 1.0, 0.0, 1.0, [wall])
 }
+# the caption row clears the chips and ends before the plot: an 11 pt line
+# under chip_bottom and above Theme.pad_t, so the loading note and caption
+# never overprint a chip at any width
+expect Curve.caption_top >= Curve.chip_bottom + 4.0 and Curve.caption_top + 13.0 <= Theme.pad_t
+expect Curve.chip_bottom - Curve.chip_top == 22.0
