@@ -439,8 +439,10 @@ Career :: [].{
 			)
 
 			# ── monthly load: the recessive ground. A month in progress is the
-			# same bar from the baseline, dimmer and outlined, so it reads as
-			# unfinished rather than as a collapse; the legend names the mark.
+			# same stack from the baseline in dimmer tints, so it reads as
+			# unfinished rather than as a collapse, and the legend names the
+			# tint. It carries no outline or top edge: a stroke rasterises
+			# offset from the fill and reads as a second shape on the bar.
 			bw = (plot_w / nf - 1.5).max(1.0)
 			List.for_each!(
 				idx,
@@ -450,8 +452,7 @@ Career :: [].{
 					rise = if (p >= 1.0) (1.0) else if (reached) ((((head_x - bx) / plot_w) * 5.0).min(1.0)) else 0.0
 					bh = (I64.to_f32(x.m.load) / I64.to_f32(lmax)) * (bars_bot - bars_top) * rise
 					if bh > 0.5 {
-						ground = if (x.m.partial) Draw.filled_and_outlined(Color.with_alpha(Theme.ctl_c, 50), Color.with_alpha(Theme.ctl_c, 200), 1.0) else Draw.filled(Color.with_alpha(Theme.ctl_c, 90))
-						frame.rectangle!({ x: bx, y: bars_bot - bh, width: bw, height: bh, style: ground })
+						frame.rectangle!({ x: bx, y: bars_bot - bh, width: bw, height: bh, style: Draw.filled(Color.with_alpha(Theme.ctl_c, (if (x.m.partial) 50 else 90))) })
 						# the SELECTED family's share of that month, filled from the
 						# baseline in the family's own identity colour. The ground bar
 						# pools every sport, so without this a family whose threshold
@@ -475,10 +476,10 @@ Career :: [].{
 			valley_x = List.fold(idx, { x: plot_l, f: fmax }, |a, x| if (x.m.ftp10 > 0 and x.m.ftp10 <= a.f) { x: xf(x.i), f: x.m.ftp10 } else a).x
 			keys = List.concat(
 				List.concat(
-					[{ label: "monthly load, every sport", style: Draw.filled(Color.with_alpha(Theme.ctl_c, 90)) }],
-					if (sp.fam == "") [] else [{ label: Str.with_ascii_lowercased(family_name(sp.fam)), style: Draw.filled(Color.with_alpha(Theme.sport_color(sp.fam), 210)) }],
+					[{ label: "monthly load, every sport", fill: Color.with_alpha(Theme.ctl_c, 90), base: Color.with_alpha(Theme.ctl_c, 90), split: Bool.False }],
+					if (sp.fam == "") [] else [{ label: Str.with_ascii_lowercased(family_name(sp.fam)), fill: Color.with_alpha(Theme.sport_color(sp.fam), 210), base: Color.with_alpha(Theme.sport_color(sp.fam), 210), split: Bool.False }],
 				),
-				if (List.any(months, |m| m.partial)) [{ label: "month in progress", style: Draw.filled_and_outlined(Color.with_alpha(Theme.ctl_c, 50), Color.with_alpha(Theme.ctl_c, 200), 1.0) }] else [],
+				if (List.any(months, |m| m.partial)) [{ label: "month in progress", fill: Color.with_alpha(Theme.ctl_c, 50), base: if (sp.fam == "") Color.with_alpha(Theme.ctl_c, 50) else Color.with_alpha(Theme.sport_color(sp.fam), 120), split: Bool.True }] else [],
 			)
 			key_w = |k| 16.0 + model.font.measure({ text: k.label, size: 10.0, spacing: Text.default_spacing }).width
 			keys_w = List.fold(keys, 0.0, |a, k| a + key_w(k) + 18.0) - 18.0
@@ -487,7 +488,12 @@ Career :: [].{
 				keys,
 				if (legend_left(valley_x, plot_l, plot_r)) plot_l else plot_r - keys_w,
 				|kx, k| {
-					frame.rectangle!({ x: kx, y: key_y + 1.0, width: 10.0, height: 10.0, style: k.style })
+					# a swatch is a small bar: the in-progress key shows the same
+					# dimmed ground over its dimmed share that the bar draws
+					frame.rectangle!({ x: kx, y: key_y + 1.0, width: 10.0, height: 10.0, style: Draw.filled(k.fill) })
+					if k.split {
+						frame.rectangle!({ x: kx, y: key_y + 6.0, width: 10.0, height: 5.0, style: Draw.filled(k.base) })
+					}
 					Text.from(k.label, model.font).size(10).draw!(frame, { pos: { x: kx + 16.0, y: key_y }, color: ink_faint, align: (Top, Left) })
 					Ok(kx + key_w(k) + 18.0)
 				},
