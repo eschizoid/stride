@@ -25,9 +25,13 @@ Career :: [].{
 
 	# the arrival sweep, in ticks: five years wants longer than the form
 	# board's half second, and any click completes it (main.roc zeroes
-	# view_anim, whose zero means "settled" everywhere)
+	# view_anim, whose zero means "settled" everywhere). A capture of this
+	# view waits the whole sweep out (main.roc's settle_ticks).
+	sweep_ticks : U64
+	sweep_ticks = 120
+
 	dur : F32
-	dur = 120.0
+	dur = U64.to_f32(sweep_ticks)
 
 	# eased progress through the sweep: 0 at arrival, 1 settled
 	progress : Ui.Model -> F32

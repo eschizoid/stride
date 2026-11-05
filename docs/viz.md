@@ -256,7 +256,8 @@ VALUES (0, 30, '2026-09-02', NULL, NULL);
 -- `stride activities --json`; `viz_focus` reports the ids of what is shown.
 INSERT INTO viz_directives (trace_id, ghost_id) VALUES (20355183143, 20342052869);
 -- a capture: 'png' writes the view the directive lands on, once it has
--- settled (a view switch's crossfade over, no trace fetch in flight), to
+-- settled (its arrival animation over - the career view's whole sweep,
+-- half a second elsewhere - and no trace fetch in flight), to
 -- captures/<view>.png under the directory the window was launched from
 -- (your home folder for the app bundle, the repo for `just viz`);
 -- 'webm_start' / 'webm_stop' begin and end a WebM recording of it. The row
