@@ -19,6 +19,8 @@ Curve :: [].{
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
 		win_w = model.win.w
+		# planned targets are ride power, so they ride on the ride curve only
+		ride_targets = if (model.curve_family == "Ride") model.plan_targets else []
 		win_h = model.win.h
 		pad_l = Theme.pad_l
 		pad_r = Theme.pad_r
@@ -64,11 +66,23 @@ Curve :: [].{
 				x.s.chip.draw!(frame, { pos: { x: chx + 23.0, y: 68.0 }, color: if (on) Color.white else ink_muted, align: (Top, Center) })
 			},
 		)
+		# the family chips beside them: the lit one is the family on screen
+		List.for_each!(
+			family_chips,
+			|fc| {
+				fx = win_w - 420.0 + fc.dx
+				on = fc.fam == model.curve_family
+				hov = model.mouse_x >= fx and model.mouse_x <= fx + 46.0 and model.mouse_y >= 64.0 and model.mouse_y <= 86.0
+				style = if (on) (Draw.filled(Color.with_alpha(Theme.tsb_c, 60))) else if (hov) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
+				frame.rounded_rectangle!({ x: fx, y: 64.0, width: 46.0, height: 22.0, radius: 6.0, segments: 6, style })
+				Text.from(fc.label, model.font).size(12).draw!(frame, { pos: { x: fx + 23.0, y: 68.0 }, color: if (on) Color.white else ink_muted, align: (Top, Center) })
+			},
+		)
 		# eight zero rungs IS the no-records state - the loader materializes
 		# every rung, so emptiness is the summed watts, not the list length
 		have = List.fold(model.prs, 0.I64, |a, pr| a + pr.w)
 		if List.is_empty(model.prs) or have == 0 {
-			Text.from("no ride power yet", model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 130.0 }, color: ink_muted, align: (Top, Left) })
+			Text.from(empty_note(model.curve_family), model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 130.0 }, color: ink_muted, align: (Top, Left) })
 		} else {
 			pw = win_w - pad_l - pad_r
 			ph = win_h - pad_t - pad_b
@@ -90,15 +104,30 @@ Curve :: [].{
 					}
 				) else a,
 			)
+			# each window judged on its own: a rung within flat_ratio of the next
+			# longer one was not pushed, and its dot and delta go quiet
+			now_flags = unpushed(List.map(model.prs, |pr| joined(model.curve, pr.secs)))
+			prev_flags = unpushed(List.map(model.prs, |pr| joined(model.curve_prev, pr.secs)))
 			rungs = List.map_with_index(
 				model.prs,
 				|pr, i| {
 					now_w = joined(model.curve, pr.secs)
 					prev_w = joined(model.curve_prev, pr.secs)
-					{ pr, now_w, prev_w, i }
+					now_unp = List.get(now_flags, i) ?? Bool.False
+					prev_unp = List.get(prev_flags, i) ?? Bool.False
+					src = List.find_first(model.curve, |cp| cp.dur_s == pr.secs)
+					src_txt = match src {
+						Ok(sp) => source_text(sp)
+						Err(_) => ""
+					}
+					stale = match src {
+						Ok(sp) => stale_best(sp.ago, model.curve_days)
+						Err(_) => Bool.False
+					}
+					{ pr, now_w, prev_w, i, now_unp, prev_unp, src_txt, stale }
 				},
 			)
-			w_hi = F32.max(List.fold(rungs, 1.0, |a, r| F32.max(a, F32.max(I64.to_f32(r.pr.w), F32.max(I64.to_f32(r.now_w), I64.to_f32(r.prev_w))))), List.fold(model.plan_targets, 1.0, |a, t| F32.max(a, I64.to_f32(t.watts)))) * 1.08
+			w_hi = F32.max(List.fold(rungs, 1.0, |a, r| F32.max(a, F32.max(I64.to_f32(r.pr.w), F32.max(I64.to_f32(r.now_w), I64.to_f32(r.prev_w))))), List.fold(ride_targets, 1.0, |a, t| F32.max(a, I64.to_f32(t.watts)))) * 1.08
 			nlast = List.len(rungs) - 1
 			cx = |i| if (nlast == 0) (pad_l + pw / 2.0) else pad_l + pw * U64.to_f32(i) / U64.to_f32(nlast)
 			cy = |w| pad_t + ph * (1.0 - w / w_hi)
@@ -195,13 +224,13 @@ Curve :: [].{
 				p = rung_pos(rung_secs, t.dur_s)
 				if (nlast == 0) (pad_l + pw / 2.0) else pad_l + pw * p / U64.to_f32(nlast)
 			}
-			tgt_hover = List.find_first(model.plan_targets, |t| F32.abs(model.mouse_x - tx(t)) <= 8.0 and F32.abs(model.mouse_y - cy(I64.to_f32(t.watts))) <= 8.0)
+			tgt_hover = List.find_first(ride_targets, |t| F32.abs(model.mouse_x - tx(t)) <= 8.0 and F32.abs(model.mouse_y - cy(I64.to_f32(t.watts))) <= 8.0)
 			tgt_hovering = match tgt_hover {
 				Ok(_) => Bool.True
 				Err(_) => Bool.False
 			}
 			List.for_each!(
-				List.map_with_index(model.plan_targets, |t, i| { t, i }),
+				List.map_with_index(ride_targets, |t, i| { t, i }),
 				|x| {
 					mx = tx(x.t)
 					my = cy(I64.to_f32(x.t.watts))
@@ -250,7 +279,7 @@ Curve :: [].{
 						frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 5.0, style: Draw.filled(tsb_c) })
 						pr_half = model.font.measure({ text: "pr", size: 10.0, spacing: Text.default_spacing }).width / 2.0
 						Text.from("pr", model.font).size(10).draw!(frame, { pos: { x: label_center_within(cx(r.i), pr_half, pad_l, pad_l + pw - label_inset), y: rec_y - 20.0 }, color: tsb_c, align: (Top, Center) })
-						dpr_txt = delta_label(r.now_w, r.prev_w)
+						dpr_txt = if (r.now_unp or r.prev_unp) "" else delta_label(r.now_w, r.prev_w)
 						if dpr_txt != "" {
 							dpr_col = if (r.now_w > r.prev_w) tsb_c else Theme.alarm_c
 							dpr_w = model.font.measure({ text: dpr_txt, size: 10.0, spacing: Text.default_spacing }).width
@@ -263,14 +292,14 @@ Curve :: [].{
 					} else {
 						frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 3.0, style: Draw.filled(Color.with_alpha(ink_muted, 80)) })
 						if r.prev_w > 0 and r.prev_w < r.pr.w {
-							frame.circle!({ center: { x: cx(r.i), y: cy(I64.to_f32(r.prev_w)) }, radius: 4.0, style: Draw.filled(Color.with_alpha(ink_muted, 150)) })
+							frame.circle!({ center: { x: cx(r.i), y: cy(I64.to_f32(r.prev_w)) }, radius: 4.0, style: Draw.filled(Color.with_alpha(ink_muted, if (r.prev_unp) (70) else 150)) })
 						}
 						if r.now_w > 0 {
 							now_y = cy(I64.to_f32(r.now_w))
-							frame.circle!({ center: { x: cx(r.i), y: now_y }, radius: 4.0, style: Draw.filled(ctl_c) })
+							frame.circle!({ center: { x: cx(r.i), y: now_y }, radius: 4.0, style: Draw.filled(if (r.now_unp) (Color.with_alpha(ink_muted, 170)) else if (r.stale) (Color.with_alpha(ctl_c, 110)) else ctl_c) })
 							# the change against the PREVIOUS window, signed, right
 							# where it lives - green-teal going up, alarm going down
-							d_txt = delta_label(r.now_w, r.prev_w)
+							d_txt = if (r.now_unp or r.prev_unp) "" else delta_label(r.now_w, r.prev_w)
 							if d_txt != "" {
 								d_col = if (r.now_w > r.prev_w) tsb_c else Theme.alarm_c
 								d_w = model.font.measure({ text: d_txt, size: 10.0, spacing: Text.default_spacing }).width
@@ -285,11 +314,17 @@ Curve :: [].{
 					if model.mouse_x >= cx(r.i) - half and model.mouse_x < cx(r.i) + half and model.mouse_y >= pad_t and model.mouse_y <= pad_t + ph and !tgt_hovering {
 						now_txt = if (r.now_w > 0) ("   now ${Db.num_unit(r.now_w, "w")}") else "   not ridden this window"
 						prev_txt = if (r.prev_w > 0) ("   prev ${Db.num_unit(r.prev_w, "w")}") else ""
-						tip = if (r.pr.w > 0) ("${r.pr.rung}   best ${Db.num_unit(r.pr.w, "w")} set ${r.pr.day}${now_txt}${prev_txt}") else "${r.pr.rung}   never ridden"
+						quality = if (r.now_unp) "   not all-out" else if (r.stale) "   stale" else ""
+						tip = if (r.pr.w > 0) ("${r.pr.rung}   best ${Db.num_unit(r.pr.w, "w")} set ${r.pr.day}${now_txt}${r.src_txt}${quality}${prev_txt}") else "${r.pr.rung}   never ridden"
 						Text.from(tip, model.font).size(12).draw!(frame, { pos: { x: 36.0, y: 92.0 }, color: Color.white, align: (Top, Left) })
 					}
 				},
 			)
+			# the window's unpushed durations, named above the fit caption
+			unp_txt = unpushed_caption(List.map(rungs, |r| r.pr.rung), List.map(rungs, |r| r.now_unp), model.curve_days)
+			if unp_txt != "" {
+				Text.from(unp_txt, model.font).size(12).draw!(frame, { pos: { x: win_w - 40.0, y: win_h - 72.0 }, color: ink_faint, align: (Top, Right) })
+			}
 		}
 		model.curve_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 		Ok({})
@@ -392,6 +427,93 @@ Curve :: [].{
 		share = if (best <= 0.0) "no window best at that duration" else "${Db.fmt_i(I64.to_f32(t.watts) / best * 100.0)}% of this window's best at that duration"
 		"${t.day} ${t.typ}: ${I64.to_str(t.reps)}x${Fmt.mmss(t.dur_s)} @ ${I64.to_str(t.watts)}W - ${share}"
 	}
+
+	# ── the family chips: bike and row, to the right of the range chips, on
+	# the same row. chip0 is the first range chip's left edge.
+	family_chips : List({ fam : Str, label : Str, dx : F32 })
+	family_chips = [{ fam: "Ride", label: "bike", dx: 176.0 }, { fam: "Rowing", label: "row", dx: 230.0 }]
+
+	family_chip_at : F32, F32 -> Str
+	family_chip_at = |x, chip0|
+		match List.find_first(family_chips, |c| x >= chip0 + c.dx and x <= chip0 + c.dx + 46.0) {
+			Ok(c) => c.fam
+			Err(_) => ""
+		}
+
+	# what the view says when the chosen family has no power on record: the
+	# family is kept (the chip stays lit), and the note names the way back
+	empty_note : Str -> Str
+	empty_note = |fam| if (fam == "Ride") "no ride power yet" else if (fam == "Rowing") "no rowing power yet - the bike chip shows ride power" else "no ${fam} power yet - the bike chip shows ride power"
+
+	# ── pushed and unpushed rungs. A maximal best at one duration stands
+	# clearly above the best at the next longer one; a best within
+	# flat_ratio of it is that session's ordinary output, not an all-out
+	# effort, so a gap between two such rungs reflects which workouts were
+	# chosen rather than a change in fitness. The longest rung has nothing
+	# longer to compare with and counts as pushed; an absent rung (0) is
+	# neither.
+	flat_ratio : F32
+	flat_ratio = 1.05
+
+	unpushed : List(I64) -> List(Bool)
+	unpushed = |ws|
+		List.map_with_index(
+			ws,
+			|w, i| match List.get(ws, i + 1) {
+				Ok(nx) => w > 0 and nx > 0 and I64.to_f32(w) < I64.to_f32(nx) * flat_ratio
+				Err(_) => Bool.False
+			},
+		)
+
+	# the caption naming the window's unpushed durations, or "" when every
+	# rung with a value was pushed
+	unpushed_caption : List(Str), List(Bool), I64 -> Str
+	unpushed_caption = |rungs, flags, days| {
+		names = List.keep_oks(List.map2(rungs, flags, |r, f| { r, f }), |x| if (x.f) Ok(x.r) else Err(Pushed))
+		if (List.is_empty(names)) "" else "no all-out effort in ${I64.to_str(days)} days at ${Str.join_with(names, ", ")}"
+	}
+
+	# a window best set more than half the window ago reads as stale
+	stale_best : I64, I64 -> Bool
+	stale_best = |age_days, window_days| age_days >= 0 and age_days * 2 > window_days
+
+	# the rung tooltip's source: which session set the window's best, and when
+	source_text : Db.CurvePt -> Str
+	source_text = |p| if (p.name == "" and p.day == "") "" else "   ${p.name} ${p.day}"
+
+	# the rung column under (mx, my), laid out the way draw! lays it: index
+	# spacing over the plot between the theme's paddings, each column half a
+	# step to either side of its rung
+	rung_at : F32, F32, F32, F32, U64 -> Try(U64, [NoRung])
+	rung_at = |mx, my, win_w, win_h, n| {
+		pw = win_w - Theme.pad_l - Theme.pad_r
+		ph = win_h - Theme.pad_t - Theme.pad_b
+		if (n == 0 or my < Theme.pad_t or my > Theme.pad_t + ph) Err(NoRung)
+		else {
+			nlast = n - 1
+			half = if (nlast == 0) (pw / 2.0) else pw / U64.to_f32(nlast) / 2.0
+			cx = |i| if (nlast == 0) (Theme.pad_l + pw / 2.0) else Theme.pad_l + pw * U64.to_f32(i) / U64.to_f32(nlast)
+			match List.find_first(List.map_with_index(List.repeat({}, n), |_u, k| k), |i| mx >= cx(i) - half and mx < cx(i) + half) {
+				Ok(i) => Ok(i)
+				Err(_) => Err(NoRung)
+			}
+		}
+	}
+
+	# the session behind the hovered rung's window best, for TAB to open in
+	# the trace view; -1 when no rung is hovered or the rung has no best
+	hovered_source : Ui.Model -> I64
+	hovered_source = |model|
+		match rung_at(model.mouse_x, model.mouse_y, model.win.w, model.win.h, List.len(model.prs)) {
+			Ok(i) => match List.get(model.prs, i) {
+				Ok(pr) => match List.find_first(model.curve, |c| c.dur_s == pr.secs) {
+					Ok(c) => if (c.aid > 0) c.aid else -1
+					Err(_) => -1
+				}
+				Err(_) => -1
+			}
+			Err(_) => -1
+		}
 
 	# a label keeps this much plot between itself and the right edge, so it
 	# reads apart from the CP label drawn just beyond it
@@ -544,3 +666,18 @@ expect Curve.target_label({ day: "2026-11-05", typ: "threshold", reps: 2, dur_s:
 expect Curve.target_label({ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }, 0.0) == "11-05 225W"
 expect Curve.target_tip({ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }, 257.0) == "2026-11-05 threshold: 2x15:00 @ 225W - 88% of this window's best at that duration"
 expect Curve.r2_str(0.84) == "0.84" and Curve.r2_str(0.9) == "0.90" and Curve.r2_str(0.05) == "0.05" and Curve.r2_str(1.0) == "1.00" and Curve.r2_str(0.899) == "0.89" and Curve.r2_str(0.8999) == "0.89" and Curve.r2_str(-0.253) == "-0.25"
+# a rung within 5% of the next longer one was not pushed: on the live 60-day
+# ladder the short rungs crowd the 20-minute best, while the 20-minute best
+# stands 5% over the hour; the hour has nothing longer to beat, and an
+# absent rung is neither
+expect Curve.flat_ratio == 1.05
+expect Curve.unpushed([290, 272, 265, 262, 255, 254, 248, 236]) == [Bool.False, Bool.True, Bool.True, Bool.True, Bool.True, Bool.True, Bool.False, Bool.False]
+expect Curve.unpushed([400, 0, 300]) == [Bool.False, Bool.False, Bool.False]
+expect Curve.unpushed_caption(["5s", "15s", "30s"], [Bool.False, Bool.True, Bool.True], 30) == "no all-out effort in 30 days at 15s, 30s"
+expect Curve.unpushed_caption(["5s", "15s"], [Bool.False, Bool.False], 30) == ""
+# a best set more than half the window ago is stale; exactly half is not
+expect !Curve.stale_best(15, 30) and Curve.stale_best(16, 30) and !Curve.stale_best(-1, 30)
+# the family chips sit right of the range chips; a family with no power
+# keeps its chip lit and names the way back
+expect Curve.family_chip_at(1000.0 + 176.0, 1000.0) == "Ride" and Curve.family_chip_at(1000.0 + 276.0, 1000.0) == "Rowing" and Curve.family_chip_at(1000.0 + 100.0, 1000.0) == ""
+expect Curve.empty_note("Rowing") == "no rowing power yet - the bike chip shows ride power" and Curve.empty_note("Ride") == "no ride power yet"

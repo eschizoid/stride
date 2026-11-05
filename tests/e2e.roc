@@ -7472,13 +7472,14 @@ b_cross_surface! = |ctx| {
 	cli_curve = strjq!(ctx, ["power-curve", "3650", "Ride"], "[.data.points[] | select(.watts > 0) | (.dur_s | tostring) + \":\" + ((.watts * 10 | round) | tostring)] | join(\",\")")
 	view_curve = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(s), '') FROM (SELECT secs || ':' || CAST(ROUND(MAX(watts) * 10) AS INTEGER) AS s FROM activity_power_ladder WHERE sport_family = 'Ride' AND start_local >= date('${ctx.today}', '-3650 days') GROUP BY rung, secs ORDER BY secs);"))
 	check!("the CLI power curve equals the ladder view at every rung (${cli_curve})", !Str.is_empty(cli_curve) and cli_curve == view_curve)?
-	# the window's record book joins the Ride record per rung onto the
-	# engine's power_ladder_rungs view. Its query is read out of src/viz/Db.roc
-	# rather than copied here, so the text this runs IS the text the window
-	# runs; it must equal the CLI's all-time Ride curve at every rung the CLI
-	# reports, and the rung list it stands on must equal the unpivot's - a
-	# rung added to one and not the other fails here by name
-	prs_q = Str.trim(sh!("grep -oE 'db\\.query!\\(\"WITH best AS[^\"]*power_ladder_rungs[^\"]*\"' src/viz/Db.roc | sed 's/^db\\.query!(\"//; s/\"$//'"))
+	# the window's record book joins a family's record per rung onto the
+	# engine's power_ladder_rungs view, the family bound as :fam. Its query
+	# is read out of src/viz/Db.roc rather than copied here, with Ride put in
+	# for the binding, so the text this runs IS the text the window runs; it
+	# must equal the CLI's all-time Ride curve at every rung the CLI reports,
+	# and the rung list it stands on must equal the unpivot's - a rung added
+	# to one and not the other fails here by name
+	prs_q = Str.trim(sh!("grep -oE 'db\\.query!\\(\"WITH best AS[^\"]*power_ladder_rungs[^\"]*\"' src/viz/Db.roc | sed 's/^db\\.query!(\"//; s/\"$//' | sed \"s/:fam/'Ride'/\""))
 	book = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(secs || ':' || w), '') FROM (${prs_q});"))
 	cli_book = strjq!(ctx, ["power-curve", "3650", "Ride"], "[.data.points[] | (.dur_s | tostring) + \":\" + ((.watts | round) | tostring)] | join(\",\")")
 	check!("the window's record-book query, read from its source, equals the CLI's all-time Ride curve at every rung (${book})", !Str.is_empty(prs_q) and !Str.is_empty(book) and book == cli_book)?
@@ -7764,7 +7765,7 @@ b_viz_caps! = |ctx| {
 	# update!'s resolver acts on a field - refusals_for's expects judge a
 	# resolved selection, not the fold that resolves it. An empty extraction
 	# fails rather than matching empty against empty.
-	field_parity = Str.trim(sh!("pub=$(awk '/^caps_fields = \\[/{p=1} p{print} p&&/\\]/{exit}' src/viz/main.roc | grep -oE 'name: \"[a-z_]+\"' | sed 's/name: \"//; s/\"//' | LC_ALL=C sort -u | tr '\\n' ' '); q=$(grep -oE 'COALESCE\\((view|range|cursor_day|trace_day|ghost_day|trace_id|ghost_id|capture)' src/core/Bus.roc | grep -oE '[a-z_]+$' | LC_ALL=C sort -u | tr '\\n' ' '); if [ -n \"$pub\" ] && [ \"$pub\" = \"$q\" ]; then echo same; else echo \"pub=$pub q=$q\"; fi"))
+	field_parity = Str.trim(sh!("pub=$(awk '/^caps_fields = \\[/{p=1} p{print} p&&/\\]/{exit}' src/viz/main.roc | grep -oE 'name: \"[a-z_]+\"' | sed 's/name: \"//; s/\"//' | LC_ALL=C sort -u | tr '\\n' ' '); q=$(grep -oE 'COALESCE\\((view|range|cursor_day|trace_day|ghost_day|trace_id|ghost_id|capture|family)' src/core/Bus.roc | grep -oE '[a-z_]+$' | LC_ALL=C sort -u | tr '\\n' ' '); if [ -n \"$pub\" ] && [ \"$pub\" = \"$q\" ]; then echo same; else echo \"pub=$pub q=$q\"; fi"))
 	check!("the published field names equal the columns the poll reads (${field_parity})", field_parity == "same")?
 	# the accepts text of every field is prose the binary never reads, so each
 	# claim it makes that the code also makes is compared across the two

@@ -115,6 +115,8 @@ Ui :: [].{
 		# instead of a task round-trip per keypress
 		trace_cache : List({ tr : List(F32), sg : List(Db.Seg), du : F32, un : Str, sp : List(Series.Split), st : Db.StrengthLog }),
 		curve_days : I64,
+		# the family whose power curve the power view draws: Ride or Rowing
+		curve_family : Str,
 		# the window's CP, 0 when the fit is not usable (Curve.fit_usable)
 		fit_cp : F32,
 		# open sessions ahead with a structured target, for the power view
@@ -134,7 +136,7 @@ Ui :: [].{
 		# the coach: the window keeps its full frame rate for a moment after it
 		last_active : U64,
 		view_anim : U64,
-		last_focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, detail_day : Str, sport : Str, family : Str },
+		last_focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, detail_day : Str, sport : Str, family : Str, curve_family : Str },
 		# quitting is raised by the ESC frame, which spawns the focus-row clear;
 		# the frame that sees the clear land - or sees quit_tick fall half a
 		# second behind, so a stuck database can never trap the athlete in a
