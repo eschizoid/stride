@@ -4,6 +4,7 @@ import rr.Text
 import core.Sports
 import core.Units
 import Db
+import Wrap
 import Theme
 import Ui
 
@@ -106,13 +107,18 @@ Trace :: [].{
 	strength_session : Str -> Bool
 	strength_session = |sport| Sports.canonical(sport) == "WeightTraining"
 
-	# one stored row as the panel prints it: sets x reps, or sets x seconds
-	# for a hold, then the weight in the athlete's units when one was moved
+	# one stored row as the panel prints it: the exercise name cut to 32
+	# columns, sets x reps or sets x seconds for a hold, then the weight in
+	# the athlete's units when one was moved
 	set_line : [Metric, Imperial], Db.SetRow -> Str
 	set_line = |units, r| {
 		shape = if (r.hold_s > 0) "${I64.to_str(r.sets)}x${I64.to_str(r.hold_s)}s hold" else "${I64.to_str(r.sets)}x${I64.to_str(r.reps)}"
 		w = if (r.kg > 0.0) " @ ${Units.mass_label(units, r.kg)}" else ""
-		"${r.exercise}  ${shape}${w}"
+		name = match List.first(Wrap.fit(r.exercise, 32, 1)) {
+			Ok(n) => n
+			Err(_) => ""
+		}
+		"${name}  ${shape}${w}"
 	}
 
 	# the empty panel says which absence it is: text in the description that
@@ -140,8 +146,17 @@ Trace :: [].{
 	right_pad : Ui.Model -> F32
 	right_pad = |model| {
 		w = List.fold(panel_lines(model), 0.0, |acc, l| F32.max(acc, model.font.measure({ text: l, size: 11.0, spacing: Text.default_spacing }).width))
-		if (w > 0.0) (Theme.pad_r + w + 24.0) else Theme.pad_r
+		if (w > 0.0) (Theme.pad_r + panel_room(w + 24.0, model.win.w - Theme.pad_l - Theme.pad_r)) else Theme.pad_r
 	}
+
+	# the column never takes more than panel_share of the room the plot has,
+	# so the plot keeps a positive width at any window size; set_line caps a
+	# name's length so a line rarely needs more
+	panel_share : F32
+	panel_share = 0.45
+
+	panel_room : F32, F32 -> F32
+	panel_room = |want, room| F32.max(0.0, F32.min(want, room * panel_share))
 
 	# ── session trace view (TAB) ────────────────────────────────────────────
 	# One session's measured trace, with the detector's blocks shaded BEHIND it
@@ -383,3 +398,9 @@ expect Trace.set_line(Imperial, { exercise: "Curl", sets: 3, reps: 0, kg: 9.0718
 expect Trace.set_line(Metric, { exercise: "Push Up", sets: 3, reps: 12, kg: 0.0, hold_s: 0 }) == "Push Up  3x12"
 expect Trace.no_sets_note(Bool.True) == "no sets read - the description holds text no adapter parsed"
 expect Trace.no_sets_note(Bool.False) == "no sets logged"
+# the column takes what it wants up to its share of the plot's room, and
+# never a negative width
+expect Trace.panel_room(300.0, 1600.0) == 300.0
+expect Trace.panel_room(900.0, 1000.0) == 450.0
+expect Trace.panel_room(300.0, -50.0) == 0.0
+expect Trace.set_line(Metric, { exercise: "An Extremely Long Exercise Name That Keeps Going", sets: 3, reps: 8, kg: 10.0, hold_s: 0 }) == "An Extremely Long Exercise Na...  3x8 @ 10.0 kg"
