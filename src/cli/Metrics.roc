@@ -5387,6 +5387,8 @@ expect Metrics.stored_target("", 0, 0, 0.0) == Metrics.no_target
 # hr_band_seconds: capped-gap time under, inside and over the band; junk HR skipped
 expect Metrics.hr_band_seconds([{ t: 0, v: 120.0 }, { t: 10, v: 120.0 }, { t: 20, v: 130.0 }, { t: 30, v: 150.0 }, { t: 40, v: 250.0 }, { t: 100, v: 140.0 }], 125, 147) == { under_s: 10, in_s: 40, over_s: 10 }
 expect Metrics.hr_band_seconds([], 125, 147) == { under_s: 0, in_s: 0, over_s: 0 }
+# floor and cap are inside the band
+expect Metrics.hr_band_seconds([{ t: 0, v: 147.0 }, { t: 10, v: 147.0 }, { t: 20, v: 125.0 }, { t: 30, v: 124.0 }, { t: 40, v: 148.0 }], 125, 147) == { under_s: 10, in_s: 20, over_s: 10 }
 # pace per unit from m/s: 4.0 m/s is 4:10/km, 1:40/100m is 1.0 m/s
 expect (Metrics.pace_s_per_unit(4.0, "/km") - 250.0).abs() < 0.001
 expect (Metrics.pace_s_per_unit(1.0, "/100m") - 100.0).abs() < 0.001

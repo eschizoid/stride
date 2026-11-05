@@ -126,10 +126,24 @@ reason `--json` and still answers in JSON).
 5. **Plan** with `stride week add <YYYY-MM-DD> <type> "<detail>" "<rationale>" ["<target>"] --json`.
    - `type` is the intensity intent, not the sport: vo2max | threshold | endurance |
      recovery | strength | rest (free-form accepted). The sport goes in `detail`.
-   - The optional target is the strict literal `<reps>x<mm:ss>@<watts>W` (`3x12:00@230W`;
-     reps 1-99, rep at least 0:30, watts 1-2500), power only, stored beside the prose.
-     Malformed: `bad_target`. The echo and `plan`'s open sessions carry `target_known`,
-     `target_reps`, `target_dur_s`, `target_watts`.
+   - The optional target is a strict literal `<reps>x<rep>@<signal>` on any signal, for
+     any sport, stored beside the prose:
+     - power `3x12:00@230W` (rep `mm:ss`, at least 0:30; watts 1-2500)
+     - heart-rate band `1x60:00@HR125-147` (35-220 bpm, floor below cap)
+     - HR zone `1x90:00@Z2` (1-5, the athlete's configured zones; without them
+       `missing_config`)
+     - pace `5x4:00@4:10/km`, `3x10:00@6:45/mi`, `10x100m@1:40/100m`, `6x500m@1:55/500m`
+
+     Reps are 1-99. A non-power rep may also be `h:mm:ss`, and only a pace rep may be a
+     distance (`<n>m`, `<n>km`). The unit decides the sport family the pace is read
+     for: /km and /mi run, walk and hike; /100m swim; /500m rowing. Malformed:
+     `bad_target`. The echo and `plan`'s open sessions carry `target_known`,
+     `target_kind` (`power|hr|zone|pace`), `target_literal` (canonical, e.g. `60:00`
+     echoes as `1:00:00`), `target_reps`, `target_dur_s` (0 for a distance rep),
+     `target_dist_m`, `target_watts`, `target_hr_lo`, `target_hr_hi`, `target_zone`,
+     `target_pace_s` and `target_pace_unit`; a magnitude another kind carries stays 0
+     or "". `week` rows carry `target_kind` and `target_literal`. Projections
+     (`project`, `events`, the form board) still count power targets only.
    - Adding a session on a date that already has an open one REVISES it in place (same
      id) and replaces the whole prescription, so re-planning without the target clears
      it. Never `skip` to re-plan.
@@ -137,9 +151,22 @@ reason `--json` and still answers in JSON).
 ### Closing sessions
 
 - `stride complete <id> <activity_id> --json` returns
-  `{completed_session, replaced_activity, dropped_substitute, target_known, target_reps, target_dur_s, target_watts, detected_known, detected_reps, detected_mean_dur_s, detected_mean_watts, reps_delta, watts_pct}`.
-  `reps_delta`/`watts_pct` mean something only when both `target_known` and
-  `detected_known` are true. Completing a done session overwrites its link:
+  `{completed_session, replaced_activity, dropped_substitute, target_known, target_kind, target_literal, target_reps, target_dur_s, target_watts, detected_known, detected_reps, detected_mean_dur_s, detected_mean_watts, reps_delta, watts_pct, exec_known, exec_reason}`
+  plus each kind's target magnitudes (as `plan` carries them) and its execution fields.
+  `reps_delta`/`watts_pct` mean something only for a `power` target with
+  `detected_known` true. `exec_known` says the activity carries the target's own signal;
+  when false, `exec_reason` says why (`no_target`, `no_power_intervals`,
+  `no_hr_stream`, `no_hr_zones`, `pace_unit_mismatch`, `no_distance`). Per kind:
+  - `hr`: `{hr_under_s, hr_in_s, hr_over_s, hr_mean}`: seconds below, inside and above
+    the band, from the HR stream.
+  - `zone`: `{zone_below_s, zone_in_s, zone_above_s}`: from the zone split analyze
+    stored.
+  - `pace`: `{pace_basis, pace_actual_s, pace_pct, pace_reps, pace_reps_delta}`.
+    `pace_basis` is `detected` (the detector's pace work reps) or `whole` (distance over
+    moving time). `pace_actual_s` is seconds per the target's unit, and `pace_pct` is
+    the speed relative to the target, so above 100 means faster.
+
+  Whether the session was hit is your sentence. Completing a done session overwrites its link:
   `replaced_activity` names the old one (0 if none) and `plan_history_28d` keeps it as
   `superseded_activity_id`. That is the repair for a mis-linked completion.
 - A rest day that happened: `stride complete <id> --json` with no activity. Any non-rest
