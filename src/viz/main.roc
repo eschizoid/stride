@@ -384,6 +384,10 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 			Ok(t2) => t2.sp
 			Err(_) => []
 		},
+		trace_sets: match List.first(loaded.tcache) {
+			Ok(t2) => t2.st
+			Err(_) => { rows: [], pasted: Bool.False }
+		},
 		units: loaded.un,
 		trace_sport: "",
 		curve_hint: mk!("1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      V  record      ESC quit", 13)?,
@@ -582,7 +586,8 @@ trace_task! = |acc, units, ids, sel, gen|
 					sg = Db.load_segs!(db, entry.id)
 					du = Db.load_dur!(db, entry.id)
 					sp = if (entry.chan == Db.pace_chan) (Db.load_splits!(db, entry.id, Units.split_len(units))) else []
-					TraceSwitched({ tr, sg, du, gen, day: entry.day, un: Db.trace_unit(entry.chan, units), sp })
+					st = if (Trace.strength_session(entry.sport)) (Db.load_sets!(db, entry.id)) else { rows: [], pasted: Bool.False }
+					TraceSwitched({ tr, sg, du, gen, day: entry.day, un: Db.trace_unit(entry.chan, units), sp, st })
 				}
 			}
 	}
@@ -1579,7 +1584,7 @@ Msg : [
 	MarkDone(I64),
 	Reloaded(Ui.Model),
 	ReloadFailed,
-	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, gen : U64, day : Str, un : Str, sp : List(Series.Split) }),
+	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, gen : U64, day : Str, un : Str, sp : List(Series.Split), st : Db.StrengthLog }),
 	TraceSwitchFailed(U64),
 	# `ids` is the picker as the database holds it at poll time, read only when
 	# the directive names a session: what a session-naming directive is judged
@@ -1611,7 +1616,7 @@ nav_width = 70.0
 # One entry per pickable session, loaded eagerly: switching and ghost
 # summons read this list instead of a task round-trip per keypress.
 # Recursion because an effectful body cannot reassign an outer var.
-load_tcache! : Sqlite.Db, [Metric, Imperial], List(TraceId) => List({ tr : List(F32), sg : List(Db.Seg), du : F32, un : Str, sp : List(Series.Split) })
+load_tcache! : Sqlite.Db, [Metric, Imperial], List(TraceId) => List({ tr : List(F32), sg : List(Db.Seg), du : F32, un : Str, sp : List(Series.Split), st : Db.StrengthLog })
 load_tcache! = |db, units, ids|
 	match List.first(ids) {
 		Err(_) => []
@@ -1625,7 +1630,8 @@ load_tcache! = |db, units, ids|
 			# the unit travels with the samples so a cache read needs no second
 			# lookup into the picker row; prepend so picker order survives
 			# without List.reverse, which this stdlib lacks
-			List.prepend(load_tcache!(db, units, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9, un: Db.trace_unit(te.chan, units), sp: sp9 })
+			st9 = if (Trace.strength_session(te.sport)) (Db.load_sets!(db, te.id)) else { rows: [], pasted: Bool.False }
+			List.prepend(load_tcache!(db, units, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9, un: Db.trace_unit(te.chan, units), sp: sp9, st: st9 })
 		}
 	}
 
@@ -1767,7 +1773,7 @@ update! = |model0, program_input, io| {
 				# that switches, and a picker re-read may have moved the session
 				# since the fetch read its index; the samples are still that
 				# session's, so they land under whatever index it holds now.
-				TraceSwitched(sw) => if (sw.gen != acc.trace_gen) acc else { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_day: sw.day, trace_unit: sw.un, trace_splits: sw.sp, trace_loading: Bool.False }
+				TraceSwitched(sw) => if (sw.gen != acc.trace_gen) acc else { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_day: sw.day, trace_unit: sw.un, trace_splits: sw.sp, trace_sets: sw.st, trace_loading: Bool.False }
 			},
 	)
 	# the coach's word arrives beside the human's input and steers only what
@@ -2124,7 +2130,7 @@ update! = |model0, program_input, io| {
 			if (view != 2) model.trace_pan
 			else if ((d.key_pressed(Key0) and !ctrl) or moving) 0.0
 			else {
-				pw9 = win.w - Theme.pad_l - Theme.pad_r
+				pw9 = win.w - Theme.pad_l - Trace.right_pad(model)
 				u9 = F32.min(1.0, F32.max(0.0, (m.x - Theme.pad_l) / pw9))
 				if trace_zoom2 != model.trace_zoom {
 					# hold the moment under the cursor still through the zoom
@@ -2210,6 +2216,10 @@ update! = |model0, program_input, io| {
 		trace_splits2 = match switched {
 			Ok(sc) => sc.sp
 			Err(_) => if (switching) ([]) else model.trace_splits
+		}
+		trace_sets2 = match switched {
+			Ok(sc) => sc.st
+			Err(_) => if (switching) ({ rows: [], pasted: Bool.False }) else model.trace_sets
 		}
 		trace_dur2 = match switched {
 			Ok(sc) => sc.du
@@ -2420,7 +2430,7 @@ update! = |model0, program_input, io| {
 		used = !List.is_empty(d.events) or List.any(d.keys, |k| k != 0) or pointer.x != 0.0 or pointer.y != 0.0 or wheel.x != 0.0 or wheel.y != 0.0 or Mouse.button_down(d.mouse, Left) or Mouse.button_down(d.mouse, Right) or win.w != model.win.w or win.h != model.win.h or directive.has_d
 		last_active = if (used) tick else model.last_active
 		Window.set_target_fps!(frame_rate({ busy, tick, last_active }))
-		Ok({ ..model, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
