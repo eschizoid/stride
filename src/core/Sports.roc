@@ -161,11 +161,22 @@ Sports :: [].{
 		else if (unit == "/500m") ["Rowing"]
 		else []
 
+	# Every family head some pace unit fits, each once, in the order the units
+	# name them: the families a pace target can be projected for.
+	pace_target_families : List(Str)
+	pace_target_families =
+		List.fold(
+			List.join(List.map(["/km", "/mi", "/100m", "/500m"], pace_unit_families)),
+			[],
+			|acc, h| if (List.contains(acc, h)) acc else List.append(acc, h),
+		)
+
 	expect Sports.pace_unit_families("/km") == ["Run", "Walk"]
 	expect Sports.pace_unit_families("/mi") == ["Run", "Walk"]
 	expect Sports.pace_unit_families("/100m") == ["Swim"]
 	expect Sports.pace_unit_families("/500m") == ["Rowing"]
 	expect Sports.pace_unit_families("/furlong") == []
+	expect Sports.pace_target_families == ["Run", "Walk", "Swim", "Rowing"]
 	# every family a pace unit names is a real family head, and the swim and
 	# rowing units agree with the unit each family reads its own pace over
 	expect List.all(List.join(List.map(["/km", "/100m", "/500m"], pace_unit_families)), |h| canonical(h) == h and List.any(families, |f| List.first(f.sports) == Ok(h)))

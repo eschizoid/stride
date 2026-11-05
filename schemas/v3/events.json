@@ -1,6 +1,6 @@
 {
   "title": "events",
-  "description": "Result of `stride events` — projected CTL/ATL/TSB on each event date (ADR 0010: the arithmetic consequences of the recorded open plan, never a proposed one). The projection folds Metrics.load_step forward from the last computed daily_load row; open sessions with structured targets contribute deterministic TSS (Metrics.tss_from_target), untargeted sessions contribute zero and are counted. baseline_known false = no computed history, every number is decay over zero. ftp_known false = no 60d best-20min power, so targeted sessions could not contribute.",
+  "description": "Result of `stride events` — projected CTL/ATL/TSB on each event date (ADR 0010: the arithmetic consequences of the recorded open plan, never a proposed one). The projection folds Metrics.load_step forward from the last computed daily_load row; each open session with a structured target contributes the load its kind prices to (Metrics.projected_load, ADR 0019: power TSS, pace rTSS, heart-rate hrTSS, session-RPE load), and a session with no target or no input to price it contributes zero and is counted. baseline_known false = no computed history, every number is decay over zero. ftp_known false = no 60d best-20min power, so power targets contribute nothing.",
   "type": "object",
   "additionalKeys": false,
   "required": [
@@ -64,7 +64,7 @@
           },
           "sessions_projected": {
             "type": "integer",
-            "description": "How many of those carried a structured target AND an FTP existed — the sessions whose load the projection actually contains. The gap to planned_in_window is the projection's stated blindness."
+            "description": "How many of those carried a target the projection could price — the sessions whose load the projection actually contains. The gap to planned_in_window is the projection's stated blindness; `stride project` names each unpriced session and why."
           }
         }
       }

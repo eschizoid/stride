@@ -120,15 +120,15 @@ Board :: [].{
 
 	# the board's projection, as two tile lines: where it ends (the event
 	# when the written plan reaches it, else the plan's last day) with the
-	# projected fitness and form, then how much of the window's plan carries
-	# a structured target - the rest contributes no load, so this count is
-	# how blind the projection is
+	# projected fitness and form, then how many of the window's sessions
+	# carry a load the engine could price - the rest add none, so this count
+	# is how blind the projection is
 	proj_lines : Str, Str, Db.Projection -> List(Str)
 	proj_lines = |horizon, event_day, p| {
 		mmdd = Str.from_utf8_lossy(List.drop_first(Str.to_utf8(horizon), 5))
 		head = if (horizon == event_day) "at event" else "plan to ${mmdd}"
 		if (!p.ok or horizon == "") []
-		else ["${head}: fit ${Db.fmt_f(p.ctl)}, form ${Db.fmt_f(p.tsb)}", "${I64.to_str(p.projected)} of ${I64.to_str(p.considered)} sessions targeted"]
+		else ["${head}: fit ${Db.fmt_f(p.ctl)}, form ${Db.fmt_f(p.tsb)}", "${I64.to_str(p.projected)} of ${I64.to_str(p.considered)} sessions carry load"]
 	}
 
 	# true when no value falls inside [lo, hi]
@@ -495,8 +495,8 @@ expect Str.ends_with(Str.join_with(Board.ev_lines(Text.font_stub, "one two three
 
 # the projection names where it ends - the event only when the plan reaches
 # it - and how many of the window's sessions carry a target
-expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.True, ctl: 46.0, tsb: 14.3, considered: 4, projected: 1 }) == ["plan to 11-08: fit 46.0, form 14.3", "1 of 4 sessions targeted"]
-expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 40, projected: 12 }) == ["at event: fit 52.5, form -3.2", "12 of 40 sessions targeted"]
+expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.True, ctl: 46.0, tsb: 14.3, considered: 4, projected: 1 }) == ["plan to 11-08: fit 46.0, form 14.3", "1 of 4 sessions carry load"]
+expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 40, projected: 12 }) == ["at event: fit 52.5, form -3.2", "12 of 40 sessions carry load"]
 expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0 }) == []
 expect Board.proj_lines("", "", { ok: Bool.True, ctl: 1.0, tsb: 1.0, considered: 1, projected: 1 }) == []
 

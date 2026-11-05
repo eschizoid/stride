@@ -134,6 +134,7 @@
           "target_pace_s",
           "target_pace_unit",
           "target_reps",
+          "target_rpe",
           "target_watts",
           "target_zone"
         ],
@@ -165,9 +166,10 @@
               "power",
               "hr",
               "zone",
-              "pace"
+              "pace",
+              "rpe"
             ],
-            "description": "The signal the target is written on: power watts, a heart-rate band, an HR zone, or a pace. Empty when target_known is false."
+            "description": "The signal the target is written on: power watts, a heart-rate band, an HR zone, a pace, or a session rating (RPE). Empty when target_known is false."
           },
           "target_literal": {
             "type": "string",
@@ -214,6 +216,10 @@
               "/500m"
             ],
             "description": "The distance a pace reads over; pace targets only."
+          },
+          "target_rpe": {
+            "type": "integer",
+            "description": "The session rating the target names, 1-10; rpe targets only."
           }
         }
       }

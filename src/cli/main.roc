@@ -141,7 +141,7 @@ help_text =
 	\\    event add <date> <name>    record an event target (judgment tier)
 	\\    event remove <event_id>    delete an event target
 	\\    events                      projected CTL/ATL/TSB on each event date,
-	\\                                from the open plan's structured targets
+	\\                                from the open plan's targets, every kind priced
 	\\    project <date> [plan]       CTL/ATL/TSB on a date — recorded plan, or a
 	\\                                hypothetical one (date=target pairs, echoed
 	\\                                back, never stored)
