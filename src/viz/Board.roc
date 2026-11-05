@@ -95,10 +95,10 @@ Board :: [].{
 	tile_h : F32
 	tile_h = 78.0
 
-	# the event name in at most two lines of ev_room, words kept whole and
-	# greedily packed by the font's measure; a word wider than a line is cut
-	# by ev_line, and whatever does not fit in two lines ends the second in
-	# "..."
+	# the event name in at most two lines of ev_room: words packed greedily
+	# by the font's measure into the first line, the rest into the second.
+	# ev_line cuts a word wider than a line, and a second line that does not
+	# fit, so either ends in "..." and can break mid-word
 	ev_lines : Text.Font, Str, F32 -> List(Str)
 	ev_lines = |font, name, size| {
 		fits = |line| font.measure({ text: line, size, spacing: Text.default_spacing }).width <= ev_room
