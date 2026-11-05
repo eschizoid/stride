@@ -195,7 +195,7 @@ Career :: [].{
 	# Strava spellings. The strength family pools Workout and WeightTraining
 	# into one segment, and naming it after either reads as only that one.
 	family_name : Str -> Str
-	family_name = |head| if (List.contains(Sports.family("strength"), head)) "strength" else head
+	family_name = |head| if (List.contains(Sports.family("strength"), head)) "Strength" else head
 
 	# the monthly-bar legend shares the gutter under the curve with the
 	# valley's label, so it takes the half of the plot the valley is not on
@@ -793,7 +793,7 @@ expect Career.strip_widths([], 400.0) == []
 
 # the strength family is named for what it is, whichever spelling heads it;
 # other families keep their head
-expect Career.family_name("WeightTraining") == "strength" and Career.family_name("Workout") == "strength"
+expect Career.family_name("WeightTraining") == "Strength" and Career.family_name("Workout") == "Strength"
 expect Career.family_name("Ride") == "Ride" and Career.family_name("other") == "other"
 
 # the legend takes the half of the plot the valley label is not on
