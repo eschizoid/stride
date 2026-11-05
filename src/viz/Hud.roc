@@ -92,31 +92,35 @@ Hud :: [].{
 		else if (tsb < 25.0) ({ label: "primed", c: Theme.gold_c })
 		else { label: "coasting", c: Theme.tsb_c }
 
-	# a small flame at (x, y): a tall teardrop of embers tapering to a tip
-	# that sways on two out-of-phase sines, with a gold core low in the body.
-	# Geometry, not a glyph - the font atlas is ascii-only. The base barely
-	# moves and the sway grows toward the tip, which is what makes the
-	# silhouette read as fire rather than a blob.
-	flame! : Draw.Frame, F32, F32, U64 => {}
-	flame! = |frame, x, y, tick| {
-		tf = U64.to_f32(tick)
-		fl = F32.sin(tf / 4.3) * 0.6 + F32.sin(tf / 7.1) * 0.4
+	# The streak flame, still: an ember body that tapers to a pointed tip
+	# flicked to the right, a smaller tongue on the left, and a gold core low
+	# in the body. Geometry only (the font atlas is ascii-only). A still
+	# frame has to read as fire on its own, so the asymmetry carries the
+	# motion a sway would. Triangles list their corners counter-clockwise
+	# on screen, the winding the host fills.
+	FlamePart : [Disc({ cx : F32, cy : F32, r : F32 }), Tri({ a : { x : F32, y : F32 }, b : { x : F32, y : F32 }, c : { x : F32, y : F32 } })]
+
+	flame_shape : F32, F32 -> List({ part : FlamePart, tone : [Ember, Gold], a : U8 })
+	flame_shape = |x, y| [
+		{ part: Disc({ cx: x, cy: y + 2.6, r: 4.2 }), tone: Ember, a: 200 },
+		{ part: Tri({ a: { x: x + 1.8, y: y - 9.5 }, b: { x: x - 4.1, y: y + 2.0 }, c: { x: x + 4.1, y: y + 2.0 } }), tone: Ember, a: 230 },
+		{ part: Tri({ a: { x: x - 2.9, y: y - 4.8 }, b: { x: x - 4.2, y: y + 1.5 }, c: { x: x - 0.6, y: y + 1.5 } }), tone: Ember, a: 190 },
+		{ part: Disc({ cx: x + 0.1, cy: y + 3.1, r: 2.2 }), tone: Gold, a: 255 },
+		{ part: Tri({ a: { x: x + 0.8, y: y - 3.2 }, b: { x: x - 2.0, y: y + 2.8 }, c: { x: x + 2.1, y: y + 2.8 } }), tone: Gold, a: 235 },
+	]
+
+	flame! : Draw.Frame, F32, F32 => {}
+	flame! = |frame, x, y|
 		List.for_each!(
-			[
-				{ dy: 2.6, r: 3.3, sw: 0.0, a: 170.U8 },
-				{ dy: 0.4, r: 2.9, sw: 0.15, a: 195.U8 },
-				{ dy: -1.8, r: 2.3, sw: 0.35, a: 215.U8 },
-				{ dy: -3.8, r: 1.7, sw: 0.6, a: 235.U8 },
-				{ dy: -5.5, r: 1.2, sw: 0.85, a: 250.U8 },
-				{ dy: -7.0, r: 0.7, sw: 1.0, a: 255.U8 },
-			],
-			|rw|
-				frame.circle!({ center: { x: x + fl * 2.2 * rw.sw, y: y + rw.dy - fl * 0.5 * rw.sw }, radius: rw.r, style: Draw.filled(Color.with_alpha(Theme.ember_c, rw.a)) }),
+			flame_shape(x, y),
+			|p| {
+				col = Color.with_alpha((if (p.tone == Gold) Theme.gold_c else Theme.ember_c), p.a)
+				match p.part {
+					Disc(d) => frame.circle!({ center: { x: d.cx, y: d.cy }, radius: d.r, style: Draw.filled(col) })
+					Tri(t) => frame.triangle!({ a: t.a, b: t.b, c: t.c, style: Draw.filled(col) })
+				}
+			},
 		)
-		frame.circle!({ center: { x: x + fl * 0.4, y: y + 2.4 }, radius: 1.9, style: Draw.filled(Theme.gold_c) })
-		frame.circle!({ center: { x: x + fl * 0.7, y: y + 0.4 }, radius: 1.3, style: Draw.filled(Color.with_alpha(Theme.gold_c, 220)) })
-		frame.circle!({ center: { x: x + fl * 1.0, y: y - 1.4 }, radius: 0.8, style: Draw.filled(Color.with_alpha(Theme.gold_c, 180)) })
-	}
 
 	# ── the XP rail: the panel's left edge, filled to level progress ──
 	# Fills bottom-up over the first seconds of a session (eased), carries a
@@ -150,9 +154,32 @@ Hud :: [].{
 				sk = streak_weeks(model.heat)
 				frame.rounded_rectangle!({ x: 40.0, y: bot - 84.0, width: 250.0, height: 72.0, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
 				Text.from("level ${I64.to_str(lvl)} - ${tier(lvl)}", model.font).size(14).draw!(frame, { pos: { x: 54.0, y: bot - 72.0 }, color: Theme.gold_c, align: (Top, Left) })
-				Text.from("${I64.to_str(hours_to_next(hours))}h to level ${I64.to_str(lvl + 1)}", model.font).size(11).draw!(frame, { pos: { x: 54.0, y: bot - 52.0 }, color: Theme.ink_muted, align: (Top, Left) })
+				Text.from("${Db.num_unit(hours_to_next(hours), "h")} to level ${I64.to_str(lvl + 1)}", model.font).size(11).draw!(frame, { pos: { x: 54.0, y: bot - 52.0 }, color: Theme.ink_muted, align: (Top, Left) })
 				Text.from("${I64.to_str(sk)} week streak", model.font).size(11).draw!(frame, { pos: { x: 54.0, y: bot - 36.0 }, color: Theme.ink_muted, align: (Top, Left) })
 			}
 		}
 	}
+}
+
+# the static flame: its tip stands above the whole body, flicked right of
+# centre so a still frame is not a symmetric teardrop, and the gold core
+# sits low, below the tip's midpoint
+expect {
+	parts = Hud.flame_shape(100.0, 50.0)
+	tips = List.keep_oks(
+		parts,
+		|p| match p.part {
+			Tri(t) => Ok(t.a)
+			Disc(_) => Err(NotTri)
+		},
+	)
+	main_tip = List.first(tips) ?? { x: 0.0, y: 0.0 }
+	cores = List.keep_if(parts, |p| p.tone == Gold)
+	List.all(tips, |t| t.y >= main_tip.y) and main_tip.x > 100.0 and main_tip.y < 50.0 - 8.0 and List.len(cores) == 2 and List.all(
+		cores,
+		|c| match c.part {
+			Disc(d) => d.cy > 50.0
+			Tri(t) => t.a.y > main_tip.y + 4.0
+		},
+	)
 }

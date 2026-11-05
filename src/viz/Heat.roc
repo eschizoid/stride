@@ -14,6 +14,10 @@ Heat :: [].{
 	gap : F32
 	gap = 3.0
 
+	# the row axis, Monday first: row r of the grid is day_labels[r]
+	day_labels : List(Str)
+	day_labels = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
 	# %w gives 0=Sun..6=Sat; rows run Monday-first
 	row_of : I64 -> I64
 	row_of = |dow| if (dow == 0) (6) else dow - 1
@@ -44,9 +48,9 @@ Heat :: [].{
 			peak = List.fold(days, 1, |a, h| if (h.tss > a) h.tss else a)
 			gx = 96.0
 			gy = 130.0
-			# weekday labels
-			List.for_each!([{ t: "mon", r: 0 }, { t: "wed", r: 2 }, { t: "fri", r: 4 }], |lb|
-				Text.from(lb.t, model.font).size(10).draw!(frame, { pos: { x: gx - 10.0, y: gy + I64.to_f32(lb.r) * step + 3.0 }, color: ink_faint, align: (Top, Right) }))
+			# every weekday row named, each label centred on its row
+			List.for_each!(List.map_with_index(day_labels, |t, r| { t, r }), |lb|
+				Text.from(lb.t, model.font).size(10).draw!(frame, { pos: { x: gx - 10.0, y: gy + U64.to_f32(lb.r) * step + cell / 2.0 }, color: ink_faint, align: (Middle, Right) }))
 			# cells: week advances when the row wraps past Sunday
 			_ = List.fold_try!(
 				days,
@@ -99,7 +103,7 @@ Heat :: [].{
 					if model.mouse_x >= x0 and model.mouse_x < x0 + cell and model.mouse_y >= y0 and model.mouse_y < y0 + cell {
 						note = Db.note_for(model.day_notes, h.day)
 						# the note joins only when the day actually has one
-						tip = if (note == "rest day") ("${h.day}   ${I64.to_str(h.tss)} tss") else "${h.day}   ${I64.to_str(h.tss)} tss   ${note}"
+						tip = if (note == "rest day") ("${h.day}   ${Db.num_unit(h.tss, "tss")}") else "${h.day}   ${Db.num_unit(h.tss, "tss")}   ${note}"
 						tip_short = if (Str.count_utf8_bytes(tip) > 70) (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(tip), 68)), "..")) else tip
 						frame.rounded_rectangle!({ x: 96.0, y: gy + 7.0 * step + 18.0, width: win_w - 132.0, height: 26.0, radius: 6.0, segments: 5, style: Draw.filled(Theme.card) })
 						Text.from(tip_short, model.font).size(12).draw!(frame, { pos: { x: 108.0, y: gy + 7.0 * step + 24.0 }, color: Color.white, align: (Top, Left) })
@@ -121,3 +125,6 @@ Heat :: [].{
 		Ok({})
 	}
 }
+
+# seven row labels, Monday first, the order row_of lays the grid in
+expect Heat.day_labels == ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]

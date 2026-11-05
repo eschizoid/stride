@@ -1,6 +1,7 @@
 import rr.Color
 import rr.Draw
 import rr.Text
+import Db
 import Theme
 import Ui
 
@@ -32,7 +33,7 @@ Zones :: [].{
 	hours : I64 -> Str
 	hours = |secs| {
 		h10 = secs * 10 // 3600
-		"${I64.to_str(h10 // 10)}.${I64.to_str(h10 % 10)}h"
+		"${Db.grouped(h10 // 10)}.${I64.to_str(h10 % 10)} h"
 	}
 
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])

@@ -25,9 +25,13 @@ Career :: [].{
 
 	# the arrival sweep, in ticks: five years wants longer than the form
 	# board's half second, and any click completes it (main.roc zeroes
-	# view_anim, whose zero means "settled" everywhere)
+	# view_anim, whose zero means "settled" everywhere). A capture of this
+	# view waits the whole sweep out (main.roc's settle_ticks).
+	sweep_ticks : U64
+	sweep_ticks = 120
+
 	dur : F32
-	dur = 120.0
+	dur = U64.to_f32(sweep_ticks)
 
 	# eased progress through the sweep: 0 at arrival, 1 settled
 	progress : Ui.Model -> F32
@@ -207,7 +211,7 @@ Career :: [].{
 			if sk > 0 {
 				sx = lx - 110.0
 				frame.rounded_rectangle!({ x: sx, y: 62.0, width: 100.0, height: 26.0, radius: 7.0, segments: 6, style: Draw.filled(Theme.card) })
-				Hud.flame!(frame, sx + 14.0, 75.0, model.tick)
+				Hud.flame!(frame, sx + 14.0, 75.0)
 				Text.from("${I64.to_str(sk)} wk streak", model.font).size(11).draw!(frame, { pos: { x: sx + 26.0, y: 70.0 }, color: Theme.ember_c, align: (Top, Left) })
 			}
 		}
@@ -238,13 +242,13 @@ Career :: [].{
 			cw = 196.0
 			gap = (win_w - 72.0 - cw * 4.0) / 3.0
 			cx0 = |i| 36.0 + I64.to_f32(i) * (cw + gap)
-			card!(frame, model.font, cx0(0), 96.0, "${I64.to_str(ease_i(tot.h10) // 10)}h", "moving time${fam_cap}")
+			card!(frame, model.font, cx0(0), 96.0, Db.num_unit(ease_i(tot.h10) // 10, "h"), "moving time${fam_cap}")
 			# a family that records no distance says so rather than showing a
 			# zero: 0 km under a lifting arc reads as a measurement that came
 			# back empty, when the sport simply does not carry the quantity
-			dist_card = if (tot.m <= 0.0) "-" else "${I64.to_str(ease_i(dist_whole))} ${Units.dist_unit(model.units)}"
+			dist_card = if (tot.m <= 0.0) "-" else Db.num_unit(ease_i(dist_whole), Units.dist_unit(model.units))
 			card!(frame, model.font, cx0(1), 96.0, dist_card, "distance${fam_cap}")
-			card!(frame, model.font, cx0(2), 96.0, I64.to_str(ease_i(tot.ss)), "sessions${fam_cap}")
+			card!(frame, model.font, cx0(2), 96.0, Db.grouped(ease_i(tot.ss)), "sessions${fam_cap}")
 			# months TRAINED, not months elapsed: the axis spans every month
 			# daily_load carries, and it carries decay days after the last
 			# session too, so a month with no session is on the axis and
@@ -255,7 +259,7 @@ Career :: [].{
 				} else {
 					List.fold(model.career_fam_months, 0.I64, |a, fm| if (fm.fam == sp.fam and fm.sessions > 0) (a + 1) else a)
 				}
-			card!(frame, model.font, cx0(3), 96.0, I64.to_str(ease_i(trained)), "months trained${fam_cap}")
+			card!(frame, model.font, cx0(3), 96.0, Db.grouped(ease_i(trained)), "months trained${fam_cap}")
 
 			# ── geometry: months on x, the spine value on the one y axis
 			plot_l = pad

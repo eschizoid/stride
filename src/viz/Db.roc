@@ -32,6 +32,25 @@ Db :: [].{
 	fmt1 = |t| Fmt.tenths(t)
 
 	# F32 -> "41.9", through the same integer-tenths door as fmt1
+	# The window's one rule for a whole number a person reads: thousands
+	# grouped with commas (13,201), and a unit, when it has one, one space
+	# after the number (447 h). Axis tick labels and dates keep their short
+	# forms, and nothing published on the bus or written to a capture's
+	# status row passes through here.
+	grouped : I64 -> Str
+	grouped = |n| {
+		# the sign comes off the string, not the number: negating I64.min
+		# overflows, its text does not
+		txt = I64.to_str(n)
+		digits = Str.to_utf8(Str.drop_prefix(txt, "-"))
+		len = List.len(digits)
+		out = List.join(List.map_with_index(digits, |d, i| if (i > 0 and (len - i) % 3 == 0) [',', d] else [d]))
+		"${if (n < 0) "-" else ""}${Str.from_utf8_lossy(out)}"
+	}
+
+	num_unit : I64, Str -> Str
+	num_unit = |n, unit| "${grouped(n)} ${unit}"
+
 	# A COUNT, not a magnitude: fmt_f would render 3 bests as "3.0".
 	fmt_i : F32 -> Str
 	fmt_i = |v| match F32.round_to_i64_try(v) {
@@ -1036,7 +1055,7 @@ Db :: [].{
 		mins = secs // 60
 		dk = Fmt.tenths((Units.dist_value(units, dist_m) * 10.0).round_to_i64_try().ok_or(0))
 		du = Units.dist_unit(units)
-		stats = if (np > 0) "${I64.to_str(mins)}min  ${dk}${du}  ${I64.to_str(tss)} tss  ${I64.to_str(np)}w np" else "${I64.to_str(mins)}min  ${dk}${du}  ${I64.to_str(tss)} tss"
+		stats = if (np > 0) "${num_unit(mins, "min")}  ${dk}${du}  ${num_unit(tss, "tss")}  ${num_unit(np, "w")} np" else "${num_unit(mins, "min")}  ${dk}${du}  ${num_unit(tss, "tss")}"
 		# if100 is intensity_factor * 100 rounded: 98 -> "IF 0.98", 105 -> "IF 1.05"
 		p1 = if (if100 > 0) "IF ${Fmt.hundredths(if100)}" else ""
 		p2 = if (hr > 0) "${I64.to_str(hr)} bpm avg" else ""
@@ -1507,3 +1526,9 @@ expect {
 }
 expect !(Db.parse_projection("{\"schema_version\":3,\"data\":{\"atl\":0,\"baseline_known\":false,\"ctl\":0,\"sessions_considered\":0,\"sessions_projected\":0,\"tsb\":0}}").ok)
 expect !(Db.parse_projection("").ok)
+
+# thousands group in threes from the right, a sign stays in front, and a
+# unit sits one space after the number
+expect Db.grouped(0) == "0" and Db.grouped(999) == "999" and Db.grouped(1000) == "1,000" and Db.grouped(13201) == "13,201" and Db.grouped(1000000) == "1,000,000"
+expect Db.grouped(-1234) == "-1,234" and Db.grouped(-999) == "-999" and Db.grouped(-9_223_372_036_854_775_807 - 1) == "-9,223,372,036,854,775,808"
+expect Db.num_unit(447, "h") == "447 h" and Db.num_unit(13201, "mi") == "13,201 mi"

@@ -1329,11 +1329,17 @@ rec_failure_text = |r|
 		Unknown => "the host gave no reason"
 	}
 
-# the view has settled when a view switch's crossfade and the form board's
-# draw-in are over (half a second), no trace or ghost fetch is in flight,
-# and no reload is
-view_settled : { view_anim : U64, tick : U64, trace_loading : Bool, ghost_loading : Bool, reloading : Bool } -> Bool
-view_settled = |m| (m.view_anim == 0 or m.tick - m.view_anim >= ticks_per_second / 2) and !m.trace_loading and !m.ghost_loading and !m.reloading
+# the view has settled when its arrival animation is over (settle_ticks),
+# no trace or ghost fetch is in flight, and no reload is
+view_settled : { view : U8, view_anim : U64, tick : U64, trace_loading : Bool, ghost_loading : Bool, reloading : Bool } -> Bool
+view_settled = |m| (m.view_anim == 0 or m.tick - m.view_anim >= settle_ticks(m.view)) and !m.trace_loading and !m.ghost_loading and !m.reloading
+
+# how long a view animates after it arrives: the career view's sweep
+# (Career.sweep_ticks), and the crossfade and the form board's draw-in, half
+# a second, for every other view. A capture waits this out, so it writes
+# the settled frame and never one mid-animation.
+settle_ticks : U8 -> U64
+settle_ticks = |v| if (v == 8) Career.sweep_ticks else ticks_per_second / 2
 
 expect {
 	m = [
@@ -1461,12 +1467,15 @@ expect {
 		and gone == { next: NoCapture, act: Mark({ id: 5, refused: "capture webm_start failed: no answer from the host within 10 seconds", result: "" }) }
 		and capture_is_pending(AwaitingStop(c)) and !capture_is_pending(NoCapture)
 		and capture_path("", "power.png") == "captures/power.png" and capture_path("/h", "power.png") == "/h/captures/power.png"
-		and view_settled({ view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
-		and !view_settled({ view_anim: 100, tick: 129, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
-		and view_settled({ view_anim: 100, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
-		and !view_settled({ view_anim: 100, tick: 130, trace_loading: Bool.True, ghost_loading: Bool.False, reloading: Bool.False })
-		and !view_settled({ view_anim: 100, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.True, reloading: Bool.False })
-		and !view_settled({ view_anim: 0, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.True })
+		and view_settled({ view: 0, view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
+		and !view_settled({ view: 0, view_anim: 100, tick: 129, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
+		and view_settled({ view: 0, view_anim: 100, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
+		and !view_settled({ view: 0, view_anim: 100, tick: 130, trace_loading: Bool.True, ghost_loading: Bool.False, reloading: Bool.False })
+		and !view_settled({ view: 0, view_anim: 100, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.True, reloading: Bool.False })
+		and !view_settled({ view: 0, view_anim: 0, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.True })
+		and !view_settled({ view: 8, view_anim: 100, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
+		and !view_settled({ view: 8, view_anim: 100, tick: 100 + Career.sweep_ticks - 1, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
+		and view_settled({ view: 8, view_anim: 100, tick: 100 + Career.sweep_ticks, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
 }
 
 # Reports a directive's terminal outcome from the task lane.
@@ -1814,7 +1823,7 @@ update! = |model0, program_input, io| {
 			_ => acc9
 		},
 	)
-	cap_step = capture_step(model.pending_capture, { shot: shot_done, rec: program_input.capture, settled: view_settled({ view_anim: model.view_anim, tick, trace_loading: model.trace_loading, ghost_loading: model.ghost_loading, reloading: model.reloading }), tick })
+	cap_step = capture_step(model.pending_capture, { shot: shot_done, rec: program_input.capture, settled: view_settled({ view: model.view, view_anim: model.view_anim, tick, trace_loading: model.trace_loading, ghost_loading: model.ghost_loading, reloading: model.reloading }), tick })
 	pending1 = cap_step.next
 	_ = match cap_step.act {
 		Nothing => {}

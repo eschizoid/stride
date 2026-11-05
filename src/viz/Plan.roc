@@ -220,7 +220,7 @@ Plan :: [].{
 
 		# load strip + coach corner. The week's session count lives in the
 		# quest label only; the strip states load, Monday-aligned on both sides.
-		strip = "${I64.to_str(model.week_tss.this)} tss this week (last ${I64.to_str(model.week_tss.last)})"
+		strip = "${Db.num_unit(model.week_tss.this, "tss")} this week (last ${Db.grouped(model.week_tss.last)})"
 		Text.from(strip, model.font).size(13).draw!(frame, { pos: { x: 36.0, y: win_h - 84.0 }, color: ink_muted, align: (Top, Left) })
 		Text.from("coach: ${model.bus_note}", model.font).size(11).draw!(frame, { pos: { x: 36.0, y: win_h - 60.0 }, color: ink_faint, align: (Top, Left) })
 		model.plan_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
