@@ -524,15 +524,13 @@ Db :: [].{
 			_ => Err(BadTz)
 		}
 
-	# the Monday-aligned CURRENT week's completion count - the progress strip's
-	# numerator and denominator (the display ladder below is forward-looking
-	# and cannot count done sessions meaningfully). The week is TODAY's, the
-	# same anchor the engine's `week` command uses (Plan.plan_view!, today
-	# minus its Monday offset), and not week_bounds', which is the SERIES'
-	# current week - the week of the last analyzed day. The two agree once
-	# analyze has run today and differ by a week when it has not; a plan
-	# count is a calendar question, so it stays on the calendar. The sibling
-	# load_week_tss! reads week_bounds because load is a series question.
+	# The Monday-aligned CURRENT week's completion count, the quest strip's
+	# numerator and denominator. The week is TODAY's, the anchor the engine's
+	# `week` command uses (today minus its Monday offset), not week_bounds',
+	# which is the week of the last analyzed day. The two differ by a week
+	# when analyze has not run since Monday; a plan count is a calendar
+	# question, so it stays on the calendar. load_week_tss! reads week_bounds
+	# because load is a series question.
 	load_plan_week_at! : Sqlite.Db, Str => { done : I64, total : I64 }
 	load_plan_week_at! = |db, today_mod|
 		match db.query!("WITH anchor AS (SELECT date(date('now', '${today_mod}'), '-6 days', 'weekday 1') AS mon) SELECT CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER) AS dn, COUNT(*) AS tot FROM plan_current, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days')", []) {
@@ -553,23 +551,55 @@ Db :: [].{
 			}
 		}
 
-	PlanRow : { day : Str, typ : Str, detail : Str, rationale : Str, done : Bool, skipped : Bool, today : Bool }
+	# One plan_current row, with what the athlete did about it. `wi` is the
+	# day's offset from this week's Monday (0..6 inside the week, 7+ for the
+	# days ahead the ladder also lists). `act_*` describe the activity a done
+	# session links; `sub_*` the substitute a skipped one names. The target and
+	# the detected work reps are the two structured records `stride complete`
+	# compares (target_match!), read the same way: power work segments of the
+	# linked activity. `day_load_known` separates a measured zero-load day from
+	# a day daily_load has not covered yet.
+	PlanRow : {
+		day : Str,
+		wi : I64,
+		typ : Str,
+		detail : Str,
+		rationale : Str,
+		status : Str,
+		reason : Str,
+		today : Bool,
+		past : Bool,
+		done_day : Str,
+		act_name : Str,
+		act_secs : I64,
+		act_load : I64,
+		sub_id : I64,
+		sub_name : Str,
+		tgt_reps : I64,
+		tgt_dur_s : I64,
+		tgt_watts : F64,
+		det_reps : I64,
+		det_dur_s : I64,
+		det_watts : F64,
+		day_load_known : Bool,
+		day_load : F64,
+	}
 
-	# the prescribed days ahead of the athlete's civil today (today_mod!) -
-	# prescriptions are calendar items the athlete reads on the real day, so
-	# the plan view is the one place the series clock does not rule (PMC
-	# reads keep it).
-
+	# The current Mon-Sun week, plus the six days ahead of the athlete's civil
+	# today (today_mod!), so a day late in the week still shows what comes
+	# next. Prescriptions are calendar items read on the real day, so this
+	# view runs on the civil clock, not the series clock the PMC reads keep.
+	# The Monday is the one load_plan_week_at! and the engine's `week` use.
 	load_plan_at! : Sqlite.Db, Str => List(PlanRow)
 	load_plan_at! = |db, today_mod|
-		match db.query!("WITH anchor AS (SELECT date('now', '${today_mod}') AS today) SELECT CAST(target_date AS TEXT) AS d, CAST(COALESCE(session_type, '') AS TEXT) AS t, CAST(COALESCE(detail, '') AS TEXT) AS dt, CAST(COALESCE(rationale, '') AS TEXT) AS ra, (COALESCE(status, '') = 'done') AS dn, (COALESCE(status, '') = 'skipped') AS sk, (target_date = (SELECT today FROM anchor)) AS td FROM plan_current, anchor WHERE target_date >= (SELECT today FROM anchor) AND target_date <= date((SELECT today FROM anchor), '+6 days') ORDER BY target_date, id", []) {
+		match db.query!("WITH anchor AS (SELECT date('now', '${today_mod}') AS today, date(date('now', '${today_mod}'), '-6 days', 'weekday 1') AS mon), seg AS (SELECT activity_id, COUNT(*) AS n, AVG(dur_s) AS du, AVG(avg_signal) AS w FROM activity_segments WHERE kind = 'work' AND signal = 'power' AND activity_id IN (SELECT pc.completed_activity_id FROM plan_current pc, anchor an WHERE pc.target_date >= an.mon AND pc.target_date <= date(an.today, '+6 days')) GROUP BY activity_id) SELECT CAST(p.target_date AS TEXT) AS d, CAST(julianday(p.target_date) - julianday(a.mon) AS INTEGER) AS wi, CAST(COALESCE(p.session_type, '') AS TEXT) AS t, CAST(COALESCE(p.detail, '') AS TEXT) AS dt, CAST(COALESCE(p.rationale, '') AS TEXT) AS ra, CAST(COALESCE(p.status, 'open') AS TEXT) AS pst, CAST(COALESCE(p.skipped_reason, '') AS TEXT) AS prs, (p.target_date = a.today) AS td, (p.target_date < a.today) AS pps, CAST(COALESCE(substr(ca.start_local, 1, 10), '') AS TEXT) AS cdd, CAST(COALESCE(ca.name, '') AS TEXT) AS can, CAST(COALESCE(ca.moving_time, 0) AS INTEGER) AS cam, CAST(ROUND(COALESCE(cm.tss, 0)) AS INTEGER) AS cal, CAST(COALESCE(sa.id, 0) AS INTEGER) AS sid, CAST(COALESCE(sa.name, '') AS TEXT) AS snm, CAST(COALESCE(p.target_reps, 0) AS INTEGER) AS ptr, CAST(COALESCE(p.target_dur_s, 0) AS INTEGER) AS ptd, CAST(COALESCE(p.target_watts, 0) AS REAL) AS ptw, CAST(COALESCE(sg.n, 0) AS INTEGER) AS sgn, CAST(COALESCE(sg.du, 0) AS INTEGER) AS sgd, CAST(COALESCE(sg.w, 0) AS REAL) AS sgw, (dl.day IS NOT NULL) AS dlk, CAST(COALESCE(dl.tss, 0) AS REAL) AS dlt FROM plan_current p CROSS JOIN anchor a LEFT JOIN activities ca ON ca.id = p.completed_activity_id AND COALESCE(p.status, '') = 'done' LEFT JOIN activity_metrics cm ON cm.activity_id = ca.id LEFT JOIN seg sg ON sg.activity_id = ca.id LEFT JOIN activities sa ON sa.id = p.substitute_activity_id AND COALESCE(p.status, '') = 'skipped' LEFT JOIN daily_load dl ON dl.day = p.target_date WHERE p.target_date >= a.mon AND p.target_date <= date(a.today, '+6 days') ORDER BY p.target_date, p.id", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.map(
 					rows,
 					|r| match decode_plan_row(r) {
 						Ok(row) => row
-						Err(_) => { day: "?", typ: "?", detail: "plan record unreadable", rationale: "", done: Bool.False, skipped: Bool.False, today: Bool.False }
+						Err(_) => { day: "?", wi: -1, typ: "?", detail: "plan record unreadable", rationale: "", status: "open", reason: "", today: Bool.False, past: Bool.False, done_day: "", act_name: "", act_secs: 0, act_load: 0, sub_id: 0, sub_name: "", tgt_reps: 0, tgt_dur_s: 0, tgt_watts: 0.0, det_reps: 0, det_dur_s: 0, det_watts: 0.0, day_load_known: Bool.False, day_load: 0.0 }
 					},
 				)
 		}
@@ -577,13 +607,29 @@ Db :: [].{
 	decode_plan_row : Sqlite.Row -> Try(PlanRow, [BadRow])
 	decode_plan_row = |r| {
 		day = r.str("d") ? |_| BadRow
+		wi = r.i64("wi") ? |_| BadRow
 		typ = r.str("t") ? |_| BadRow
 		detail = r.str("dt") ? |_| BadRow
 		rationale = r.str("ra") ? |_| BadRow
-		dn = r.i64("dn") ? |_| BadRow
-		sk = r.i64("sk") ? |_| BadRow
+		status = r.str("pst") ? |_| BadRow
+		reason = r.str("prs") ? |_| BadRow
 		td = r.i64("td") ? |_| BadRow
-		Ok({ day, typ, detail: ascii_safe(detail), rationale: ascii_safe(rationale), done: dn == 1, skipped: sk == 1, today: td == 1 })
+		ps = r.i64("pps") ? |_| BadRow
+		done_day = r.str("cdd") ? |_| BadRow
+		act_name = r.str("can") ? |_| BadRow
+		act_secs = r.i64("cam") ? |_| BadRow
+		act_load = r.i64("cal") ? |_| BadRow
+		sub_id = r.i64("sid") ? |_| BadRow
+		sub_name = r.str("snm") ? |_| BadRow
+		tgt_reps = r.i64("ptr") ? |_| BadRow
+		tgt_dur_s = r.i64("ptd") ? |_| BadRow
+		tgt_watts = r.f64("ptw") ? |_| BadRow
+		det_reps = r.i64("sgn") ? |_| BadRow
+		det_dur_s = r.i64("sgd") ? |_| BadRow
+		det_watts = r.f64("sgw") ? |_| BadRow
+		dlk = r.i64("dlk") ? |_| BadRow
+		day_load = r.f64("dlt") ? |_| BadRow
+		Ok({ day, wi, typ, detail: ascii_safe(detail), rationale: ascii_safe(rationale), status, reason: ascii_safe(reason), today: td == 1, past: ps == 1, done_day, act_name: ascii_safe(act_name), act_secs, act_load, sub_id, sub_name: ascii_safe(sub_name), tgt_reps, tgt_dur_s, tgt_watts, det_reps, det_dur_s, det_watts, day_load_known: dlk == 1, day_load })
 	}
 
 	# this week's load beside last week's, MONDAY-ALIGNED to agree with the

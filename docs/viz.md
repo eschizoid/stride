@@ -31,8 +31,9 @@ current level, and the level number sits at its foot. Hovering the rail opens
 the sheet: level and tier, hours to the next level, and the current training
 streak in consecutive Mon–Sun weeks with any load. The detail lives where it
 belongs — the career view wears the level chip, XP bar and streak flame; the
-plan view turns the week into a quest row of gold pips (one per prescribed
-session, lit as completed, pulsing when the week is done); the power view
+plan view turns the week into a quest row of seven pips (one per weekday,
+Monday first, colored by what became of that day, gold when done, pulsing
+when every session is done); the power view
 rings a ride record set in the last seven days in gold; the career view
 turns the spine's peak gold with a breathing "all-time high" halo when the
 peak is the current month, which celebrates a threshold record for EVERY
@@ -51,12 +52,23 @@ data table, with as many rows as the window height holds.
 
 ## The plan view
 
-The fifth TAB stop answers "what do I do today" without asking anyone: the
-prescribed session and its rationale in a card, the week's ladder with type
-chips and done/today/upcoming states, this week's load beside last week's,
-and the coach corner - the newest bus directive, on screen. Steerable like
-everything else: a directive with view 4 opens it. "Today" here, and the week
-the strip counts, is the athlete's civil day resolved the way the CLI resolves
+The fifth TAB stop answers "what do I do today" and "how did the week go"
+without asking anyone. A card holds today's prescription and its rationale,
+or, once the day has an outcome, that outcome. The ladder below lists the
+whole Monday-to-Sunday week and the six days after today, each row with its
+type chip, its prescription and its status: `done` (with the day of the
+linked activity when it differs), `skipped`, `rested` (a rest day past its
+date with under 1.0 load, the rule `stride week` applies), `open`, or `>>`
+for today. Under the prescription a second line says what happened: the
+linked activity's name, minutes and load, and for a session with a
+structured target, the detected power work reps beside it with their share
+of the target watts; or the skip reason and the substitute the athlete did
+instead. The quest strip carries the week's done count and one pip per
+weekday colored by that day's status, with a substitute day distinct from a
+plain skip; the bottom strip states this week's load beside last week's,
+and the coach corner shows the newest bus directive. Steerable like
+everything else: a directive with view 4 opens it. "Today" here, and the
+week it lists, is the athlete's civil day resolved the way the CLI resolves
 it (config `timezone`, then `utc_offset_minutes`, then UTC), not the machine
 clock, so the window and `stride week` name the same Monday wherever the
 machine is set.
