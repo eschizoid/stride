@@ -241,11 +241,11 @@ Db :: [].{
 				List.keep_oks(
 					rows,
 					|r| {
-						day = r.str("tgd") ? |_| "bad"
-						typ = r.str("tgt") ? |_| "bad"
-						reps = r.i64("tgr") ? |_| "bad"
-						dur_s = r.i64("tgs") ? |_| "bad"
-						w = r.i64("tgw") ? |_| "bad"
+						day = r.str("tgd") ? |_| "bad tgd"
+						typ = r.str("tgt") ? |_| "bad tgt"
+						reps = r.i64("tgr") ? |_| "bad tgr"
+						dur_s = r.i64("tgs") ? |_| "bad tgs"
+						w = r.i64("tgw") ? |_| "bad tgw"
 						Ok({ day, typ: ascii_safe(typ), reps, dur_s, watts: w })
 					},
 				)
