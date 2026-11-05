@@ -221,7 +221,7 @@ Board :: [].{
 			model.subs,
 			|s|
 				if s.r == model.range and model.view == 0 {
-					# x clears the legend's third label ("form" ends ~286 at this size)
+					# x clears the legend's third label, "form"
 					s.p.draw!(frame, { pos: { x: 330.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 				} else {},
 		)

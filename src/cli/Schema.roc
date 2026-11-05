@@ -71,7 +71,7 @@ Schema :: [].{
 		\\  completed_activity_id INTEGER
 		\\)
 
-	# event targets (#138, judgment tier): a date the athlete is training toward.
+	# event targets (judgment tier): a date the athlete is training toward.
 	# REMOVABLE, unlike planned_sessions — an event is a target, not a record of
 	# training done, so deleting one destroys no adherence history.
 	events =
@@ -392,7 +392,7 @@ Schema :: [].{
 	# how much of a month's strength work the parsed sets actually cover:
 	# tracked sessions carry a pasted breakdown or an imported log,
 	# instructor-led classes never do, so a month's tonnage is a SAMPLE of
-	# its training — and a biased sample reads as a trend (#521). One row per
+	# its training, and a biased sample reads as a trend. One row per
 	# strength month: how many of its sessions contributed sets, out of how
 	# many the family trained. Shared as a view so every surface states the
 	# same denominator.

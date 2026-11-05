@@ -470,7 +470,7 @@ Db :: [].{
 			},
 		)
 
-	# the window's half of capability discovery (#439): what an agent may put
+	# the window's half of capability discovery: what an agent may put
 	# on the bus is a fact about THIS binary, so this binary states it. The
 	# three tables are rewritten wholesale on every model load - they always
 	# describe the build that last ran - and the CLI serves them read-only,

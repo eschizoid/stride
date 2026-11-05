@@ -193,11 +193,10 @@ Curve :: [].{
 			}
 			List.for_each!(placed, |l| Text.from(l.text, model.font).size(11).draw!(frame, { pos: { x: cx(0.U64) + 14.0, y: l.y }, color: l.color, align: (Top, Left) }))
 			intro_boxes = List.map(placed, |l| { top: l.y, bot: l.y + 11.0 })
-			# three envelopes back to front: the record book faintest (a
-			# reference, no longer the antagonist), the previous window in
-			# quiet grey, this window loudest. Envelope segments only between
-			# rungs that HAVE values - a 0 rung must not drag a line to the
-			# floor.
+			# three envelopes back to front: the record book faintest, as a
+			# reference, the previous window in quiet grey, this window loudest.
+			# Envelope segments run only between rungs that HAVE values - a 0
+			# rung must not drag a line to the floor.
 			List.for_each!(
 				rungs,
 				|r|
@@ -313,11 +312,10 @@ Curve :: [].{
 					if (r.pr.w == 0) {
 						# a rung with no effort on record keeps its label and rail, nothing else
 					} else if r.now_w >= r.pr.w and r.now_w > 0 {
-						# the window best IS the record: one teal dot - and the
-						# delta still prints, because a record rung's change is the
-						# best news on the chart, not a case to suppress. Teal for
-						# both is a decision: it is the house "good" accent, and
-						# the dot and the text differ in shape.
+						# the window best IS the record: one teal dot, and the delta
+						# still prints, since a record rung's change is the best
+						# news on the chart. Teal is the house "good" accent; the dot
+						# and the text tell themselves apart by shape.
 						frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 5.0, style: Draw.filled(tsb_c) })
 						pr_half = model.font.measure({ text: "pr", size: 10.0, spacing: Text.default_spacing }).width / 2.0
 						Text.from("pr", model.font).size(10).draw!(frame, { pos: { x: label_center_within(cx(r.i), pr_half, pad_l, pad_l + pw - label_inset), y: rec_y - 20.0 }, color: tsb_c, align: (Top, Center) })
