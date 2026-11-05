@@ -14,6 +14,10 @@ Heat :: [].{
 	gap : F32
 	gap = 3.0
 
+	# the row axis, Monday first: row r of the grid is day_labels[r]
+	day_labels : List(Str)
+	day_labels = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
 	# %w gives 0=Sun..6=Sat; rows run Monday-first
 	row_of : I64 -> I64
 	row_of = |dow| if (dow == 0) (6) else dow - 1
@@ -44,9 +48,9 @@ Heat :: [].{
 			peak = List.fold(days, 1, |a, h| if (h.tss > a) h.tss else a)
 			gx = 96.0
 			gy = 130.0
-			# weekday labels
-			List.for_each!([{ t: "mon", r: 0 }, { t: "wed", r: 2 }, { t: "fri", r: 4 }], |lb|
-				Text.from(lb.t, model.font).size(10).draw!(frame, { pos: { x: gx - 10.0, y: gy + I64.to_f32(lb.r) * step + 3.0 }, color: ink_faint, align: (Top, Right) }))
+			# every weekday row named, each label centred on its row
+			List.for_each!(List.map_with_index(day_labels, |t, r| { t, r }), |lb|
+				Text.from(lb.t, model.font).size(10).draw!(frame, { pos: { x: gx - 10.0, y: gy + U64.to_f32(lb.r) * step + cell / 2.0 }, color: ink_faint, align: (Middle, Right) }))
 			# cells: week advances when the row wraps past Sunday
 			_ = List.fold_try!(
 				days,
@@ -121,3 +125,6 @@ Heat :: [].{
 		Ok({})
 	}
 }
+
+# seven row labels, Monday first, the order row_of lays the grid in
+expect Heat.day_labels == ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
