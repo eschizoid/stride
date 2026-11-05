@@ -580,23 +580,45 @@ Render :: [].{
 	structure_group_label = |reps, mean_dur, sig, example|
 		"${(reps).to_str()}×[~${mmss(mean_dur)}] ${sig} intervals (${example})"
 
-	## the week-add echo's target clause (#198, ADR 0014) — numbers only. Lives in
-	## Render, not Plan, so the 0012 sweep expect below this module can actually run
-	## over it (Plan.roc is not in the pure-test list).
-	target_note : [NoT, T({ reps : I64, dur_s : I64, watts : F64 })] -> Str
+	## the week-add echo's target clause (#198, ADR 0014) — the canonical literal,
+	## numbers only. Lives in Render, not Plan, so the 0012 sweep expect below this
+	## module can actually run over it (Plan.roc is not in the pure-test list).
+	target_note : [NoT, T(Metrics.Target)] -> Str
 	target_note = |pt|
 		match pt {
-			T(t) => " (target ${(t.reps).to_str()}×${mmss(t.dur_s)} @ ${(t.watts.to_i64_wrap()).to_str()}W)"
+			T(t) => " (target ${Metrics.target_literal(t)})"
 			NoT => ""
 		}
 
-	## complete's target-vs-detected clause — numbers on both sides, no verdict:
-	## "did they hit it" is the coach's sentence (ADR 0012, ADR 0014 §4)
-	target_match_note : { target_known : Bool, target_reps : I64, target_dur_s : I64, target_watts : F64, detected_known : Bool, detected_reps : I64, detected_mean_dur_s : I64, detected_mean_watts : F64, reps_delta : I64, watts_pct : F64 } -> Str
-	target_match_note = |tm|
-		if (!(tm.target_known)) ""
-		else if (tm.detected_known) " (target ${(tm.target_reps).to_str()}×${mmss(tm.target_dur_s)} @ ${(tm.target_watts.to_i64_wrap()).to_str()}W; detected ${(tm.detected_reps).to_str()}×~${mmss(tm.detected_mean_dur_s)} @ ${(tm.detected_mean_watts.to_i64_wrap()).to_str()}W)"
-		else " (target ${(tm.target_reps).to_str()}×${mmss(tm.target_dur_s)} @ ${(tm.target_watts.to_i64_wrap()).to_str()}W; no detected power intervals to compare)"
+	## complete's target-vs-execution clause — numbers on both sides, no verdict:
+	## "did they hit it" is the coach's sentence (ADR 0012, ADR 0014 §4). Each kind
+	## states its own signal; an execution with no comparable signal names why.
+	target_match_note : { target_kind : Str, target_literal : Str, target_pace_unit : Str, detected_known : Bool, detected_reps : I64, detected_mean_dur_s : I64, detected_mean_watts : F64, exec_known : Bool, exec_reason : Str, hr_under_s : I64, hr_in_s : I64, hr_over_s : I64, hr_mean : F64, zone_below_s : I64, zone_in_s : I64, zone_above_s : I64, pace_basis : Str, pace_actual_s : F64, pace_reps : I64 } -> Str
+	target_match_note = |tm| {
+		d = Metrics.rep_dur_str
+		pace = |s| "${Metrics.rep_dur_str(s.round_to_i64_try().ok_or(0))}${tm.target_pace_unit}"
+		what =
+			if tm.target_kind == "power" {
+				if (tm.detected_known) "detected ${(tm.detected_reps).to_str()}×~${mmss(tm.detected_mean_dur_s)} @ ${(tm.detected_mean_watts.to_i64_wrap()).to_str()}W" else "no detected power intervals to compare"
+			} else if !(tm.exec_known) {
+				reason =
+					if (tm.exec_reason == "no_hr_stream") "no heart-rate stream"
+					else if (tm.exec_reason == "no_hr_zones") "no heart-rate zone split"
+					else if (tm.exec_reason == "pace_unit_mismatch") "this sport is not paced ${tm.target_pace_unit}"
+					else if (tm.exec_reason == "no_distance") "no distance recorded"
+					else tm.exec_reason
+				"nothing to compare: ${reason}"
+			} else if tm.target_kind == "hr" {
+				"HR in band ${d(tm.hr_in_s)}, over ${d(tm.hr_over_s)}, under ${d(tm.hr_under_s)}, mean ${(tm.hr_mean.round_to_i64_try().ok_or(0)).to_str()} bpm"
+			} else if tm.target_kind == "zone" {
+				"in zone ${d(tm.zone_in_s)}, above ${d(tm.zone_above_s)}, below ${d(tm.zone_below_s)}"
+			} else if tm.pace_basis == "detected" {
+				"detected ${(tm.pace_reps).to_str()} reps at ${pace(tm.pace_actual_s)}"
+			} else {
+				"whole session at ${pace(tm.pace_actual_s)}"
+			}
+		if (tm.target_kind == "") "" else " (target ${tm.target_literal}; ${what})"
+	}
 
 	# display label for a progress group, from anchor_filter's structured kind
 	progress_group_label : [Metric, Imperial], Str, [Exact, SimilarDistance(F64), LoneNoDistance] -> Str
@@ -2645,6 +2667,9 @@ expect {
 # the rule is about surfaces rather than intent — and a sweep that skips a surface
 # because someone judged it exempt is how the gap recurs.
 expect {
+	# the complete clause's input with nothing known: each target row below overrides
+	# only what its kind carries
+	tm_base = { target_kind: "", target_literal: "", target_pace_unit: "", detected_known: Bool.False, detected_reps: 0, detected_mean_dur_s: 0, detected_mean_watts: 0.0, exec_known: Bool.False, exec_reason: "", hr_under_s: 0, hr_in_s: 0, hr_over_s: 0, hr_mean: 0.0, zone_below_s: 0, zone_in_s: 0, zone_above_s: 0, pace_basis: "", pace_actual_s: 0.0, pace_reps: 0 }
 	notes = [
 		Render.drain_note(Complete, 0),
 		Render.drain_note(Complete, 5),
@@ -2672,11 +2697,20 @@ expect {
 		Render.freshness_note({ activities_awaiting_metrics: 0, activities_awaiting_metrics_known: False, activities_awaiting_streams: 4 }),
 		# the target clauses (#198) join on arrival — targeted/untargeted on the echo,
 		# and all three match arms: both known, target-only, and the silent untargeted
-		Render.target_note(T({ reps: 3, dur_s: 720, watts: 230.0 })),
+		Render.target_note(T(Metrics.power_target({ reps: 3, dur_s: 720, watts: 230.0 }))),
+		Render.target_note(T({ ..Metrics.no_target, kind: "hr", reps: 1, dur_s: 3600, hr_lo: 125, hr_hi: 147 })),
 		Render.target_note(NoT),
-		Render.target_match_note({ target_known: True, target_reps: 3, target_dur_s: 720, target_watts: 230.0, detected_known: True, detected_reps: 3, detected_mean_dur_s: 720, detected_mean_watts: 233.0, reps_delta: 0, watts_pct: 101.3 }),
-		Render.target_match_note({ target_known: True, target_reps: 3, target_dur_s: 720, target_watts: 230.0, detected_known: False, detected_reps: 0, detected_mean_dur_s: 0, detected_mean_watts: 0.0, reps_delta: 0, watts_pct: 0.0 }),
-		Render.target_match_note({ target_known: False, target_reps: 0, target_dur_s: 0, target_watts: 0.0, detected_known: False, detected_reps: 0, detected_mean_dur_s: 0, detected_mean_watts: 0.0, reps_delta: 0, watts_pct: 0.0 }),
+		Render.target_match_note({ ..tm_base, target_kind: "power", target_literal: "3x12:00@230W", detected_known: True, detected_reps: 3, detected_mean_dur_s: 720, detected_mean_watts: 233.0, exec_known: True }),
+		Render.target_match_note({ ..tm_base, target_kind: "power", target_literal: "3x12:00@230W", exec_reason: "no_power_intervals" }),
+		Render.target_match_note({ ..tm_base, target_kind: "hr", target_literal: "1x1:00:00@HR125-147", exec_known: True, hr_in_s: 3130, hr_over_s: 185, hr_under_s: 285, hr_mean: 138.2 }),
+		Render.target_match_note({ ..tm_base, target_kind: "hr", target_literal: "1x1:00:00@HR125-147", exec_reason: "no_hr_stream" }),
+		Render.target_match_note({ ..tm_base, target_kind: "zone", target_literal: "1x1:30:00@Z2", exec_known: True, zone_in_s: 4200, zone_above_s: 300, zone_below_s: 900 }),
+		Render.target_match_note({ ..tm_base, target_kind: "zone", target_literal: "1x1:30:00@Z2", exec_reason: "no_hr_zones" }),
+		Render.target_match_note({ ..tm_base, target_kind: "pace", target_literal: "5x4:00@4:10/km", target_pace_unit: "/km", exec_known: True, pace_basis: "detected", pace_actual_s: 245.0, pace_reps: 5 }),
+		Render.target_match_note({ ..tm_base, target_kind: "pace", target_literal: "10x100m@1:40/100m", target_pace_unit: "/100m", exec_known: True, pace_basis: "whole", pace_actual_s: 104.0 }),
+		Render.target_match_note({ ..tm_base, target_kind: "pace", target_literal: "6x500m@1:55/500m", target_pace_unit: "/500m", exec_reason: "pace_unit_mismatch" }),
+		Render.target_match_note({ ..tm_base, target_kind: "pace", target_literal: "5x4:00@4:10/km", target_pace_unit: "/km", exec_reason: "no_distance" }),
+		Render.target_match_note(tm_base),
 		# events_screen (#138) joins on arrival: the empty state, a populated row, and
 		# both degraded-baseline notes — ADR 0010 warns "you are on track" would slip
 		# the denylist, which is why the screen carries no verdict line AT ALL, and the

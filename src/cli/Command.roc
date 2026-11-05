@@ -200,8 +200,9 @@ Command := [
 			["cs", n, sport] => count(n, |c| PaceCurve(c, sport))
 			["week"] => Ok(WeekView)
 			["week", "all"] => Ok(WeekViewAll)
-			# optional fifth argument: a structured target `<reps>x<mm:ss>@<watts>W`
-			# (#198, ADR 0014) — validated in Plan (bad_target), stored beside the prose
+			# optional fifth argument: a structured target `<reps>x<rep>@<signal>` on
+			# power, heart rate, an HR zone or pace (ADR 0014, ADR 0019) — validated in
+			# Plan (bad_target), stored beside the prose
 			["week", "add", date, session_type, detail, rationale, target] => Ok(WeekAddT(date, session_type, detail, rationale, target))
 			["week", "add", date, session_type, detail, rationale] => Ok(WeekAdd(date, session_type, detail, rationale))
 
@@ -467,7 +468,7 @@ Command := [
 		errs(writes("analyze", [], "analyze.json"), ["missing_config", "unreadable_activity_date", "unreadable_config"]),
 		errs(writes("import", [req_ex("<export.zip|dir>", "")], "import.json"), ["empty_csv", "no_activities_csv", "unzip_failed"]),
 		errs(writes("rate", [req("<activity_id|latest>"), req("<1-10>")], "rate.json"), ["activity_not_found", "bad_id", "bad_rpe", "no_activities", "unreadable_activity_date"]),
-		errs(writes("week add", [req_ex("<YYYY-MM-DD>", "2099-01-01"), req_ex("<type>", "endurance"), req_ex("<detail>", "example"), req_ex("<rationale>", "example"), opt_ex("<RxMM:SS@WWWW>", "3x12:00@230W")], "week_add.json"), ["bad_date", "bad_target"]),
+		errs(writes("week add", [req_ex("<YYYY-MM-DD>", "2099-01-01"), req_ex("<type>", "endurance"), req_ex("<detail>", "example"), req_ex("<rationale>", "example"), opt_ex("<target>", "3x12:00@230W")], "week_add.json"), ["bad_date", "bad_target", "missing_config"]),
 		errs(writes("complete", [req("<session_id>"), opt("<activity_id>")], "complete.json"), ["activity_already_linked", "activity_not_found", "activity_required", "bad_id", "session_not_found"]),
 
 		## the resolving form: no arguments of its own, its own refusal when the
