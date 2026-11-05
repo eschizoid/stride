@@ -1,6 +1,7 @@
 import rr.Color
 import rr.Draw
 import rr.Text
+import core.Fmt
 import core.Sports
 import core.Units
 import Db
@@ -33,6 +34,16 @@ Trace :: [].{
 		if (hi <= 2.0) (0.25)
 		else if (hi <= 4.0) (0.5)
 		else 1.0
+
+	# a speed on a pace trace read as the pace its axis names: per 100 m on
+	# a swim's axis, the athlete's kilometre or mile otherwise
+	trace_pace : Str, [Metric, Imperial], F64 -> Str
+	trace_pace = |unit, units, mps|
+		if (unit != Db.swim_pace_unit) (Units.pace_from_speed(units, mps))
+		else if (mps <= 0.0) "-"
+		else Fmt.mmss(F64.round_to_i64_try(I64.to_f64(Sports.pace_unit("Swim").dist_m) / mps) ?? 0)
+
+	expect trace_pace(Db.swim_pace_unit, Metric, 1.0) == "1:40" and trace_pace(Units.pace_unit(Metric), Metric, 4.0) == "4:10"
 
 	# the pace channel is recognized by its unit label - the one channel
 	# whose unit begins "min/" in either unit culture
@@ -322,7 +333,7 @@ Trace :: [].{
 							# a pace gridline says the pace, not the raw m/s the
 							# samples are stored in - the same last-moment rule
 							# every other surface follows
-							lbl = if (is_pace) (Units.pace_from_speed(model.units, ((k).to_f64() + 1.0) * ystep64)) else (
+							lbl = if (is_pace) (trace_pace(model.trace_unit, model.units, ((k).to_f64() + 1.0) * ystep64)) else (
 								match F32.round_to_u64_try(gv) {
 									Ok(gi) => U64.to_str(gi)
 									Err(_) => ""

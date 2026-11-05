@@ -326,13 +326,14 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		Ok(ld) => ld
 		Err(_) => "no data"
 	}
-	# the event tile prefers the future; a race inside the last week still
-	# deserves its "ridden" moment; otherwise the slot says so
+	# the event tile prefers the future; an event inside the last week still
+	# gets its "done" moment, in words that fit any sport; otherwise the slot
+	# says so
 	ev_tile =
 		if loaded.e.day != "" {
 			{ top: loaded.e.name, sub: if (loaded.e.ahead == 0) ("today, ${loaded.e.day}") else "in ${I64.to_str(loaded.e.ahead)}d, ${loaded.e.day}" }
 		} else if loaded.rd.ago >= 0 and loaded.rd.ago <= 7 {
-			{ top: loaded.rd.name, sub: "ridden, ${I64.to_str(loaded.rd.ago)}d ago" }
+			{ top: loaded.rd.name, sub: "done, ${I64.to_str(loaded.rd.ago)}d ago" }
 		} else {
 			{ top: "no event planned", sub: "stride event add <date> <name>" }
 		}
@@ -416,7 +417,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		ev_tile_sub: mk!(ev_tile.sub, 11)?,
 		zero_note: mk!("fresh above", 11)?,
 		ridden_found: loaded.rd.ago >= 0 and loaded.rd.ago <= 7 and loaded.e.day != "",
-		ridden_note: mk!(Board.ev_line(head, loaded.rd.name, " ridden, ${I64.to_str(loaded.rd.ago)}d ago", 10.0), 10)?,
+		ridden_note: mk!(Board.ev_line(head, loaded.rd.name, " done, ${I64.to_str(loaded.rd.ago)}d ago", 10.0), 10)?,
 		curve_empty: mk!("no rides in the selected window - the curve has nothing to draw", 16)?,
 		trace: loaded.tr,
 		ghost: [],
@@ -598,7 +599,7 @@ trace_task! = |acc, units, ids, sel, gen|
 					du = Db.load_dur!(db, entry.id)
 					sp = if (entry.chan == Db.pace_chan) (Db.load_splits!(db, entry.id, Units.split_len(units))) else []
 					st = if (Trace.strength_session(entry.sport)) (Db.load_sets!(db, entry.id)) else { rows: [], pasted: Bool.False }
-					TraceSwitched({ tr, sg, du, gen, day: entry.day, un: Db.trace_unit(entry.chan, units), sp, st })
+					TraceSwitched({ tr, sg, du, gen, day: entry.day, un: Db.trace_unit(entry.chan, units, entry.sport), sp, st })
 				}
 			}
 	}
@@ -1677,7 +1678,7 @@ load_tcache! = |db, units, ids|
 			# lookup into the picker row; prepend so picker order survives
 			# without List.reverse, which this stdlib lacks
 			st9 = if (Trace.strength_session(te.sport)) (Db.load_sets!(db, te.id)) else { rows: [], pasted: Bool.False }
-			List.prepend(load_tcache!(db, units, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9, un: Db.trace_unit(te.chan, units), sp: sp9, st: st9 })
+			List.prepend(load_tcache!(db, units, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9, un: Db.trace_unit(te.chan, units, te.sport), sp: sp9, st: st9 })
 		}
 	}
 
@@ -2298,7 +2299,7 @@ update! = |model0, program_input, io| {
 		trace_unit2 =
 			if switching {
 				match List.get(model.trace_ids, want_sel2) {
-					Ok(se) => Db.trace_unit(se.chan, model.units)
+					Ok(se) => Db.trace_unit(se.chan, model.units, se.sport)
 					Err(_) => model.trace_unit
 				}
 			} else model.trace_unit

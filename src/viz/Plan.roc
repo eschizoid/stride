@@ -82,12 +82,14 @@ Plan :: [].{
 	pct_label = |detected, target|
 		if (target <= 0.0) "" else "${watts_str(detected / target * 100.0)}%"
 
-	# the recorded target beside the detected power work reps of the linked
-	# activity; each side is stated only when it is known
+	# a power target beside the detected power work reps of the linked
+	# activity, each side stated only when it is known; any other target
+	# (heart rate, zone, pace) as the engine stores it, since its result is
+	# what `stride complete` reports
 	target_text : Db.PlanRow -> Str
 	target_text = |p| {
 		tgt = "${I64.to_str(p.tgt_reps)}x${Fmt.mmss(p.tgt_dur_s)} @ ${watts_str(p.tgt_watts)}W"
-		if (p.tgt_reps <= 0) ""
+		if (p.tgt_reps <= 0) (if (p.tgt_lit == "") "" else "target ${p.tgt_lit}")
 		else if (p.det_reps <= 0) "target ${tgt}, no power intervals detected"
 		else "${I64.to_str(p.det_reps)}x${Fmt.mmss(p.det_dur_s)} @ ${watts_str(p.det_watts)}W - ${pct_label(p.det_watts, p.tgt_watts)} of ${tgt}"
 	}
@@ -153,7 +155,7 @@ Plan :: [].{
 		# today's card: the prescription in full until the day has an outcome,
 		# then the outcome. The card grows with the wrapped text rather than
 		# truncating it.
-		blank = { day: "", wi: -1, typ: "", detail: "no plan for today - ask the coach", rationale: "", status: "open", reason: "", today: Bool.False, past: Bool.False, done_day: "", act_name: "", act_secs: 0, act_load: 0, sub_id: 0, sub_name: "", tgt_reps: 0, tgt_dur_s: 0, tgt_watts: 0.0, det_reps: 0, det_dur_s: 0, det_watts: 0.0, day_load_known: Bool.False, day_load: 0.0 }
+		blank = { day: "", wi: -1, typ: "", detail: "no plan for today - ask the coach", rationale: "", status: "open", reason: "", today: Bool.False, past: Bool.False, done_day: "", act_name: "", act_secs: 0, act_load: 0, sub_id: 0, sub_name: "", tgt_reps: 0, tgt_dur_s: 0, tgt_watts: 0.0, tgt_lit: "", det_reps: 0, det_dur_s: 0, det_watts: 0.0, day_load_known: Bool.False, day_load: 0.0 }
 		today = List.fold(model.plan, blank, |acc, p| if (p.today) p else acc)
 		outcome = result_text(today)
 		card_head = if (outcome == "") "today - ${today.typ}" else "today - ${today.typ} - ${status_text(today)}"
@@ -228,7 +230,7 @@ Plan :: [].{
 	}
 
 	blank_row : Db.PlanRow
-	blank_row = { day: "2026-11-02", wi: 0, typ: "endurance", detail: "", rationale: "", status: "open", reason: "", today: Bool.False, past: Bool.True, done_day: "", act_name: "", act_secs: 0, act_load: 0, sub_id: 0, sub_name: "", tgt_reps: 0, tgt_dur_s: 0, tgt_watts: 0.0, det_reps: 0, det_dur_s: 0, det_watts: 0.0, day_load_known: Bool.True, day_load: 0.0 }
+	blank_row = { day: "2026-11-02", wi: 0, typ: "endurance", detail: "", rationale: "", status: "open", reason: "", today: Bool.False, past: Bool.True, done_day: "", act_name: "", act_secs: 0, act_load: 0, sub_id: 0, sub_name: "", tgt_reps: 0, tgt_dur_s: 0, tgt_watts: 0.0, tgt_lit: "", det_reps: 0, det_dur_s: 0, det_watts: 0.0, day_load_known: Bool.True, day_load: 0.0 }
 
 	# each pip is its weekday: Mon done, Tue skipped with a substitute, Wed
 	# done, Thu today and open, Fri ahead, Sat holds nothing, Sun rest ahead
@@ -264,6 +266,7 @@ Plan :: [].{
 
 	expect result_text({ ..blank_row, status: "done", act_name: "Ride", act_secs: 3600, act_load: 62, tgt_reps: 2, tgt_dur_s: 900, tgt_watts: 225.0, det_reps: 2, det_dur_s: 905, det_watts: 228.0 }) == "Ride - 60 min - load 62 - 2x15:05 @ 228W - 101% of 2x15:00 @ 225W"
 	expect result_text({ ..blank_row, status: "done", act_name: "Ride", act_secs: 3600, act_load: 62, tgt_reps: 2, tgt_dur_s: 900, tgt_watts: 225.0 }) == "Ride - 60 min - load 62 - target 2x15:00 @ 225W, no power intervals detected"
+	expect result_text({ ..blank_row, status: "done", act_name: "Trail run", act_secs: 3600, act_load: 55, tgt_lit: "5x4:00@4:10/km" }) == "Trail run - 60 min - load 55 - target 5x4:00@4:10/km"
 	expect result_text({ ..blank_row, status: "skipped", reason: "sick", sub_id: 7, sub_name: "Z2 Ride" }) == "skipped: sick -> Z2 Ride"
 	expect result_text({ ..blank_row, status: "skipped" }) == "skipped"
 	expect result_text({ ..blank_row, past: Bool.False }) == ""
