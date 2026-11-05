@@ -154,7 +154,7 @@ Hud :: [].{
 				sk = streak_weeks(model.heat)
 				frame.rounded_rectangle!({ x: 40.0, y: bot - 84.0, width: 250.0, height: 72.0, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
 				Text.from("level ${I64.to_str(lvl)} - ${tier(lvl)}", model.font).size(14).draw!(frame, { pos: { x: 54.0, y: bot - 72.0 }, color: Theme.gold_c, align: (Top, Left) })
-				Text.from("${I64.to_str(hours_to_next(hours))}h to level ${I64.to_str(lvl + 1)}", model.font).size(11).draw!(frame, { pos: { x: 54.0, y: bot - 52.0 }, color: Theme.ink_muted, align: (Top, Left) })
+				Text.from("${Db.num_unit(hours_to_next(hours), "h")} to level ${I64.to_str(lvl + 1)}", model.font).size(11).draw!(frame, { pos: { x: 54.0, y: bot - 52.0 }, color: Theme.ink_muted, align: (Top, Left) })
 				Text.from("${I64.to_str(sk)} week streak", model.font).size(11).draw!(frame, { pos: { x: 54.0, y: bot - 36.0 }, color: Theme.ink_muted, align: (Top, Left) })
 			}
 		}

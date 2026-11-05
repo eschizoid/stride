@@ -2,6 +2,7 @@ import rr.Color
 import rr.Draw
 import rr.Text
 import core.Fmt
+import Db
 import Theme
 import Ui
 
@@ -89,7 +90,7 @@ Ramp :: [].{
 						Text.from(Str.from_utf8_lossy(List.drop_first(Str.to_utf8(x.w.wk), 5)), model.font).size(10).draw!(frame, { pos: { x: cx, y: bars_bot + 10.0 }, color: ink_faint, align: (Top, Center) })
 					}
 					if hovered {
-						Text.from("wk of ${x.w.wk}   ${I64.to_str(x.w.tss)} tss   ctl ${Fmt.tenths(x.w.ctl10)}   ramp ${Fmt.tenths_signed(x.w.ramp10)}/wk", model.font).size(12).draw!(frame, { pos: { x: pad, y: 96.0 }, color: Color.white, align: (Top, Left) })
+						Text.from("wk of ${x.w.wk}   ${Db.num_unit(x.w.tss, "tss")}   ctl ${Fmt.tenths(x.w.ctl10)}   ramp ${Fmt.tenths_signed(x.w.ramp10)}/wk", model.font).size(12).draw!(frame, { pos: { x: pad, y: 96.0 }, color: Color.white, align: (Top, Left) })
 					}
 				},
 			)

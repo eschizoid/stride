@@ -283,9 +283,9 @@ Curve :: [].{
 					# hover the rung's column: the full story under the title
 					half = if (nlast == 0) (pw / 2.0) else pw / U64.to_f32(nlast) / 2.0
 					if model.mouse_x >= cx(r.i) - half and model.mouse_x < cx(r.i) + half and model.mouse_y >= pad_t and model.mouse_y <= pad_t + ph and !tgt_hovering {
-						now_txt = if (r.now_w > 0) ("   now ${I64.to_str(r.now_w)}w") else "   not ridden this window"
-						prev_txt = if (r.prev_w > 0) ("   prev ${I64.to_str(r.prev_w)}w") else ""
-						tip = if (r.pr.w > 0) ("${r.pr.rung}   best ${I64.to_str(r.pr.w)}w set ${r.pr.day}${now_txt}${prev_txt}") else "${r.pr.rung}   never ridden"
+						now_txt = if (r.now_w > 0) ("   now ${Db.num_unit(r.now_w, "w")}") else "   not ridden this window"
+						prev_txt = if (r.prev_w > 0) ("   prev ${Db.num_unit(r.prev_w, "w")}") else ""
+						tip = if (r.pr.w > 0) ("${r.pr.rung}   best ${Db.num_unit(r.pr.w, "w")} set ${r.pr.day}${now_txt}${prev_txt}") else "${r.pr.rung}   never ridden"
 						Text.from(tip, model.font).size(12).draw!(frame, { pos: { x: 36.0, y: 92.0 }, color: Color.white, align: (Top, Left) })
 					}
 				},
