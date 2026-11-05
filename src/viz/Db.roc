@@ -44,11 +44,7 @@ Db :: [].{
 		txt = I64.to_str(n)
 		digits = Str.to_utf8(Str.drop_prefix(txt, "-"))
 		len = List.len(digits)
-		out = List.fold(
-			List.map_with_index(digits, |d, i| { d, i }),
-			[],
-			|acc, x| if (x.i > 0 and (len - x.i) % 3 == 0) (List.append(List.append(acc, ','), x.d)) else List.append(acc, x.d),
-		)
+		out = List.join(List.map_with_index(digits, |d, i| if (i > 0 and (len - i) % 3 == 0) [',', d] else [d]))
 		"${if (n < 0) "-" else ""}${Str.from_utf8_lossy(out)}"
 	}
 
