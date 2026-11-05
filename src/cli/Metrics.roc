@@ -875,12 +875,66 @@ Metrics :: [].{
 			intensity * intensity * hours * 100.0
 		}
 
+	## What a planned target is expected to load, on the same ladder analyze scores
+	## a finished session by, rung chosen by the target's own signal:
+	##   power  TSS against the ride FTP (tss_from_target)
+	##   pace   rTSS against the threshold speed of the first family the pace unit
+	##          names that has one, at that family's exponent
+	##   hr     hrTSS at the rate of the zone the band's midpoint falls in, under the
+	##          athlete's global zones (the sport is not known until the day)
+	##   zone   hrTSS at that zone's rate; the zone number needs no bounds
+	##   rpe    session-RPE load, hours × RPE × 10
+	## A target the inputs cannot price is Unprojected with the reason, never a
+	## silent zero: the projection says how much of the plan it could not see.
+	ProjectionInputs : { ftp : F64, zones : [NoZones, Zones(ZoneBounds)], pace_thresholds : List({ family : Str, speed : F64 }) }
+
+	projected_load : Target, ProjectionInputs -> [Load(F64), Unprojected(Str)]
+	projected_load = |t, inp| {
+		hours = ((t.reps * t.dur_s)).to_f64() / 3600.0
+		if t.kind == "power" {
+			if (inp.ftp > 0.0) Load(tss_from_target({ reps: t.reps, dur_s: t.dur_s, watts: t.watts, ftp: inp.ftp })) else Unprojected("no_ftp")
+		} else if t.kind == "zone" {
+			Load(hours * hr_zone_rate(t.zone))
+		} else if t.kind == "hr" {
+			match inp.zones {
+				Zones(zb) => {
+					mid = ((t.hr_lo + t.hr_hi)).to_f64() / 2.0
+					Load(hours * hr_zone_rate((zone_of(mid, zb)).to_i64()))
+				}
+				NoZones => Unprojected("no_hr_zones")
+			}
+		} else if t.kind == "rpe" {
+			Load(srpe_load({ rpe: (t.rpe).to_f64(), moving_time: t.reps * t.dur_s }))
+		} else if t.kind == "pace" {
+			fams = Sports.pace_unit_families(t.pace_unit)
+			thr = List.first(List.keep_if(inp.pace_thresholds, |p| p.speed > 0.0 and List.contains(fams, p.family)))
+			speed = if (t.pace_s > 0.0) pace_unit_m(t.pace_unit) / t.pace_s else 0.0
+			match thr {
+				Ok(p) if speed > 0.0 => {
+					dur_s = if (t.dist_m > 0.0) (t.reps).to_f64() * t.dist_m / speed else ((t.reps * t.dur_s)).to_f64()
+					Load(pace_tss({ ngp_speed: speed, threshold_speed: p.speed, dur_s, exponent: Sports.pace_tss_exponent(p.family) }))
+				}
+				_ => Unprojected("no_threshold_pace")
+			}
+		} else {
+			Unprojected("no_target")
+		}
+	}
+
+	# the hrTSS-per-hour rate of HR zone n, 1-5; the top rate above zone 5
+	hr_zone_rate : I64 -> F64
+	hr_zone_rate = |n| {
+		f = hr_tss_per_hour
+		if (n <= 1) f.z1 else if (n == 2) f.z2 else if (n == 3) f.z3 else if (n == 4) f.z4 else f.z5
+	}
+
 	## the hypothetical-plan literal (#189, ADR 0010): comma-separated
-	## `<YYYY-MM-DD>=<reps>x<mm:ss>@<watts>W` pairs. Caller input, echoed back
-	## verbatim, NEVER stored — the recorded plan stays the single source of
-	## adherence truth. Errors name the half that failed so the caller's refusal
-	## carries the same codes the stored surfaces use (bad_date / bad_target).
-	parse_plan_literal : Str -> Try(List({ date : Str, days : I64, target : { reps : I64, dur_s : I64, watts : F64 } }), [PairDate(Str), PairTarget(Str)])
+	## `<YYYY-MM-DD>=<target>` pairs, the target in any kind parse_any_target
+	## reads. Caller input, echoed back verbatim, NEVER stored — the recorded plan
+	## stays the single source of adherence truth. Errors name the half that failed
+	## so the caller's refusal carries the same codes the stored surfaces use
+	## (bad_date / bad_target).
+	parse_plan_literal : Str -> Try(List({ date : Str, days : I64, target : Target }), [PairDate(Str), PairTarget(Str)])
 	parse_plan_literal = |lit|
 		List.map_try(
 			Str.split_on(lit, ","),
@@ -891,7 +945,7 @@ Metrics :: [].{
 						if !(is_canonical_date(date)) {
 							Err(PairDate(date))
 						} else {
-							match (date_str_to_days(date), parse_target(tgt)) {
+							match (date_str_to_days(date), parse_any_target(tgt)) {
 								(Ok(days), Ok(t)) => Ok({ date, days, target: t })
 								(Err(_), _) => Err(PairDate(date))
 								(_, Err(_)) => Err(PairTarget(tgt))
@@ -2045,14 +2099,14 @@ Metrics :: [].{
 		}
 
 	## A structured target on any signal (#636). `kind` names the signal the
-	## session is judged on: "power", "hr" (a bpm band), "zone" (an HR zone) or
-	## "pace". Magnitudes that do not belong to the kind ride at 0 or "" (ADR 0009
-	## impossible-zero), and a rep is a duration OR a distance: `dur_s` 0 means a
-	## distance rep, `dist_m` 0 a timed one.
-	Target : { kind : Str, reps : I64, dur_s : I64, dist_m : F64, watts : F64, hr_lo : I64, hr_hi : I64, zone : I64, pace_s : F64, pace_unit : Str }
+	## session is judged on: "power", "hr" (a bpm band), "zone" (an HR zone),
+	## "pace" or "rpe" (a session rating, 1-10). Magnitudes that do not belong to
+	## the kind ride at 0 or "" (ADR 0009 impossible-zero), and a rep is a duration
+	## OR a distance: `dur_s` 0 means a distance rep, `dist_m` 0 a timed one.
+	Target : { kind : Str, reps : I64, dur_s : I64, dist_m : F64, watts : F64, hr_lo : I64, hr_hi : I64, zone : I64, pace_s : F64, pace_unit : Str, rpe : I64 }
 
 	no_target : Target
-	no_target = { kind: "", reps: 0, dur_s: 0, dist_m: 0.0, watts: 0.0, hr_lo: 0, hr_hi: 0, zone: 0, pace_s: 0.0, pace_unit: "" }
+	no_target = { kind: "", reps: 0, dur_s: 0, dist_m: 0.0, watts: 0.0, hr_lo: 0, hr_hi: 0, zone: 0, pace_s: 0.0, pace_unit: "", rpe: 0 }
 
 	power_target : { reps : I64, dur_s : I64, watts : F64 } -> Target
 	power_target = |t| { ..no_target, kind: "power", reps: t.reps, dur_s: t.dur_s, watts: t.watts }
@@ -2062,6 +2116,8 @@ Metrics :: [].{
 	##   hr     `1x60:00@HR125-147` — a bpm band, 35-220, low below high
 	##   zone   `1x90:00@Z2` — HR zone 1-5 under the athlete's configured zones
 	##   pace   `5x4:00@4:10/km`, `/mi`, `10x100m@1:40/100m`, `6x500m@1:55/500m`
+	##   rpe    `1x45:00@RPE6` — a session rating 1-10, for any sport, the one
+	##          signal a session with no stream still carries
 	## A non-power rep is `mm:ss` or `h:mm:ss` (0:30 up to 23:59:59); only a pace
 	## rep may instead be a distance, `<n>m` or `<n>km`. Strict for the same reason
 	## parse_target is: a target that half-parses is one the athlete and the
@@ -2088,7 +2144,12 @@ Metrics :: [].{
 
 	signal_target : I64, Str, Str -> Try(Target, [BadTarget])
 	signal_target = |reps, rep_s, sig|
-		if Str.starts_with(sig, "HR") {
+		if Str.starts_with(sig, "RPE") {
+			match (rep_duration(rep_s), I64.from_str(Str.replace_first(sig, "RPE", ""))) {
+				(Ok(dur_s), Ok(r)) => if (r >= 1 and r <= 10) Ok({ ..no_target, kind: "rpe", reps, dur_s, rpe: r }) else Err(BadTarget)
+				_ => Err(BadTarget)
+			}
+		} else if Str.starts_with(sig, "HR") {
 			match (rep_duration(rep_s), Str.split_first(Str.replace_first(sig, "HR", ""), "-")) {
 				(Ok(dur_s), Ok({ before: lo_s, after: hi_s })) =>
 					match (I64.from_str(lo_s), I64.from_str(hi_s)) {
@@ -2218,6 +2279,8 @@ Metrics :: [].{
 				"HR${I64.to_str(t.hr_lo)}-${I64.to_str(t.hr_hi)}"
 			} else if t.kind == "zone" {
 				"Z${I64.to_str(t.zone)}"
+			} else if t.kind == "rpe" {
+				"RPE${I64.to_str(t.rpe)}"
 			} else {
 				"${rep_dur_str(t.pace_s.round_to_i64_try().ok_or(0))}${t.pace_unit}"
 			}
@@ -5475,7 +5538,7 @@ expect {
 
 expect {
 	d = (Metrics.date_str_to_days("2099-01-05")).ok_or(0)
-	Metrics.parse_plan_literal("2099-01-05=3x12:00@230W") == Ok([{ date: "2099-01-05", days: d, target: { reps: 3, dur_s: 720, watts: 230.0 } }]) and d > 0
+	Metrics.parse_plan_literal("2099-01-05=3x12:00@230W") == Ok([{ date: "2099-01-05", days: d, target: Metrics.power_target({ reps: 3, dur_s: 720, watts: 230.0 }) }]) and d > 0
 }
 expect {
 	r = Metrics.parse_plan_literal("2099-01-05=3x12:00@230W,2099-01-07=4x8:00@250W")
@@ -5487,6 +5550,64 @@ expect {
 expect Metrics.parse_plan_literal("not-a-date=3x12:00@230W") == Err(PairDate("not-a-date"))
 expect Metrics.parse_plan_literal("2099-01-05=junk") == Err(PairTarget("junk"))
 expect Metrics.parse_plan_literal("nodelimiter") == Err(PairDate("nodelimiter"))
+# an RPE target: a session rating 1-10 over a timed rep, any sport
+expect Metrics.parse_any_target("1x45:00@RPE6") == Ok({ ..Metrics.no_target, kind: "rpe", reps: 1, dur_s: 2700, rpe: 6 })
+expect Metrics.parse_any_target("1x1:15:00@RPE10") == Ok({ ..Metrics.no_target, kind: "rpe", reps: 1, dur_s: 4500, rpe: 10 })
+expect Metrics.parse_any_target("1x45:00@RPE0") == Err(BadTarget)
+expect Metrics.parse_any_target("1x45:00@RPE11") == Err(BadTarget)
+expect Metrics.parse_any_target("1x45:00@RPE6.5") == Err(BadTarget)
+expect Metrics.parse_any_target("1x400m@RPE6") == Err(BadTarget)
+expect Metrics.target_literal({ ..Metrics.no_target, kind: "rpe", reps: 1, dur_s: 2700, rpe: 6 }) == "1x45:00@RPE6"
+expect Metrics.parse_any_target(Metrics.target_literal({ ..Metrics.no_target, kind: "rpe", reps: 2, dur_s: 3900, rpe: 7 })) == Ok({ ..Metrics.no_target, kind: "rpe", reps: 2, dur_s: 3900, rpe: 7 })
+
+# projected load: each kind priced on its own rung, and an unpriceable one names why
+expect {
+	inp = { ftp: 230.0, zones: Zones({ z1_max: 120.0, z2_max: 145.0, z3_max: 160.0, z4_max: 175.0 }), pace_thresholds: [{ family: "Run", speed: 4.0 }, { family: "Swim", speed: 1.0 }] }
+	load_of = |lit, i|
+		match Metrics.parse_any_target(lit) {
+			Ok(t) =>
+				match Metrics.projected_load(t, i) {
+					Load(x) => x
+					Unprojected(_) => -1.0
+				}
+			Err(_) => -2.0
+		}
+	reason_of = |t, i|
+		match Metrics.projected_load(t, i) {
+			Load(_) => ""
+			Unprojected(r) => r
+		}
+	near = |a, b| (a - b).abs() < 0.001
+	tgt = |lit| (Metrics.parse_any_target(lit)).ok_or(Metrics.no_target)
+	near(load_of("3x12:00@230W", inp), 60.0)
+		and near(load_of("1x1:00:00@Z2", inp), 55.0)
+		# the band's midpoint (136) sits in zone 2 under these bounds; 180 in zone 5
+		and near(load_of("1x1:00:00@HR125-147", inp), 55.0)
+		and near(load_of("1x30:00@HR170-190", inp), 50.0)
+		and near(load_of("1x45:00@RPE6", inp), 45.0)
+		# 4:10/km is 4.0 m/s, the run threshold: intensity 1 for an hour
+		and near(load_of("1x1:00:00@4:10/km", inp), 100.0)
+		# a distance rep's time comes from the target pace: 10 x 100 m at 1.0 m/s is 1000 s
+		and near(load_of("10x100m@1:40/100m", inp), 1000.0 / 36.0)
+		# swim takes its own exponent: 1:15/100m against 1.0 m/s is intensity 4/3, cubed
+		and near(load_of("1x1:00:00@1:15/100m", inp), (4.0 / 3.0).pow(3.0) * 100.0)
+		# a /km target reads any family the unit names: a walker's threshold prices it
+		and near(load_of("1x1:00:00@10:00/km", { ..inp, pace_thresholds: [{ family: "Walk", speed: 1000.0 / 600.0 }] }), 100.0)
+		# the zone a target names, not the bounds, sets its rate
+		and near(load_of("1x1:00:00@Z4", { ..inp, zones: NoZones }), 80.0)
+		and reason_of(tgt("1x1:00:00@1:55/500m"), inp) == "no_threshold_pace"
+		and reason_of(tgt("1x1:00:00@HR125-147"), { ..inp, zones: NoZones }) == "no_hr_zones"
+		and reason_of(tgt("3x12:00@230W"), { ..inp, ftp: 0.0 }) == "no_ftp"
+		and reason_of(Metrics.no_target, inp) == "no_target"
+}
+# every target kind is a hypothetical session, as it is a recorded one
+expect {
+	r = Metrics.parse_plan_literal("2099-01-05=1x1:00:00@HR125-147,2099-01-06=5x4:00@4:10/km,2099-01-07=1x45:00@RPE6")
+	match r {
+		Ok(l) => List.map(l, |p| p.target.kind) == ["hr", "pace", "rpe"]
+		Err(_) => False
+	}
+}
 
 # the pace rung is for endurance-class sports only: a strength-like session with
 # a distance (a Workout whose watch kept recording a walk) has an NGP speed and a

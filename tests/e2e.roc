@@ -364,7 +364,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1359)?
+	checks_ran_exactly!(1371)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6154,6 +6154,19 @@ b_targets! = |ctx| {
 	# a pace unit read over another sport family compares nothing, and says why
 	sid2 = Str.trim(strjq!(ctx, ["week", "add", "2099-09-15", "threshold", "row split on a run", "r", "6x500m@1:55/500m"], ".data.id"))
 	check!("a rowing split completed by a run names the unit mismatch", strjq!(ctx, ["complete", sid2, "9807"], "[.data.exec_known, .data.exec_reason] | map(tostring) | join(\",\")") == "false,pace_unit_mismatch")?
+	# an RPE target is judged on the session's own rating: absent until `stride
+	# rate` stores one, then reported beside the target. Strength has no stream, so
+	# this is the one target a lifting day can carry.
+	rid = Str.trim(strjq!(ctx, ["week", "add", "2099-09-16", "strength", "full body", "r", "1x45:00@RPE6"], ".data.id"))
+	check!("an RPE target echoes its kind, literal and rating", strjq!(ctx, ["plan"], "[.data.open_sessions[] | select(.id == ${rid})][0] | [.target_kind, .target_literal, .target_rpe, .target_watts] | map(tostring) | join(\",\")") == "rpe,1x45:00@RPE6,6,0")?
+	check!("...and a rating outside 1-10 is refused", strjq!(ctx, ["week", "add", "2099-09-17", "strength", "bad", "r", "1x45:00@RPE11"], ".error.code") == "bad_target")?
+	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time) VALUES (9808,'lift','WeightTraining','2099-09-16T10:00:00Z',2700);")
+	check!("completing an RPE target before a rating names the gap", strjq!(ctx, ["complete", rid, "9808"], "[.data.exec_known, .data.exec_reason, .data.rpe_known, .data.rpe_actual] | map(tostring) | join(\",\")") == "false,no_rating,false,0")?
+	_ = stride!(ctx.bin, ctx.home, ["rate", "9808", "7"])
+	check!("...and once rated, reports the stored rating", strjq!(ctx, ["complete", rid, "9808"], "[.data.exec_known, .data.rpe_known, .data.rpe_actual, .data.target_rpe] | map(tostring) | join(\",\")") == "true,true,7,6")?
+	check!("...and the human line states it", Str.contains(stride_human!(ctx.bin, ctx.home, ["complete", rid, "9808"]), "(target 1x45:00@RPE6; rated 7.0)"))?
+	check!("the complete payload conforms to its schema with an RPE target", validate_schema!(ctx, "complete ${rid} 9808", "complete") == "")?
+	_ = sql!(ctx.db, "DELETE FROM ratings WHERE activity_id = 9808; DELETE FROM activity_metrics WHERE activity_id = 9808; DELETE FROM activities WHERE id = 9808; DELETE FROM planned_sessions WHERE id = ${rid};")
 	_ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id = 9805; DELETE FROM streams WHERE activity_id IN (9801, 9805); DELETE FROM activity_metrics WHERE activity_id = 9803; DELETE FROM activities WHERE id IN (9801, 9802, 9803, 9804, 9805, 9806, 9807); DELETE FROM planned_sessions WHERE id IN (${hid}, ${hid2}, ${zid}, ${pid}, ${pid2}, ${sid}, ${sid2});")
 	_ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id = 977; DELETE FROM activities WHERE id IN (977, 978, 979); DELETE FROM planned_sessions WHERE id IN (${tid}, ${tid2}, ${tid3});")
 	Ok({})
@@ -6233,6 +6246,36 @@ b_events! = |ctx| {
 	check!("...and a malformed pair target with the target's", strjq!(ctx, ["project", ten_days_out!(ctx), "2099-12-25=junk"], ".error.code") == "bad_target")?
 	check!("the project payload conforms to its schema", validate_schema!(ctx, "project ${ten_days_out!(ctx)}", "project") == "")?
 	_ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${tsid};")
+	# ── every target kind is priced (#636, ADR 0019). Two run sessions inside the
+	# 60-day window give the run family a threshold of 6.0 × 0.95 = 5.7 m/s, so
+	# 2:55/km (1000/175 m/s) is intensity ~1.0: about 100 load for the hour. The
+	# fixture's zones put an HR125-147 band's midpoint (136) in zone 2, 55 an hour,
+	# and 45 minutes at RPE 6 is 45. One session at a time, the projection must
+	# order exactly as those loads do, each above pure decay.
+	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9811,'threshold run a','Run','${ctx.today}T06:00:00Z',1800,9000),(9812,'threshold run b','Run','${ctx.today}T07:00:00Z',1800,9000); INSERT INTO activity_metrics (activity_id,best_20min_speed,metrics_rev) VALUES (9811,6.0,1),(9812,6.0,1);")
+	five = five_days_out!(ctx)
+	ten = ten_days_out!(ctx)
+	hyp_ctl! = |tgt| Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' project ${ten} \"${five}=${tgt}\" | jq -r '.data.ctl'"))
+	c_pace = hyp_ctl!("1x1:00:00@2:55/km")
+	c_hr = hyp_ctl!("1x1:00:00@HR125-147")
+	c_rpe = hyp_ctl!("1x45:00@RPE6")
+	check!("a pace, an HR-band and an RPE target each raise the projection, ordered as their loads (${c_pace} > ${c_hr} > ${c_rpe} > ${expected_ctl})", sfloat(c_pace) > sfloat(c_hr) and sfloat(c_hr) > sfloat(c_rpe) and sfloat(c_rpe) > sfloat(expected_ctl))?
+	check!("...and each counts as projected", strjq!(ctx, ["project", ten, "${five}=1x1:00:00@2:55/km"], "[.data.sessions_considered, .data.sessions_projected, (.data.unprojected | length)] | map(tostring) | join(\",\")") == "1,1,0")?
+	check!("...and the hypothetical echoes each target's kind and literal", strjq!(ctx, ["project", ten, "${five}=1x45:00@RPE6"], ".data.hypothetical[0] | [.target_kind, .target_literal] | join(\",\")") == "rpe,1x45:00@RPE6")?
+	# the recorded plan: three targeted kinds and one untargeted session in the
+	# window — three projected, and the untargeted one listed with its reason
+	d2 = Str.trim(sh!("TZ='${ctx.tz}' date -v+2d +%F 2>/dev/null || TZ='${ctx.tz}' date -d '+2 days' +%F"))
+	d3 = Str.trim(sh!("TZ='${ctx.tz}' date -v+3d +%F 2>/dev/null || TZ='${ctx.tz}' date -d '+3 days' +%F"))
+	d4 = Str.trim(sh!("TZ='${ctx.tz}' date -v+4d +%F 2>/dev/null || TZ='${ctx.tz}' date -d '+4 days' +%F"))
+	r1 = Str.trim(strjq!(ctx, ["week", "add", d2, "endurance", "z2", "r", "1x1:00:00@HR125-147"], ".data.id"))
+	r2 = Str.trim(strjq!(ctx, ["week", "add", d3, "threshold", "tempo", "r", "1x1:00:00@2:55/km"], ".data.id"))
+	r3 = Str.trim(strjq!(ctx, ["week", "add", d4, "strength", "lift", "r", "1x45:00@RPE6"], ".data.id"))
+	r4 = Str.trim(strjq!(ctx, ["week", "add", five, "endurance", "untargeted", "r"], ".data.id"))
+	check!("the recorded plan prices every targeted kind and names the untargeted day", strjq!(ctx, ["project", ten], "[.data.sessions_considered, .data.sessions_projected, (.data.unprojected | map(.date + \":\" + .reason) | join(\";\"))] | map(tostring) | join(\",\")") == "4,3,${five}:no_target")?
+	kid = Str.trim(strjq!(ctx, ["event", "add", ten, "Kinds Probe"], ".data.id"))
+	check!("...and events counts the same coverage", strjq!(ctx, ["events"], "[.data.events[] | select(.id == ${kid})][0] | [.planned_in_window, .sessions_projected] | map(tostring) | join(\",\")") == "4,3")?
+	check!("the project payload conforms to its schema with every kind priced", validate_schema!(ctx, "project ${ten}", "project") == "")?
+	_ = sql!(ctx.db, "DELETE FROM events WHERE name = 'Kinds Probe'; DELETE FROM planned_sessions WHERE id IN (${r1}, ${r2}, ${r3}, ${r4}); DELETE FROM activity_metrics WHERE activity_id IN (9811, 9812); DELETE FROM activities WHERE id IN (9811, 9812);")
 	Ok({})
 }
 
