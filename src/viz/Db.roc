@@ -1249,6 +1249,39 @@ Db :: [].{
 	# core.Series body; the split length comes from the caller, who owns the
 	# athlete's units. Altitude and HR pass empty - the panel beside a trace
 	# says distance and pace, and the trace itself already tells the effort.
+	# A strength session's stored sets, in the order strength_sets keeps them
+	# (one row per run of identical sets, as either adapter writes it), and
+	# whether its description holds text that yielded no rows: the fact
+	# `stride strength` counts as pasted_unparsed, distinct from never pasted.
+	SetRow : { exercise : Str, sets : I64, reps : I64, kg : F64, hold_s : I64 }
+	StrengthLog : { rows : List(SetRow), pasted : Bool }
+	load_sets! : Sqlite.Db, I64 => StrengthLog
+	load_sets! = |db, aid| {
+		rows = match db.query!("SELECT CAST(exercise AS TEXT) AS sx, CAST(COALESCE(sets, 0) AS INTEGER) AS sn, CAST(COALESCE(reps, 0) AS INTEGER) AS sr, CAST(COALESCE(weight_kg, 0) AS REAL) AS skg, CAST(COALESCE(hold_s, 0) AS INTEGER) AS shs FROM strength_sets WHERE activity_id = :a ORDER BY ordinal", [{ name: ":a", value: Integer(aid) }]) {
+			Err(_) => []
+			Ok(rs) =>
+				List.keep_oks(
+					rs,
+					|r| {
+						ex = r.str("sx") ? |_| "bad sx"
+						sn = r.i64("sn") ? |_| "bad sn"
+						sr = r.i64("sr") ? |_| "bad sr"
+						kg = r.f64("skg") ? |_| "bad skg"
+						hs = r.i64("shs") ? |_| "bad shs"
+						Ok({ exercise: ascii_safe(ex), sets: sn, reps: sr, kg, hold_s: hs })
+					},
+				)
+		}
+		pasted = match db.query!("SELECT (COALESCE(CAST(description AS TEXT), '') <> '') AS pz FROM strength_notes WHERE activity_id = :a", [{ name: ":a", value: Integer(aid) }]) {
+			Ok(rs) => match List.first(rs) {
+				Ok(r) => (r.i64("pz") ?? 0) == 1
+				Err(_) => Bool.False
+			}
+			Err(_) => Bool.False
+		}
+		{ rows, pasted }
+	}
+
 	load_splits! : Sqlite.Db, I64, F64 => List(Series.Split)
 	load_splits! = |db, aid, split_m|
 		Series.splits(load_dist_pairs!(db, aid), [], [], split_m)

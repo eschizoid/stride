@@ -94,6 +94,8 @@ Ui :: [].{
 		# channel - the same core.Series rows the CLI prints, segmented at
 		# the athlete's split length
 		trace_splits : List(Series.Split),
+		# the selected strength session's stored sets, empty for any other
+		trace_sets : Db.StrengthLog,
 		# the picker's sport filter; "" offers every sport. [ and ] step to
 		# the next session this filter admits, so the selection index still
 		# addresses the full menu and every cache lookup stays valid
@@ -111,7 +113,7 @@ Ui :: [].{
 		trace_pan : F32,
 		# every pickable session, loaded once - switching and ghosts read this
 		# instead of a task round-trip per keypress
-		trace_cache : List({ tr : List(F32), sg : List(Db.Seg), du : F32, un : Str, sp : List(Series.Split) }),
+		trace_cache : List({ tr : List(F32), sg : List(Db.Seg), du : F32, un : Str, sp : List(Series.Split), st : Db.StrengthLog }),
 		curve_days : I64,
 		# the window's CP, 0 when the fit is not usable (Curve.fit_usable)
 		fit_cp : F32,

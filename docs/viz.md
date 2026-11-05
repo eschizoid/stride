@@ -455,6 +455,16 @@ power meter recorded them and heart rate otherwise, and the y axis names its
 unit so the two can never be confused. Both axes carry labelled gridlines, and
 the x step follows the VISIBLE span, so zooming in earns finer ticks.
 
+A lifting session (the WeightTraining family, the gate the engine's
+`strength_sets` rebuild uses) has no power or pace for the detector, so its
+heading names the channel only. Its stored sets fill a column at the right,
+in the order the engine keeps them: exercise, sets × reps or sets × seconds
+for a hold, and the weight in the athlete's units when one was moved. The
+plot narrows to leave that column clear. With nothing stored, the column says
+which absence it is: "no sets logged", or "no sets read" when the
+description holds text no adapter parsed (what `stride strength` counts as
+`pasted_unparsed`).
+
 The ghost overlay compares the live session against another of the same
 KIND — same sport, same unit — because an honest axis is not yet a meaningful
 comparison: a workout and a ride both plot bpm and still answer no question

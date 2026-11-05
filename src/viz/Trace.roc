@@ -1,7 +1,9 @@
 import rr.Color
 import rr.Draw
 import rr.Text
+import core.Sports
 import core.Units
+import Db
 import Theme
 import Ui
 
@@ -98,6 +100,49 @@ Trace :: [].{
 			and fmt_clock(-5.0) == "0:00"
 	}
 
+	# the sessions strength_sets can hold rows for: the WeightTraining family
+	# (Sports.canonical), the gate the engine's rebuild of strength_sets joins
+	# on through activity_family_month
+	strength_session : Str -> Bool
+	strength_session = |sport| Sports.canonical(sport) == "WeightTraining"
+
+	# one stored row as the panel prints it: sets x reps, or sets x seconds
+	# for a hold, then the weight in the athlete's units when one was moved
+	set_line : [Metric, Imperial], Db.SetRow -> Str
+	set_line = |units, r| {
+		shape = if (r.hold_s > 0) "${I64.to_str(r.sets)}x${I64.to_str(r.hold_s)}s hold" else "${I64.to_str(r.sets)}x${I64.to_str(r.reps)}"
+		w = if (r.kg > 0.0) " @ ${Units.mass_label(units, r.kg)}" else ""
+		"${r.exercise}  ${shape}${w}"
+	}
+
+	# the empty panel says which absence it is: text in the description that
+	# no adapter read, or nothing logged at all
+	no_sets_note : Bool -> Str
+	no_sets_note = |pasted| if (pasted) "no sets read - the description holds text no adapter parsed" else "no sets logged"
+
+	# whether the selected session is a lifting one, and the lines its sets
+	# panel prints: the stored rows (at most 18), or the empty-state note
+	lifting_shown : Ui.Model -> Bool
+	lifting_shown = |model| match List.get(model.trace_ids, model.trace_sel) {
+		Ok(te) => strength_session(te.sport)
+		Err(_) => Bool.False
+	}
+
+	panel_lines : Ui.Model -> List(Str)
+	panel_lines = |model|
+		if (!lifting_shown(model)) []
+		else if (List.is_empty(model.trace_sets.rows)) [no_sets_note(model.trace_sets.pasted)]
+		else List.map(List.take_first(model.trace_sets.rows, 18), |r| set_line(model.units, r))
+
+	# the plot's right padding: a lifting session's sets panel takes its own
+	# column, as wide as its longest line, so the trace never runs under the
+	# text. The pointer's zoom and pan read the same padding.
+	right_pad : Ui.Model -> F32
+	right_pad = |model| {
+		w = List.fold(panel_lines(model), 0.0, |acc, l| F32.max(acc, model.font.measure({ text: l, size: 11.0, spacing: Text.default_spacing }).width))
+		if (w > 0.0) (Theme.pad_r + w + 24.0) else Theme.pad_r
+	}
+
 	# ── session trace view (TAB) ────────────────────────────────────────────
 	# One session's measured trace, with the detector's blocks shaded BEHIND it
 	# where it found any, so the two can be compared by eye — which is the
@@ -109,7 +154,9 @@ Trace :: [].{
 		win_w = model.win.w
 		win_h = model.win.h
 		pad_l = Theme.pad_l
-		pad_r = Theme.pad_r
+		lifting = lifting_shown(model)
+		set_lines = panel_lines(model)
+		pad_r = right_pad(model)
 		pad_t = Theme.pad_t
 		pad_b = Theme.pad_b
 		ink_muted = Theme.ink_muted
@@ -121,8 +168,10 @@ Trace :: [].{
 		# detector found any blocks in it vary from one session to the next.
 		nsegs = List.len(List.keep_if(model.segs, |sg| sg.kind == "work"))
 		what = if (model.trace_unit == "bpm") ("heart rate") else if (pace_axis(model.trace_unit)) ("pace") else "power"
+		# a lifting session has no power or pace for the detector to read, so
+		# its heading names the channel only and the sets panel speaks for it
 		blocks =
-			if (List.is_empty(model.trace)) ("")
+			if (List.is_empty(model.trace) or lifting) ("")
 			else if (nsegs == 0) (" - no intervals detected")
 			else if (nsegs == 1) (" - 1 detected block shaded behind it") else " - ${U64.to_str(nsegs)} detected blocks shaded behind it"
 		Text.from("${what} trace${blocks}", model.font).size(15).draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
@@ -155,6 +204,19 @@ Trace :: [].{
 			extra = List.len(model.trace_splits) - List.len(shown)
 			if extra > 0 {
 				Text.from("+${U64.to_str(extra)} more", model.font).size(10).draw!(frame, { pos: { x: model.win.w - 34.0, y: 154.0 + 14.0 * 16.0 }, color: ink_faint, align: (Top, Right) })
+			}
+		}
+		# ── the sets panel: a lifting session's stored sets in order, holds
+		# included, capped to what fits beside the plot with an overflow line
+		if lifting {
+			Text.from("sets", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 34.0, y: 136.0 }, color: ink_muted, align: (Top, Right) })
+			List.for_each!(List.map_with_index(set_lines, |l, i| { l, i }), |x|
+				Text.from(x.l, model.font).size(11).draw!(frame, { pos: { x: model.win.w - 34.0, y: 154.0 + U64.to_f32(x.i) * 16.0 }, color: ink_faint, align: (Top, Right) }))
+			if !(List.is_empty(model.trace_sets.rows)) {
+				extra = List.len(model.trace_sets.rows) - List.len(set_lines)
+				if extra > 0 {
+					Text.from("+${U64.to_str(extra)} more", model.font).size(10).draw!(frame, { pos: { x: model.win.w - 34.0, y: 154.0 + 18.0 * 16.0 }, color: ink_faint, align: (Top, Right) })
+				}
 			}
 		}
 		if List.is_empty(model.trace) {
@@ -310,3 +372,14 @@ Trace :: [].{
 		}
 	}
 }
+
+# the family gate matches the engine's: WeightTraining and Workout hold sets;
+# a ride, and a yoga class the engine's strength class covers but its sets
+# rebuild does not, hold none
+expect Trace.strength_session("WeightTraining") and Trace.strength_session("Workout")
+expect !Trace.strength_session("Ride") and !Trace.strength_session("Yoga")
+expect Trace.set_line(Metric, { exercise: "Incline Barbell Bench Press", sets: 1, reps: 8, kg: 54.4, hold_s: 0 }) == "Incline Barbell Bench Press  1x8 @ 54.4 kg"
+expect Trace.set_line(Imperial, { exercise: "Curl", sets: 3, reps: 0, kg: 9.0718474, hold_s: 60 }) == "Curl  3x60s hold @ 20.0 lb"
+expect Trace.set_line(Metric, { exercise: "Push Up", sets: 3, reps: 12, kg: 0.0, hold_s: 0 }) == "Push Up  3x12"
+expect Trace.no_sets_note(Bool.True) == "no sets read - the description holds text no adapter parsed"
+expect Trace.no_sets_note(Bool.False) == "no sets logged"
