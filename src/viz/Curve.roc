@@ -320,10 +320,11 @@ Curve :: [].{
 					}
 				},
 			)
-			# the window's unpushed durations, named above the fit caption
+			# the window's unpushed durations, at the right under the chips,
+			# clear of the axis labels, the rung labels and the fit caption
 			unp_txt = unpushed_caption(List.map(rungs, |r| r.pr.rung), List.map(rungs, |r| r.now_unp), model.curve_days)
 			if unp_txt != "" {
-				Text.from(unp_txt, model.font).size(12).draw!(frame, { pos: { x: win_w - 40.0, y: win_h - 72.0 }, color: ink_faint, align: (Top, Right) })
+				Text.from(unp_txt, model.font).size(11).draw!(frame, { pos: { x: win_w - 40.0, y: 112.0 }, color: ink_faint, align: (Top, Right) })
 			}
 		}
 		model.curve_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
