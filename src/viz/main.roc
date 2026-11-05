@@ -124,7 +124,7 @@ init! = App.init_for_args(
 	|io| {
 		font = Draw.default_font!()
 		args = io.args!()
-		load_model!({ io, dir: stride_dir_of(args) }, launch_dir_of(args), font, 90, Bool.True)
+		load_model!({ io, dir: stride_dir_of(args) }, launch_dir_of(args), font, 90, "Ride", Bool.True)
 	},
 )
 
@@ -211,8 +211,8 @@ skeleton = |err|
 # boot=True builds the instant skeleton the splash renders over: no database
 # and no engine call - the window opens on frame one and the real load runs
 # in a spawned task that answers with Reloaded.
-load_model! : Access, Str, Text.Font, I64, Bool => Try(Ui.Model, [ResourceLimit])
-load_model! = |acc, cwd, font, curve_days, boot| {
+load_model! : Access, Str, Text.Font, I64, Str, Bool => Try(Ui.Model, [ResourceLimit])
+load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 	loaded = if boot {
 		skeleton("")
 	} else match open_db!(acc) {
@@ -221,7 +221,7 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 			s = Db.load_series!(db)
 			e = Db.load_event!(db)
 			tm = Db.today_mod!(acc.io.commands(), db)
-			c = Db.load_curve!(db, curve_days, tm)
+			c = Db.load_curve!(db, curve_days, tm, curve_family)
 			tids = Db.load_trace_ids!(db)
 			# ONLY the selected session is cached at boot. The roc-ray SQLite
 			# binding marshals result rows one at a time, and each session's
@@ -253,7 +253,7 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 			ht = Db.load_heat!(db)
 			hev = Db.load_event_days!(db)
 			zw = Db.load_zone_weeks!(db)
-			b20 = Db.load_best20_age!(db, curve_days, tm)
+			b20 = Db.load_best20_age!(db, curve_days, tm, curve_family)
 			tg = Db.load_targets_at!(db, tm)
 			ph = Db.load_plan_horizon!(db)
 			sfs = Db.load_spine_fams!(db)
@@ -261,9 +261,9 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 			cs = Db.load_career_sports!(db)
 			cfm = Db.load_fam_months!(db)
 			rw = Db.load_ramp_weeks!(db)
-			prs = Db.load_prs!(db)
+			prs = Db.load_prs!(db, curve_family)
 			nts = Db.load_day_notes!(db)
-			cpv = Db.load_curve_prev!(db, curve_days, tm)
+			cpv = Db.load_curve_prev!(db, curve_days, tm, curve_family)
 			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, ph, b20, tg, rw, csp, cs, cfm, prs, tcache, un }
 		}
 		Err(NoStrideDir) => skeleton("no stride directory — the launcher passes it as the first argument")
@@ -271,7 +271,7 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 	}
 	ev = Db.find_idx(loaded.s.days, loaded.e.day)
 	# the fit runs the engine; the skeleton cannot afford it
-	fit = if (boot) ({ cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }) else Db.load_fit!(acc.io.commands(), curve_days)
+	fit = if (boot) ({ cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }) else Db.load_fit!(acc.io.commands(), curve_days, curve_family)
 	fit_text = Curve.fit_caption(fit, loaded.b20)
 	# the board projects as far as the written plan reaches, never past the
 	# next event (load_plan_horizon! caps it there), and reads the numbers
@@ -366,6 +366,7 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 		fit_lbl: mk!(Db.ascii_safe(fit_text), 14)?,
 		curve_title: mk!("power - this ${I64.to_str(curve_days)}d vs the ${I64.to_str(curve_days)}d before it", 15)?,
 		curve_days,
+		curve_family,
 		trace_ids: loaded.tids,
 		trace_sel: 0.U64,
 		trace_gen: 0.U64,
@@ -432,7 +433,7 @@ load_model! = |acc, cwd, font, curve_days, boot| {
 		tick: 0,
 		last_active: 0,
 		view_anim: 0,
-		last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "" },
+		last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "", curve_family: "" },
 		day_notes: loaded.nts,
 		plan: loaded.pl,
 		week_tss: loaded.wk,
@@ -1126,7 +1127,7 @@ capture_refusal_for = |kind, rec_active, cap_pending|
 # inline block: on the pinned compiler, a large conditional binding captured
 # by a task closure compiles to its empty default (#371), and a call compiles
 # correctly.
-refusals_for : { has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, capture : Str }, I64, U64, U64, List(TraceId), Bool, Bool -> Str
+refusals_for : { has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, capture : Str, family : Str }, I64, U64, U64, List(TraceId), Bool, Bool -> Str
 refusals_for = |dv, cdir, wsel, cur_sel, ids, rec_active, cap_pending| {
 	segs = List.keep_if(
 		[
@@ -1188,6 +1189,7 @@ refusals_for = |dv, cdir, wsel, cur_sel, ids, rec_active, cap_pending| {
 				} else ""
 			),
 			(capture_refusal_for(dv.capture, rec_active, cap_pending)),
+			(Bus.family_refusal(dv.family)),
 		],
 		|s9| s9 != "",
 	)
@@ -1346,7 +1348,7 @@ expect {
 		{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan },
 		{ id: 2, day: "d2", name: "n2", sport: "Rowing", chan: Db.watts_chan },
 	]
-	dv = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "d1", trace_id: -1, ghost_id: -1, capture: "" }
+	dv = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "d1", trace_id: -1, ghost_id: -1, capture: "", family: "" }
 	# naming the shown session as its own ghost is refused BY NAME - the kind
 	# test cannot catch it (a session trivially matches itself) and the
 	# dismissal downstream is silent
@@ -1355,7 +1357,7 @@ expect {
 		# these two differ by sport
 		and refusals_for(dv, -2, 1, 1, m, Bool.False, Bool.False) == "ghost_day d1 is Ride, the session is Rowing"
 		# a clean directive refuses nothing
-		and refusals_for({ has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }, -2, 0, 0, m, Bool.False, Bool.False) == ""
+		and refusals_for({ has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "", family: "" }, -2, 0, 0, m, Bool.False, Bool.False) == ""
 }
 
 # a session named by id is judged by identity: absent, the one on screen, or
@@ -1365,7 +1367,7 @@ expect {
 		{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan },
 		{ id: 2, day: "d2", name: "n2", sport: "Rowing", chan: Db.watts_chan },
 	]
-	blank = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }
+	blank = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "", family: "" }
 	# an id no picker entry carries; the selection did not move, so it is
 	# judged against the shown session and refused by name
 	refusals_for({ ..blank, trace_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "trace_id 9 not in the picker"
@@ -1392,7 +1394,7 @@ expect {
 		{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan },
 		{ id: 2, day: "d2", name: "n2", sport: "Rowing", chan: Db.watts_chan },
 	]
-	blank = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }
+	blank = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "", family: "" }
 	refusals_for({ ..blank, trace_day: "d9", trace_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "trace_id 9 not in the picker"
 		and refusals_for({ ..blank, trace_day: "d9" }, -2, 0, 0, m, Bool.False, Bool.False) == "trace_day d9 not in the picker"
 		and refusals_for({ ..blank, trace_day: "d9", trace_id: 1 }, -2, 0, 0, m, Bool.False, Bool.False) == ""
@@ -1410,7 +1412,7 @@ expect {
 	m = [
 		{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan },
 	]
-	blank = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }
+	blank = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "", family: "" }
 	refusals_for({ ..blank, capture: "gif" }, -2, 0, 0, m, Bool.False, Bool.False) == "capture gif not png/webm_start/webm_stop"
 		and refusals_for({ ..blank, capture: "png" }, -2, 0, 0, m, Bool.False, Bool.False) == ""
 		and refusals_for({ ..blank, capture: "png" }, -2, 0, 0, m, Bool.True, Bool.False) == ""
@@ -1537,18 +1539,18 @@ focus_task! = |acc, f|
 # click through the full loader repeats, on every switch, the whole read
 # the boot pays once. This is the chip's own path; R still runs the full
 # loader, which is what R is for.
-CurveWindow : { days : I64, c : List(Db.CurvePt), cpv : List(Db.CurvePt), lbls : List({ p : Text.Prepared, d : I64 }), title : Text.Prepared, fit_lbl : Text.Prepared, cp_lbl : Text.Prepared, fit_cp : F32 }
+CurveWindow : { days : I64, fam : Str, prs : List(Db.PrRung), c : List(Db.CurvePt), cpv : List(Db.CurvePt), lbls : List({ p : Text.Prepared, d : I64 }), title : Text.Prepared, fit_lbl : Text.Prepared, cp_lbl : Text.Prepared, fit_cp : F32 }
 
-load_curve_window! : Access, Text.Font, I64 => Try(CurveWindow, [ResourceLimit])
-load_curve_window! = |acc, font, curve_days| {
+load_curve_window! : Access, Text.Font, I64, Str => Try(CurveWindow, [ResourceLimit])
+load_curve_window! = |acc, font, curve_days, curve_family| {
 	read = match open_db!(acc) {
 		Ok(db) => {
 			tm = Db.today_mod!(acc.io.commands(), db)
-			{ c: Db.load_curve!(db, curve_days, tm), cpv: Db.load_curve_prev!(db, curve_days, tm), b20: Db.load_best20_age!(db, curve_days, tm) }
+			{ c: Db.load_curve!(db, curve_days, tm, curve_family), cpv: Db.load_curve_prev!(db, curve_days, tm, curve_family), b20: Db.load_best20_age!(db, curve_days, tm, curve_family), prs: Db.load_prs!(db, curve_family) }
 		}
-		Err(_) => { c: [], cpv: [], b20: -1 }
+		Err(_) => { c: [], cpv: [], b20: -1, prs: [] }
 	}
-	fit = Db.load_fit!(acc.io.commands(), curve_days)
+	fit = Db.load_fit!(acc.io.commands(), curve_days, curve_family)
 	fit_text = Curve.fit_caption(fit, read.b20)
 	# the same two faces the full loader prepares these labels with, so a
 	# window switch cannot re-set the curve in a different type
@@ -1565,6 +1567,8 @@ load_curve_window! = |acc, font, curve_days| {
 	)?
 	Ok({
 		days: curve_days,
+		fam: curve_family,
+		prs: read.prs,
 		c: read.c,
 		cpv: read.cpv,
 		lbls,
@@ -1674,6 +1678,7 @@ caps_fields = [
 	{ name: "trace_id", kind: "integer", accepts: "an activity id among the trace picker's sessions; when both are given it takes precedence over trace_day" },
 	{ name: "ghost_id", kind: "integer", accepts: "an activity id among the trace picker's sessions, of the same kind as the session shown; takes precedence over ghost_day, and 'none' in ghost_day still dismisses" },
 	{ name: "capture", kind: "text", accepts: "'png' writes the view the directive lands on, once it has settled, to captures/<view>.png under the directory the window was launched from; 'webm_start' and 'webm_stop' begin and end a WebM recording of it; the row stays pending until the host answers, then result names the file by its absolute path" },
+	{ name: "family", kind: "text", accepts: "'Ride' or 'Rowing' switches the power view's curve, record book and CP fit to that family; omitted leaves it unchanged" },
 ]
 
 update! : Model, App.Input(Msg), App.Io => Try(Model, [Exit(I64)])
@@ -1704,8 +1709,8 @@ update! = |model0, program_input, io| {
 				# dropped whole - including its reloading flag, which the newer
 				# request still owns
 				CurveReloaded(w) =>
-					if (w.days != acc.curve_days) acc
-					else { ..acc, curve: w.c, curve_prev: w.cpv, curve_lbls: w.lbls, curve_title: w.title, fit_lbl: w.fit_lbl, cp_lbl: w.cp_lbl, fit_cp: w.fit_cp, reloading: Bool.False }
+					if (w.days != acc.curve_days or w.fam != acc.curve_family) acc
+					else { ..acc, prs: w.prs, curve: w.c, curve_prev: w.cpv, curve_lbls: w.lbls, curve_title: w.title, fit_lbl: w.fit_lbl, cp_lbl: w.cp_lbl, fit_cp: w.fit_cp, reloading: Bool.False }
 				CurveReloadFailed(days) => if (days != acc.curve_days) acc else { ..acc, reloading: Bool.False }
 				# a failed fetch lowers the loading flag only if it was the current
 				# fetch: a failure for a superseded switch must not clear the flag
@@ -1724,7 +1729,7 @@ update! = |model0, program_input, io| {
 				# only the answer for the day still open lands; a result for a day
 				# the user closed or switched away from is dropped
 				DayDetail(dd) => if (dd.day == acc.detail_day) ({ ..acc, detail: dd.lines }) else acc
-				FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "" } }
+				FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "", curve_family: "" } }
 				# a session-naming directive replaces the picker with the one it
 				# was read against, so the refusal below and the selection it
 				# resolves both see the database as it is. The trace cache is
@@ -1771,8 +1776,8 @@ update! = |model0, program_input, io| {
 					# R still refreshes everything the window does not drive. The
 					# reloading flag stays the chip's too, since its request may
 					# still be in flight.
-					if (fresh.curve_days == acc.curve_days) merged
-					else { ..merged, curve: acc.curve, curve_prev: acc.curve_prev, curve_lbls: acc.curve_lbls, curve_title: acc.curve_title, curve_days: acc.curve_days, fit_lbl: acc.fit_lbl, cp_lbl: acc.cp_lbl, fit_cp: acc.fit_cp, reloading: acc.reloading }
+					if (fresh.curve_days == acc.curve_days and fresh.curve_family == acc.curve_family) merged
+					else { ..merged, curve_family: acc.curve_family, prs: acc.prs, curve: acc.curve, curve_prev: acc.curve_prev, curve_lbls: acc.curve_lbls, curve_title: acc.curve_title, curve_days: acc.curve_days, fit_lbl: acc.fit_lbl, cp_lbl: acc.cp_lbl, fit_cp: acc.fit_cp, reloading: acc.reloading }
 				}
 				# only the reply for the current trace generation lands: two switches
 				# faster than the first fetch resolves would otherwise let the first,
@@ -1789,10 +1794,10 @@ update! = |model0, program_input, io| {
 	# it names: view, range, a day for the crosshair, a session for the trace
 	directive0 = List.fold(
 		program_input.messages,
-		{ has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" },
+		{ has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "", family: "" },
 		|acc, msg|
 			match msg {
-				Directive(d2) => { has_d: Bool.True, id: d2.dv.id, view: d2.dv.view, range: d2.dv.range, cursor_day: d2.dv.cursor_day, trace_day: d2.dv.trace_day, ghost_day: d2.dv.ghost_day, trace_id: d2.dv.trace_id, ghost_id: d2.dv.ghost_id, capture: d2.dv.capture }
+				Directive(d2) => { has_d: Bool.True, id: d2.dv.id, view: d2.dv.view, range: d2.dv.range, cursor_day: d2.dv.cursor_day, trace_day: d2.dv.trace_day, ghost_day: d2.dv.ghost_day, trace_id: d2.dv.trace_id, ghost_id: d2.dv.ghost_id, capture: d2.dv.capture, family: d2.dv.family }
 				_ => acc
 			},
 	)
@@ -1841,7 +1846,7 @@ update! = |model0, program_input, io| {
 	}
 	# the outcome a re-delivery re-reports, once the capture has answered
 	last_directive1 = last_directive_after(model.last_directive, cap_step.act)
-	directive = if (is_redelivery) ({ has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "" }) else directive0
+	directive = if (is_redelivery) ({ has_d: Bool.False, id: -1.I64, view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "", family: "" }) else directive0
 	if model.quitting {
 		# the wait for the focus clear is short, and answered at full rate
 		Window.set_target_fps!(full_fps)
@@ -1982,6 +1987,13 @@ update! = |model0, program_input, io| {
 			)
 			else if (view == 1) (if (d.key_pressed(Key1)) 30 else if (d.key_pressed(Key2)) 60 else if (d.key_pressed(Key3)) 90 else model.curve_days)
 			else model.curve_days
+		# the power view's family: a directive's (a refused one changes nothing),
+		# or the family chip clicked on the power view
+		clicked_family = if (view == 1 and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0) (Curve.family_chip_at(m0.x, win.w - 420.0)) else ""
+		want_family =
+			if (directive.has_d and directive.family != "" and Bus.family_refusal(directive.family) == "") directive.family
+			else if (clicked_family != "") clicked_family
+			else model.curve_family
 		# on the trace view, [ and ] walk the picker, X narrows it to one sport.
 		# A filter change moves the selection itself, because the session the
 		# window is showing may be one the new filter does not admit.
@@ -2096,9 +2108,13 @@ update! = |model0, program_input, io| {
 		# a directive naming a session day resolves to its picker slot
 		# an id names one session exactly and wins over a day; a day names
 		# whichever session of that day sorts first, which is the newest
+		# TAB on the power view with a rung hovered opens the session that set
+		# that rung's window best (TAB already moves the power view to the trace)
+		tab_source = if (model.view == 1 and d.key_pressed(KeyTab)) (Curve.hovered_source(model)) else -1
 		want_sel2 =
 			if (directive.has_d and directive.trace_id >= 0) (sel_for_id(model.trace_ids, directive.trace_id, want_sel))
 			else if (directive.has_d and directive.trace_day != "") (sel_for_day(model.trace_ids, directive.trace_day, want_sel))
+			else if (tab_source >= 0) (sel_for_id(model.trace_ids, tab_source, want_sel))
 			else want_sel
 		# NoSwitch joins List.get's OutOfBounds in one inferred error union
 		# a switch is the selection moving, or a refetch the picker re-read
@@ -2251,7 +2267,7 @@ update! = |model0, program_input, io| {
 					Err(_) => model.trace_unit
 				}
 			} else model.trace_unit
-		reload_spawned = want_days != model.curve_days or d.key_pressed(KeyR)
+		reload_spawned = want_days != model.curve_days or want_family != model.curve_family or d.key_pressed(KeyR)
 		# R is the full reload - every table, for an athlete who just synced.
 		# A chip is a window change, and takes the three-read path.
 		_ = if d.key_pressed(KeyR) {
@@ -2260,17 +2276,17 @@ update! = |model0, program_input, io| {
 			cwd2 = model.cwd
 			Task.spawn!(
 				program_input,
-				|| match load_model!(acc2r, cwd2, f2, want_days, Bool.False) {
+				|| match load_model!(acc2r, cwd2, f2, want_days, want_family, Bool.False) {
 					Ok(m2) => Reloaded(m2)
 					Err(_) => ReloadFailed
 				},
 			)
-		} else if want_days != model.curve_days {
+		} else if want_days != model.curve_days or want_family != model.curve_family {
 			f3 = model.font
 			acc3r = { io, dir: model.stride_dir }
 			Task.spawn!(
 				program_input,
-				|| match load_curve_window!(acc3r, f3, want_days) {
+				|| match load_curve_window!(acc3r, f3, want_days, want_family) {
 					Ok(w) => CurveReloaded(w)
 					Err(_) => CurveReloadFailed(want_days)
 				},
@@ -2279,7 +2295,7 @@ update! = |model0, program_input, io| {
 		chip0h = win.w - 420.0
 		# per-chip, not one wide band: the 8px gaps between chips are not
 		# clickable and must not claim the pointer
-		over_chip = (view2 == 0 or view2 == 1) and m.y >= 64.0 and m.y <= 86.0 and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0))
+		over_chip = (view2 == 0 or view2 == 1) and m.y >= 64.0 and m.y <= 86.0 and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0) or (view2 == 1 and Curve.family_chip_at(m.x, chip0h) != ""))
 		over_row = view2 == 3 and m.x >= 36.0 and m.x < Table.table_edge(win.w, detail_day2) and (
 			match Table.row_at(Table.page_for(model, cursor2), m.y) {
 				Row(_) => Bool.True
@@ -2311,7 +2327,7 @@ update! = |model0, program_input, io| {
 			cwd0 = model.cwd
 			Task.spawn!(
 				program_input,
-				|| match load_model!(acc0r, cwd0, f0, 90, Bool.False) {
+				|| match load_model!(acc0r, cwd0, f0, 90, "Ride", Bool.False) {
 					Ok(m2) => Reloaded(m2)
 					Err(_) => ReloadFailed
 				},
@@ -2361,6 +2377,7 @@ update! = |model0, program_input, io| {
 			detail_day: (if (view2 == 3) detail_day2 else ""),
 			sport: want_sport2,
 			family: Career.spine_at(model.career_spines, spine_idx).fam,
+			curve_family: want_family,
 		}
 		# written when what the human sees changed, at most twice a second,
 		# and on a heartbeat regardless: updated_at is the coach's liveness
@@ -2439,7 +2456,7 @@ update! = |model0, program_input, io| {
 		used = !List.is_empty(d.events) or List.any(d.keys, |k| k != 0) or pointer.x != 0.0 or pointer.y != 0.0 or wheel.x != 0.0 or wheel.y != 0.0 or Mouse.button_down(d.mouse, Left) or Mouse.button_down(d.mouse, Right) or win.w != model.win.w or win.h != model.win.h or directive.has_d
 		last_active = if (used) tick else model.last_active
 		Window.set_target_fps!(frame_rate({ busy, tick, last_active }))
-		Ok({ ..model, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 

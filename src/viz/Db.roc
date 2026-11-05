@@ -6,7 +6,7 @@ import rr.Sqlite
 import rr.Cmd
 
 Db :: [].{
-	CurvePt : { dur_s : I64, watts : F32 }
+	CurvePt : { dur_s : I64, watts : F32, aid : I64, name : Str, day : Str, ago : I64 }
 	DayLine : { title : Str, stats : Str, extra : Str, zones : List(I64) }
 
 	# the brand atlases carry ASCII; human-authored text (plan details, session
@@ -194,11 +194,11 @@ Db :: [].{
 	# rung and a zero-watt rung draw identically. today_mod is the athlete's
 	# today as a sqlite modifier (today_mod!), which the window's days count
 	# back from.
-	load_curve! : Sqlite.Db, I64, Str => List(CurvePt)
-	load_curve! = |db, days, today_mod| {
-		q = "SELECT secs AS d, CAST(ROUND(MAX(watts)) AS INTEGER) AS p FROM activity_power_ladder WHERE sport_family = 'Ride' AND start_local >= date('now', '${today_mod}', '-' || :d || ' days') GROUP BY rung, secs ORDER BY secs"
+	load_curve! : Sqlite.Db, I64, Str, Str => List(CurvePt)
+	load_curve! = |db, days, today_mod, fam| {
+		q = "SELECT secs AS d, CAST(ROUND(watts) AS INTEGER) AS p, CAST(x.activity_id AS INTEGER) AS ca, CAST(COALESCE(a.name, '') AS TEXT) AS cn, CAST(x.day AS TEXT) AS cdy, CAST(julianday(date('now', '${today_mod}')) - julianday(x.day) AS INTEGER) AS cag FROM (SELECT activity_id, day, secs, watts, ROW_NUMBER() OVER (PARTITION BY secs ORDER BY watts DESC, start_local DESC) AS rn FROM activity_power_ladder WHERE sport_family = :fam AND start_local >= date('now', '${today_mod}', '-' || :d || ' days')) x LEFT JOIN activities a ON a.id = x.activity_id WHERE x.rn = 1 ORDER BY secs"
 
-		match db.query!(q, [{ name: ":d", value: Integer(days) }]) {
+		match db.query!(q, [{ name: ":d", value: Integer(days) }, { name: ":fam", value: String(fam) }]) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(
@@ -206,8 +206,11 @@ Db :: [].{
 					|r| {
 						d = r.i64("d") ? |_| "bad d"
 						p = r.i64("p") ? |_| "bad p"
-
-						Ok({ dur_s: d, watts: I64.to_f32(p) })
+						ca = r.i64("ca") ? |_| "bad ca"
+						cn = r.str("cn") ? |_| "bad cn"
+						cdy = r.str("cdy") ? |_| "bad cdy"
+						cag = r.i64("cag") ? |_| "bad cag"
+						Ok({ dur_s: d, watts: I64.to_f32(p), aid: ca, name: ascii_safe(cn), day: cdy, ago: cag })
 					},
 				)
 		}
@@ -217,11 +220,11 @@ Db :: [].{
 	# ago). The curve view's deltas argue against this, not the record book -
 	# progress is a comparison with recent self, and the all-time envelope
 	# stays as a faint reference rather than the antagonist.
-	load_curve_prev! : Sqlite.Db, I64, Str => List(CurvePt)
-	load_curve_prev! = |db, days, today_mod| {
-		q = "SELECT secs AS d, CAST(ROUND(MAX(watts)) AS INTEGER) AS p FROM activity_power_ladder WHERE sport_family = 'Ride' AND start_local >= date('now', '${today_mod}', '-' || :d2 || ' days') AND start_local < date('now', '${today_mod}', '-' || :d || ' days') GROUP BY rung, secs ORDER BY secs"
+	load_curve_prev! : Sqlite.Db, I64, Str, Str => List(CurvePt)
+	load_curve_prev! = |db, days, today_mod, fam| {
+		q = "SELECT secs AS d, CAST(ROUND(MAX(watts)) AS INTEGER) AS p FROM activity_power_ladder WHERE sport_family = :fam AND start_local >= date('now', '${today_mod}', '-' || :d2 || ' days') AND start_local < date('now', '${today_mod}', '-' || :d || ' days') GROUP BY rung, secs ORDER BY secs"
 
-		match db.query!(q, [{ name: ":d", value: Integer(days) }, { name: ":d2", value: Integer(days * 2) }]) {
+		match db.query!(q, [{ name: ":d", value: Integer(days) }, { name: ":d2", value: Integer(days * 2) }, { name: ":fam", value: String(fam) }]) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(
@@ -230,7 +233,7 @@ Db :: [].{
 						d = r.i64("d") ? |_| "bad d"
 						p = r.i64("p") ? |_| "bad p"
 
-						Ok({ dur_s: d, watts: I64.to_f32(p) })
+						Ok({ dur_s: d, watts: I64.to_f32(p), aid: 0, name: "", day: "", ago: -1 })
 					},
 				)
 		}
@@ -239,9 +242,9 @@ Db :: [].{
 	# how many days before the athlete's today the window's best 20-minute
 	# ride power was set (the latest day holding that best), or -1 when the
 	# window has none
-	load_best20_age! : Sqlite.Db, I64, Str => I64
-	load_best20_age! = |db, days, today_mod|
-		match db.query!("SELECT CAST(julianday(date('now', '${today_mod}')) - julianday(substr(a.start_local, 1, 10)) AS INTEGER) AS ag FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_family = 'Ride' AND a.start_local >= date('now', '${today_mod}', '-' || :d || ' days') AND COALESCE(m.best_20min_w, 0) > 0 ORDER BY m.best_20min_w DESC, a.start_local DESC LIMIT 1", [{ name: ":d", value: Integer(days) }]) {
+	load_best20_age! : Sqlite.Db, I64, Str, Str => I64
+	load_best20_age! = |db, days, today_mod, fam|
+		match db.query!("SELECT CAST(julianday(date('now', '${today_mod}')) - julianday(substr(a.start_local, 1, 10)) AS INTEGER) AS ag FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_family = :fam AND a.start_local >= date('now', '${today_mod}', '-' || :d || ' days') AND COALESCE(m.best_20min_w, 0) > 0 ORDER BY m.best_20min_w DESC, a.start_local DESC LIMIT 1", [{ name: ":d", value: Integer(days) }, { name: ":fam", value: String(fam) }]) {
 			Err(_) => -1
 			Ok(rows) => match List.first(rows) {
 				Ok(r) => r.i64("ag") ?? -1
@@ -371,7 +374,7 @@ Db :: [].{
 	# -1 in an id field and "" in a day field mean "not set" (SQL NULL). An id
 	# names one session exactly; a day names whichever session on that day
 	# sorts first, and when both are given the id is the one that counts.
-	Directive : { id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, capture : Str }
+	Directive : { id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, capture : Str, family : Str }
 
 	# the newest fresh unconsumed directive. Rows past the freshness window are
 	# consumed as read (marked stale), and rows older than the winner are
@@ -447,6 +450,10 @@ Db :: [].{
 							Ok(x) => x
 							Err(_) => ""
 						}
+						fm = match r.str("fm") {
+							Ok(x) => x
+							Err(_) => ""
+						}
 						if (id < 0) None
 						else {
 							# older unconsumed rows are closed as superseded; the
@@ -454,7 +461,7 @@ Db :: [].{
 							# it reports back - a crash between read and apply
 							# leaves it retryable instead of silently lost
 							_ = db.execute!(Bus.supersede_sql, [{ name: ":id", value: Integer(id) }])
-							Some({ id, view: v, range: rg, cursor_day: cd, trace_day: td, ghost_day: gd, trace_id: ti, ghost_id: gi, capture: cp })
+							Some({ id, view: v, range: rg, cursor_day: cd, trace_day: td, ghost_day: gd, trace_id: ti, ghost_id: gi, capture: cp, family: fm })
 						}
 					}
 				}
@@ -472,11 +479,11 @@ Db :: [].{
 	}
 
 	# the window's answer: what the human is looking at, one row, upserted
-	Focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, detail_day : Str, sport : Str, family : Str }
+	Focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, detail_day : Str, sport : Str, family : Str, curve_family : Str }
 
 	# every placeholder the upsert names, bound from the row
 	focus_bindings : Focus -> List({ name : Str, value : Sqlite.Value })
-	focus_bindings = |f| [{ name: ":v", value: Integer(f.view) }, { name: ":rg", value: Integer(f.range) }, { name: ":cd", value: String(f.cursor_day) }, { name: ":td", value: String(f.trace_day) }, { name: ":gd", value: String(f.ghost_day) }, { name: ":ti", value: Integer(f.trace_id) }, { name: ":gi", value: Integer(f.ghost_id) }, { name: ":dd", value: String(f.detail_day) }, { name: ":sp", value: String(f.sport) }, { name: ":fm", value: String(f.family) }]
+	focus_bindings = |f| [{ name: ":v", value: Integer(f.view) }, { name: ":rg", value: Integer(f.range) }, { name: ":cd", value: String(f.cursor_day) }, { name: ":td", value: String(f.trace_day) }, { name: ":gd", value: String(f.ghost_day) }, { name: ":ti", value: Integer(f.trace_id) }, { name: ":gi", value: Integer(f.ghost_id) }, { name: ":dd", value: String(f.detail_day) }, { name: ":sp", value: String(f.sport) }, { name: ":fm", value: String(f.family) }, { name: ":cf", value: String(f.curve_family) }]
 
 	write_focus! : Sqlite.Db, Focus => Try({}, [WriteFailed])
 	write_focus! = |db, f| {
@@ -995,9 +1002,9 @@ Db :: [].{
 	# earliest ride (a matched record is not a new one). The query runs once
 	# per load (launch and R), never per frame.
 	PrRung : { rung : Str, secs : I64, w : I64, day : Str }
-	load_prs! : Sqlite.Db => List(PrRung)
-	load_prs! = |db|
-		match db.query!("WITH best AS (SELECT rung, watts, day FROM (SELECT rung, watts, day, ROW_NUMBER() OVER (PARTITION BY rung ORDER BY watts DESC, start_local ASC) AS rn FROM activity_power_ladder WHERE sport_family = 'Ride') WHERE rn = 1) SELECT CAST(r.rung AS TEXT) AS rung, CAST(r.secs AS INTEGER) AS secs, CAST(COALESCE(ROUND(b.watts), 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM power_ladder_rungs r LEFT JOIN best b ON b.rung = r.rung ORDER BY r.secs ASC", []) {
+	load_prs! : Sqlite.Db, Str => List(PrRung)
+	load_prs! = |db, fam|
+		match db.query!("WITH best AS (SELECT rung, watts, day FROM (SELECT rung, watts, day, ROW_NUMBER() OVER (PARTITION BY rung ORDER BY watts DESC, start_local ASC) AS rn FROM activity_power_ladder WHERE sport_family = :fam) WHERE rn = 1) SELECT CAST(r.rung AS TEXT) AS rung, CAST(r.secs AS INTEGER) AS secs, CAST(COALESCE(ROUND(b.watts), 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM power_ladder_rungs r LEFT JOIN best b ON b.rung = r.rung ORDER BY r.secs ASC", [{ name: ":fam", value: String(fam) }]) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(
@@ -1456,9 +1463,9 @@ Db :: [].{
 		parse_projection(out)
 	}
 
-	load_fit! : Cmd.Runner, I64 => Fit
-	load_fit! = |runner, days| {
-		out = match runner.run_utf8!(Cmd.with_args(Cmd.new("stride"), ["power-curve", I64.to_str(days), "Ride", "--json"])) {
+	load_fit! : Cmd.Runner, I64, Str => Fit
+	load_fit! = |runner, days, fam| {
+		out = match runner.run_utf8!(Cmd.with_args(Cmd.new("stride"), ["power-curve", I64.to_str(days), fam, "--json"])) {
 			Ok(o) => if (o.exit_code == 0) o.stdout else ""
 			Err(_) => ""
 		}
@@ -1497,11 +1504,11 @@ expect Db.plain_int("") == Err(NotAnInt)
 # are no more bindings than placeholders, and every column the INSERT
 # names is carried into the row on conflict
 expect {
-	blank = { view: 0, range: 0, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "" }
+	blank = { view: 0, range: 0, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "", curve_family: "" }
 	sql = Bus.focus_upsert_sql
 	names = List.map(Db.focus_bindings(blank), |b| b.name)
 	colons = List.count_if(Str.to_utf8(sql), |c| c == ':')
-	cols = ["view", "range", "cursor_day", "trace_day", "ghost_day", "trace_id", "ghost_id", "detail_day", "sport", "family"]
+	cols = ["view", "range", "cursor_day", "trace_day", "ghost_day", "trace_id", "ghost_id", "detail_day", "sport", "family", "curve_family"]
 	bound = List.all(names, |nm| Str.contains(sql, Str.concat(nm, ",")) or Str.contains(sql, Str.concat(nm, ")")))
 	inserted = List.all(cols, |c| Str.contains(sql, " ${c},") or Str.contains(sql, " ${c})"))
 	carried = List.all(cols, |c| Str.contains(sql, "${c} = excluded.${c}"))

@@ -28,7 +28,7 @@ Bus :: [].{
 	# The migration, in order. Every statement is safe to repeat: CREATE and
 	# INDEX carry IF NOT EXISTS, and an ALTER on a column that already exists
 	# fails and is discarded by the executor, by design. The LAST statement
-	# adds family to viz_focus, and the sentinel below counts that column
+	# adds curve_family to viz_focus, and the sentinel below counts that column
 	# as proof the whole list ran - so a new column joins at the END and the
 	# sentinel moves to it, or an existing database never gains it.
 	ddl : List(Str)
@@ -61,6 +61,10 @@ Bus :: [].{
 		"ALTER TABLE viz_focus ADD COLUMN detail_day TEXT",
 		"ALTER TABLE viz_focus ADD COLUMN sport TEXT",
 		"ALTER TABLE viz_focus ADD COLUMN family TEXT",
+		# the power view's curve family: asked for by a directive, reported in
+		# the focus row
+		"ALTER TABLE viz_directives ADD COLUMN family TEXT",
+		"ALTER TABLE viz_focus ADD COLUMN curve_family TEXT",
 	]
 
 	# The every-second fast path: one read of the catalog, no schema lock.
@@ -71,12 +75,13 @@ Bus :: [].{
 	# to its last statement reaches sentinel_present; any older column set
 	# re-enters the DDL. A table that does not exist contributes nothing.
 	sentinel_sql : Str
-	sentinel_sql = "SELECT (SELECT count(*) FROM sqlite_master WHERE name IN ('viz_directives', 'viz_focus', 'viz_directives_pending')) + (SELECT count(*) FROM pragma_table_info('viz_directives') WHERE name IN ('ghost_day', 'ghost_id', 'capture', 'result')) + (SELECT count(*) FROM pragma_table_info('viz_focus') WHERE name IN ('ghost_day', 'ghost_id', 'detail_day', 'sport', 'family')) AS c"
+	sentinel_sql = "SELECT (SELECT count(*) FROM sqlite_master WHERE name IN ('viz_directives', 'viz_focus', 'viz_directives_pending')) + (SELECT count(*) FROM pragma_table_info('viz_directives') WHERE name IN ('ghost_day', 'ghost_id', 'capture', 'result', 'family')) + (SELECT count(*) FROM pragma_table_info('viz_focus') WHERE name IN ('ghost_day', 'ghost_id', 'detail_day', 'sport', 'family', 'curve_family')) AS c"
 
-	# 3 objects + ghost_day, ghost_id, capture and result on viz_directives (4)
-	# + ghost_day, ghost_id, detail_day, sport and family on viz_focus (5)
+	# 3 objects + ghost_day, ghost_id, capture, result and family on
+	# viz_directives (5) + ghost_day, ghost_id, detail_day, sport, family and
+	# curve_family on viz_focus (6)
 	sentinel_present : I64
-	sentinel_present = 12
+	sentinel_present = 14
 
 	# a read gates the writes: a zero-row UPDATE still takes the write lock
 	has_pending_sql : Str
@@ -91,7 +96,7 @@ Bus :: [].{
 
 	# the newest fresh unconsumed row; -1 and '' stand for NULL (field not set)
 	winner_sql : Str
-	winner_sql = "SELECT id, COALESCE(view, -1) AS v, COALESCE(range, -1) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd, CAST(COALESCE(trace_day, '') AS TEXT) AS td, CAST(COALESCE(ghost_day, '') AS TEXT) AS gd, COALESCE(trace_id, -1) AS ti, COALESCE(ghost_id, -1) AS gi, CAST(COALESCE(capture, '') AS TEXT) AS cp FROM viz_directives WHERE consumed = 0 AND created_at >= datetime('now', '-${stale_secs.to_str()} seconds') ORDER BY id DESC LIMIT 1"
+	winner_sql = "SELECT id, COALESCE(view, -1) AS v, COALESCE(range, -1) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd, CAST(COALESCE(trace_day, '') AS TEXT) AS td, CAST(COALESCE(ghost_day, '') AS TEXT) AS gd, COALESCE(trace_id, -1) AS ti, COALESCE(ghost_id, -1) AS gi, CAST(COALESCE(family, '') AS TEXT) AS fm, CAST(COALESCE(capture, '') AS TEXT) AS cp FROM viz_directives WHERE consumed = 0 AND created_at >= datetime('now', '-${stale_secs.to_str()} seconds') ORDER BY id DESC LIMIT 1"
 
 	# older unconsumed rows close as superseded; the winner stays PENDING
 	# until the frame that applies it reports back through mark_sql, so a
@@ -129,27 +134,35 @@ Bus :: [].{
 	capture_refusal : Str -> Str
 	capture_refusal = |c| if (c == "" or List.contains(capture_kinds, c)) "" else "capture ${c} not png/webm_start/webm_stop"
 
+	# the families the power view draws a curve for, and the refusal a
+	# directive's family earns before any window judges it: '' asks for no
+	# change, the two families pass, anything else is named with the vocabulary
+	curve_families : List(Str)
+	curve_families = ["Ride", "Rowing"]
+	family_refusal : Str -> Str
+	family_refusal = |f| if (f == "" or List.contains(curve_families, f)) "" else "family ${f} not Ride/Rowing"
+
 	focus_upsert_sql : Str
-	focus_upsert_sql = "INSERT INTO viz_focus (id, updated_at, view, range, cursor_day, trace_day, ghost_day, trace_id, ghost_id, detail_day, sport, family) VALUES (1, datetime('now'), :v, :rg, NULLIF(:cd, ''), NULLIF(:td, ''), NULLIF(:gd, ''), NULLIF(:ti, -1), NULLIF(:gi, -1), NULLIF(:dd, ''), NULLIF(:sp, ''), NULLIF(:fm, '')) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, view = excluded.view, range = excluded.range, cursor_day = excluded.cursor_day, trace_day = excluded.trace_day, ghost_day = excluded.ghost_day, trace_id = excluded.trace_id, ghost_id = excluded.ghost_id, detail_day = excluded.detail_day, sport = excluded.sport, family = excluded.family"
+	focus_upsert_sql = "INSERT INTO viz_focus (id, updated_at, view, range, cursor_day, trace_day, ghost_day, trace_id, ghost_id, detail_day, sport, family, curve_family) VALUES (1, datetime('now'), :v, :rg, NULLIF(:cd, ''), NULLIF(:td, ''), NULLIF(:gd, ''), NULLIF(:ti, -1), NULLIF(:gi, -1), NULLIF(:dd, ''), NULLIF(:sp, ''), NULLIF(:fm, ''), NULLIF(:cf, '')) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, view = excluded.view, range = excluded.range, cursor_day = excluded.cursor_day, trace_day = excluded.trace_day, ghost_day = excluded.ghost_day, trace_id = excluded.trace_id, ghost_id = excluded.ghost_id, detail_day = excluded.detail_day, sport = excluded.sport, family = excluded.family, curve_family = excluded.curve_family"
 
 	focus_clear_sql : Str
 	focus_clear_sql = "DELETE FROM viz_focus WHERE id = 1"
 }
 
-# the sentinel's proof is the migration's last statement: it ADDS family
-# to viz_focus. A column appended after it would never be counted, so this
+# the sentinel's proof is the migration's last statement: it ADDS
+# curve_family to viz_focus. A column appended after it would never be counted, so this
 # holds the two together.
 expect {
 	last = match List.last(Bus.ddl) {
 		Ok(s) => s
 		Err(_) => ""
 	}
-	Str.starts_with(last, "ALTER TABLE viz_focus ADD COLUMN family")
+	Str.starts_with(last, "ALTER TABLE viz_focus ADD COLUMN curve_family")
 }
 
 # the sentinel reads the catalog's column structure for both tables, not
 # the text of a CREATE statement, and its target is the three objects plus
-# the columns it names on each table: four on viz_directives, five on
+# the columns it names on each table: five on viz_directives, six on
 # viz_focus, each one a column some migration appended, named in the list
 # of the table it belongs to
 expect {
@@ -164,9 +177,9 @@ expect {
 	}
 	Str.contains(directives_part, "pragma_table_info('viz_directives')")
 		and List.len(parts) == 2
-		and Bus.sentinel_present == 3 + 4 + 5
-		and List.all(["'ghost_day'", "'ghost_id'", "'capture'", "'result'"], |c| Str.contains(directives_part, c))
-		and List.all(["'ghost_day'", "'ghost_id'", "'detail_day'", "'sport'", "'family'"], |c| Str.contains(focus_part, c))
+		and Bus.sentinel_present == 3 + 5 + 6
+		and List.all(["'ghost_day'", "'ghost_id'", "'capture'", "'result'", "'family'"], |c| Str.contains(directives_part, c))
+		and List.all(["'ghost_day'", "'ghost_id'", "'detail_day'", "'sport'", "'family'", "'curve_family'"], |c| Str.contains(focus_part, c))
 		and !Str.contains(focus_part, "'capture'") and !Str.contains(directives_part, "'sport'")
 }
 
@@ -187,3 +200,9 @@ expect Str.contains(Bus.mark_sql, "result = NULLIF(:r, '')") and Str.contains(Bu
 # the capture vocabulary: nothing asked, the three kinds, and a misspelling
 expect Bus.capture_refusal("") == "" and Bus.capture_refusal("png") == "" and Bus.capture_refusal("webm_start") == "" and Bus.capture_refusal("webm_stop") == ""
 expect Bus.capture_refusal("gif") == "capture gif not png/webm_start/webm_stop"
+
+# the family vocabulary: nothing asked, the two curve families, and anything
+# else refused by name; the winner reads what was asked for
+expect Bus.family_refusal("") == "" and Bus.family_refusal("Ride") == "" and Bus.family_refusal("Rowing") == ""
+expect Bus.family_refusal("Run") == "family Run not Ride/Rowing"
+expect Str.contains(Bus.winner_sql, "AS fm, ")

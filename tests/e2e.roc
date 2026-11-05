@@ -364,7 +364,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1334)?
+	checks_ran_exactly!(1336)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7472,13 +7472,14 @@ b_cross_surface! = |ctx| {
 	cli_curve = strjq!(ctx, ["power-curve", "3650", "Ride"], "[.data.points[] | select(.watts > 0) | (.dur_s | tostring) + \":\" + ((.watts * 10 | round) | tostring)] | join(\",\")")
 	view_curve = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(s), '') FROM (SELECT secs || ':' || CAST(ROUND(MAX(watts) * 10) AS INTEGER) AS s FROM activity_power_ladder WHERE sport_family = 'Ride' AND start_local >= date('${ctx.today}', '-3650 days') GROUP BY rung, secs ORDER BY secs);"))
 	check!("the CLI power curve equals the ladder view at every rung (${cli_curve})", !Str.is_empty(cli_curve) and cli_curve == view_curve)?
-	# the window's record book joins the Ride record per rung onto the
-	# engine's power_ladder_rungs view. Its query is read out of src/viz/Db.roc
-	# rather than copied here, so the text this runs IS the text the window
-	# runs; it must equal the CLI's all-time Ride curve at every rung the CLI
-	# reports, and the rung list it stands on must equal the unpivot's - a
-	# rung added to one and not the other fails here by name
-	prs_q = Str.trim(sh!("grep -oE 'db\\.query!\\(\"WITH best AS[^\"]*power_ladder_rungs[^\"]*\"' src/viz/Db.roc | sed 's/^db\\.query!(\"//; s/\"$//'"))
+	# the window's record book joins a family's record per rung onto the
+	# engine's power_ladder_rungs view, the family bound as :fam. Its query
+	# is read out of src/viz/Db.roc rather than copied here, with Ride put in
+	# for the binding, so the text this runs IS the text the window runs; it
+	# must equal the CLI's all-time Ride curve at every rung the CLI reports,
+	# and the rung list it stands on must equal the unpivot's - a rung added
+	# to one and not the other fails here by name
+	prs_q = Str.trim(sh!("grep -oE 'db\\.query!\\(\"WITH best AS[^\"]*power_ladder_rungs[^\"]*\"' src/viz/Db.roc | sed 's/^db\\.query!(\"//; s/\"$//' | sed \"s/:fam/'Ride'/\""))
 	book = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(secs || ':' || w), '') FROM (${prs_q});"))
 	cli_book = strjq!(ctx, ["power-curve", "3650", "Ride"], "[.data.points[] | (.dur_s | tostring) + \":\" + ((.watts | round) | tostring)] | join(\",\")")
 	check!("the window's record-book query, read from its source, equals the CLI's all-time Ride curve at every rung (${book})", !Str.is_empty(prs_q) and !Str.is_empty(book) and book == cli_book)?
@@ -7764,7 +7765,7 @@ b_viz_caps! = |ctx| {
 	# update!'s resolver acts on a field - refusals_for's expects judge a
 	# resolved selection, not the fold that resolves it. An empty extraction
 	# fails rather than matching empty against empty.
-	field_parity = Str.trim(sh!("pub=$(awk '/^caps_fields = \\[/{p=1} p{print} p&&/\\]/{exit}' src/viz/main.roc | grep -oE 'name: \"[a-z_]+\"' | sed 's/name: \"//; s/\"//' | LC_ALL=C sort -u | tr '\\n' ' '); q=$(grep -oE 'COALESCE\\((view|range|cursor_day|trace_day|ghost_day|trace_id|ghost_id|capture)' src/core/Bus.roc | grep -oE '[a-z_]+$' | LC_ALL=C sort -u | tr '\\n' ' '); if [ -n \"$pub\" ] && [ \"$pub\" = \"$q\" ]; then echo same; else echo \"pub=$pub q=$q\"; fi"))
+	field_parity = Str.trim(sh!("pub=$(awk '/^caps_fields = \\[/{p=1} p{print} p&&/\\]/{exit}' src/viz/main.roc | grep -oE 'name: \"[a-z_]+\"' | sed 's/name: \"//; s/\"//' | LC_ALL=C sort -u | tr '\\n' ' '); q=$(grep -oE 'COALESCE\\((view|range|cursor_day|trace_day|ghost_day|trace_id|ghost_id|capture|family)' src/core/Bus.roc | grep -oE '[a-z_]+$' | LC_ALL=C sort -u | tr '\\n' ' '); if [ -n \"$pub\" ] && [ \"$pub\" = \"$q\" ]; then echo same; else echo \"pub=$pub q=$q\"; fi"))
 	check!("the published field names equal the columns the poll reads (${field_parity})", field_parity == "same")?
 	# the accepts text of every field is prose the binary never reads, so each
 	# claim it makes that the code also makes is compared across the two
@@ -7863,15 +7864,15 @@ b_viz_tick! = |ctx| {
 	_ = strjq!(ctx, ["viz", "tick"], ".data.found")
 	cols2 = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_directives');")
 	fcols = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")
-	check!("a bus from before the id columns gains them on the next tick, both tables", Str.contains(cols2, "capture") and Str.contains(cols2, "result") and Str.contains(cols2, "trace_id") and Str.contains(cols2, "ghost_id") and Str.contains(fcols, "trace_id") and Str.contains(fcols, "ghost_id") and Str.contains(fcols, "detail_day") and Str.contains(fcols, "sport") and Str.contains(fcols, "family"))?
-	# a focus table the previous build created - every column through the
-	# ids, none of the identity columns - gains the three on the next tick
-	_ = sql!(ctx.db, "ALTER TABLE viz_focus DROP COLUMN family; ALTER TABLE viz_focus DROP COLUMN sport; ALTER TABLE viz_focus DROP COLUMN detail_day;")
-	fcols1 = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")
-	check!("...the three are gone before the tick runs, so the gain below is the migration's", Str.contains(fcols1, "trace_id") and !Str.contains(fcols1, "detail_day") and !Str.contains(fcols1, "sport") and !Str.contains(fcols1, "family"))?
+	check!("a bus from before the id columns gains them on the next tick, both tables", Str.contains(cols2, "capture") and Str.contains(cols2, "result") and Str.contains(cols2, "trace_id") and Str.contains(cols2, "ghost_id") and Str.contains(fcols, "trace_id") and Str.contains(fcols, "ghost_id") and Str.contains(fcols, "detail_day") and Str.contains(fcols, "sport") and Str.contains(fcols, "family") and Str.contains(fcols, "curve_family") and Str.contains(cols2, " family"))?
+	# a focus table the previous builds created - every column through the
+	# ids, none of the identity columns - gains all four on the next tick
+	_ = sql!(ctx.db, "ALTER TABLE viz_focus DROP COLUMN curve_family; ALTER TABLE viz_focus DROP COLUMN family; ALTER TABLE viz_focus DROP COLUMN sport; ALTER TABLE viz_focus DROP COLUMN detail_day;")
+	fcols1 = Str.concat(" ", Str.trim(sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")))
+	check!("...the four are gone before the tick runs, so the gain below is the migration's", Str.contains(fcols1, " trace_id") and !Str.contains(fcols1, " detail_day") and !Str.contains(fcols1, " sport") and !Str.contains(fcols1, " family") and !Str.contains(fcols1, " curve_family"))?
 	_ = strjq!(ctx, ["viz", "tick"], ".data.found")
-	fcols2 = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")
-	check!("a focus table with the ids but none of the identity columns gains all three on the next tick", Str.contains(fcols2, "trace_id") and Str.contains(fcols2, "detail_day") and Str.contains(fcols2, "sport") and Str.contains(fcols2, "family"))?
+	fcols2 = Str.concat(" ", Str.trim(sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")))
+	check!("a focus table with the ids but none of the identity columns gains all four on the next tick", Str.contains(fcols2, " trace_id") and Str.contains(fcols2, " detail_day") and Str.contains(fcols2, " sport") and Str.contains(fcols2, " family") and Str.contains(fcols2, " curve_family"))?
 	# stale: a row older than the window closes as stale, applied by nobody,
 	# and a fresh row beside it is the winner
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, created_at) VALUES (3, datetime('now', '-1 hour'));")
@@ -7884,6 +7885,12 @@ b_viz_tick! = |ctx| {
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (5);")
 	check!("the newest of two fresh rows wins", strjq!(ctx, ["viz", "tick"], ".data.view") == "5")?
 	check!("...and the older closed as superseded", Str.trim(sql!(ctx.db, "SELECT status FROM viz_directives WHERE view = 4;")) == "superseded")?
+	# the power view's family: a directive naming Ride or Rowing is applied
+	# with it, and any other value is refused by name
+	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, family) VALUES (1, 'Rowing');")
+	check!("a directive naming a curve family is applied with it", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .family") == "applied/Rowing")?
+	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, family) VALUES (1, 'Run');")
+	check!("...and a family outside Ride/Rowing is refused by name", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/family Run not Ride/Rowing")?
 	# pending until reported: a cycle that does not ack leaves the winner
 	# pending, and the next cycle returns the SAME row - a crash between
 	# apply and report retries rather than loses the directive

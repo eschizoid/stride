@@ -355,7 +355,8 @@ polls about once a second and every row reaches a status you can read back.
    it holds two sessions). The id wins when both are given. `ghost_day = 'none'`
    dismisses the ghost. `capture = 'png'` writes the landed view to
    `captures/<view>.png` under the window's launch directory; `'webm_start'` and
-   `'webm_stop'` record. One capture runs at a time.
+   `'webm_stop'` record. One capture runs at a time. `family = 'Rowing'` (or `'Ride'`)
+   switches the power view's curve, record book and CP fit to that family.
 3. **Verify by id.** `stride viz --json` lists the last ten directives newest first in
    `history` and capture rows in `captures`, each
    `{id, created_at, status, error, applied_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id, capture, result}`
@@ -365,7 +366,8 @@ polls about once a second and every row reaches a status you can read back.
    row won; `stale` = nothing read it within the freshness window. A refused field is a
    fact about the data or the picker, not a reason to retry.
 4. **Observe with freshness.** `stride viz --json` serves `focus`
-   `{present, live, age_seconds, updated_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id, detail_day, sport, family}`.
+   `{present, live, age_seconds, updated_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id, detail_day, sport, family, curve_family}`
+   (`family` is the career view's family, `curve_family` the power view's).
    Read `live`, never the timestamp: a window closed by the OS leaves a row that is
    present but not live; `present: false` is a clean quit (ESC) or a window that never ran.
 5. **Focus is context, not evidence.** It tells you what the athlete is asking about,

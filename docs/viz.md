@@ -271,6 +271,9 @@ INSERT INTO viz_directives (trace_id, ghost_id) VALUES (20355183143, 20342052869
 -- the older close superseded).
 -- `stride viz --json` lists them under `captures`.
 INSERT INTO viz_directives (view, capture) VALUES (1, 'png');
+-- the power view's family: 'Ride' or 'Rowing' switches its curve, record
+-- book and CP fit; any other value is refused by name.
+INSERT INTO viz_directives (view, family) VALUES (1, 'Rowing');
 -- view 0..8 (form/power/trace/table/plan/heat/zones/ramp/career) - but read
 -- the list from `stride viz --json`, which the running binary publishes,
 -- rather than from this comment. A directive naming a view outside the
@@ -425,6 +428,24 @@ duration and target watts (between rungs, placed linearly in seconds),
 labelled with its day and the target's share of this window's best at that
 duration, read off the line between the rungs around it. Hovering a ring
 names the session: type, reps, duration and watts.
+
+Two chips beside the range chips, bike and row, switch the whole tab between
+the Ride and Rowing families: the curve, the previous window, the record book
+and the CP fit (`stride power-curve <days> <family>`). A family with no power
+on record keeps its chip lit and says so, naming the bike chip as the way
+back; planned targets are ride power and show on the ride curve only. A
+directive's `family` field steers the same switch, and the focus row reports
+the family on screen as `curve_family`.
+
+A rung whose window best is within 5% of the next longer rung's best
+(`flat_ratio`) was not pushed: it is that session's ordinary output, not an
+all-out effort. Its dot goes muted in that window, no delta is printed
+beside it (a gap between two unpushed rungs reflects which workouts were
+chosen, not fitness), and a line above the fit caption names the window's
+unpushed durations. The longest rung has nothing longer to beat and is never
+marked. A window best set more than half the window ago fades. Hovering a
+rung names the session that set the window's best and its day, and TAB on a
+hovered rung opens that session in the trace view.
 The ladder itself - which columns, which family, that zero and NULL both mean unrecorded - is
 the `activity_power_ladder` view's, shared with the record book and the
 CLI's health report.

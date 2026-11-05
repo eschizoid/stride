@@ -15,7 +15,8 @@
     "trace_id",
     "view",
     "capture",
-    "error"
+    "error",
+    "family"
   ],
   "additionalKeys": false,
   "properties": {
@@ -60,6 +61,10 @@
     "error": {
       "type": "string",
       "description": "the capture refusal this tick would record (and did, when acked): a capture needs a window; empty when none"
+    },
+    "family": {
+      "type": "string",
+      "description": "the curve family the directive asked the power view to show (Ride or Rowing), empty when it asked for none; any other value is refused by name"
     }
   }
 }
