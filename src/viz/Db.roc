@@ -39,7 +39,10 @@ Db :: [].{
 	# status row passes through here.
 	grouped : I64 -> Str
 	grouped = |n| {
-		digits = Str.to_utf8(I64.to_str(if (n < 0) (-n) else n))
+		# the sign comes off the string, not the number: negating I64.min
+		# overflows, its text does not
+		txt = I64.to_str(n)
+		digits = Str.to_utf8(Str.drop_prefix(txt, "-"))
 		len = List.len(digits)
 		out = List.fold(
 			List.map_with_index(digits, |d, i| { d, i }),
@@ -1531,5 +1534,5 @@ expect !(Db.parse_projection("").ok)
 # thousands group in threes from the right, a sign stays in front, and a
 # unit sits one space after the number
 expect Db.grouped(0) == "0" and Db.grouped(999) == "999" and Db.grouped(1000) == "1,000" and Db.grouped(13201) == "13,201" and Db.grouped(1000000) == "1,000,000"
-expect Db.grouped(-1234) == "-1,234" and Db.grouped(-999) == "-999"
+expect Db.grouped(-1234) == "-1,234" and Db.grouped(-999) == "-999" and Db.grouped(-9_223_372_036_854_775_807 - 1) == "-9,223,372,036,854,775,808"
 expect Db.num_unit(447, "h") == "447 h" and Db.num_unit(13201, "mi") == "13,201 mi"
