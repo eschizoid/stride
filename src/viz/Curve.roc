@@ -309,13 +309,13 @@ Curve :: [].{
 
 	# r2 to two decimals, cut toward zero and signed: one decimal reads 0.95
 	# as 1.0, and rounding would show a fit just under the 0.9 floor as 0.90.
-	# An r2 below zero (a fit worse than the mean) keeps its sign.
+	# An r2 below zero (a fit worse than the mean) keeps its sign. The 1e-4
+	# nudge keeps an F32 a hair under a two-decimal value (0.84 is stored as
+	# 0.8399999) from cutting down a whole hundredth.
 	r2_str : F32 -> Str
-	r2_str = |v| match F32.round_to_i64_try(v * 1000.0) {
-		Ok(m) => {
-			n = m // 10
-			a = if (n < 0) -n else n
-			sign = if (n < 0) "-" else ""
+	r2_str = |v| match F32.round_to_i64_try(F32.div_floor_by((if (v < 0.0) -v else v) * 100.0 + 0.0001, 1.0)) {
+		Ok(a) => {
+			sign = if (v < 0.0 and a > 0) "-" else ""
 			"${sign}${I64.to_str(a // 100)}.${if (a % 100 < 10) "0" else ""}${I64.to_str(a % 100)}"
 		}
 		Err(_) => "?"
@@ -543,4 +543,4 @@ expect Curve.best_at([{ secs: 600, w: 260 }, { secs: 1200, w: 254 }], 1200) == 2
 expect Curve.target_label({ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }, 257.0) == "11-05 225W 88%"
 expect Curve.target_label({ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }, 0.0) == "11-05 225W"
 expect Curve.target_tip({ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }, 257.0) == "2026-11-05 threshold: 2x15:00 @ 225W - 88% of this window's best at that duration"
-expect Curve.r2_str(0.84) == "0.84" and Curve.r2_str(0.9) == "0.90" and Curve.r2_str(0.05) == "0.05" and Curve.r2_str(1.0) == "1.00" and Curve.r2_str(0.899) == "0.89" and Curve.r2_str(-0.253) == "-0.25"
+expect Curve.r2_str(0.84) == "0.84" and Curve.r2_str(0.9) == "0.90" and Curve.r2_str(0.05) == "0.05" and Curve.r2_str(1.0) == "1.00" and Curve.r2_str(0.899) == "0.89" and Curve.r2_str(0.8999) == "0.89" and Curve.r2_str(-0.253) == "-0.25"
