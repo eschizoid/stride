@@ -1593,6 +1593,7 @@ Plan :: [].{
 						}
 						awaiting_metrics = awaiting.count
 						awaiting_streams = Strava.pending_streams!(path)?
+						missing_sets = Report.strength_without_sets_ids!(path)?
 						# Date only, lining up with summary.as_of — but mind what the gap measures:
 						# rebuild_daily_load! floors the series at local today, so as_of is pinned to the
 						# day analyze LAST RAN. The gap is last-activity-to-last-analyze and simply stops
@@ -1660,6 +1661,9 @@ Plan :: [].{
 									# consumer never reads an unknowable 0 as "nothing to do"
 									activities_awaiting_metrics_known: awaiting.known,
 									activities_awaiting_streams: awaiting_streams,
+									# strength-family sessions with no stored sets, newest first:
+									# the ids to hand `stride strength import`
+									strength_without_sets_ids: missing_sets,
 								},
 							})
 						} else {
@@ -1674,6 +1678,10 @@ Plan :: [].{
 							})
 							if fresh_line != "" {
 								Stdout.line!(fresh_line)?
+								Stdout.line!("")?
+							}
+							if !(List.is_empty(missing_sets)) {
+								Stdout.line!("STRENGTH: ${U64.to_str(List.len(missing_sets))} recent sessions have no sets (stride doctor lists them)")?
 								Stdout.line!("")?
 							}
 							# one descriptive line of plan memory (#158) — raw counts only

@@ -364,7 +364,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1336)?
+	checks_ran_exactly!(1343)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7392,6 +7392,25 @@ b_strength_import! = |ctx| {
 	check!("...and the same window is polarized once the lift has no sets", strjq!(ctx, ["summary"], ".data.last_7d.polarization_known | tostring") == "true")?
 	_ = sql!(ctx.db, "DELETE FROM strength_sets WHERE activity_id = 9734; DELETE FROM streams WHERE activity_id = 9734; DELETE FROM activity_metrics WHERE activity_id = 9734; DELETE FROM activities WHERE id = 9734; DELETE FROM daily_load WHERE day = '2099-06-15';")
 	_ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (9730, 9731, 9732, 9733); DELETE FROM activities WHERE id IN (9730, 9731, 9732, 9733);")
+	# strength sessions still missing their sets, dated on the real clock because the
+	# list is a window ending at the local today: a pasted lift (9781), a logged one
+	# (9782), one with neither (9783), a family member under another sport type with
+	# neither (9784), a ride (9785) and a lift older than the window (9786). Only the
+	# ids in this range are read, since earlier fixtures may hold recent lifts too.
+	day = |n| "strftime('%Y-%m-%dT07:00:00Z', 'now', '-${n} days')"
+	_ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance) VALUES (9781, 'pasted recent lift', 'WeightTraining', ${day("3")}, 3600, 0), (9782, 'logged recent lift', 'WeightTraining', ${day("4")}, 3600, 0), (9783, 'bare recent lift', 'WeightTraining', ${day("1")}, 3600, 0), (9784, 'bare recent workout', 'Workout', ${day("2")}, 3600, 0), (9785, 'recent ride', 'Ride', ${day("5")}, 3600, 20000), (9786, 'old bare lift', 'WeightTraining', ${day("40")}, 3600, 0); INSERT OR REPLACE INTO strength_notes (activity_id, description) VALUES (9781, '${paste}');")
+	curl_log = |aid| "{\"activity_id\":\"${aid}\",\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"10 kg\"},\"reps\":{\"value\":\"10\"}}]}"
+	_ = sh!("printf '%s' '${curl_log("9782")}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - >/dev/null")
+	mine = "[.[] | select(. >= 9781 and . <= 9786)] | map(tostring) | join(\",\")"
+	check!("doctor lists the recent strength sessions with no sets, newest first, whatever their sport type", strjq!(ctx, ["doctor"], ".data.strength_without_sets_ids | ${mine}") == "9783,9784")?
+	check!("...and its count is the list's length", strjq!(ctx, ["doctor"], ".data | (.strength_without_sets == (.strength_without_sets_ids | length)) | tostring") == "true")?
+	check!("...plan carries the same list in data_freshness", strjq!(ctx, ["plan"], ".data.data_freshness.strength_without_sets_ids | tojson") == strjq!(ctx, ["doctor"], ".data.strength_without_sets_ids | tojson"))?
+	check!("doctor conforms to its schema with the list populated", validate_schema!(ctx, "doctor", "doctor") == "")?
+	check!("plan conforms to its schema with the list populated", validate_schema!(ctx, "plan", "plan") == "")?
+	check!("...the doctor screen names the ids to import", Str.contains(stride_human!(ctx.bin, ctx.home, ["doctor"]), "9783, 9784"))?
+	_ = sh!("printf '%s' '${curl_log("9783")}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - >/dev/null")
+	check!("an imported log takes its session off the list", strjq!(ctx, ["doctor"], ".data.strength_without_sets_ids | ${mine}") == "9784")?
+	_ = sql!(ctx.db, "DELETE FROM strength_sets WHERE activity_id BETWEEN 9781 AND 9786; DELETE FROM strength_logs WHERE activity_id BETWEEN 9781 AND 9786; DELETE FROM strength_notes WHERE activity_id BETWEEN 9781 AND 9786; DELETE FROM activity_metrics WHERE activity_id BETWEEN 9781 AND 9786; DELETE FROM activities WHERE id BETWEEN 9781 AND 9786;")
 	Ok({})
 }
 
