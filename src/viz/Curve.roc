@@ -128,36 +128,57 @@ Curve :: [].{
 					{ pr, now_w, prev_w, i, now_unp, prev_unp, src_txt, stale }
 				},
 			)
-			w_hi = F32.max(List.fold(rungs, 1.0, |a, r| F32.max(a, F32.max(I64.to_f32(r.pr.w), F32.max(I64.to_f32(r.now_w), I64.to_f32(r.prev_w))))), List.fold(plan_marks, 1.0, |a, t| F32.max(a, I64.to_f32(t.val)))) * 1.08
+			span = axis_span(curve, List.join(List.map(rungs, |r| [r.pr.w, r.now_w, r.prev_w])), List.map(plan_marks, |t| t.val), model.fit_cp)
+			w_lo = span.lo
+			w_hi = span.hi
 			nlast = List.len(rungs) - 1
 			cx = |i| if (nlast == 0) (pad_l + pw / 2.0) else pad_l + pw * U64.to_f32(i) / U64.to_f32(nlast)
-			cy = |w| pad_t + ph * (1.0 - w / w_hi)
-			# the grid: a faint rule and label every grid_step; steps come from
-			# the ceiling itself, so any scale gets its rules
-			step = grid_step(curve, w_hi)
-			grid_n = match F32.round_to_u64_try(F32.div_floor_by(w_hi, step)) {
-				Ok(gn) => gn
-				Err(_) => 0.U64
+			cy = |w| pad_t + ph * (1.0 - (w - w_lo) / (w_hi - w_lo))
+			# Each line introduces itself at its first rung, so the chart reads
+			# with no narrator. Each label clears its own line's first segment,
+			# which can fall or rise steeply across the label's width; the labels
+			# are then laid out in their dots' order, since two bests a few watts
+			# apart would otherwise overprint. The first rung's delta, the grid
+			# rules and the threshold line read the same placement to keep clear
+			# of them, so the drawing and the avoidance cannot drift apart.
+			slope0 = |sel| match (List.first(rungs), List.get(rungs, 1)) {
+				(Ok(a), Ok(b)) => if (sel(a) > 0 and sel(b) > 0 and nlast > 0) ((cy(I64.to_f32(sel(b))) - cy(I64.to_f32(sel(a)))) / (cx(1) - cx(0))) else 0.0
+				_ => 0.0
 			}
+			intro_w = |t| 14.0 + model.font.measure({ text: t, size: 11.0, spacing: Text.default_spacing }).width
+			intro_lines = match List.first(rungs) {
+				Ok(r0) => List.join([
+					(if (r0.pr.w > 0) [{ text: "best ever", y: intro_above(cy(I64.to_f32(r0.pr.w)), slope0(|r| r.pr.w), intro_w("best ever")), dot: cy(I64.to_f32(r0.pr.w)), color: Color.with_alpha(ink_muted, 130) }] else []),
+					(if (r0.prev_w > 0 and r0.prev_w < r0.pr.w) [{ text: "previous window", y: intro_above(cy(I64.to_f32(r0.prev_w)), slope0(|r| r.prev_w), intro_w("previous window")), dot: cy(I64.to_f32(r0.prev_w)), color: ink_muted }] else []),
+					(if (r0.now_w > 0 and r0.now_w < r0.pr.w) [{ text: "this window", y: intro_below(cy(I64.to_f32(r0.now_w)), slope0(|r| r.now_w), intro_w("this window")), dot: cy(I64.to_f32(r0.now_w)), color: Theme.ctl_c }] else []),
+				])
+				Err(_) => []
+			}
+			placed = layout_intros(intro_lines)
+			# where each introduction ends, so a rule crossing one starts past it
+			intro_spans = List.map(placed, |l| { top: l.y, bot: l.y + 11.0, right: cx(0.U64) + intro_w(l.text) })
+			# the grid: a faint rule and label at each grid_vals value, which
+			# come from the axis span itself, so any scale gets its rules
 			List.for_each!(
-				List.map_with_index(List.repeat({}, grid_n), |_u, k| (U64.to_f32(k) + 1.0) * step),
-				|gw|
-					if gw < w_hi {
-						frame.line!({ start: { x: pad_l, y: cy(gw) }, end: { x: win_w - pad_r, y: cy(gw) }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 36), 1) })
-						Text.from(
-							match F32.round_to_i64_try(gw) {
-								Ok(gi) => axis_text(curve, units, gi)
-								Err(_) => ""
-							},
-							model.font,
-						).size(10).draw!(frame, { pos: { x: pad_l - 8.0, y: cy(gw) - 6.0 }, color: ink_faint, align: (Top, Right) })
-					} else {},
+				# a rule in the band the rung labels sit in, or hard under the tooltip
+				# row, would run through their text
+				List.keep_if(grid_vals(curve, units, w_lo, w_hi), |gw| cy(gw) > pad_t + 8.0 and cy(gw) < pad_t + ph - 26.0),
+				|gw| {
+					frame.line!({ start: { x: rule_start(cy(gw), pad_l, intro_spans), y: cy(gw) }, end: { x: win_w - pad_r, y: cy(gw) }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 36), 1) })
+					Text.from(
+						match F32.round_to_i64_try(gw) {
+							Ok(gi) => axis_text(curve, units, gi)
+							Err(_) => ""
+						},
+						model.font,
+					).size(10).draw!(frame, { pos: { x: pad_l - 8.0, y: cy(gw) - 6.0 }, color: ink_faint, align: (Top, Right) })
+				},
 			)
 			# CP from the window's fit, dashed - the blue curve should flatten
 			# toward it, and a fit far from the long rungs is visibly wrong. The
 			# loader zeroes fit_cp unless the fit is usable (fit_usable), and the
 			# footer then says why instead
-			if model.fit_cp > 0.0 and model.fit_cp < w_hi {
+			if model.fit_cp > w_lo and model.fit_cp < w_hi {
 				cpy = cy(model.fit_cp)
 				cp_a = 120
 				cp_lbl_c = tsb_c
@@ -165,25 +186,11 @@ Curve :: [].{
 					List.map_with_index(List.repeat({}, 60), |_u, k| k),
 					|k| {
 						x0 = pad_l + U64.to_f32(k) * (pw / 60.0)
-						frame.line!({ start: { x: x0, y: cpy }, end: { x: x0 + pw / 120.0, y: cpy }, stroke: Draw.stroke(Color.with_alpha(tsb_c, cp_a), 1) })
+						if (x0 >= rule_start(cpy, pad_l, intro_spans)) (frame.line!({ start: { x: x0, y: cpy }, end: { x: x0 + pw / 120.0, y: cpy }, stroke: Draw.stroke(Color.with_alpha(tsb_c, cp_a), 1) })) else {}
 					},
 				)
 				model.cp_lbl.draw!(frame, { pos: { x: pad_l + pw + 8.0, y: cpy }, color: cp_lbl_c, align: (Middle, Left) })
 			}
-			# each line introduces itself at its first rung - the chart must be
-			# readable with no narrator. The first rung's delta reads the same
-			# list to keep clear of them, so the drawing and the avoidance
-			# cannot drift apart; the introductions are laid out in their dots' order
-			# first, since two bests a few watts apart would otherwise overprint
-			intro_lines = match List.first(rungs) {
-				Ok(r0) => List.join([
-					(if (r0.pr.w > 0) [{ text: "best ever", y: cy(I64.to_f32(r0.pr.w)) - 8.0, dot: cy(I64.to_f32(r0.pr.w)), color: Color.with_alpha(ink_muted, 130) }] else []),
-					(if (r0.prev_w > 0 and r0.prev_w < r0.pr.w) [{ text: "previous window", y: cy(I64.to_f32(r0.prev_w)) - 8.0, dot: cy(I64.to_f32(r0.prev_w)), color: ink_muted }] else []),
-					(if (r0.now_w > 0 and r0.now_w < r0.pr.w) [{ text: "this window", y: cy(I64.to_f32(r0.now_w)) + 6.0, dot: cy(I64.to_f32(r0.now_w)), color: Theme.ctl_c }] else []),
-				])
-				Err(_) => []
-			}
-			placed = layout_intros(intro_lines)
 			List.for_each!(placed, |l| Text.from(l.text, model.font).size(11).draw!(frame, { pos: { x: cx(0.U64) + 14.0, y: l.y }, color: l.color, align: (Top, Left) }))
 			intro_boxes = List.map(placed, |l| { top: l.y, bot: l.y + 11.0 })
 			# three envelopes back to front: the record book faintest (a
@@ -693,6 +700,23 @@ Curve :: [].{
 		}
 	}
 
+	# where a horizontal rule at y starts: at x0, or 6 px past the right end
+	# of every introduction whose box it would cross (2 px of air above and
+	# below the box count as crossing)
+	rule_start : F32, F32, List({ top : F32, bot : F32, right : F32 }) -> F32
+	rule_start = |y, x0, spans| List.fold(List.keep_if(spans, |s| y >= s.top - 2.0 and y <= s.bot + 2.0), x0, |a, s| F32.max(a, s.right + 6.0))
+
+	# Where an introduction sits beside its line's first dot. Below the line,
+	# 6 px under the dot, pushed further down when the line falls more than
+	# that across the label's width; above it, 8 px over the dot, pushed up
+	# when the line rises across the label's width. An 11 pt label is 11 px
+	# tall.
+	intro_below : F32, F32, F32 -> F32
+	intro_below = |dot, slope, w| F32.max(dot + 6.0, dot + slope * w + 2.0)
+
+	intro_above : F32, F32, F32 -> F32
+	intro_above = |dot, slope, w| F32.min(dot - 8.0, dot + slope * w - 13.0)
+
 	# the first rung's introductions laid out in the order of the dots they
 	# name: a label crossing one placed before it goes below that one.
 	# Whenever the draw includes another introduction it includes "best
@@ -813,17 +837,49 @@ Curve :: [].{
 			Pace(sp) => Fmt.mmss(pace_secs(v, (pace_unit_for(units, sp)).m))
 		}
 
-	# the gridline step: every 100 W on a power curve; on a speed curve the
-	# smallest 1-2-5 step that leaves at most six lines under the ceiling
-	grid_step : Str, F32 -> F32
-	grid_step = |curve, hi|
-		if (!is_pace(curve)) 100.0
-		else
-			List.fold(
-				[50.0, 100.0, 200.0, 250.0, 500.0, 1000.0, 2000.0],
-				2000.0,
-				|best, s| if (s < best and hi / s <= 6.0) s else best,
-			)
+	# The value axis. A power curve rises from 0 W to 8% over its highest
+	# value, as it always has. A speed curve's values sit in a narrow band
+	# far from zero (a runner's 5- and 20-minute bests differ by a few
+	# percent), so its axis spans its own values: from 10% under the lowest
+	# to 8% of the span over the highest. Zero values are absent rungs and
+	# never set the floor.
+	axis_span : Str, List(I64), List(I64), F32 -> { lo : F32, hi : F32 }
+	axis_span = |curve, rung_vals, mark_vals, fit| {
+		vals = List.concat(List.map(List.keep_if(List.concat(rung_vals, mark_vals), |v| v > 0), I64.to_f32), if (fit > 0.0) [fit] else [])
+		top = List.fold(vals, 1.0, F32.max)
+		if (!is_pace(curve)) ({ lo: 0.0, hi: top * 1.08 })
+		else {
+			low = List.fold(vals, top, F32.min) * 0.9
+			{ lo: low, hi: top + (top - low) * 0.08 }
+		}
+	}
+
+	# The gridlines between lo and hi. A power curve rules every 100 W. A pace
+	# curve rules round paces in its own unit, every 5, 10, 15, 20 or 30
+	# seconds or every 1, 2 or 5 minutes - the smallest step that leaves at
+	# most six lines - placed at the speed each pace is.
+	grid_vals : Str, [Metric, Imperial], F32, F32 -> List(F32)
+	grid_vals = |curve, units, lo, hi|
+		match Bus.curve_key(curve) {
+			Power(_) => {
+				n = F32.round_to_u64_try(F32.div_floor_by(hi, 100.0)) ?? 0
+				List.keep_if(List.map_with_index(List.repeat({}, n), |_u, k| (U64.to_f32(k) + 1.0) * 100.0), |v| v > lo and v < hi)
+			}
+			Pace(sp) => {
+				m = (pace_unit_for(units, sp)).m
+				speed_of = |p| I64.to_f32(F64.round_to_i64_try(m * 1000.0 / I64.to_f64(p)) ?? 0)
+				fast = pace_secs(F32.round_to_i64_try(hi) ?? 0, m)
+				slow = pace_secs(F32.round_to_i64_try(lo) ?? 0, m)
+				if (fast <= 0 or slow <= fast) []
+				else {
+					step = List.fold([300, 120, 60, 30, 20, 15, 10, 5], 600, |best, s| if ((slow - fast) // s <= 6) s else best)
+					first = (fast + step - 1) // step
+					count = slow // step - first + 1
+					paces = if (count <= 0) [] else List.map_with_index(List.repeat({}, I64.to_u64_wrap(count)), |_u, k| (first + U64.to_i64_wrap(k)) * step)
+					List.keep_if(List.map(paces, speed_of), |v| v > lo and v < hi)
+				}
+			}
+		}
 
 	# the window-over-window change: watts with their sign on a power curve
 	# (delta_label), and on a pace curve the change in pace in seconds per
@@ -1120,7 +1176,18 @@ expect Curve.empty_note("Rowing") == "no row power on record yet" and Curve.empt
 expect Curve.val_text("pace:Run", Metric, 4000) == "4:10/km" and Curve.val_text("pace:Run", Imperial, 4000) == "6:42/mi" and Curve.val_text("pace:Swim", Imperial, 1000) == "1:40/100m" and Curve.val_text("pace:VirtualRow", Metric, 4000) == "2:05/500m"
 expect Curve.val_text("Ride", Metric, 1234) == "1,234 w" and Curve.axis_text("Ride", Metric, 300) == "300" and Curve.axis_text("pace:Run", Metric, 4000) == "4:10"
 expect Curve.delta_for("pace:Run", Metric, 4000, 3846) == "-10s" and Curve.delta_for("pace:Run", Metric, 3846, 4000) == "+10s" and Curve.delta_for("pace:Run", Metric, 4000, 4000) == "" and Curve.delta_for("Ride", Metric, 354, 340) == "+14w"
-expect Curve.grid_step("Ride", 540.0) == 100.0 and Curve.grid_step("pace:Run", 4500.0) == 1000.0 and Curve.grid_step("pace:Swim", 1600.0) == 500.0
+# a power axis rises from zero and rules every 100 W; a pace axis spans its
+# own values and rules round paces, at most six of them
+expect {
+	s = Curve.axis_span("Ride", [500, 0, 300], [225], 0.0)
+	s.lo.abs() < 0.001 and (s.hi - 540.0).abs() < 0.01 and List.map(Curve.grid_vals("Ride", Metric, 0.0, 540.0), |v| Curve.axis_text("Ride", Metric, F32.round_to_i64_try(v) ?? 0)) == ["100", "200", "300", "400", "500"]
+}
+expect {
+	s = Curve.axis_span("pace:Run", [4600, 4200, 4000, 0], [3850], 0.0)
+	(s.lo - 3465.0).abs() < 0.5 and (s.hi - 4690.8).abs() < 0.5
+}
+expect List.map(Curve.grid_vals("pace:Run", Metric, 3465.0, 4689.0), |v| Curve.axis_text("pace:Run", Metric, F32.round_to_i64_try(v) ?? 0)) == ["3:45", "4:00", "4:15", "4:30", "4:45"]
+expect List.map(Curve.grid_vals("pace:Swim", Metric, 1200.0, 1500.0), |v| Curve.axis_text("pace:Swim", Metric, F32.round_to_i64_try(v) ?? 0)) == ["1:10", "1:15", "1:20"]
 expect Curve.title_text("Ride", 90) == "power - this 90d vs the 90d before it" and Curve.title_text("Rowing", 30) == "row power - this 30d vs the 30d before it" and Curve.title_text("pace:TrailRun", 60) == "trail run pace - this 60d vs the 60d before it"
 expect Curve.chip_label("Ride") == "bike" and Curve.chip_label("Run") == "run" and Curve.chip_label("WeightTraining") == "strength" and Curve.chip_label("Kayaking") == "kayaking" and Curve.chip_label("pace:OpenWaterSwim") == "open"
 # a CS fit is usable at the r2 floor with D' inside its band, and its line
@@ -1170,3 +1237,13 @@ expect {
 # never overprint a chip at any width
 expect Curve.caption_top >= Curve.chip_bottom + 4.0 and Curve.caption_top + 13.0 <= Theme.pad_t
 expect Curve.chip_bottom - Curve.chip_top == 22.0
+# a label beside a gently falling line keeps its offset; beside a steep one
+# it moves clear of where the line ends up under the label's far edge
+expect (Curve.intro_below(100.0, 0.02, 100.0) - 106.0).abs() < 0.001 and (Curve.intro_below(100.0, 0.24, 100.0) - 126.0).abs() < 0.001
+expect (Curve.intro_above(100.0, 0.24, 100.0) - 92.0).abs() < 0.001 and (Curve.intro_above(100.0, -0.2, 100.0) - 67.0).abs() < 0.001
+# a rule through an introduction starts past its end; one clear of every
+# introduction starts at the plot's edge
+expect {
+	spans = [{ top: 100.0, bot: 111.0, right: 200.0 }, { top: 130.0, bot: 141.0, right: 250.0 }]
+	(Curve.rule_start(105.0, 64.0, spans) - 206.0).abs() < 0.001 and (Curve.rule_start(120.0, 64.0, spans) - 64.0).abs() < 0.001 and (Curve.rule_start(142.5, 64.0, spans) - 256.0).abs() < 0.001
+}
