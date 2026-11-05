@@ -2225,7 +2225,8 @@ Metrics :: [].{
 	}
 
 	## A stored target row back to a Target: the canonical literal when the row has
-	## one, else the power-only columns a session written before #636 carries.
+	## one, else its power columns, which are all a row with no target_literal holds,
+	## as a database from before schema v42 does.
 	stored_target : Str, I64, I64, F64 -> Target
 	stored_target = |literal, reps, dur_s, watts|
 		match parse_any_target(literal) {
@@ -2242,6 +2243,40 @@ Metrics :: [].{
 		hi_f = (hi).to_f64()
 		b = time_in_bands(samples, |v| if (!(valid_hr(v))) Skip else if (v < lo_f) Easy else if (v <= hi_f) Moderate else Hard)
 		{ under_s: b.easy_s, in_s: b.moderate_s, over_s: b.hard_s }
+	}
+
+	## Cumulative distance at second `t`, linearly interpolated between the two
+	## samples around it; the first or last sample's distance outside them, 0 for an
+	## empty stream.
+	distance_at : List({ t : I64, v : F64 }), I64 -> F64
+	distance_at = |pairs, t| {
+		lo = List.fold(pairs, Err(NoSample), |acc, p| if (p.t <= t) Ok(p) else acc)
+		hi = List.fold(
+			pairs,
+			Err(NoSample),
+			|acc, p|
+				match acc {
+					Ok(_) => acc
+					Err(_) => if (p.t >= t) Ok(p) else acc
+				},
+		)
+		match (lo, hi) {
+			(Ok(a), Ok(b)) => if (b.t == a.t) a.v else a.v + (b.v - a.v) * (t - a.t).to_f64() / (b.t - a.t).to_f64()
+			(Ok(a), Err(_)) => a.v
+			(Err(_), Ok(b)) => b.v
+			_ => 0.0
+		}
+	}
+
+	## Actual speed over a set of time windows: the distance the stream covered inside
+	## them over their summed length, in m/s; 0 when either is nothing. The detector's
+	## pace signal is grade-adjusted, so the actual pace of its reps is read here, from
+	## the distance stream, never from the segments' own average.
+	windows_speed : List({ t : I64, v : F64 }), List({ start_s : I64, dur_s : I64 }) -> F64
+	windows_speed = |dist_pairs, windows| {
+		d = List.fold(windows, 0.0, |a, w| a + distance_at(dist_pairs, w.start_s + w.dur_s) - distance_at(dist_pairs, w.start_s))
+		secs = List.fold(windows, 0.I64, |a, w| a + w.dur_s)
+		if (secs > 0 and d > 0.0) d / (secs).to_f64() else 0.0
 	}
 
 	## The metres a pace unit reads over; 0 for a unit no target can carry.
@@ -5380,7 +5415,7 @@ expect List.all(["3x12:00@230W", "1x60:00@230W", "1x1:00:00@HR125-147", "1x2:30:
 expect (Metrics.parse_any_target("4x1000m@3:50/km")).map_ok(Metrics.target_literal) == Ok("4x1km@3:50/km")
 expect (Metrics.parse_any_target("1x60:00@HR125-147")).map_ok(Metrics.target_literal) == Ok("1x1:00:00@HR125-147")
 expect Metrics.target_literal(Metrics.no_target) == ""
-# a stored row: the literal wins, a pre-#636 power row rebuilds from its columns
+# a stored row: the literal wins, and a row with no literal rebuilds its power target from the columns
 expect Metrics.stored_target("1x90:00@Z2", 1, 5400, 0.0).kind == "zone"
 expect Metrics.stored_target("", 3, 720, 230.0) == Metrics.power_target({ reps: 3, dur_s: 720, watts: 230.0 })
 expect Metrics.stored_target("", 0, 0, 0.0) == Metrics.no_target
@@ -5394,6 +5429,17 @@ expect (Metrics.pace_s_per_unit(4.0, "/km") - 250.0).abs() < 0.001
 expect (Metrics.pace_s_per_unit(1.0, "/100m") - 100.0).abs() < 0.001
 expect (Metrics.pace_s_per_unit(4.0, "/mi") - 402.336).abs() < 0.001
 expect Metrics.pace_s_per_unit(0.0, "/km") == 0.0 and Metrics.pace_s_per_unit(4.0, "/furlong") == 0.0
+# distance_at interpolates between samples and clamps outside them
+expect (Metrics.distance_at([{ t: 0, v: 0.0 }, { t: 10, v: 40.0 }, { t: 20, v: 100.0 }], 5) - 20.0).abs() < 0.001
+expect (Metrics.distance_at([{ t: 0, v: 0.0 }, { t: 10, v: 40.0 }], 10) - 40.0).abs() < 0.001
+expect (Metrics.distance_at([{ t: 5, v: 7.0 }, { t: 10, v: 40.0 }], 0) - 7.0).abs() < 0.001
+expect (Metrics.distance_at([{ t: 5, v: 7.0 }, { t: 10, v: 40.0 }], 99) - 40.0).abs() < 0.001
+expect Metrics.distance_at([], 5) == 0.0
+# windows_speed: distance inside the windows over their summed seconds — two
+# 1000 m reps in 280 s each is 3.571 m/s, whatever happened between them
+expect (Metrics.windows_speed([{ t: 0, v: 0.0 }, { t: 280, v: 1000.0 }, { t: 600, v: 1500.0 }, { t: 880, v: 2500.0 }], [{ start_s: 0, dur_s: 280 }, { start_s: 600, dur_s: 280 }]) - 2000.0 / 560.0).abs() < 0.001
+expect Metrics.windows_speed([], [{ start_s: 0, dur_s: 280 }]) == 0.0
+expect Metrics.windows_speed([{ t: 0, v: 0.0 }, { t: 280, v: 1000.0 }], []) == 0.0
 
 # one hour of work AT ftp is 100 by construction, the anchor the TSS scale is built on
 expect (Metrics.tss_from_target({ reps: 1, dur_s: 3600, watts: 200.0, ftp: 200.0 }) - 100.0).abs() < 0.001

@@ -167,7 +167,7 @@ Records a planned session. `type` is the intensity intent (vo2max, threshold, en
 
 ### `stride complete <id> [activity_id]`
 
-Marks a planned session done, linked to the activity that fulfilled it. Only a REST session may be completed bare — anything else raises `activity_required`, because done means evidence. Refuses ids that don't exist. On a targeted session the payload states the execution on the target's own signal: detected power work against target watts; seconds under, inside and over a heart-rate band from the HR stream; seconds below, inside and above an HR zone from the stored zone split; or the pace of the detected work reps (else distance over moving time) per the target's unit. `exec_known` is false, with `exec_reason` naming why, when the activity carries no such signal or the pace unit belongs to another sport family.
+Marks a planned session done, linked to the activity that fulfilled it. Only a REST session may be completed bare — anything else raises `activity_required`, because done means evidence. Refuses ids that don't exist. On a targeted session the payload states the execution on the target's own signal: detected power work against target watts; seconds under, inside and over a heart-rate band from the HR stream; seconds below, inside and above an HR zone from the stored zone split; or the actual pace per the target's unit, read over the detected work reps' windows from the distance stream (the detector's own signal is grade-adjusted), else as distance over moving time. `exec_known` is false, with `exec_reason` naming why, when the activity carries no such signal or the pace unit belongs to another sport family.
 
 ### `stride skip <id> <reason> [activity_id|none]`
 

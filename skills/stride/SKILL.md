@@ -138,9 +138,10 @@ reason `--json` and still answers in JSON).
      distance (`<n>m`, `<n>km`). The unit decides the sport family the pace is read
      for: /km and /mi run, walk and hike; /100m swim; /500m rowing. Malformed:
      `bad_target`. The echo and `plan`'s open sessions carry `target_known`,
-     `target_kind` (`power|hr|zone|pace`), `target_literal` (canonical, e.g. `60:00`
-     echoes as `1:00:00`), `target_reps`, `target_dur_s` (0 for a distance rep),
-     `target_dist_m`, `target_watts`, `target_hr_lo`, `target_hr_hi`, `target_zone`,
+     `target_kind` (`power|hr|zone|pace`), `target_literal` (canonical: a non-power
+     rep of an hour or more echoes as `h:mm:ss`, so `1x60:00@Z2` comes back as
+     `1x1:00:00@Z2`, while power keeps `mm:ss`), `target_reps`, `target_dur_s` (0 for
+     a distance rep), `target_dist_m`, `target_watts`, `target_hr_lo`, `target_hr_hi`, `target_zone`,
      `target_pace_s` and `target_pace_unit`; a magnitude another kind carries stays 0
      or "". `week` rows carry `target_kind` and `target_literal`. Projections
      (`project`, `events`, the form board) still count power targets only.
@@ -162,9 +163,11 @@ reason `--json` and still answers in JSON).
   - `zone`: `{zone_below_s, zone_in_s, zone_above_s}`: from the zone split analyze
     stored.
   - `pace`: `{pace_basis, pace_actual_s, pace_pct, pace_reps, pace_reps_delta}`.
-    `pace_basis` is `detected` (the detector's pace work reps) or `whole` (distance over
-    moving time). `pace_actual_s` is seconds per the target's unit, and `pace_pct` is
-    the speed relative to the target, so above 100 means faster.
+    `pace_actual_s` is always the ACTUAL pace, in seconds per the target's unit:
+    `pace_basis` `detected` reads it over the detector's pace work-rep windows (the
+    distance stream, not the detector's grade-adjusted signal), `whole` as distance over
+    moving time. `pace_pct` is the speed relative to the target, so above 100 means
+    faster.
 
   Whether the session was hit is your sentence. Completing a done session overwrites its link:
   `replaced_activity` names the old one (0 if none) and `plan_history_28d` keeps it as

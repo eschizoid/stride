@@ -32,12 +32,16 @@ Each of those forms has a literal athletes already write: `HR125-147`, `Z2`,
 3. **Each kind is compared on its own signal.** `complete` keeps ADR 0014's power fields
    and adds a signal-neutral block, `exec_known` with `exec_reason`, plus each kind's
    measurements:
-   - **hr:** seconds under, inside and over the band, and the mean of the in-range
-     samples, from the stored HR stream.
+   - **hr:** seconds under, inside and over the band, and the mean of the stream's
+     valid (35-220 bpm) samples, from the stored HR stream.
    - **zone:** seconds below, inside and above the zone, from the zone split analyze
      stored under the zones in force for that sport.
-   - **pace:** the pace of the detector's work reps when it found pace reps, otherwise
-     distance over moving time, in seconds per the target's unit.
+   - **pace:** always the actual pace, in seconds per the target's unit. When the
+     detector found pace work reps it is the distance the stream covered inside their
+     windows over their time (`pace_basis: detected`). The detector finds reps on
+     grade-adjusted speed, and that average describes the effort, not the pace that
+     was run, so it is never reported as one. Otherwise it is distance over moving
+     time (`whole`).
 
    The pace unit names the sport family it is read for: /km and /mi for run, walk and
    hike, /100m for swim, /500m for rowing. Completing a pace target with an activity
@@ -54,4 +58,4 @@ Each of those forms has a literal athletes already write: `HR125-147`, `Z2`,
   count power targets only. A follow-up gives every kind a load estimate.
 - **RPE targets.**
 - **Per-rep comparison:** it stays out for the reason ADR 0014 gives. The pace
-  comparison uses the detector's mean over its work reps, as the power one does.
+  comparison reads the detected work reps together, as the power one does.

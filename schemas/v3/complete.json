@@ -143,7 +143,7 @@
     },
     "hr_mean": {
       "type": "number",
-      "description": "hr targets: the mean of the stream's in-range HR samples, in bpm."
+      "description": "hr targets: the mean of the stream's valid (35-220 bpm) HR samples, in bpm."
     },
     "zone_below_s": {
       "type": "integer",
@@ -164,11 +164,11 @@
         "detected",
         "whole"
       ],
-      "description": "pace targets: detected when the interval detector found pace work reps (their mean speed is used), whole when it did not (distance over moving time)."
+      "description": "pace targets: detected when the interval detector found pace work reps, whole when it did not. Both report the ACTUAL pace: on detected, the distance the stream covered inside the reps' windows over their time (the detector's own signal is grade-adjusted, so its average is not used); on whole, distance over moving time."
     },
     "pace_actual_s": {
       "type": "number",
-      "description": "pace targets: the execution's pace in seconds per target_pace_unit."
+      "description": "pace targets: the actual pace in seconds per target_pace_unit, on the basis pace_basis names."
     },
     "pace_pct": {
       "type": "number",

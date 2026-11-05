@@ -596,18 +596,21 @@ Plan :: [].{
 	session_not_found! = |session_id|
 		Output.err_out!("session_not_found", "no planned session #${(session_id).to_str()} — `stride plan` lists open ones, `stride week all` the whole log")
 
-	# ADR 0014 §3, on every signal (#636): the recorded target beside what the linked
-	# activity did on THAT target's signal — arithmetic on two records, each side gated
-	# by its own _known flag (ADR 0009) so an absent side is stated, never invented.
-	# The power fields keep their meaning: detected power work against target watts.
-	# The exec_* block answers for the target's own signal, whatever its kind:
+	# ADR 0014 §3 on every signal (ADR 0019): the recorded target beside what the
+	# linked activity did on THAT target's signal — arithmetic on two records, each
+	# side gated by its own _known flag (ADR 0009) so an absent side is stated, never
+	# invented. The power fields keep their meaning: detected power work against
+	# target watts. The exec_* block answers for the target's own signal, whatever
+	# its kind:
 	#   power  exec_known is detected_known
-	#   hr     seconds under, inside and over the band, and the mean of the in-range
-	#          HR samples, from the stored stream
+	#   hr     seconds under, inside and over the band, and the mean of the stream's
+	#          valid (35-220 bpm) samples
 	#   zone   seconds below, inside and above the zone, from the zone split analyze
 	#          stored under the zones in force for that sport
-	#   pace   the detector's work reps when it found pace reps, else the whole moving
-	#          portion (distance over moving time), as seconds per the target's unit
+	#   pace   the ACTUAL pace, always: over the detector's work-rep windows when it
+	#          found pace reps (distance from the stream, since the detector's own
+	#          signal is grade-adjusted), else over the whole moving portion
+	#          (distance over moving time), as seconds per the target's unit
 	# exec_reason names why exec_known is false. Field names are measurements, never
 	# verdicts (ADR 0012).
 	TargetMatch : { target_known : Bool, target_kind : Str, target_literal : Str, target_reps : I64, target_dur_s : I64, target_dist_m : F64, target_watts : F64, target_hr_lo : I64, target_hr_hi : I64, target_zone : I64, target_pace_s : F64, target_pace_unit : Str, detected_known : Bool, detected_reps : I64, detected_mean_dur_s : I64, detected_mean_watts : F64, reps_delta : I64, watts_pct : F64, exec_known : Bool, exec_reason : Str, hr_under_s : I64, hr_in_s : I64, hr_over_s : I64, hr_mean : F64, zone_below_s : I64, zone_in_s : I64, zone_above_s : I64, pace_basis : Str, pace_actual_s : F64, pace_pct : F64, pace_reps : I64, pace_reps_delta : I64 }
@@ -692,20 +695,8 @@ Plan :: [].{
 		} else if t.kind == "power" {
 			Ok(if (power_detected) { ..none, known: Bool.True } else { ..none, reason: "no_power_intervals" })
 		} else if t.kind == "hr" {
-			raws = Sql.query_many!({
-				path: Path.utf8(path),
-				query: "SELECT COALESCE(CAST(raw_json AS TEXT), '') AS raw FROM streams WHERE activity_id = :id",
-				bindings: [{ name: ":id", value: Integer(activity_id) }],
-				rows: Sql.str("raw"),
-			})?
-			raw = List.first(raws).ok_or("")
-			hr_pairs =
-				if raw == "" {
-					[]
-				} else {
-					s = (Streams.decode_streams(NotNull(raw))).streams
-					List.keep_if(Streams.stream_pairs(s.time, s.heartrate), |p| Metrics.valid_hr(p.v))
-				}
+			s = stream_of!(path, activity_id)?
+			hr_pairs = List.keep_if(Streams.stream_pairs(s.time, s.heartrate), |p| Metrics.valid_hr(p.v))
 			if List.is_empty(hr_pairs) {
 				Ok({ ..none, reason: "no_hr_stream" })
 			} else {
@@ -753,18 +744,28 @@ Plan :: [].{
 			if !(List.contains(Sports.pace_unit_families(t.pace_unit), Sports.canonical(a.sp))) {
 				Ok({ ..none, reason: "pace_unit_mismatch" })
 			} else {
-				reps = Sql.query!({
+				# the detector's work reps are found on grade-adjusted speed, so their
+				# own average is not the pace that was run; their ACTUAL pace is the
+				# distance the stream covered inside their windows, over their time
+				windows = Sql.query_many!({
 					path: Path.utf8(path),
-					query: "SELECT COUNT(*) AS pr, CAST(COALESCE(AVG(avg_signal), 0) AS REAL) AS ps FROM activity_segments WHERE activity_id = :aid AND kind = 'work' AND signal = 'pace'",
+					query: "SELECT COALESCE(start_s, 0) AS ws, COALESCE(dur_s, 0) AS wd FROM activity_segments WHERE activity_id = :aid AND kind = 'work' AND signal = 'pace' ORDER BY ordinal",
 					bindings: [{ name: ":aid", value: Integer(activity_id) }],
-					row: |cols| |stmt| {
-						pr = Sql.i64("pr")(cols)(stmt)?
-						ps = Sql.f64("ps")(cols)(stmt)?
-						Ok({ pr, ps })
+					rows: |cols| |stmt| {
+						ws = Sql.i64("ws")(cols)(stmt)?
+						wd = Sql.i64("wd")(cols)(stmt)?
+						Ok({ start_s: ws, dur_s: wd })
 					},
 				})?
-				if reps.pr > 0 and reps.ps > 0.0 {
-					Ok({ ..none, known: Bool.True, pace: { basis: "detected", actual_s: Metrics.pace_s_per_unit(reps.ps, t.pace_unit), reps: reps.pr } })
+				rep_speed =
+					if List.is_empty(windows) {
+						0.0
+					} else {
+						s = stream_of!(path, activity_id)?
+						Metrics.windows_speed(Streams.stream_pairs(s.time, s.distance), windows)
+					}
+				if rep_speed > 0.0 {
+					Ok({ ..none, known: Bool.True, pace: { basis: "detected", actual_s: Metrics.pace_s_per_unit(rep_speed, t.pace_unit), reps: List.len(windows).to_i64_wrap() } })
 				} else if a.dist > 0.0 and a.mt > 0 {
 					Ok({ ..none, known: Bool.True, pace: { basis: "whole", actual_s: Metrics.pace_s_per_unit(a.dist / (a.mt).to_f64(), t.pace_unit), reps: 0 } })
 				} else {
@@ -772,6 +773,18 @@ Plan :: [].{
 				}
 			}
 		}
+	}
+	# the activity's stored streams, decoded; all absent when it has none
+	stream_of! : Str, I64 => Try(Streams.StreamsResp, _)
+	stream_of! = |path, activity_id| {
+		raws = Sql.query_many!({
+			path: Path.utf8(path),
+			query: "SELECT COALESCE(CAST(raw_json AS TEXT), '') AS raw FROM streams WHERE activity_id = :id",
+			bindings: [{ name: ":id", value: Integer(activity_id) }],
+			rows: Sql.str("raw"),
+		})?
+		raw = List.first(raws).ok_or("")
+		Ok(if (raw == "") Streams.empty_streams else (Streams.decode_streams(NotNull(raw))).streams)
 	}
 	# `complete latest` is pure argument RESOLUTION in front of complete! - it
 	# resolves the two ids and hands them over as strings, so every guarantee

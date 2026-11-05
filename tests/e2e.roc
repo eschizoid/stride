@@ -6136,13 +6136,17 @@ b_targets! = |ctx| {
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9803,'zone probe','Ride','2099-09-11T10:00:00Z',3600,30000); INSERT INTO activity_metrics (activity_id,z1_s,z2_s,z3_s,z4_s,z5_s,hr_samples_total,metrics_rev) VALUES (9803,100,200,300,50,10,660,1);")
 	check!("completing a zone target splits time below, inside and above the zone", strjq!(ctx, ["complete", zid, "9803"], "[.data.exec_known, .data.target_zone, .data.zone_below_s, .data.zone_in_s, .data.zone_above_s] | map(tostring) | join(\",\")") == "true,2,100,200,360")?
 	# pace: a run with no detected reps reads its whole moving portion (10 km in
-	# 2500 s is 4.0 m/s, 4:10/km); a run with five pace work reps at 4.0 m/s reads those
+	# 2500 s is 4.0 m/s, 4:10/km). A hill-rep run is the other basis: the detector's
+	# segments carry GRADE-ADJUSTED speed (4.0 m/s, 4:10/km), while the distance
+	# stream covers 1000 m in each 280 s rep, an actual 4:40/km. The detected basis
+	# must report the actual pace, so 280 s/km and 89% of the target's speed.
 	pid = Str.trim(strjq!(ctx, ["week", "add", "2099-09-12", "threshold", "tempo", "r", "5x4:00@4:10/km"], ".data.id"))
 	pid2 = Str.trim(strjq!(ctx, ["week", "add", "2099-09-13", "threshold", "reps", "r", "5x4:00@4:10/km"], ".data.id"))
-	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9804,'tempo run','Run','2099-09-12T10:00:00Z',2500,10000),(9805,'rep run','Run','2099-09-13T10:00:00Z',2500,9000),(9806,'pool','Swim','2099-09-14T10:00:00Z',2000,2000),(9807,'easy run','Run','2099-09-15T10:00:00Z',1800,5000);")
-	_ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (9805,0,'work',300,240,4.0,'pace'),(9805,1,'work',660,240,4.0,'pace'),(9805,2,'work',1020,240,4.0,'pace'),(9805,3,'work',1380,240,4.0,'pace'),(9805,4,'work',1740,240,4.0,'pace');")
+	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9804,'tempo run','Run','2099-09-12T10:00:00Z',2500,10000),(9805,'hill reps','Run','2099-09-13T10:00:00Z',2500,8000),(9806,'pool','Swim','2099-09-14T10:00:00Z',2000,2000),(9807,'easy run','Run','2099-09-15T10:00:00Z',1800,5000);")
+	_ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (9805,0,'work',300,280,4.0,'pace'),(9805,1,'work',700,280,4.0,'pace'),(9805,2,'work',1100,280,4.0,'pace'),(9805,3,'work',1500,280,4.0,'pace'),(9805,4,'work',1900,280,4.0,'pace');")
+	_ = sql!(ctx.db, "INSERT INTO streams (activity_id, raw_json) VALUES (9805, '{\"time\":{\"data\":[0,300,580,700,980,1100,1380,1500,1780,1900,2180,2500]},\"distance\":{\"data\":[0,1000,2000,2300,3300,3600,4600,4900,5900,6200,7200,8000]}}');")
 	check!("a pace target with no detected reps reads the whole moving portion", strjq!(ctx, ["complete", pid, "9804"], "[.data.exec_known, .data.pace_basis, (.data.pace_actual_s | round), (.data.pace_pct | round), .data.pace_reps] | map(tostring) | join(\",\")") == "true,whole,250,100,0")?
-	check!("...and one with detected pace reps reads those, reps against prescribed", strjq!(ctx, ["complete", pid2, "9805"], "[.data.pace_basis, (.data.pace_actual_s | round), .data.pace_reps, .data.pace_reps_delta] | map(tostring) | join(\",\")") == "detected,250,5,0")?
+	check!("...and detected hill reps report their ACTUAL pace, not the grade-adjusted one", strjq!(ctx, ["complete", pid2, "9805"], "[.data.pace_basis, (.data.pace_actual_s | round), (.data.pace_pct | round), .data.pace_reps, .data.pace_reps_delta] | map(tostring) | join(\",\")") == "detected,280,89,5,0")?
 	# a swim set by distance against a pool session: 2000 m in 2000 s is 1:40/100m
 	sid = Str.trim(strjq!(ctx, ["week", "add", "2099-09-14", "threshold", "swim set", "r", "10x100m@1:40/100m"], ".data.id"))
 	check!("a distance-rep swim target echoes its rep length", strjq!(ctx, ["plan"], "[.data.open_sessions[] | select(.id == ${sid})][0] | [.target_dist_m, .target_dur_s, .target_pace_unit] | map(tostring) | join(\",\")") == "100,0,/100m")?
@@ -6150,7 +6154,7 @@ b_targets! = |ctx| {
 	# a pace unit read over another sport family compares nothing, and says why
 	sid2 = Str.trim(strjq!(ctx, ["week", "add", "2099-09-15", "threshold", "row split on a run", "r", "6x500m@1:55/500m"], ".data.id"))
 	check!("a rowing split completed by a run names the unit mismatch", strjq!(ctx, ["complete", sid2, "9807"], "[.data.exec_known, .data.exec_reason] | map(tostring) | join(\",\")") == "false,pace_unit_mismatch")?
-	_ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id = 9805; DELETE FROM streams WHERE activity_id = 9801; DELETE FROM activity_metrics WHERE activity_id = 9803; DELETE FROM activities WHERE id IN (9801, 9802, 9803, 9804, 9805, 9806, 9807); DELETE FROM planned_sessions WHERE id IN (${hid}, ${hid2}, ${zid}, ${pid}, ${pid2}, ${sid}, ${sid2});")
+	_ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id = 9805; DELETE FROM streams WHERE activity_id IN (9801, 9805); DELETE FROM activity_metrics WHERE activity_id = 9803; DELETE FROM activities WHERE id IN (9801, 9802, 9803, 9804, 9805, 9806, 9807); DELETE FROM planned_sessions WHERE id IN (${hid}, ${hid2}, ${zid}, ${pid}, ${pid2}, ${sid}, ${sid2});")
 	_ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id = 977; DELETE FROM activities WHERE id IN (977, 978, 979); DELETE FROM planned_sessions WHERE id IN (${tid}, ${tid2}, ${tid3});")
 	Ok({})
 }
