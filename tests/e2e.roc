@@ -364,7 +364,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1375)?
+	checks_ran_exactly!(1377)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6129,6 +6129,7 @@ b_targets! = |ctx| {
 	check!("completing an HR target reports seconds under, inside and over the band", strjq!(ctx, ["complete", hid, "9801"], "[.data.exec_known, .data.hr_under_s, .data.hr_in_s, .data.hr_over_s, (.data.hr_mean | round)] | map(tostring) | join(\",\")") == "true,0,20,20,138")?
 	check!("...leaving the power comparison at its flagged zeros", strjq!(ctx, ["complete", hid, "9801"], "[.data.target_known, .data.reps_delta, .data.watts_pct] | map(tostring) | join(\",\")") == "true,0,0")?
 	check!("...and the human line states the band's seconds", Str.contains(stride_human!(ctx.bin, ctx.home, ["complete", hid, "9801"]), "(target 1x1:00:00@HR125-147; HR in band 0:20, over 0:20, under 0:00, mean 138 bpm)"))?
+	check!("...and stores that result on the session for the window's plan view", Str.trim(sql!(ctx.db, "SELECT CAST(target_result AS TEXT) FROM planned_sessions WHERE id = ${hid};")) == "HR in band 0:20, over 0:20, under 0:00, mean 138 bpm")?
 	hid2 = Str.trim(strjq!(ctx, ["week", "add", "2099-09-10", "endurance", "hr, no strap", "r", "1x60:00@HR125-147"], ".data.id"))
 	check!("an HR target on an activity with no HR stream names the gap", strjq!(ctx, ["complete", hid2, "9802"], "[.data.exec_known, .data.exec_reason, .data.hr_in_s] | map(tostring) | join(\",\")") == "false,no_hr_stream,0")?
 	# the zone split comes from activity_metrics, as analyze stored it
@@ -6163,6 +6164,7 @@ b_targets! = |ctx| {
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time) VALUES (9808,'lift','WeightTraining','2099-09-16T10:00:00Z',2700);")
 	check!("completing an RPE target before a rating names the gap", strjq!(ctx, ["complete", rid, "9808"], "[.data.exec_known, .data.exec_reason, .data.rpe_known, .data.rpe_actual] | map(tostring) | join(\",\")") == "false,no_rating,false,0")?
 	_ = stride!(ctx.bin, ctx.home, ["rate", "9808", "7"])
+	check!("rating the linked activity refreshes the session's stored result", Str.trim(sql!(ctx.db, "SELECT CAST(target_result AS TEXT) FROM planned_sessions WHERE id = ${rid};")) == "rated 7.0")?
 	check!("...and once rated, reports the stored rating", strjq!(ctx, ["complete", rid, "9808"], "[.data.exec_known, .data.rpe_known, .data.rpe_actual, .data.target_rpe] | map(tostring) | join(\",\")") == "true,true,7,6")?
 	check!("...and the human line states it", Str.contains(stride_human!(ctx.bin, ctx.home, ["complete", rid, "9808"]), "(target 1x45:00@RPE6; rated 7.0)"))?
 	check!("the complete payload conforms to its schema with an RPE target", validate_schema!(ctx, "complete ${rid} 9808", "complete") == "")?

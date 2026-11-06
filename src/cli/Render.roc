@@ -594,7 +594,13 @@ Render :: [].{
 	## "did they hit it" is the coach's sentence (ADR 0012, ADR 0014 §4). Each kind
 	## states its own signal; an execution with no comparable signal names why.
 	target_match_note : { target_kind : Str, target_literal : Str, target_pace_unit : Str, target_rpe : I64, detected_known : Bool, detected_reps : I64, detected_mean_dur_s : I64, detected_mean_watts : F64, exec_known : Bool, exec_reason : Str, hr_under_s : I64, hr_in_s : I64, hr_over_s : I64, hr_mean : F64, zone_below_s : I64, zone_in_s : I64, zone_above_s : I64, pace_basis : Str, pace_actual_s : F64, pace_reps : I64, rpe_actual : F64 } -> Str
-	target_match_note = |tm| {
+	target_match_note = |tm| if (tm.target_kind == "") "" else " (target ${tm.target_literal}; ${target_result_text(tm)})"
+
+	## The execution half of that clause alone, "" for a session with no target. It
+	## is the text `complete` and `rate` store on the planned session, so the
+	## window's plan view states the same result the CLI printed.
+	target_result_text : { target_kind : Str, target_literal : Str, target_pace_unit : Str, target_rpe : I64, detected_known : Bool, detected_reps : I64, detected_mean_dur_s : I64, detected_mean_watts : F64, exec_known : Bool, exec_reason : Str, hr_under_s : I64, hr_in_s : I64, hr_over_s : I64, hr_mean : F64, zone_below_s : I64, zone_in_s : I64, zone_above_s : I64, pace_basis : Str, pace_actual_s : F64, pace_reps : I64, rpe_actual : F64 } -> Str
+	target_result_text = |tm| {
 		d = Metrics.rep_dur_str
 		pace = |s| "${Metrics.rep_dur_str(s.round_to_i64_try().ok_or(0))}${tm.target_pace_unit}"
 		what =
@@ -620,7 +626,7 @@ Render :: [].{
 			} else {
 				"whole session at ${pace(tm.pace_actual_s)}"
 			}
-		if (tm.target_kind == "") "" else " (target ${tm.target_literal}; ${what})"
+		if (tm.target_kind == "") "" else what
 	}
 
 	# display label for a progress group, from anchor_filter's structured kind

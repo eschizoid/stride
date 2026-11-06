@@ -936,19 +936,18 @@ Curve :: [].{
 			"${why} - ${when}; an all-out 20 minutes would anchor it"
 		}
 
-	# ── planned targets as marks on the curve. A power target belongs on the
-	# ride curve, where every power prescription stride writes is ridden; a
-	# pace target belongs on every pace curve its unit fits (Sports
-	# pace_unit_families), at the speed its pace names and the duration one
-	# rep takes at that speed.
+	# ── planned targets as marks on the curve. A planned session names no
+	# sport, so a power target belongs on every power curve, whichever family
+	# is on screen; a pace target belongs on every pace curve its unit fits
+	# (Sports pace_unit_families), at the speed its pace names and the
+	# duration one rep takes at that speed.
 	Mark : { day : Str, typ : Str, dur_s : I64, val : I64, val_txt : Str, rep_txt : Str }
 
 	marks_for : Str, List(Db.Target), List(Db.PaceTarget) -> List(Mark)
 	marks_for = |curve, power, pace|
 		match Bus.curve_key(curve) {
-			Power(fam) =>
-				if (fam != "Ride") []
-				else List.map(power, |t| { day: t.day, typ: t.typ, dur_s: t.dur_s, val: t.watts, val_txt: "${I64.to_str(t.watts)}W", rep_txt: "${I64.to_str(t.reps)}x${Fmt.mmss(t.dur_s)}" })
+			Power(_) =>
+				List.map(power, |t| { day: t.day, typ: t.typ, dur_s: t.dur_s, val: t.watts, val_txt: "${I64.to_str(t.watts)}W", rep_txt: "${I64.to_str(t.reps)}x${Fmt.mmss(t.dur_s)}" })
 			Pace(sp) =>
 				List.keep_oks(
 					pace,
@@ -1098,8 +1097,8 @@ expect Curve.rung_pos([5, 15, 30, 60, 300, 600, 1200, 3600], 7200) == 7.0
 expect (Curve.best_at([{ secs: 600, w: 260 }, { secs: 1200, w: 254 }], 900) - 257.0).abs() < 0.001
 expect Curve.best_at([{ secs: 600, w: 0 }, { secs: 1200, w: 254 }], 900) == 0.0
 expect Curve.best_at([{ secs: 600, w: 260 }, { secs: 1200, w: 254 }], 1200) == 254.0
-# a power target reads in watts on the ride curve and nowhere else; its
-# label carries its share of the window's best at the rep duration
+# a power target reads in watts on every power curve; its label carries
+# its share of the window's best at the rep duration
 expect {
 	ms = Curve.marks_for("Ride", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])
 	match ms {
@@ -1107,7 +1106,7 @@ expect {
 		_ => Bool.False
 	}
 }
-expect Curve.marks_for("Rowing", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], []) == []
+expect List.len(Curve.marks_for("Rowing", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])) == 1 and List.len(Curve.marks_for("Run", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])) == 1
 # a pace target lands on every pace curve its unit fits, at the speed its
 # pace names; a distance rep takes the time that distance needs at that
 # pace, and a unit for another sport keeps it off the curve

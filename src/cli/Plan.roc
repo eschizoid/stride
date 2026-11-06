@@ -60,6 +60,8 @@ Plan :: [].{
 							})?
 							# a rating is a metric input — invalidate so analyze rescores
 							Strava.invalidate_metrics!(path, activity_id)?
+							# an RPE target's stored result reads the rating
+							refresh_target_results_for!(path, activity_id)?
 							Output.out!({ rated: activity_id, rpe }, |p| "activity ${I64.to_str(p.rated)} rated ${Render.fmt0(p.rpe)}/10 — run `stride analyze` to rescore")
 						}
 				}
@@ -690,6 +692,44 @@ Plan :: [].{
 		})
 	}
 
+	# the fields the rendered target clause reads, out of a TargetMatch
+	note_fields : TargetMatch -> { target_kind : Str, target_literal : Str, target_pace_unit : Str, target_rpe : I64, detected_known : Bool, detected_reps : I64, detected_mean_dur_s : I64, detected_mean_watts : F64, exec_known : Bool, exec_reason : Str, hr_under_s : I64, hr_in_s : I64, hr_over_s : I64, hr_mean : F64, zone_below_s : I64, zone_in_s : I64, zone_above_s : I64, pace_basis : Str, pace_actual_s : F64, pace_reps : I64, rpe_actual : F64 }
+	note_fields = |tm| { target_kind: tm.target_kind, target_literal: tm.target_literal, target_pace_unit: tm.target_pace_unit, target_rpe: tm.target_rpe, detected_known: tm.detected_known, detected_reps: tm.detected_reps, detected_mean_dur_s: tm.detected_mean_dur_s, detected_mean_watts: tm.detected_mean_watts, exec_known: tm.exec_known, exec_reason: tm.exec_reason, hr_under_s: tm.hr_under_s, hr_in_s: tm.hr_in_s, hr_over_s: tm.hr_over_s, hr_mean: tm.hr_mean, zone_below_s: tm.zone_below_s, zone_in_s: tm.zone_in_s, zone_above_s: tm.zone_above_s, pace_basis: tm.pace_basis, pace_actual_s: tm.pace_actual_s, pace_reps: tm.pace_reps, rpe_actual: tm.rpe_actual }
+
+	# The session's target result as text, beside the row it describes, for readers
+	# that cannot run the scoring (the window). It is a snapshot taken when `complete`
+	# links the activity and again when `rate` changes the activity's rating; a
+	# session completed before its activity was analyzed keeps the result it had
+	# then until it is completed again.
+	store_target_result! : Str, I64, Str => Try({}, _)
+	store_target_result! = |path, session_id, text| {
+		_ = Sql.execute!({
+			path: Path.utf8(path),
+			query: "UPDATE planned_sessions SET target_result = :t WHERE id = :pid",
+			bindings: [{ name: ":t", value: String(text) }, { name: ":pid", value: Integer(session_id) }],
+		})?
+		Ok({})
+	}
+
+	# every done session the activity completes gets its stored result recomputed
+	refresh_target_results_for! : Str, I64 => Try({}, _)
+	refresh_target_results_for! = |path, activity_id| {
+		ids = Sql.query_many!({
+			path: Path.utf8(path),
+			query: "SELECT id AS sid FROM planned_sessions WHERE completed_activity_id = :aid AND status = 'done'",
+			bindings: [{ name: ":aid", value: Integer(activity_id) }],
+			rows: |cols| |stmt| Sql.i64("sid")(cols)(stmt),
+		})?
+		_ = List.map_try!(
+			ids,
+			|sid| {
+				tm = target_match!(path, sid, activity_id)?
+				store_target_result!(path, sid, Render.target_result_text(note_fields(tm)))
+			},
+		)?
+		Ok({})
+	}
+
 	# the execution of one target on its own signal; every magnitude another kind
 	# would carry stays at 0 or ""
 	exec_for! : Str, I64, Metrics.Target, Bool => Try({ known : Bool, reason : Str, hr : { under_s : I64, in_s : I64, over_s : I64 }, hr_mean : F64, zone : { below_s : I64, in_s : I64, above_s : I64 }, pace : { basis : Str, actual_s : F64, reps : I64 }, rpe : F64 }, _)
@@ -936,7 +976,8 @@ Plan :: [].{
 							replaced_note = if (replaced != 0) " (replacing activity ${I64.to_str(replaced)}, whose completion of this session is now gone — `stride complete ${I64.to_str(session_id)} ${I64.to_str(replaced)}` puts this session's completion back)" else ""
 							released_note = if (released != 0) " (dropping substitute activity ${I64.to_str(released)}, which no longer stands in for this session)" else ""
 							tm = target_match!(path, session_id, activity_id)?
-							tm_note = Render.target_match_note({ target_kind: tm.target_kind, target_literal: tm.target_literal, target_pace_unit: tm.target_pace_unit, target_rpe: tm.target_rpe, detected_known: tm.detected_known, detected_reps: tm.detected_reps, detected_mean_dur_s: tm.detected_mean_dur_s, detected_mean_watts: tm.detected_mean_watts, exec_known: tm.exec_known, exec_reason: tm.exec_reason, hr_under_s: tm.hr_under_s, hr_in_s: tm.hr_in_s, hr_over_s: tm.hr_over_s, hr_mean: tm.hr_mean, zone_below_s: tm.zone_below_s, zone_in_s: tm.zone_in_s, zone_above_s: tm.zone_above_s, pace_basis: tm.pace_basis, pace_actual_s: tm.pace_actual_s, pace_reps: tm.pace_reps, rpe_actual: tm.rpe_actual })
+							tm_note = Render.target_match_note(note_fields(tm))
+							store_target_result!(path, session_id, Render.target_result_text(note_fields(tm)))?
 							match steal_dead_links!(path, activity_id, session_id)? {
 								ReleasedFrom(holder) =>
 									Output.out!({ completed_session: session_id, activity: activity_id, replaced_activity: replaced, dropped_substitute: released, released_substitute_of: holder, target_known: tm.target_known, target_kind: tm.target_kind, target_literal: tm.target_literal, target_reps: tm.target_reps, target_dur_s: tm.target_dur_s, target_dist_m: tm.target_dist_m, target_watts: tm.target_watts, target_hr_lo: tm.target_hr_lo, target_hr_hi: tm.target_hr_hi, target_zone: tm.target_zone, target_pace_s: tm.target_pace_s, target_pace_unit: tm.target_pace_unit, target_rpe: tm.target_rpe, detected_known: tm.detected_known, detected_reps: tm.detected_reps, detected_mean_dur_s: tm.detected_mean_dur_s, detected_mean_watts: tm.detected_mean_watts, reps_delta: tm.reps_delta, watts_pct: tm.watts_pct, exec_known: tm.exec_known, exec_reason: tm.exec_reason, hr_under_s: tm.hr_under_s, hr_in_s: tm.hr_in_s, hr_over_s: tm.hr_over_s, hr_mean: tm.hr_mean, zone_below_s: tm.zone_below_s, zone_in_s: tm.zone_in_s, zone_above_s: tm.zone_above_s, pace_basis: tm.pace_basis, pace_actual_s: tm.pace_actual_s, pace_pct: tm.pace_pct, pace_reps: tm.pace_reps, pace_reps_delta: tm.pace_reps_delta, rpe_actual: tm.rpe_actual, rpe_known: tm.rpe_known }, |o| "planned session #${I64.to_str(o.completed_session)} completed by activity ${I64.to_str(o.activity)}${replaced_note}${released_note}${tm_note} (released its old substitute link on session #${I64.to_str(o.released_substitute_of)})")

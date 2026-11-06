@@ -781,6 +781,9 @@ Db :: [].{
 		tgt_watts : F64,
 		# the target as the engine stores it, any signal; '' when none
 		tgt_lit : Str,
+		# that target's result on its own signal as `complete` stored it; '' when
+		# the session was completed without one
+		tgt_res : Str,
 		det_reps : I64,
 		det_dur_s : I64,
 		det_watts : F64,
@@ -795,14 +798,14 @@ Db :: [].{
 	# The Monday is the one load_plan_week_at! and the engine's `week` use.
 	load_plan_at! : Sqlite.Db, Str => List(PlanRow)
 	load_plan_at! = |db, today_mod|
-		match db.query!("WITH anchor AS (SELECT date('now', '${today_mod}') AS today, date(date('now', '${today_mod}'), '-6 days', 'weekday 1') AS mon), seg AS (SELECT activity_id, COUNT(*) AS n, AVG(dur_s) AS du, AVG(avg_signal) AS w FROM activity_segments WHERE kind = 'work' AND signal = 'power' AND activity_id IN (SELECT pc.completed_activity_id FROM plan_current pc, anchor an WHERE pc.target_date >= an.mon AND pc.target_date <= date(an.today, '+6 days')) GROUP BY activity_id) SELECT CAST(p.target_date AS TEXT) AS d, CAST(julianday(p.target_date) - julianday(a.mon) AS INTEGER) AS wi, CAST(COALESCE(p.session_type, '') AS TEXT) AS t, CAST(COALESCE(p.detail, '') AS TEXT) AS dt, CAST(COALESCE(p.rationale, '') AS TEXT) AS ra, CAST(COALESCE(p.status, 'open') AS TEXT) AS pst, CAST(COALESCE(p.skipped_reason, '') AS TEXT) AS prs, (p.target_date = a.today) AS td, (p.target_date < a.today) AS pps, CAST(COALESCE(substr(ca.start_local, 1, 10), '') AS TEXT) AS cdd, CAST(COALESCE(ca.name, '') AS TEXT) AS can, CAST(COALESCE(ca.moving_time, 0) AS INTEGER) AS cam, CAST(ROUND(COALESCE(cm.tss, 0)) AS INTEGER) AS cal, CAST(COALESCE(sa.id, 0) AS INTEGER) AS sid, CAST(COALESCE(sa.name, '') AS TEXT) AS snm, CAST(COALESCE(p.target_reps, 0) AS INTEGER) AS ptr, CAST(COALESCE(p.target_dur_s, 0) AS INTEGER) AS ptd, CAST(COALESCE(p.target_watts, 0) AS REAL) AS ptw, CAST(COALESCE(p.target_literal, '') AS TEXT) AS ptl, CAST(COALESCE(sg.n, 0) AS INTEGER) AS sgn, CAST(COALESCE(sg.du, 0) AS INTEGER) AS sgd, CAST(COALESCE(sg.w, 0) AS REAL) AS sgw, (dl.day IS NOT NULL) AS dlk, CAST(COALESCE(dl.tss, 0) AS REAL) AS dlt FROM plan_current p CROSS JOIN anchor a LEFT JOIN activities ca ON ca.id = p.completed_activity_id AND COALESCE(p.status, '') = 'done' LEFT JOIN activity_metrics cm ON cm.activity_id = ca.id LEFT JOIN seg sg ON sg.activity_id = ca.id LEFT JOIN activities sa ON sa.id = p.substitute_activity_id AND COALESCE(p.status, '') = 'skipped' LEFT JOIN daily_load dl ON dl.day = p.target_date WHERE p.target_date >= a.mon AND p.target_date <= date(a.today, '+6 days') ORDER BY p.target_date, p.id", []) {
+		match db.query!("WITH anchor AS (SELECT date('now', '${today_mod}') AS today, date(date('now', '${today_mod}'), '-6 days', 'weekday 1') AS mon), seg AS (SELECT activity_id, COUNT(*) AS n, AVG(dur_s) AS du, AVG(avg_signal) AS w FROM activity_segments WHERE kind = 'work' AND signal = 'power' AND activity_id IN (SELECT pc.completed_activity_id FROM plan_current pc, anchor an WHERE pc.target_date >= an.mon AND pc.target_date <= date(an.today, '+6 days')) GROUP BY activity_id) SELECT CAST(p.target_date AS TEXT) AS d, CAST(julianday(p.target_date) - julianday(a.mon) AS INTEGER) AS wi, CAST(COALESCE(p.session_type, '') AS TEXT) AS t, CAST(COALESCE(p.detail, '') AS TEXT) AS dt, CAST(COALESCE(p.rationale, '') AS TEXT) AS ra, CAST(COALESCE(p.status, 'open') AS TEXT) AS pst, CAST(COALESCE(p.skipped_reason, '') AS TEXT) AS prs, (p.target_date = a.today) AS td, (p.target_date < a.today) AS pps, CAST(COALESCE(substr(ca.start_local, 1, 10), '') AS TEXT) AS cdd, CAST(COALESCE(ca.name, '') AS TEXT) AS can, CAST(COALESCE(ca.moving_time, 0) AS INTEGER) AS cam, CAST(ROUND(COALESCE(cm.tss, 0)) AS INTEGER) AS cal, CAST(COALESCE(sa.id, 0) AS INTEGER) AS sid, CAST(COALESCE(sa.name, '') AS TEXT) AS snm, CAST(COALESCE(p.target_reps, 0) AS INTEGER) AS ptr, CAST(COALESCE(p.target_dur_s, 0) AS INTEGER) AS ptd, CAST(COALESCE(p.target_watts, 0) AS REAL) AS ptw, CAST(COALESCE(p.target_literal, '') AS TEXT) AS ptl, CAST(COALESCE(p.target_result, '') AS TEXT) AS ptx, CAST(COALESCE(sg.n, 0) AS INTEGER) AS sgn, CAST(COALESCE(sg.du, 0) AS INTEGER) AS sgd, CAST(COALESCE(sg.w, 0) AS REAL) AS sgw, (dl.day IS NOT NULL) AS dlk, CAST(COALESCE(dl.tss, 0) AS REAL) AS dlt FROM plan_current p CROSS JOIN anchor a LEFT JOIN activities ca ON ca.id = p.completed_activity_id AND COALESCE(p.status, '') = 'done' LEFT JOIN activity_metrics cm ON cm.activity_id = ca.id LEFT JOIN seg sg ON sg.activity_id = ca.id LEFT JOIN activities sa ON sa.id = p.substitute_activity_id AND COALESCE(p.status, '') = 'skipped' LEFT JOIN daily_load dl ON dl.day = p.target_date WHERE p.target_date >= a.mon AND p.target_date <= date(a.today, '+6 days') ORDER BY p.target_date, p.id", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.map(
 					rows,
 					|r| match decode_plan_row(r) {
 						Ok(row) => row
-						Err(_) => { day: "?", wi: -1, typ: "?", detail: "plan record unreadable", rationale: "", status: "open", reason: "", today: Bool.False, past: Bool.False, done_day: "", act_name: "", act_secs: 0, act_load: 0, sub_id: 0, sub_name: "", tgt_reps: 0, tgt_dur_s: 0, tgt_watts: 0.0, tgt_lit: "", det_reps: 0, det_dur_s: 0, det_watts: 0.0, day_load_known: Bool.False, day_load: 0.0 }
+						Err(_) => { day: "?", wi: -1, typ: "?", detail: "plan record unreadable", rationale: "", status: "open", reason: "", today: Bool.False, past: Bool.False, done_day: "", act_name: "", act_secs: 0, act_load: 0, sub_id: 0, sub_name: "", tgt_reps: 0, tgt_dur_s: 0, tgt_watts: 0.0, tgt_lit: "", tgt_res: "", det_reps: 0, det_dur_s: 0, det_watts: 0.0, day_load_known: Bool.False, day_load: 0.0 }
 					},
 				)
 		}
@@ -828,12 +831,13 @@ Db :: [].{
 		tgt_dur_s = r.i64("ptd") ? |_| BadRow
 		tgt_watts = r.f64("ptw") ? |_| BadRow
 		tgt_lit = r.str("ptl") ? |_| BadRow
+		tgt_res = r.str("ptx") ? |_| BadRow
 		det_reps = r.i64("sgn") ? |_| BadRow
 		det_dur_s = r.i64("sgd") ? |_| BadRow
 		det_watts = r.f64("sgw") ? |_| BadRow
 		dlk = r.i64("dlk") ? |_| BadRow
 		day_load = r.f64("dlt") ? |_| BadRow
-		Ok({ day, wi, typ, detail: ascii_safe(detail), rationale: ascii_safe(rationale), status, reason: ascii_safe(reason), today: td == 1, past: ps == 1, done_day, act_name: ascii_safe(act_name), act_secs, act_load, sub_id, sub_name: ascii_safe(sub_name), tgt_reps, tgt_dur_s, tgt_watts, tgt_lit, det_reps, det_dur_s, det_watts, day_load_known: dlk == 1, day_load })
+		Ok({ day, wi, typ, detail: ascii_safe(detail), rationale: ascii_safe(rationale), status, reason: ascii_safe(reason), today: td == 1, past: ps == 1, done_day, act_name: ascii_safe(act_name), act_secs, act_load, sub_id, sub_name: ascii_safe(sub_name), tgt_reps, tgt_dur_s, tgt_watts, tgt_lit, tgt_res: ascii_safe(tgt_res), det_reps, det_dur_s, det_watts, day_load_known: dlk == 1, day_load })
 	}
 
 	# this week's load beside last week's, MONDAY-ALIGNED to agree with the
