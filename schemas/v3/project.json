@@ -1,6 +1,6 @@
 {
   "title": "project",
-  "description": "Result of `stride project <YYYY-MM-DD> [\"<date>=<target>,...\"]` (ADR 0010, ADR 0019): CTL/ATL/TSB on the target date, folded by the same recurrence daily_load runs — over the RECORDED open plan (plan_source: recorded), or over a caller-passed hypothetical plan that REPLACES it in the walk (plan_source: hypothetical). Every target kind is priced on its own rung: power as TSS against the ride FTP, pace as rTSS against its family's threshold speed, a heart-rate band or zone as hrTSS, a session rating as session-RPE load. A session the inputs cannot price adds nothing and is listed in unprojected with its reason. The hypothetical is echoed back verbatim and never stored — the recorded plan stays the single source of adherence truth. stride never solves for the plan that reaches a target: plan to consequences only.",
+  "description": "Result of `stride project <YYYY-MM-DD> [\"<date>=<target>,...\"]` (ADR 0010, ADR 0019): CTL/ATL/TSB on the target date, folded by the same recurrence daily_load runs — over the RECORDED open plan (plan_source: recorded), or over a caller-passed hypothetical plan that REPLACES it in the walk (plan_source: hypothetical). Every target kind is priced on its own rung: power as TSS against the ride FTP, pace as rTSS against its family's threshold speed, a heart-rate band or zone as hrTSS, a session rating as session-RPE load. A session the inputs cannot price adds nothing and is listed in unprojected with its reason. The hypothetical is echoed back (dates as given, targets in canonical form, so 1x60:00@Z2 echoes as 1x1:00:00@Z2) and never stored — the recorded plan stays the single source of adherence truth. stride never solves for the plan that reaches a target: plan to consequences only.",
   "type": "object",
   "additionalKeys": false,
   "required": [
@@ -58,7 +58,7 @@
     },
     "unprojected": {
       "type": "array",
-      "description": "Each session in the window that adds no load, with why: no_target (no structured target), no_ftp (a power target with no ride FTP on file), no_hr_zones (a heart-rate band with no zones configured), no_threshold_pace (a pace target whose sport families have no 60-day threshold on file). sessions_considered minus sessions_projected counts them.",
+      "description": "Each session in the window that adds no load, with why: no_target (no structured target), no_ftp (a power target with no ride FTP on file), no_hr_zones (a heart-rate band with no zones configured), no_threshold_pace (a pace target whose sport families have no 60-day threshold on file, or whose intensity against the nearest one exceeds the 1.5 bound analyze enforces). sessions_considered minus sessions_projected counts them.",
       "items": {
         "type": "object",
         "additionalKeys": false,
@@ -89,7 +89,7 @@
     },
     "hypothetical": {
       "type": "array",
-      "description": "The caller's plan, echoed verbatim; empty for plan_source: recorded.",
+      "description": "The caller's plan, echoed back with dates as given and each target in canonical form (1x60:00@Z2 echoes as 1x1:00:00@Z2); empty for plan_source: recorded.",
       "items": {
         "type": "object",
         "additionalKeys": false,

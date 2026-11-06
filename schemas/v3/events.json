@@ -1,6 +1,6 @@
 {
   "title": "events",
-  "description": "Result of `stride events` — projected CTL/ATL/TSB on each event date (ADR 0010: the arithmetic consequences of the recorded open plan, never a proposed one). The projection folds Metrics.load_step forward from the last computed daily_load row; each open session with a structured target contributes the load its kind prices to (Metrics.projected_load, ADR 0019: power TSS, pace rTSS, heart-rate hrTSS, session-RPE load), and a session with no target or no input to price it contributes zero and is counted. baseline_known false = no computed history, every number is decay over zero. ftp_known false = no 60d best-20min power, so power targets contribute nothing.",
+  "description": "Result of `stride events` — projected CTL/ATL/TSB on each event date (ADR 0010: the arithmetic consequences of the recorded open plan, never a proposed one). The projection folds Metrics.load_step forward from the last computed daily_load row; each open session with a structured target contributes the load its kind prices to (Metrics.projected_load, ADR 0019: power TSS, pace rTSS, heart-rate hrTSS, session-RPE load), and a session with no target or no input to price it contributes zero and is counted. baseline_known false = no computed history, every number is decay over zero. ftp_known false = no 60d best-20min power, so power targets contribute nothing (each is listed in its event's unprojected as no_ftp).",
   "type": "object",
   "additionalKeys": false,
   "required": [
@@ -33,7 +33,8 @@
           "atl",
           "tsb",
           "planned_in_window",
-          "sessions_projected"
+          "sessions_projected",
+          "unprojected"
         ],
         "properties": {
           "id": {
@@ -64,7 +65,38 @@
           },
           "sessions_projected": {
             "type": "integer",
-            "description": "How many of those carried a target the projection could price — the sessions whose load the projection actually contains. The gap to planned_in_window is the projection's stated blindness; `stride project` names each unpriced session and why."
+            "description": "How many of those carried a target the projection could price — the sessions whose load the projection actually contains. The gap to planned_in_window is the projection's stated blindness, and unprojected names each unpriced session and why."
+          },
+          "unprojected": {
+            "type": "array",
+            "description": "Each session in (projected_from, event_date] that adds no load, with why, the same entries `stride project` lists: no_target, no_ftp, no_hr_zones, no_threshold_pace. planned_in_window minus sessions_projected counts them.",
+            "items": {
+              "type": "object",
+              "additionalKeys": false,
+              "required": [
+                "date",
+                "target_literal",
+                "reason"
+              ],
+              "properties": {
+                "date": {
+                  "type": "string"
+                },
+                "target_literal": {
+                  "type": "string",
+                  "description": "The session's target in canonical form; empty when it has none."
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "no_target",
+                    "no_ftp",
+                    "no_hr_zones",
+                    "no_threshold_pace"
+                  ]
+                }
+              }
+            }
           }
         }
       }
