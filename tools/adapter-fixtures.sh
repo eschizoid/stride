@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env sh
 # adapter-fixtures — ADR 0018's enforcement: every strength-set adapter ships
 # with a real sample of its source's text, and the ordered table in
 # src/cli/Strength.roc and the modules in src/strength agree exactly.
