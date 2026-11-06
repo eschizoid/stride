@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.20.0](https://github.com/eschizoid/stride/compare/v0.19.0...v0.20.0) (2026-11-06)
+
+
+### Features
+
+* **plan:** heart rate and pace targets for every sport, scored on completion ([#645](https://github.com/eschizoid/stride/issues/645)) ([b77ef22](https://github.com/eschizoid/stride/commit/b77ef22b438ae2302f0e0150f31c69658309c2bf))
+* **plan:** RPE targets, and projected load for every target kind ([#649](https://github.com/eschizoid/stride/issues/649)) ([58d0823](https://github.com/eschizoid/stride/commit/58d082302e84c243b0e1b4ec04256ac0cbb7bf8e))
+* **strength:** keep timed sets as holds ([#617](https://github.com/eschizoid/stride/issues/617)) ([11fb2bc](https://github.com/eschizoid/stride/commit/11fb2bc7dbdbc0912c2ffb8381020bc081f1df56))
+* **strength:** list strength sessions still missing their sets ([#648](https://github.com/eschizoid/stride/issues/648)) ([e397121](https://github.com/eschizoid/stride/commit/e3971215b9f954b5361abbe765eea66bdc6f57b4))
+* **viz:** judge only full weeks against 80/20 and project the plan on the form board ([#629](https://github.com/eschizoid/stride/issues/629)) ([b9e1ed1](https://github.com/eschizoid/stride/commit/b9e1ed115eb502f5abd99c1769a91cf26a7a9153))
+* **viz:** plan view shows the whole week with results beside targets ([#628](https://github.com/eschizoid/stride/issues/628)) ([af80fdf](https://github.com/eschizoid/stride/commit/af80fdf50263df76be3a7769cc45f14433c215e4))
+* **viz:** power tab for every power sport, and a pace tab for run, swim, row and walk ([#650](https://github.com/eschizoid/stride/issues/650)) ([f8a867e](https://github.com/eschizoid/stride/commit/f8a867e2c28e5fb46c7a1e8d02dc5851a8ce43c8))
+* **viz:** power tab marks unpushed durations, toggles bike/row, and names each best's source ([#633](https://github.com/eschizoid/stride/issues/633)) ([d75ca24](https://github.com/eschizoid/stride/commit/d75ca24fd6339adc7fcbcc695d0a1f3bbf876640))
+* **viz:** power view plots planned targets and shows CP only from a usable fit ([#630](https://github.com/eschizoid/stride/issues/630)) ([367779a](https://github.com/eschizoid/stride/commit/367779a02cfd87a608ae6a45ac9b52c9d0ad82f5))
+* **viz:** trace view lists a strength session's sets instead of interval detection ([#631](https://github.com/eschizoid/stride/issues/631)) ([53674a8](https://github.com/eschizoid/stride/commit/53674a8763c5e676b8137532ce2d74d7db2922b1))
+
+
+### Bug Fixes
+
+* commit each analyzed activity once, and stop counting timed Peloton sets as reps ([1f35485](https://github.com/eschizoid/stride/commit/1f354858333d5862478c6983dda037cb63194d30))
+* **plan:** price pace targets against the nearest family threshold, capped like analyze ([#655](https://github.com/eschizoid/stride/issues/655)) ([45c9287](https://github.com/eschizoid/stride/commit/45c9287295d3122af6fc744ae384a3ed307f0263))
+* **polarization:** leave lifting out of the 80/20 easy share ([7bf6dd9](https://github.com/eschizoid/stride/commit/7bf6dd93b2377caf14dbb2f09d62e18b0971fab7))
+* **sql:** keep the error that caused a rollback ([20fce5d](https://github.com/eschizoid/stride/commit/20fce5def9e990b54ac3be4757a120d0885b8f15))
+* **strength:** count assisted and negative bodyweight moves at 0 kg ([a39d9b3](https://github.com/eschizoid/stride/commit/a39d9b3c84fc408a7b7169d471f706f00d9b2ddb))
+* **strength:** count dumbbell push ups and single leg v ups at 0 kg ([99e582e](https://github.com/eschizoid/stride/commit/99e582ea630ba3583b7fa43fc017ca5a9065f3b3))
+* **viz:** keep form board end labels apart, on Roc nightly 2026-10-26 ([3542848](https://github.com/eschizoid/stride/commit/3542848c018ffad2b099059988764ca59eb3469d))
+* **viz:** keep power tab targets, deltas and caption from overlapping ([#635](https://github.com/eschizoid/stride/issues/635)) ([0886807](https://github.com/eschizoid/stride/commit/088680705eac2937c4dcd6adf44e3d711606be02))
+* **viz:** keep the power tab's loading note and caption clear of the chips ([#647](https://github.com/eschizoid/stride/issues/647)) ([021ce75](https://github.com/eschizoid/stride/commit/021ce7549597fd1368d3de1f70d949ff79aa09c6))
+* **viz:** polish heat labels, number formatting, the streak flame and career captures ([#632](https://github.com/eschizoid/stride/issues/632)) ([2728f6d](https://github.com/eschizoid/stride/commit/2728f6d9f2bcc011c7a6c7f8f0abbbcc823ac917))
+* **viz:** tidy the career view's sport strip, partial month, bar legend and low label ([#643](https://github.com/eschizoid/stride/issues/643)) ([b28366f](https://github.com/eschizoid/stride/commit/b28366fb2862bbc5925de1ebb59b7d238666074b))
+
+
+### Performance Improvements
+
+* **viz:** stop redrawing while idle ([#618](https://github.com/eschizoid/stride/issues/618)) ([91ebcbb](https://github.com/eschizoid/stride/commit/91ebcbb0581c9577c57e233e08f63e036de1d62f))
+
 ## [0.19.0](https://github.com/eschizoid/stride/compare/v0.18.0...v0.19.0) (2026-10-22)
 
 
