@@ -1058,11 +1058,13 @@ ReportHealth :: [].{
 				cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - (days).to_i64_wrap())
 				r = Sql.query!({
 					path: Path.utf8(path),
-					query: \\SELECT
-						\\  CAST(COALESCE(MAX(m.best_300s_speed), 0) AS REAL) AS d300,
-						\\  CAST(COALESCE(MAX(m.best_600s_speed), 0) AS REAL) AS d600,
-						\\  CAST(COALESCE(MAX(m.best_20min_speed), 0) AS REAL) AS d1200
-						\\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+					query: \\-- the speed ladder (columns, 0-means-unrecorded) is the
+						\\-- activity_pace_ladder view's; this only re-pivots per window.
+						\\SELECT
+						\\  CAST(COALESCE(MAX(CASE WHEN a.rung = '5min' THEN a.speed END), 0) AS REAL) AS d300,
+						\\  CAST(COALESCE(MAX(CASE WHEN a.rung = '10min' THEN a.speed END), 0) AS REAL) AS d600,
+						\\  CAST(COALESCE(MAX(CASE WHEN a.rung = '20min' THEN a.speed END), 0) AS REAL) AS d1200
+						\\FROM activity_pace_ladder a
 						\\WHERE a.start_local >= :cutoff${sx.frag}
 					,
 					bindings: List.concat([{ name: ":cutoff", value: String(cutoff) }], sx.binds),

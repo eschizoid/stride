@@ -221,7 +221,7 @@ Board :: [].{
 			model.subs,
 			|s|
 				if s.r == model.range and model.view == 0 {
-					# x clears the legend's third label ("form" ends ~286 at this size)
+					# x clears the legend's third label, "form"
 					s.p.draw!(frame, { pos: { x: 330.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 				} else {},
 		)
@@ -471,7 +471,7 @@ expect Board.ev_title("no event planned", 28) == "no event planned"
 # a suffix survives the cut, and one long word is cut inside the room
 expect Board.ev_line(Text.font_stub, "Tour de Chi (62/100/150mi options)", "", 10.0) == "Tour de Chi..."
 expect Board.ev_line(Text.font_stub, "no event planned", "", 10.0) == "no event planned"
-expect Board.ev_line(Text.font_stub, "Tour de Chi (62/100/150mi options)", " ridden, 3d ago", 10.0) == "... ridden, 3d ago"
+expect Board.ev_line(Text.font_stub, "Tour de Chi (62/100/150mi options)", " done, 3d ago", 10.0) == "T... done, 3d ago"
 expect {
 	word = Board.ev_line(Text.font_stub, "Supercalifragilisticexpialidocious", "", 10.0)
 	Str.ends_with(word, "...") and Text.font_stub.measure({ text: word, size: 10.0, spacing: Text.default_spacing }).width <= Board.ev_room

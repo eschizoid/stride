@@ -1,6 +1,7 @@
 import core.Bus
 import core.Fmt
 import core.Series
+import core.Sports
 import core.Units
 import rr.Sqlite
 import rr.Cmd
@@ -186,19 +187,36 @@ Db :: [].{
 			}
 		}
 
-	# The power-duration curve: the window's max per rung off the shared
-	# activity_power_ladder view. CAST(ROUND(..)) because a bare CAST
-	# truncates and would draw the whole ladder a watt low. A rung nobody
-	# rode in the window emits no row; the renderer keys the curve off the
-	# PR ladder's rungs and guards every now_w path with > 0, so a missing
-	# rung and a zero-watt rung draw identically. today_mod is the athlete's
-	# today as a sqlite modifier (today_mod!), which the window's days count
-	# back from.
-	load_curve! : Sqlite.Db, I64, Str, Str => List(CurvePt)
-	load_curve! = |db, days, today_mod, fam| {
-		q = "SELECT secs AS d, CAST(ROUND(watts) AS INTEGER) AS p, CAST(x.activity_id AS INTEGER) AS ca, CAST(COALESCE(a.name, '') AS TEXT) AS cn, CAST(x.day AS TEXT) AS cdy, CAST(julianday(date('now', '${today_mod}')) - julianday(x.day) AS INTEGER) AS cag FROM (SELECT activity_id, day, secs, watts, ROW_NUMBER() OVER (PARTITION BY secs ORDER BY watts DESC, start_local DESC) AS rn FROM activity_power_ladder WHERE sport_family = :fam AND start_local >= date('now', '${today_mod}', '-' || :d || ' days')) x LEFT JOIN activities a ON a.id = x.activity_id WHERE x.rn = 1 ORDER BY secs"
+	# The ladder a curve key reads. A family head reads the power ladder by
+	# family, in watts; a pace key reads the speed ladder by exact sport
+	# type, in millimetres per second, so both curves travel through the
+	# same integer rungs. The view and column names are this module's own
+	# literals, so splicing them is safe; the key itself is always bound.
+	Ladder : { view : Str, rungs : Str, val : Str, keycol : Str, key : Str, best20 : Str }
 
-		match db.query!(q, [{ name: ":d", value: Integer(days) }, { name: ":fam", value: String(fam) }]) {
+	ladder_of : Str -> Ladder
+	ladder_of = |curve|
+		match Bus.curve_key(curve) {
+			Pace(sp) => { view: "activity_pace_ladder", rungs: "pace_ladder_rungs", val: "speed * 1000.0", keycol: "sport_type", key: sp, best20: "best_20min_speed" }
+			Power(fam) => { view: "activity_power_ladder", rungs: "power_ladder_rungs", val: "watts", keycol: "sport_family", key: fam, best20: "best_20min_w" }
+		}
+
+	expect ladder_of("pace:Run").view == "activity_pace_ladder" and ladder_of("pace:Run").key == "Run" and ladder_of("pace:Run").keycol == "sport_type"
+	expect ladder_of("Rowing").view == "activity_power_ladder" and ladder_of("Rowing").keycol == "sport_family"
+
+	# The curve: the window's max per rung off the key's ladder view.
+	# CAST(ROUND(..)) because a bare CAST truncates and would draw the whole
+	# ladder a unit low. A rung with no effort in the window emits no row; the
+	# renderer keys the curve off the record ladder's rungs and guards every
+	# now path with > 0, so a missing rung and a zero rung draw identically.
+	# today_mod is the athlete's today as a sqlite modifier (today_mod!),
+	# which the window's days count back from.
+	load_curve! : Sqlite.Db, I64, Str, Str => List(CurvePt)
+	load_curve! = |db, days, today_mod, curve| {
+		lad = ladder_of(curve)
+		q = "SELECT secs AS d, CAST(ROUND(v) AS INTEGER) AS p, CAST(x.activity_id AS INTEGER) AS ca, CAST(COALESCE(a.name, '') AS TEXT) AS cn, CAST(x.day AS TEXT) AS cdy, CAST(julianday(date('now', '${today_mod}')) - julianday(x.day) AS INTEGER) AS cag FROM (SELECT activity_id, day, secs, ${lad.val} AS v, ROW_NUMBER() OVER (PARTITION BY secs ORDER BY ${lad.val} DESC, start_local DESC) AS rn FROM ${lad.view} WHERE ${lad.keycol} = :fam AND start_local >= date('now', '${today_mod}', '-' || :d || ' days')) x LEFT JOIN activities a ON a.id = x.activity_id WHERE x.rn = 1 ORDER BY secs"
+
+		match db.query!(q, [{ name: ":d", value: Integer(days) }, { name: ":fam", value: String(lad.key) }]) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(
@@ -221,10 +239,11 @@ Db :: [].{
 	# progress is a comparison with recent self, and the all-time envelope
 	# stays as a faint reference rather than the antagonist.
 	load_curve_prev! : Sqlite.Db, I64, Str, Str => List(CurvePt)
-	load_curve_prev! = |db, days, today_mod, fam| {
-		q = "SELECT secs AS d, CAST(ROUND(MAX(watts)) AS INTEGER) AS p FROM activity_power_ladder WHERE sport_family = :fam AND start_local >= date('now', '${today_mod}', '-' || :d2 || ' days') AND start_local < date('now', '${today_mod}', '-' || :d || ' days') GROUP BY rung, secs ORDER BY secs"
+	load_curve_prev! = |db, days, today_mod, curve| {
+		lad = ladder_of(curve)
+		q = "SELECT secs AS d, CAST(ROUND(MAX(${lad.val})) AS INTEGER) AS p FROM ${lad.view} WHERE ${lad.keycol} = :fam AND start_local >= date('now', '${today_mod}', '-' || :d2 || ' days') AND start_local < date('now', '${today_mod}', '-' || :d || ' days') GROUP BY rung, secs ORDER BY secs"
 
-		match db.query!(q, [{ name: ":d", value: Integer(days) }, { name: ":d2", value: Integer(days * 2) }, { name: ":fam", value: String(fam) }]) {
+		match db.query!(q, [{ name: ":d", value: Integer(days) }, { name: ":d2", value: Integer(days * 2) }, { name: ":fam", value: String(lad.key) }]) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(
@@ -240,17 +259,139 @@ Db :: [].{
 	}
 
 	# how many days before the athlete's today the window's best 20-minute
-	# ride power was set (the latest day holding that best), or -1 when the
-	# window has none
+	# effort for the key was set (the latest day holding that best), or -1
+	# when the window has none
 	load_best20_age! : Sqlite.Db, I64, Str, Str => I64
-	load_best20_age! = |db, days, today_mod, fam|
-		match db.query!("SELECT CAST(julianday(date('now', '${today_mod}')) - julianday(substr(a.start_local, 1, 10)) AS INTEGER) AS ag FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_family = :fam AND a.start_local >= date('now', '${today_mod}', '-' || :d || ' days') AND COALESCE(m.best_20min_w, 0) > 0 ORDER BY m.best_20min_w DESC, a.start_local DESC LIMIT 1", [{ name: ":d", value: Integer(days) }, { name: ":fam", value: String(fam) }]) {
+	load_best20_age! = |db, days, today_mod, curve| {
+		lad = ladder_of(curve)
+		match db.query!("SELECT CAST(julianday(date('now', '${today_mod}')) - julianday(substr(a.start_local, 1, 10)) AS INTEGER) AS ag FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.${lad.keycol} = :fam AND a.start_local >= date('now', '${today_mod}', '-' || :d || ' days') AND COALESCE(m.${lad.best20}, 0) > 0 ORDER BY m.${lad.best20} DESC, a.start_local DESC LIMIT 1", [{ name: ":d", value: Integer(days) }, { name: ":fam", value: String(lad.key) }]) {
 			Err(_) => -1
 			Ok(rows) => match List.first(rows) {
 				Ok(r) => r.i64("ag") ?? -1
 				Err(_) => -1
 			}
 		}
+	}
+
+	# The curves the athlete has data for, most-used first: every family
+	# with power on record, then every pace sport with speed on record. A
+	# family's or sport's place in its list is its count of ladder rows, so
+	# the one trained most leads. Rides are absent from the pace list: a
+	# ride's speed follows the terrain, not the effort.
+	CurveKeys : { power : List(Str), pace : List(Str) }
+	load_curve_keys! : Sqlite.Db => CurveKeys
+	load_curve_keys! = |db| {
+		read! = |q|
+			match db.query!(q, []) {
+				Err(_) => []
+				Ok(rows) => List.keep_oks(rows, |r| r.str("k"))
+			}
+		power = read!("SELECT CAST(sport_family AS TEXT) AS k FROM activity_power_ladder WHERE sport_family IS NOT NULL GROUP BY sport_family ORDER BY COUNT(*) DESC, sport_family")
+		pace = List.keep_if(read!("SELECT CAST(sport_type AS TEXT) AS k FROM activity_pace_ladder WHERE sport_type IS NOT NULL GROUP BY sport_type ORDER BY COUNT(*) DESC, sport_type"), |s| List.contains(Bus.pace_sport_types, s))
+		{ power, pace: List.map(pace, Bus.pace_key) }
+	}
+
+	# the family the athlete trained most in the last 90 days, by moving
+	# time, among every activity; '' when there is none
+	load_top_family! : Sqlite.Db, Str => Str
+	load_top_family! = |db, today_mod|
+		match db.query!("SELECT CAST(COALESCE(sport_family, sport_type, '') AS TEXT) AS f FROM activities WHERE start_local >= date('now', '${today_mod}', '-90 days') GROUP BY COALESCE(sport_family, sport_type) ORDER BY SUM(COALESCE(moving_time, 0)) DESC LIMIT 1", []) {
+			Err(_) => ""
+			Ok(rows) => match List.first(rows) {
+				Ok(r) => r.str("f") ?? ""
+				Err(_) => ""
+			}
+		}
+
+	# the curve the window opens on: the most-trained family's power curve
+	# when it has one, else its most-used pace sport, else the first curve
+	# on record of either kind, else the ride power curve (which draws its
+	# own empty note)
+	default_curve : CurveKeys, Str -> Str
+	default_curve = |keys, top|
+		if (List.contains(keys.power, top)) top
+		else match List.first(List.keep_if(keys.pace, |k| Sports.canonical(Str.drop_prefix(k, Bus.pace_prefix)) == top)) {
+			Ok(k) => k
+			Err(_) => match List.first(keys.power) {
+				Ok(k) => k
+				Err(_) => (List.first(keys.pace)).ok_or("Ride")
+			}
+		}
+
+	expect default_curve({ power: ["Ride", "Rowing"], pace: ["pace:Rowing", "pace:Run"] }, "Rowing") == "Rowing"
+	expect default_curve({ power: ["Ride"], pace: ["pace:TrailRun", "pace:Run"] }, "Run") == "pace:TrailRun"
+	expect default_curve({ power: [], pace: ["pace:Swim"] }, "WeightTraining") == "pace:Swim"
+	expect default_curve({ power: ["Ride"], pace: [] }, "Swim") == "Ride"
+	expect default_curve({ power: [], pace: [] }, "") == "Ride"
+
+	# the open sessions from the athlete's today on that carry a PACE
+	# target, earliest first, read from the canonical literal the engine
+	# stores ('5x4:00@4:10/km', '10x100m@1:40/100m'): what the pace view
+	# plots against its curve. A literal this cannot read is skipped, never
+	# guessed at.
+	PaceTarget : { day : Str, typ : Str, reps : I64, dur_s : I64, dist_m : I64, pace_s : I64, unit : Str }
+	load_pace_targets_at! : Sqlite.Db, Str => List(PaceTarget)
+	load_pace_targets_at! = |db, today_mod|
+		match db.query!("SELECT CAST(target_date AS TEXT) AS tgd, CAST(COALESCE(session_type, '') AS TEXT) AS tgt, CAST(COALESCE(target_literal, '') AS TEXT) AS tgl FROM plan_current WHERE COALESCE(status, 'open') = 'open' AND COALESCE(target_literal, '') LIKE '%/%' AND target_date >= date('now', '${today_mod}') ORDER BY target_date, id", []) {
+			Err(_) => []
+			Ok(rows) =>
+				List.keep_oks(
+					rows,
+					|r| {
+						day = r.str("tgd") ? |_| BadRow
+						typ = r.str("tgt") ? |_| BadRow
+						lit = r.str("tgl") ? |_| BadRow
+						p = parse_pace_literal(lit) ? |_| BadRow
+						Ok({ day, typ: ascii_safe(typ), reps: p.reps, dur_s: p.dur_s, dist_m: p.dist_m, pace_s: p.pace_s, unit: p.unit })
+					},
+				)
+		}
+
+	# a clock spelling, m:ss or h:mm:ss, in seconds
+	clock_secs : Str -> Try(I64, [BadClock])
+	clock_secs = |s|
+		match List.map(Str.split_on(s, ":"), |x| I64.from_str(x)) {
+			[Ok(m), Ok(sec)] => if (m >= 0 and sec >= 0 and sec < 60) Ok(m * 60 + sec) else Err(BadClock)
+			[Ok(h), Ok(m), Ok(sec)] => if (h >= 0 and m >= 0 and m < 60 and sec >= 0 and sec < 60) Ok(h * 3600 + m * 60 + sec) else Err(BadClock)
+			_ => Err(BadClock)
+		}
+
+	# the metres a pace unit reads over: the international mile is exact
+	pace_unit_m : Str -> F64
+	pace_unit_m = |u| if (u == "/100m") 100.0 else if (u == "/500m") 500.0 else if (u == "/mi") 1609.344 else 1000.0
+
+	parse_pace_literal : Str -> Try({ reps : I64, dur_s : I64, dist_m : I64, pace_s : I64, unit : Str }, [BadLiteral])
+	parse_pace_literal = |lit|
+		match Str.split_first(lit, "x") {
+			Err(_) => Err(BadLiteral)
+			Ok({ before: reps_s, after: rest }) =>
+				match Str.split_first(rest, "@") {
+					Err(_) => Err(BadLiteral)
+					Ok({ before: rep, after: sig }) =>
+						match List.first(List.keep_if(Sports.pace_target_units, |u| Str.ends_with(sig, u))) {
+							Err(_) => Err(BadLiteral)
+							Ok(unit) => {
+								reps = I64.from_str(reps_s) ? |_| BadLiteral
+								pace_s = clock_secs(Str.drop_suffix(sig, unit)) ? |_| BadLiteral
+								# a distance rep ends in metres, a thousand of them under a k
+								metres = Str.drop_suffix(rep, "m")
+								dist_m =
+									if (!(Str.ends_with(rep, "m"))) 0
+									else if (Str.ends_with(metres, "k")) ((I64.from_str(Str.drop_suffix(metres, "k")) ?? 0) * 1000)
+									else (I64.from_str(metres) ?? 0)
+								dur_s = if (dist_m > 0) 0 else (clock_secs(rep) ?? 0)
+								if (reps <= 0 or pace_s <= 0 or (dist_m <= 0 and dur_s <= 0)) Err(BadLiteral) else Ok({ reps, dur_s, dist_m, pace_s, unit })
+							}
+						}
+				}
+		}
+
+	expect parse_pace_literal("5x4:00@4:10/km") == Ok({ reps: 5, dur_s: 240, dist_m: 0, pace_s: 250, unit: "/km" })
+	expect parse_pace_literal("10x100m@1:40/100m") == Ok({ reps: 10, dur_s: 0, dist_m: 100, pace_s: 100, unit: "/100m" })
+	expect parse_pace_literal("4x1km@3:50/km") == Ok({ reps: 4, dur_s: 0, dist_m: 1000, pace_s: 230, unit: "/km" })
+	expect parse_pace_literal("1x1:00:00@9:00/mi") == Ok({ reps: 1, dur_s: 3600, dist_m: 0, pace_s: 540, unit: "/mi" })
+	expect parse_pace_literal("6x500m@1:55/500m") == Ok({ reps: 6, dur_s: 0, dist_m: 500, pace_s: 115, unit: "/500m" })
+	expect parse_pace_literal("3x12:00@230W") == Err(BadLiteral) and parse_pace_literal("1x1:00:00@HR125-147") == Err(BadLiteral) and parse_pace_literal("") == Err(BadLiteral)
 
 	# the open sessions from the athlete's today on that carry a structured
 	# target, earliest first: what the power view plots against the curve
@@ -329,7 +470,7 @@ Db :: [].{
 			},
 		)
 
-	# the window's half of capability discovery (#439): what an agent may put
+	# the window's half of capability discovery: what an agent may put
 	# on the bus is a fact about THIS binary, so this binary states it. The
 	# three tables are rewritten wholesale on every model load - they always
 	# describe the build that last ran - and the CLI serves them read-only,
@@ -638,6 +779,8 @@ Db :: [].{
 		tgt_reps : I64,
 		tgt_dur_s : I64,
 		tgt_watts : F64,
+		# the target as the engine stores it, any signal; '' when none
+		tgt_lit : Str,
 		det_reps : I64,
 		det_dur_s : I64,
 		det_watts : F64,
@@ -652,14 +795,14 @@ Db :: [].{
 	# The Monday is the one load_plan_week_at! and the engine's `week` use.
 	load_plan_at! : Sqlite.Db, Str => List(PlanRow)
 	load_plan_at! = |db, today_mod|
-		match db.query!("WITH anchor AS (SELECT date('now', '${today_mod}') AS today, date(date('now', '${today_mod}'), '-6 days', 'weekday 1') AS mon), seg AS (SELECT activity_id, COUNT(*) AS n, AVG(dur_s) AS du, AVG(avg_signal) AS w FROM activity_segments WHERE kind = 'work' AND signal = 'power' AND activity_id IN (SELECT pc.completed_activity_id FROM plan_current pc, anchor an WHERE pc.target_date >= an.mon AND pc.target_date <= date(an.today, '+6 days')) GROUP BY activity_id) SELECT CAST(p.target_date AS TEXT) AS d, CAST(julianday(p.target_date) - julianday(a.mon) AS INTEGER) AS wi, CAST(COALESCE(p.session_type, '') AS TEXT) AS t, CAST(COALESCE(p.detail, '') AS TEXT) AS dt, CAST(COALESCE(p.rationale, '') AS TEXT) AS ra, CAST(COALESCE(p.status, 'open') AS TEXT) AS pst, CAST(COALESCE(p.skipped_reason, '') AS TEXT) AS prs, (p.target_date = a.today) AS td, (p.target_date < a.today) AS pps, CAST(COALESCE(substr(ca.start_local, 1, 10), '') AS TEXT) AS cdd, CAST(COALESCE(ca.name, '') AS TEXT) AS can, CAST(COALESCE(ca.moving_time, 0) AS INTEGER) AS cam, CAST(ROUND(COALESCE(cm.tss, 0)) AS INTEGER) AS cal, CAST(COALESCE(sa.id, 0) AS INTEGER) AS sid, CAST(COALESCE(sa.name, '') AS TEXT) AS snm, CAST(COALESCE(p.target_reps, 0) AS INTEGER) AS ptr, CAST(COALESCE(p.target_dur_s, 0) AS INTEGER) AS ptd, CAST(COALESCE(p.target_watts, 0) AS REAL) AS ptw, CAST(COALESCE(sg.n, 0) AS INTEGER) AS sgn, CAST(COALESCE(sg.du, 0) AS INTEGER) AS sgd, CAST(COALESCE(sg.w, 0) AS REAL) AS sgw, (dl.day IS NOT NULL) AS dlk, CAST(COALESCE(dl.tss, 0) AS REAL) AS dlt FROM plan_current p CROSS JOIN anchor a LEFT JOIN activities ca ON ca.id = p.completed_activity_id AND COALESCE(p.status, '') = 'done' LEFT JOIN activity_metrics cm ON cm.activity_id = ca.id LEFT JOIN seg sg ON sg.activity_id = ca.id LEFT JOIN activities sa ON sa.id = p.substitute_activity_id AND COALESCE(p.status, '') = 'skipped' LEFT JOIN daily_load dl ON dl.day = p.target_date WHERE p.target_date >= a.mon AND p.target_date <= date(a.today, '+6 days') ORDER BY p.target_date, p.id", []) {
+		match db.query!("WITH anchor AS (SELECT date('now', '${today_mod}') AS today, date(date('now', '${today_mod}'), '-6 days', 'weekday 1') AS mon), seg AS (SELECT activity_id, COUNT(*) AS n, AVG(dur_s) AS du, AVG(avg_signal) AS w FROM activity_segments WHERE kind = 'work' AND signal = 'power' AND activity_id IN (SELECT pc.completed_activity_id FROM plan_current pc, anchor an WHERE pc.target_date >= an.mon AND pc.target_date <= date(an.today, '+6 days')) GROUP BY activity_id) SELECT CAST(p.target_date AS TEXT) AS d, CAST(julianday(p.target_date) - julianday(a.mon) AS INTEGER) AS wi, CAST(COALESCE(p.session_type, '') AS TEXT) AS t, CAST(COALESCE(p.detail, '') AS TEXT) AS dt, CAST(COALESCE(p.rationale, '') AS TEXT) AS ra, CAST(COALESCE(p.status, 'open') AS TEXT) AS pst, CAST(COALESCE(p.skipped_reason, '') AS TEXT) AS prs, (p.target_date = a.today) AS td, (p.target_date < a.today) AS pps, CAST(COALESCE(substr(ca.start_local, 1, 10), '') AS TEXT) AS cdd, CAST(COALESCE(ca.name, '') AS TEXT) AS can, CAST(COALESCE(ca.moving_time, 0) AS INTEGER) AS cam, CAST(ROUND(COALESCE(cm.tss, 0)) AS INTEGER) AS cal, CAST(COALESCE(sa.id, 0) AS INTEGER) AS sid, CAST(COALESCE(sa.name, '') AS TEXT) AS snm, CAST(COALESCE(p.target_reps, 0) AS INTEGER) AS ptr, CAST(COALESCE(p.target_dur_s, 0) AS INTEGER) AS ptd, CAST(COALESCE(p.target_watts, 0) AS REAL) AS ptw, CAST(COALESCE(p.target_literal, '') AS TEXT) AS ptl, CAST(COALESCE(sg.n, 0) AS INTEGER) AS sgn, CAST(COALESCE(sg.du, 0) AS INTEGER) AS sgd, CAST(COALESCE(sg.w, 0) AS REAL) AS sgw, (dl.day IS NOT NULL) AS dlk, CAST(COALESCE(dl.tss, 0) AS REAL) AS dlt FROM plan_current p CROSS JOIN anchor a LEFT JOIN activities ca ON ca.id = p.completed_activity_id AND COALESCE(p.status, '') = 'done' LEFT JOIN activity_metrics cm ON cm.activity_id = ca.id LEFT JOIN seg sg ON sg.activity_id = ca.id LEFT JOIN activities sa ON sa.id = p.substitute_activity_id AND COALESCE(p.status, '') = 'skipped' LEFT JOIN daily_load dl ON dl.day = p.target_date WHERE p.target_date >= a.mon AND p.target_date <= date(a.today, '+6 days') ORDER BY p.target_date, p.id", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.map(
 					rows,
 					|r| match decode_plan_row(r) {
 						Ok(row) => row
-						Err(_) => { day: "?", wi: -1, typ: "?", detail: "plan record unreadable", rationale: "", status: "open", reason: "", today: Bool.False, past: Bool.False, done_day: "", act_name: "", act_secs: 0, act_load: 0, sub_id: 0, sub_name: "", tgt_reps: 0, tgt_dur_s: 0, tgt_watts: 0.0, det_reps: 0, det_dur_s: 0, det_watts: 0.0, day_load_known: Bool.False, day_load: 0.0 }
+						Err(_) => { day: "?", wi: -1, typ: "?", detail: "plan record unreadable", rationale: "", status: "open", reason: "", today: Bool.False, past: Bool.False, done_day: "", act_name: "", act_secs: 0, act_load: 0, sub_id: 0, sub_name: "", tgt_reps: 0, tgt_dur_s: 0, tgt_watts: 0.0, tgt_lit: "", det_reps: 0, det_dur_s: 0, det_watts: 0.0, day_load_known: Bool.False, day_load: 0.0 }
 					},
 				)
 		}
@@ -684,12 +827,13 @@ Db :: [].{
 		tgt_reps = r.i64("ptr") ? |_| BadRow
 		tgt_dur_s = r.i64("ptd") ? |_| BadRow
 		tgt_watts = r.f64("ptw") ? |_| BadRow
+		tgt_lit = r.str("ptl") ? |_| BadRow
 		det_reps = r.i64("sgn") ? |_| BadRow
 		det_dur_s = r.i64("sgd") ? |_| BadRow
 		det_watts = r.f64("sgw") ? |_| BadRow
 		dlk = r.i64("dlk") ? |_| BadRow
 		day_load = r.f64("dlt") ? |_| BadRow
-		Ok({ day, wi, typ, detail: ascii_safe(detail), rationale: ascii_safe(rationale), status, reason: ascii_safe(reason), today: td == 1, past: ps == 1, done_day, act_name: ascii_safe(act_name), act_secs, act_load, sub_id, sub_name: ascii_safe(sub_name), tgt_reps, tgt_dur_s, tgt_watts, det_reps, det_dur_s, det_watts, day_load_known: dlk == 1, day_load })
+		Ok({ day, wi, typ, detail: ascii_safe(detail), rationale: ascii_safe(rationale), status, reason: ascii_safe(reason), today: td == 1, past: ps == 1, done_day, act_name: ascii_safe(act_name), act_secs, act_load, sub_id, sub_name: ascii_safe(sub_name), tgt_reps, tgt_dur_s, tgt_watts, tgt_lit, det_reps, det_dur_s, det_watts, day_load_known: dlk == 1, day_load })
 	}
 
 	# this week's load beside last week's, MONDAY-ALIGNED to agree with the
@@ -987,24 +1131,23 @@ Db :: [].{
 				)
 		}
 
-	# every RIDE power PR: the best-ever watts per duration rung and the day
-	# each record first landed. The rung list is the engine's
-	# power_ladder_rungs view - every rung the ladder has, whether or not any
-	# session recorded one - and the Ride record per rung joins onto it from
-	# the activity_power_ladder unpivot, so a rung added to the schema
-	# reaches the record book with no edit in this file. A rung no ride has
-	# recorded keeps its row at w 0 / day '': the record book is index-spaced
-	# and materializes every rung, so the ladder never shrinks or jumps, and
-	# the athlete whose longest effort is five minutes still sees the three
-	# rungs above it as unridden. Ordering within a rung is on the TRUE stored
-	# watts - the round is presentation, so two efforts that DISPLAY equal
-	# still rank by their real values; only an exact tie breaks to the
-	# earliest ride (a matched record is not a new one). The query runs once
-	# per load (launch and R), never per frame.
+	# every record on the key's ladder: the best-ever value per duration rung
+	# and the day each record first landed. The rung list is the ladder's
+	# own rungs view - every rung the ladder has, whether or not any session
+	# recorded one - and the record per rung joins onto it from the unpivot,
+	# so a rung added to the schema reaches the record book with no edit in
+	# this file. A rung no session has recorded keeps its row at w 0 / day
+	# '': the record book is index-spaced and materializes every rung, so the
+	# ladder never shrinks or jumps. Ordering within a rung is on the TRUE
+	# stored value - the round is presentation, so two efforts that DISPLAY
+	# equal still rank by their real values; only an exact tie breaks to the
+	# earliest session (a matched record is not a new one). The query runs
+	# once per load (launch, R and a chip), never per frame.
 	PrRung : { rung : Str, secs : I64, w : I64, day : Str }
 	load_prs! : Sqlite.Db, Str => List(PrRung)
-	load_prs! = |db, fam|
-		match db.query!("WITH best AS (SELECT rung, watts, day FROM (SELECT rung, watts, day, ROW_NUMBER() OVER (PARTITION BY rung ORDER BY watts DESC, start_local ASC) AS rn FROM activity_power_ladder WHERE sport_family = :fam) WHERE rn = 1) SELECT CAST(r.rung AS TEXT) AS rung, CAST(r.secs AS INTEGER) AS secs, CAST(COALESCE(ROUND(b.watts), 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM power_ladder_rungs r LEFT JOIN best b ON b.rung = r.rung ORDER BY r.secs ASC", [{ name: ":fam", value: String(fam) }]) {
+	load_prs! = |db, curve| {
+		lad = ladder_of(curve)
+		match db.query!("WITH best AS (SELECT rung, v, day FROM (SELECT rung, ${lad.val} AS v, day, ROW_NUMBER() OVER (PARTITION BY rung ORDER BY ${lad.val} DESC, start_local ASC) AS rn FROM ${lad.view} WHERE ${lad.keycol} = :fam) WHERE rn = 1) SELECT CAST(r.rung AS TEXT) AS rung, CAST(r.secs AS INTEGER) AS secs, CAST(COALESCE(ROUND(b.v), 0) AS INTEGER) AS w, CAST(COALESCE(b.day, '') AS TEXT) AS day FROM ${lad.rungs} r LEFT JOIN best b ON b.rung = r.rung ORDER BY r.secs ASC", [{ name: ":fam", value: String(lad.key) }]) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(
@@ -1018,6 +1161,7 @@ Db :: [].{
 					},
 				)
 		}
+	}
 
 	# event days inside the heat window only - the grid spans at most 372 days
 	# back from MAX(day), so anything outside that range could never ring a cell
@@ -1159,16 +1303,23 @@ Db :: [].{
 	pace_chan = "pace"
 
 	# The y axis names what the chosen channel counts, so the label cannot
-	# disagree with the samples underneath it. Pace speaks the athlete's
-	# units - the samples stay SI m/s, only the label converts.
-	trace_unit : Str, [Metric, Imperial] -> Str
-	trace_unit = |chan, units|
-		if (chan == hr_chan) ("bpm") else if (chan == pace_chan) (Units.pace_unit(units)) else "W"
+	# disagree with the samples underneath it. Pace speaks the sport's own
+	# unit - per 100 m for a swim, the athlete's kilometre or mile on foot -
+	# and the samples stay SI m/s, only the label converts.
+	trace_unit : Str, [Metric, Imperial], Str -> Str
+	trace_unit = |chan, units, sport|
+		if (chan == hr_chan) ("bpm")
+		else if (chan == pace_chan) (if (Sports.canonical(sport) == "Swim") swim_pace_unit else Units.pace_unit(units))
+		else "W"
 
-	expect trace_unit(watts_chan, Metric) == "W"
-	expect trace_unit(hr_chan, Imperial) == "bpm"
-	expect trace_unit(pace_chan, Metric) == Units.pace_unit(Metric)
-	expect trace_unit(pace_chan, Imperial) == Units.pace_unit(Imperial)
+	swim_pace_unit : Str
+	swim_pace_unit = Str.concat("min", Sports.pace_unit("Swim").label)
+
+	expect trace_unit(watts_chan, Metric, "Ride") == "W"
+	expect trace_unit(hr_chan, Imperial, "Run") == "bpm"
+	expect trace_unit(pace_chan, Metric, "Run") == Units.pace_unit(Metric)
+	expect trace_unit(pace_chan, Imperial, "TrailRun") == Units.pace_unit(Imperial)
+	expect trace_unit(pace_chan, Imperial, "OpenWaterSwim") == "min/100m" and trace_unit(pace_chan, Metric, "Swim") == swim_pace_unit
 
 	# the channel said as a word - for prose (the subtitle, a ghost refusal)
 	# where a unit string would beg the units question prose does not have
@@ -1463,9 +1614,18 @@ Db :: [].{
 		parse_projection(out)
 	}
 
+	# the engine's fit for a curve key: CP and W' from `stride power-curve`
+	# for a family, critical speed (m/s) and D' (m) from `stride pace-curve`
+	# for a pace sport, carried in the same four fields
 	load_fit! : Cmd.Runner, I64, Str => Fit
-	load_fit! = |runner, days, fam| {
-		out = match runner.run_utf8!(Cmd.with_args(Cmd.new("stride"), ["power-curve", I64.to_str(days), fam, "--json"])) {
+	load_fit! = |runner, days, curve| {
+		args = match Bus.curve_key(curve) {
+			Pace(sp) => ["pace-curve", I64.to_str(days), sp, "--json"]
+			Power(fam) => ["power-curve", I64.to_str(days), fam, "--json"]
+		}
+		threshold_key = if (Str.starts_with(curve, Bus.pace_prefix)) "cs" else "cp"
+		reserve_key = if (Str.starts_with(curve, Bus.pace_prefix)) "d_prime" else "w_prime"
+		out = match runner.run_utf8!(Cmd.with_args(Cmd.new("stride"), args)) {
 			Ok(o) => if (o.exit_code == 0) o.stdout else ""
 			Err(_) => ""
 		}
@@ -1473,8 +1633,8 @@ Db :: [].{
 			Ok(v) => v
 			Err(_) => -1.0
 		}
-		cp = num("cp")
-		wp = num("w_prime")
+		cp = num(threshold_key)
+		wp = num(reserve_key)
 		r2 = num("fit_r2")
 		fp = num("fit_points")
 		{ cp, w_prime: wp, r2, points: fp, ok: cp >= 0.0 and wp >= 0.0 and r2 >= 0.0 and fp >= 0.0 }

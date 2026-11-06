@@ -96,7 +96,7 @@
         },
         "curve_family": {
           "type": "string",
-          "description": "the family whose power curve the power view shows (Ride or Rowing); empty when the window has not reported one"
+          "description": "the curve the power view shows: a sport family's head for its power curve, or pace:<sport_type> for that sport's pace curve; empty when the window has not reported one"
         }
       }
     },

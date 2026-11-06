@@ -115,8 +115,14 @@ Ui :: [].{
 		# instead of a task round-trip per keypress
 		trace_cache : List({ tr : List(F32), sg : List(Db.Seg), du : F32, un : Str, sp : List(Series.Split), st : Db.StrengthLog }),
 		curve_days : I64,
-		# the family whose power curve the power view draws: Ride or Rowing
+		# the curve the power view draws, a Bus curve key: a family head for
+		# that family's power, or pace:<sport_type> for that sport's speed
 		curve_family : Str,
+		# the curves the athlete has data for, most-used first: the power
+		# families and the pace keys the chips offer
+		curve_keys : Db.CurveKeys,
+		# open sessions ahead with a pace target, for the pace curve
+		pace_targets : List(Db.PaceTarget),
 		# the window's CP, 0 when the fit is not usable (Curve.fit_usable)
 		fit_cp : F32,
 		# open sessions ahead with a structured target, for the power view

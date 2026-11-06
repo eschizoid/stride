@@ -273,9 +273,13 @@ INSERT INTO viz_directives (trace_id, ghost_id) VALUES (20355183143, 20342052869
 -- the older close superseded).
 -- `stride viz --json` lists them under `captures`.
 INSERT INTO viz_directives (view, capture) VALUES (1, 'png');
--- the power view's family: 'Ride' or 'Rowing' switches its curve, record
--- book and CP fit; any other value is refused by name.
-INSERT INTO viz_directives (view, family) VALUES (1, 'Rowing');
+-- the power view's curve: a sport family's head ('Ride', 'Rowing', 'Run',
+-- ...) switches it to that family's power curve, record book and CP fit;
+-- 'pace:' and a sport type ('pace:Run', 'pace:Swim', 'pace:Rowing') to that
+-- sport's pace curve and critical-speed fit. A value outside that
+-- vocabulary is refused by name, and so is a valid one the athlete has no
+-- data for.
+INSERT INTO viz_directives (view, family) VALUES (1, 'pace:Run');
 -- view 0..8 (form/power/trace/table/plan/heat/zones/ramp/career) - but read
 -- the list from `stride viz --json`, which the running binary publishes,
 -- rather than from this comment. A directive naming a view outside the
@@ -431,13 +435,37 @@ labelled with its day and the target's share of this window's best at that
 duration, read off the line between the rungs around it. Hovering a ring
 names the session: type, reps, duration and watts.
 
-Two chips beside the range chips, bike and row, switch the whole tab between
-the Ride and Rowing families: the curve, the previous window, the record book
-and the CP fit (`stride power-curve <days> <family>`). A family with no power
-on record keeps its chip lit and says so, naming the bike chip as the way
-back; planned targets are ride power and show on the ride curve only. A
+The tab draws one curve at a time, named by a curve key: a sport family's
+head for that family's POWER curve, or `pace:<sport_type>` for that sport's
+SPEED curve. Speed is keyed by the exact sport type because critical speed is
+fitted per sport, a pool swim and an open-water swim sharing no speed model,
+and only the sports whose effort is their pace (the run, walk, swim and
+rowing families) take a pace curve: a ride's speed follows the terrain.
+
+The chips come from the data. Left of the range chips, right-aligned, sit the
+curves of the mode on screen that the athlete has on record, most-used first,
+as many as fit beside the title, the one on screen always among them. Right
+of the range chips, a power and a pace chip switch modes, shown only when the
+athlete has curves of both kinds. Each switch reloads the curve, the previous
+window, the record book and the fit: CP and W' from `stride power-curve
+<days> <family>`, or critical speed and D' from `stride pace-curve <days>
+<sport>`. At launch the tab opens on the athlete's most-trained family of the
+last 90 days: its power curve when it has one, else its most-used pace sport.
+
+A pace curve plots speed, so the faster effort is the higher dot, and reads
+it aloud as pace in the sport's own unit: per 500m for rowing, per 100m for
+swimming, per kilometre or mile (as `units` says) for the foot sports. Its
+gridlines, tooltips, deltas (seconds per unit, negative when the window got
+faster) and the CS line speak pace. The CS line follows the CP line's rule:
+drawn only from a fit with r2 at the floor and D' inside 10-600 m, and
+otherwise the caption names what is wrong and the effort that would fix it.
+
+Planned targets show where they belong: a power target on the ride curve, a
+pace target on every pace curve its unit fits (`/km` and `/mi` on the run and
+walk families, `/100m` on the swim family, `/500m` on the rowing family), at
+the speed its pace names and the time one rep takes at that speed. A
 directive's `family` field steers the same switch, and the focus row reports
-the family on screen as `curve_family`.
+the curve on screen as `curve_family`, in the same vocabulary.
 
 A rung whose window best is within 5% of the next longer rung's best
 (`flat_ratio`) was not pushed: it is that session's ordinary output, not an
@@ -450,7 +478,8 @@ rung names the session that set the window's best and its day, and TAB on a
 hovered rung opens that session in the trace view.
 The ladder itself - which columns, which family, that zero and NULL both mean unrecorded - is
 the `activity_power_ladder` view's, shared with the record book and the
-CLI's health report.
+CLI's health report; the speed ladder is the `activity_pace_ladder` view's,
+shared with `stride pace-curve`, with its rung list in `pace_ladder_rungs`.
 
 The **points** come from the stored per-activity bests (`activity_metrics.best_*_w`),
 maxed over the window. `CAST(ROUND(...))` matters — a bare `CAST` truncates and

@@ -12,12 +12,11 @@
 # means editing the predicate rather than adding a row.
 Sports :: [].{
 
-	# Human words and the Strava sport_type spellings they mean. NO e-bike arms
-	# in the ride family on purpose: analyze computes best_*_w for anything with
-	# a power stream, so one motor-assisted ride would set the power-curve max
-	# at every duration and drag the CP fit up permanently — and since #151 the
-	# family is also the FTP DERIVATION POPULATION (activities.sport_family),
-	# which makes that warning doubly load-bearing. Editing a row's `sports` changes
+	# Human words and the Strava sport_type spellings they mean. The ride family
+	# holds NO e-bike types: analyze computes best_*_w for anything with a power
+	# stream, so one motor-assisted ride would set the power-curve max at every
+	# duration and drag the CP fit up permanently, and the family is also the
+	# FTP DERIVATION POPULATION (activities.sport_family). Editing a row's `sports` changes
 	# scoring, not just display: it needs a schema_version bump in Db.roc so the
 	# sport_family backfill and triggers regenerate, and historical ftp_used
 	# self-detects the change on the next analyze. Editing `words` does not — only
@@ -62,11 +61,10 @@ Sports :: [].{
 
 	# Sports where speed IS the effort signal — runs and swims per ADR 0008.
 	# LOAD-BEARING FOR TWO POLICIES: interval detection's pace routing AND
-	# aerobic decoupling's pace arm (#134). A meter-less RIDE must not fall
-	# through to either: cycling speed varies with terrain, so run-tuned pace
+	# aerobic decoupling's pace arm. A meter-less RIDE must not fall through
+	# to either: cycling speed varies with terrain, so run-tuned pace
 	# parameters would invent work reps, and speed-over-HR would masquerade as
-	# efficiency. Widening this widens both features at once — on purpose,
-	# but consciously.
+	# efficiency. Widening this widens both features at once.
 	pace_routed : Str -> Bool
 	pace_routed = |sport| {
 		low = Str.with_ascii_lowercased(sport)
@@ -74,9 +72,9 @@ Sports :: [].{
 	}
 
 	# The family head a sport scores against: FTP derivation treats a family as
-	# ONE fitness pool — a gravel 20-min effort IS bike fitness, and a GravelRide
-	# scored against gravel-only history had a near-empty derivation window
-	# (#151). Exact sport_type spelling in, canonical head out; non-members pass
+	# ONE fitness pool: a gravel 20-min effort IS bike fitness, and a GravelRide
+	# scored against gravel-only history would have a near-empty derivation
+	# window. Exact sport_type spelling in, canonical head out; non-members pass
 	# through unchanged (a Yoga population is Yoga alone).
 	canonical : Str -> Str
 	canonical = |sport|
@@ -88,9 +86,8 @@ Sports :: [].{
 	# SQL CASE expression collapsing a sport_type expression to canonical() —
 	# used ONLY in DDL: the migration backfill and the activities triggers that
 	# keep the stored sport_family column current. Queries compare the COLUMN
-	# (sargable via idx_activities_family_start); wrapping query predicates in
-	# this CASE instead was measured 8.5x slower per analyze on the real db
-	# (non-sargable — the approach this replaced). Names are our own
+	# (sargable via idx_activities_family_start); a query predicate wrapped in
+	# this CASE is non-sargable and scans every row. Names are our own
 	# literals (no quotes — the expect below pins that), so the splice is safe.
 	sql_canonical_case : Str -> Str
 	sql_canonical_case = |col| {
@@ -154,6 +151,13 @@ Sports :: [].{
 	# 100m pace the swim family, a 500m split the rowing family. A unit
 	# outside the four fits nothing. Rides are absent on purpose: cycling
 	# speed follows terrain, so a ride's effort is its power or its heart rate.
+	# every unit a pace target can be written in; none is a suffix of
+	# another, so a reader may match a literal by its ending
+	pace_target_units : List(Str)
+	pace_target_units = ["/100m", "/500m", "/km", "/mi"]
+
+	expect List.all(pace_target_units, |u| !(List.is_empty(pace_unit_families(u))))
+
 	pace_unit_families : Str -> List(Str)
 	pace_unit_families = |unit|
 		if (unit == "/km" or unit == "/mi") ["Run", "Walk"]

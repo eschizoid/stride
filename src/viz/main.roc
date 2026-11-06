@@ -124,7 +124,7 @@ init! = App.init_for_args(
 	|io| {
 		font = Draw.default_font!()
 		args = io.args!()
-		load_model!({ io, dir: stride_dir_of(args) }, launch_dir_of(args), font, 90, "Ride", Bool.True)
+		load_model!({ io, dir: stride_dir_of(args) }, launch_dir_of(args), font, 90, "", Bool.True)
 	},
 )
 
@@ -206,7 +206,7 @@ load_logo! = |acc, boot|
 # face, so a window that cannot reach the athlete's data says why.
 skeleton : Str -> _
 skeleton = |err|
-	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], ph: "", b20: -1, tg: [], rw: [], csp: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric }
+	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], ph: "", b20: -1, tg: [], rw: [], csp: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric, cf: "", keys: { power: [], pace: [] }, ptg: [] }
 
 # boot=True builds the instant skeleton the splash renders over: no database
 # and no engine call - the window opens on frame one and the real load runs
@@ -221,7 +221,11 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 			s = Db.load_series!(db)
 			e = Db.load_event!(db)
 			tm = Db.today_mod!(acc.io.commands(), db)
-			c = Db.load_curve!(db, curve_days, tm, curve_family)
+			# the curve the window opens on: the one asked for, or at launch the
+			# athlete's most-trained family's (Db.default_curve)
+			keys = Db.load_curve_keys!(db)
+			cf = if (curve_family == "") Db.default_curve(keys, Db.load_top_family!(db, tm)) else curve_family
+			c = Db.load_curve!(db, curve_days, tm, cf)
 			tids = Db.load_trace_ids!(db)
 			# ONLY the selected session is cached at boot. The roc-ray SQLite
 			# binding marshals result rows one at a time, and each session's
@@ -253,26 +257,30 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 			ht = Db.load_heat!(db)
 			hev = Db.load_event_days!(db)
 			zw = Db.load_zone_weeks!(db)
-			b20 = Db.load_best20_age!(db, curve_days, tm, curve_family)
+			b20 = Db.load_best20_age!(db, curve_days, tm, cf)
 			tg = Db.load_targets_at!(db, tm)
+			ptg = Db.load_pace_targets_at!(db, tm)
 			ph = Db.load_plan_horizon!(db)
 			sfs = Db.load_spine_fams!(db)
 			csp = Db.load_career_spines!(db, sfs, tm)
 			cs = Db.load_career_sports!(db)
 			cfm = Db.load_fam_months!(db)
 			rw = Db.load_ramp_weeks!(db)
-			prs = Db.load_prs!(db, curve_family)
+			prs = Db.load_prs!(db, cf)
 			nts = Db.load_day_notes!(db)
-			cpv = Db.load_curve_prev!(db, curve_days, tm, curve_family)
-			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, ph, b20, tg, rw, csp, cs, cfm, prs, tcache, un }
+			cpv = Db.load_curve_prev!(db, curve_days, tm, cf)
+			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, ph, b20, tg, rw, csp, cs, cfm, prs, tcache, un, cf, keys, ptg }
 		}
 		Err(NoStrideDir) => skeleton("no stride directory — the launcher passes it as the first argument")
 		Err(Unreachable) => skeleton("cannot open ${acc.dir}/db.sqlite")
 	}
 	ev = Db.find_idx(loaded.s.days, loaded.e.day)
 	# the fit runs the engine; the skeleton cannot afford it
-	fit = if (boot) ({ cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }) else Db.load_fit!(acc.io.commands(), curve_days, curve_family)
-	fit_text = Curve.fit_caption(fit, loaded.b20)
+	# the curve on screen: what the load chose, the ride power curve when
+	# the database could not answer, and still unchosen while booting
+	cf = if (boot) curve_family else if (loaded.cf == "") "Ride" else loaded.cf
+	fit = if (boot) ({ cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }) else Db.load_fit!(acc.io.commands(), curve_days, cf)
+	fit_text = Curve.fit_caption_for(cf, loaded.un, fit, loaded.b20)
 	# the board projects as far as the written plan reaches, never past the
 	# next event (load_plan_horizon! caps it there), and reads the numbers
 	# from the engine's own walk
@@ -318,13 +326,14 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		Ok(ld) => ld
 		Err(_) => "no data"
 	}
-	# the event tile prefers the future; a race inside the last week still
-	# deserves its "ridden" moment; otherwise the slot says so
+	# the event tile prefers the future; an event inside the last week still
+	# gets its "done" moment, in words that fit any sport; otherwise the slot
+	# says so
 	ev_tile =
 		if loaded.e.day != "" {
 			{ top: loaded.e.name, sub: if (loaded.e.ahead == 0) ("today, ${loaded.e.day}") else "in ${I64.to_str(loaded.e.ahead)}d, ${loaded.e.day}" }
 		} else if loaded.rd.ago >= 0 and loaded.rd.ago <= 7 {
-			{ top: loaded.rd.name, sub: "ridden, ${I64.to_str(loaded.rd.ago)}d ago" }
+			{ top: loaded.rd.name, sub: "done, ${I64.to_str(loaded.rd.ago)}d ago" }
 		} else {
 			{ top: "no event planned", sub: "stride event add <date> <name>" }
 		}
@@ -364,9 +373,11 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		curve_prev: loaded.cpv,
 		curve_lbls: curve_lbls,
 		fit_lbl: mk!(Db.ascii_safe(fit_text), 14)?,
-		curve_title: mk!("power - this ${I64.to_str(curve_days)}d vs the ${I64.to_str(curve_days)}d before it", 15)?,
+		curve_title: mk!(Curve.title_text(cf, curve_days), 15)?,
 		curve_days,
-		curve_family,
+		curve_family: cf,
+		curve_keys: loaded.keys,
+		pace_targets: loaded.ptg,
 		trace_ids: loaded.tids,
 		trace_sel: 0.U64,
 		trace_gen: 0.U64,
@@ -406,7 +417,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		ev_tile_sub: mk!(ev_tile.sub, 11)?,
 		zero_note: mk!("fresh above", 11)?,
 		ridden_found: loaded.rd.ago >= 0 and loaded.rd.ago <= 7 and loaded.e.day != "",
-		ridden_note: mk!(Board.ev_line(head, loaded.rd.name, " ridden, ${I64.to_str(loaded.rd.ago)}d ago", 10.0), 10)?,
+		ridden_note: mk!(Board.ev_line(head, loaded.rd.name, " done, ${I64.to_str(loaded.rd.ago)}d ago", 10.0), 10)?,
 		curve_empty: mk!("no rides in the selected window - the curve has nothing to draw", 16)?,
 		trace: loaded.tr,
 		ghost: [],
@@ -423,9 +434,9 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		trace_cache: loaded.tcache,
 		segs: loaded.sg,
 		trace_dur: loaded.du,
-		fit_cp: if (Curve.fit_usable(fit)) (fit.cp) else 0.0,
+		fit_cp: Curve.fit_line(cf, fit),
 		plan_targets: loaded.tg,
-		cp_lbl: mkm!("CP ${Db.fmt_f(fit.cp)}W", 12)?,
+		cp_lbl: mkm!(Curve.fit_tag(cf, loaded.un, fit), 12)?,
 		data: loaded.s.data,
 		days: loaded.s.days,
 		stride_dir: acc.dir,
@@ -588,7 +599,7 @@ trace_task! = |acc, units, ids, sel, gen|
 					du = Db.load_dur!(db, entry.id)
 					sp = if (entry.chan == Db.pace_chan) (Db.load_splits!(db, entry.id, Units.split_len(units))) else []
 					st = if (Trace.strength_session(entry.sport)) (Db.load_sets!(db, entry.id)) else { rows: [], pasted: Bool.False }
-					TraceSwitched({ tr, sg, du, gen, day: entry.day, un: Db.trace_unit(entry.chan, units), sp, st })
+					TraceSwitched({ tr, sg, du, gen, day: entry.day, un: Db.trace_unit(entry.chan, units, entry.sport), sp, st })
 				}
 			}
 	}
@@ -1196,6 +1207,29 @@ refusals_for = |dv, cdir, wsel, cur_sel, ids, rec_active, cap_pending| {
 	Str.join_with(segs, "; ")
 }
 
+# a curve key the athlete has data for: one of the loaded power families or
+# pace keys
+curve_on_record : Db.CurveKeys, Str -> Bool
+curve_on_record = |keys, f| List.contains(keys.power, f) or List.contains(keys.pace, f)
+
+# the window's half of a family's judgement: Bus.family_refusal has already
+# named a key outside the vocabulary, and a valid key with nothing on record
+# is refused here by name, with the curves that are
+curve_refusal : Db.CurveKeys, Str -> Str
+curve_refusal = |keys, f|
+	if (f == "" or Bus.family_refusal(f) != "" or curve_on_record(keys, f)) ""
+	else {
+		have = List.concat(keys.power, keys.pace)
+		what = if (Str.starts_with(f, Bus.pace_prefix)) "pace" else "power"
+		if (List.is_empty(have)) "family ${f}: no ${what} on record" else "family ${f}: no ${what} on record (have ${Str.join_with(have, ", ")})"
+	}
+
+expect curve_refusal({ power: ["Ride", "Rowing"], pace: ["pace:Rowing"] }, "Run") == "family Run: no power on record (have Ride, Rowing, pace:Rowing)"
+expect curve_refusal({ power: ["Ride"], pace: [] }, "pace:Swim") == "family pace:Swim: no pace on record (have Ride)"
+expect curve_refusal({ power: ["Ride"], pace: ["pace:Run"] }, "pace:Run") == "" and curve_refusal({ power: [], pace: [] }, "") == ""
+# a key outside the vocabulary is the static refusal's, never named twice
+expect curve_refusal({ power: [], pace: [] }, "Bike") == ""
+
 # two refusals joined the way the segments are
 join_refusal : Str, Str -> Str
 join_refusal = |a, b| if (a == "") b else if (b == "") a else "${a}; ${b}"
@@ -1546,12 +1580,12 @@ load_curve_window! = |acc, font, curve_days, curve_family| {
 	read = match open_db!(acc) {
 		Ok(db) => {
 			tm = Db.today_mod!(acc.io.commands(), db)
-			{ c: Db.load_curve!(db, curve_days, tm, curve_family), cpv: Db.load_curve_prev!(db, curve_days, tm, curve_family), b20: Db.load_best20_age!(db, curve_days, tm, curve_family), prs: Db.load_prs!(db, curve_family) }
+			{ c: Db.load_curve!(db, curve_days, tm, curve_family), cpv: Db.load_curve_prev!(db, curve_days, tm, curve_family), b20: Db.load_best20_age!(db, curve_days, tm, curve_family), prs: Db.load_prs!(db, curve_family), un: Db.units!(db) }
 		}
-		Err(_) => { c: [], cpv: [], b20: -1, prs: [] }
+		Err(_) => { c: [], cpv: [], b20: -1, prs: [], un: Metric }
 	}
 	fit = Db.load_fit!(acc.io.commands(), curve_days, curve_family)
-	fit_text = Curve.fit_caption(fit, read.b20)
+	fit_text = Curve.fit_caption_for(curve_family, read.un, fit, read.b20)
 	# the same two faces the full loader prepares these labels with, so a
 	# window switch cannot re-set the curve in a different type
 	head = brand_font!(acc, "Quicksand-Medium.ttf", 24, font)
@@ -1572,10 +1606,10 @@ load_curve_window! = |acc, font, curve_days, curve_family| {
 		c: read.c,
 		cpv: read.cpv,
 		lbls,
-		title: mk!("power - this ${I64.to_str(curve_days)}d vs the ${I64.to_str(curve_days)}d before it", 15)?,
+		title: mk!(Curve.title_text(curve_family, curve_days), 15)?,
 		fit_lbl: mk!(Db.ascii_safe(fit_text), 14)?,
-		cp_lbl: mkm!("CP ${Db.fmt_f(fit.cp)}W", 12)?,
-		fit_cp: if (Curve.fit_usable(fit)) (fit.cp) else 0.0,
+		cp_lbl: mkm!(Curve.fit_tag(curve_family, read.un, fit), 12)?,
+		fit_cp: Curve.fit_line(curve_family, fit),
 	})
 }
 
@@ -1644,7 +1678,7 @@ load_tcache! = |db, units, ids|
 			# lookup into the picker row; prepend so picker order survives
 			# without List.reverse, which this stdlib lacks
 			st9 = if (Trace.strength_session(te.sport)) (Db.load_sets!(db, te.id)) else { rows: [], pasted: Bool.False }
-			List.prepend(load_tcache!(db, units, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9, un: Db.trace_unit(te.chan, units), sp: sp9, st: st9 })
+			List.prepend(load_tcache!(db, units, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9, un: Db.trace_unit(te.chan, units, te.sport), sp: sp9, st: st9 })
 		}
 	}
 
@@ -1678,7 +1712,7 @@ caps_fields = [
 	{ name: "trace_id", kind: "integer", accepts: "an activity id among the trace picker's sessions; when both are given it takes precedence over trace_day" },
 	{ name: "ghost_id", kind: "integer", accepts: "an activity id among the trace picker's sessions, of the same kind as the session shown; takes precedence over ghost_day, and 'none' in ghost_day still dismisses" },
 	{ name: "capture", kind: "text", accepts: "'png' writes the view the directive lands on, once it has settled, to captures/<view>.png under the directory the window was launched from; 'webm_start' and 'webm_stop' begin and end a WebM recording of it; the row stays pending until the host answers, then result names the file by its absolute path" },
-	{ name: "family", kind: "text", accepts: "'Ride' or 'Rowing' switches the power view's curve, record book and CP fit to that family; omitted leaves it unchanged" },
+	{ name: "family", kind: "text", accepts: "a sport family's head ('Ride', 'Rowing', 'Run', ...) switches the power view to that family's power curve, record book and CP fit; 'pace:' and a sport type ('pace:Run', 'pace:Swim', 'pace:Rowing') switches it to that sport's pace curve and critical-speed fit; refused by name when the athlete has no such data; omitted leaves it unchanged" },
 ]
 
 update! : Model, App.Input(Msg), App.Io => Try(Model, [Exit(I64)])
@@ -1776,7 +1810,9 @@ update! = |model0, program_input, io| {
 					# R still refreshes everything the window does not drive. The
 					# reloading flag stays the chip's too, since its request may
 					# still be in flight.
-					if (fresh.curve_days == acc.curve_days and fresh.curve_family == acc.curve_family) merged
+					# a model still booting has chosen no curve yet, and takes the one
+					# the load chose
+					if (acc.curve_family == "" or (fresh.curve_days == acc.curve_days and fresh.curve_family == acc.curve_family)) merged
 					else { ..merged, curve_family: acc.curve_family, prs: acc.prs, curve: acc.curve, curve_prev: acc.curve_prev, curve_lbls: acc.curve_lbls, curve_title: acc.curve_title, curve_days: acc.curve_days, fit_lbl: acc.fit_lbl, cp_lbl: acc.cp_lbl, fit_cp: acc.fit_cp, reloading: acc.reloading }
 				}
 				# only the reply for the current trace generation lands: two switches
@@ -1987,11 +2023,11 @@ update! = |model0, program_input, io| {
 			)
 			else if (view == 1) (if (d.key_pressed(Key1)) 30 else if (d.key_pressed(Key2)) 60 else if (d.key_pressed(Key3)) 90 else model.curve_days)
 			else model.curve_days
-		# the power view's family: a directive's (a refused one changes nothing),
-		# or the family chip clicked on the power view
-		clicked_family = if (view == 1 and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0) (Curve.family_chip_at(m0.x, win.w - 420.0)) else ""
+		# the power view's curve: a directive's (a refused one changes nothing),
+		# or the curve or mode chip clicked on the power view
+		clicked_family = if (view == 1 and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0) (Curve.chip_at(Curve.curve_chips(win.w, model.curve_keys, model.curve_family), m0.x)) else ""
 		want_family =
-			if (directive.has_d and directive.family != "" and Bus.family_refusal(directive.family) == "") directive.family
+			if (directive.has_d and directive.family != "" and Bus.family_refusal(directive.family) == "" and curve_on_record(model.curve_keys, directive.family)) directive.family
 			else if (clicked_family != "") clicked_family
 			else model.curve_family
 		# on the trace view, [ and ] walk the picker, X narrows it to one sport.
@@ -2263,7 +2299,7 @@ update! = |model0, program_input, io| {
 		trace_unit2 =
 			if switching {
 				match List.get(model.trace_ids, want_sel2) {
-					Ok(se) => Db.trace_unit(se.chan, model.units)
+					Ok(se) => Db.trace_unit(se.chan, model.units, se.sport)
 					Err(_) => model.trace_unit
 				}
 			} else model.trace_unit
@@ -2295,7 +2331,7 @@ update! = |model0, program_input, io| {
 		chip0h = win.w - 420.0
 		# per-chip, not one wide band: the 8px gaps between chips are not
 		# clickable and must not claim the pointer
-		over_chip = (view2 == 0 or view2 == 1) and m.y >= 64.0 and m.y <= 86.0 and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0) or (view2 == 1 and Curve.family_chip_at(m.x, chip0h) != ""))
+		over_chip = (view2 == 0 or view2 == 1) and m.y >= 64.0 and m.y <= 86.0 and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0) or (view2 == 1 and Curve.chip_at(Curve.curve_chips(win.w, model.curve_keys, model.curve_family), m.x) != ""))
 		over_row = view2 == 3 and m.x >= 36.0 and m.x < Table.table_edge(win.w, detail_day2) and (
 			match Table.row_at(Table.page_for(model, cursor2), m.y) {
 				Row(_) => Bool.True
@@ -2398,7 +2434,7 @@ update! = |model0, program_input, io| {
 			_ => Bool.False
 		}
 		cap_pending = capture_is_pending(pending1)
-		refused9 = if (directive.has_d and directive.id >= 0) (refusals_for(directive, cursor_dir, want_sel2, model.trace_sel, model.trace_ids, rec_active, cap_pending)) else ""
+		refused9 = if (directive.has_d and directive.id >= 0) (join_refusal(refusals_for(directive, cursor_dir, want_sel2, model.trace_sel, model.trace_ids, rec_active, cap_pending), curve_refusal(model.curve_keys, directive.family))) else ""
 		# a capture the refusals let through waits on the host for its mark;
 		# the test is the predicate that produced the refusal, so refusal text
 		# elsewhere in the row cannot suppress it. The file is named for the

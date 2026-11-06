@@ -407,8 +407,10 @@ polls about once a second and every row reaches a status you can read back.
    it holds two sessions). The id wins when both are given. `ghost_day = 'none'`
    dismisses the ghost. `capture = 'png'` writes the landed view to
    `captures/<view>.png` under the window's launch directory; `'webm_start'` and
-   `'webm_stop'` record. One capture runs at a time. `family = 'Rowing'` (or `'Ride'`)
-   switches the power view's curve, record book and CP fit to that family.
+   `'webm_stop'` record. One capture runs at a time. `family` picks the power view's
+   curve: a family head (`'Rowing'`, `'Run'`) for its power curve, record book and CP
+   fit, or `'pace:<sport_type>'` (`'pace:Run'`, `'pace:Swim'`) for that sport's pace
+   curve and critical-speed fit; a curve the athlete has no data for is refused by name.
 3. **Verify by id.** `stride viz --json` lists the last ten directives newest first in
    `history` and capture rows in `captures`, each
    `{id, created_at, status, error, applied_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id, capture, result}`

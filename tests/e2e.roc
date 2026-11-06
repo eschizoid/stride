@@ -364,7 +364,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1371)?
+	checks_ran_exactly!(1375)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2602,8 +2602,8 @@ b_seed_analyze! = |ctx| {
 	# beside it survives drops the count and fails loud - and `literals` is
 	# zero lines carrying a hardcoded metric unit string, the regression that
 	# motivated the sweep. Comment lines are skipped the same way as above.
-	viz_units_static = Str.trim(sh!("s=0; l=0; for f in src/viz/*.roc; do while read -r ln; do case \"$ln\" in \\#*) continue;; esac; case \"$ln\" in *'Units.dist_value('*|*'Units.dist_unit('*|*'Units.pace_from_speed('*|*'Units.pace_per_dist('*|*'pace_label_for('*) s=$((s+1));; esac; case \"$ln\" in *'km\"'*|*'\" km'*|*'/km'*|*'min/km'*) l=$((l+1));; esac; done < $f; done; echo \"sites=$s literals=$l\""))
-	check!("the window names distance and pace units through core.Units, never a literal", viz_units_static == "sites=9 literals=0")?
+	viz_units_static = Str.trim(sh!("s=0; l=0; for f in src/viz/*.roc; do while read -r ln; do case \"$ln\" in \\#*) continue;; esac; case \"$ln\" in expect*) continue;; esac; case \"$ln\" in *'Units.dist_value('*|*'Units.dist_unit('*|*'Units.pace_from_speed('*|*'Units.pace_per_dist('*|*'pace_label_for('*) s=$((s+1));; esac; case \"$ln\" in *'km\"'*|*'\" km'*|*'/km'*|*'min/km'*) l=$((l+1));; esac; done < $f; done; echo \"sites=$s literals=$l\""))
+	check!("the window names distance and pace units through core.Units, never a literal", viz_units_static == "sites=10 literals=0")?
 	check!("coverage tiers discriminate (high and medium both live)", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct > 0) and (.medium_pct > 0)") == "true")?
 	check!("form coverage carries the 90d window", strjq!(ctx, ["summary"], ".data.form_coverage_90d | (.high_pct + .medium_pct + .low_pct == 100) and ((.known | type) == \"boolean\")") == "true")?
 	# with fixtures loaded TSB is known, so the enum arm is required here; the
@@ -7578,20 +7578,38 @@ b_cross_surface! = |ctx| {
 	cli_curve = strjq!(ctx, ["power-curve", "3650", "Ride"], "[.data.points[] | select(.watts > 0) | (.dur_s | tostring) + \":\" + ((.watts * 10 | round) | tostring)] | join(\",\")")
 	view_curve = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(s), '') FROM (SELECT secs || ':' || CAST(ROUND(MAX(watts) * 10) AS INTEGER) AS s FROM activity_power_ladder WHERE sport_family = 'Ride' AND start_local >= date('${ctx.today}', '-3650 days') GROUP BY rung, secs ORDER BY secs);"))
 	check!("the CLI power curve equals the ladder view at every rung (${cli_curve})", !Str.is_empty(cli_curve) and cli_curve == view_curve)?
-	# the window's record book joins a family's record per rung onto the
-	# engine's power_ladder_rungs view, the family bound as :fam. Its query
-	# is read out of src/viz/Db.roc rather than copied here, with Ride put in
-	# for the binding, so the text this runs IS the text the window runs; it
-	# must equal the CLI's all-time Ride curve at every rung the CLI reports,
-	# and the rung list it stands on must equal the unpivot's - a rung added
-	# to one and not the other fails here by name
-	prs_q = Str.trim(sh!("grep -oE 'db\\.query!\\(\"WITH best AS[^\"]*power_ladder_rungs[^\"]*\"' src/viz/Db.roc | sed 's/^db\\.query!(\"//; s/\"$//' | sed \"s/:fam/'Ride'/\""))
+	# the window's record book joins a curve's record per rung onto the
+	# ladder's own rungs view, the key bound as :fam. Its query is read out
+	# of src/viz/Db.roc rather than copied here, with the power ladder's
+	# names put in for the key's and Ride for the binding, so the text this
+	# runs IS the text the window runs; it must equal the CLI's all-time
+	# Ride curve at every rung the CLI reports, and the rung list it stands
+	# on must equal the unpivot's - a rung added to one and not the other
+	# fails here by name
+	prs_grep = "grep -oE 'db\\.query!\\(\"WITH best AS[^\"]*\"' src/viz/Db.roc | sed 's/^db\\.query!(\"//; s/\"$//'"
+	prs_q = Str.trim(sh!("${prs_grep} | sed 's/[$][{]lad[.]val[}]/watts/g; s/[$][{]lad[.]view[}]/activity_power_ladder/g; s/[$][{]lad[.]keycol[}]/sport_family/g; s/[$][{]lad[.]rungs[}]/power_ladder_rungs/g' | sed \"s/:fam/'Ride'/\""))
 	book = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(secs || ':' || w), '') FROM (${prs_q});"))
 	cli_book = strjq!(ctx, ["power-curve", "3650", "Ride"], "[.data.points[] | (.dur_s | tostring) + \":\" + ((.watts | round) | tostring)] | join(\",\")")
 	check!("the window's record-book query, read from its source, equals the CLI's all-time Ride curve at every rung (${book})", !Str.is_empty(prs_q) and !Str.is_empty(book) and book == cli_book)?
 	rung_list = Str.trim(sql!(ctx.db, "SELECT group_concat(rung || '=' || secs) FROM (SELECT rung, secs FROM power_ladder_rungs ORDER BY secs);"))
 	unpivot_list = Str.trim(sql!(ctx.db, "SELECT group_concat(rung || '=' || secs) FROM (SELECT DISTINCT rung, secs FROM activity_power_ladder ORDER BY secs);"))
 	check!("the rung view and the unpivot name the same rungs (${rung_list})", !Str.is_empty(rung_list) and rung_list == unpivot_list)?
+	# the same query over the speed ladder: the pace key's names put in and
+	# Run for the binding, it must equal the CLI's all-time Run pace curve
+	# at every rung the CLI reports, in millimetres per second; and the
+	# speed ladder's rung view and unpivot name the same rungs
+	# a run carrying all three speed rungs, inserted here and deleted after
+	# the comparison, so the parity reads real rows whatever ran before
+	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9641,'Pace Ladder','Run','${ctx.today}T22:00:00Z',1800,8000,10,160);")
+	_ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev,best_300s_speed,best_600s_speed,best_20min_speed) VALUES (9641,40.0,190.0,1800,1,4.6667,4.1667,4.0);")
+	pace_q = Str.trim(sh!("${prs_grep} | sed 's/[$][{]lad[.]val[}]/speed * 1000.0/g; s/[$][{]lad[.]view[}]/activity_pace_ladder/g; s/[$][{]lad[.]keycol[}]/sport_type/g; s/[$][{]lad[.]rungs[}]/pace_ladder_rungs/g' | sed \"s/:fam/'Run'/\""))
+	pace_book = Str.trim(sql!(ctx.db, "SELECT COALESCE(group_concat(secs || ':' || w), '') FROM (${pace_q}) WHERE w > 0;"))
+	cli_pace = strjq!(ctx, ["pace-curve", "3650", "Run"], "[.data.points[] | (.dur_s | tostring) + \":\" + ((.speed * 1000 | round) | tostring)] | join(\",\")")
+	check!("the window's record-book query over the speed ladder equals the CLI's all-time Run pace curve at every rung (${pace_book})", !Str.is_empty(pace_book) and pace_book == cli_pace)?
+	pace_rungs = Str.trim(sql!(ctx.db, "SELECT group_concat(rung || '=' || secs) FROM (SELECT rung, secs FROM pace_ladder_rungs ORDER BY secs);"))
+	pace_unpivot = Str.trim(sql!(ctx.db, "SELECT group_concat(rung || '=' || secs) FROM (SELECT DISTINCT rung, secs FROM activity_pace_ladder ORDER BY secs);"))
+	check!("the speed rung view and its unpivot name the same rungs (${pace_rungs})", pace_rungs == "5min=300,10min=600,20min=1200" and pace_rungs == pace_unpivot)?
+	_ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 9641; DELETE FROM activities WHERE id = 9641;")
 	# the series clock and the family-month keys are views the window reads
 	# rather than expressions it copies: each window query is read out of
 	# src/viz/Db.roc so the text this checks IS the text the window runs, and
@@ -7755,7 +7773,7 @@ b_cross_surface! = |ctx| {
 	anchor_sites = Str.trim(sh!("grep -c \"'now', '..today_mod.'\" src/viz/Db.roc"))
 	local_sites = Str.trim(sh!("grep -c \"'now', 'localtime')\\|date('now', '-'\\|strftime('%Y-%m', 'now')\" src/viz/Db.roc"))
 	check!("the window's calendar anchor, read from its source, names the athlete's day under a far zone and never the machine's (${window_today} vs ${athlete_today}/${machine_today})", !Str.is_empty(anchor_expr) and window_today == athlete_today and window_today != machine_today)?
-	check!("...and every window loader that reads the calendar spells that anchor (the plan strip, the plan rows, both curve windows, the 20-minute best's age, the planned targets, the open month); none anchors on localtime or on UTC's now (${anchor_sites}/${local_sites})", anchor_sites == "7" and local_sites == "0")?
+	check!("...and every window loader that reads the calendar spells that anchor (the plan strip, the plan rows, both curve windows, the 20-minute best's age, the planned power and pace targets, the most-trained family, the open month); none anchors on localtime or on UTC's now (${anchor_sites}/${local_sites})", anchor_sites == "9" and local_sites == "0")?
 	# end-of-week CTL: weekly_ramp's newest week vs the load series on that
 	# week's last loaded day, both in thousandths
 	wk_ctl = Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(ctl_end * 1000) AS INTEGER) FROM weekly_ramp ORDER BY wk DESC LIMIT 1;"))
@@ -7991,12 +8009,18 @@ b_viz_tick! = |ctx| {
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (5);")
 	check!("the newest of two fresh rows wins", strjq!(ctx, ["viz", "tick"], ".data.view") == "5")?
 	check!("...and the older closed as superseded", Str.trim(sql!(ctx.db, "SELECT status FROM viz_directives WHERE view = 4;")) == "superseded")?
-	# the power view's family: a directive naming Ride or Rowing is applied
-	# with it, and any other value is refused by name
+	# the power view's curve: a directive naming any sport family's head, or
+	# pace: and a sport whose effort is its pace, passes the vocabulary - the
+	# headless tick holds no data, so whether the athlete has that curve is
+	# the window's judgement - and anything else is refused by name
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, family) VALUES (1, 'Rowing');")
 	check!("a directive naming a curve family is applied with it", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .family") == "applied/Rowing")?
-	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, family) VALUES (1, 'Run');")
-	check!("...and a family outside Ride/Rowing is refused by name", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/family Run not Ride/Rowing")?
+	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, family) VALUES (1, 'pace:TrailRun');")
+	check!("...a pace key over a pace sport is applied with it", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .family") == "applied/pace:TrailRun")?
+	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, family) VALUES (1, 'Bike');")
+	check!("...and a family outside the vocabulary is refused by name", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/family Bike not a sport family or pace:<sport>")?
+	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, family) VALUES (1, 'pace:Ride');")
+	check!("...as is a pace key over a sport whose speed is not its effort", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/family pace:Ride not a pace sport")?
 	# pending until reported: a cycle that does not ack leaves the winner
 	# pending, and the next cycle returns the SAME row - a crash between
 	# apply and report retries rather than loses the directive
