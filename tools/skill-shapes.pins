@@ -28,8 +28,9 @@ envelope.json	code,message	code,message	-	properties.error
 envelope.json	data,error,schema_version	schema_version	-	$
 event_add.json	days_away,event_date,id,name	days_away,event_date,id,name	doc	$
 event_remove.json	removed	removed	-	$
-events.json	atl,ctl,days_away,event_date,id,name,planned_in_window,sessions_projected,tsb	atl,ctl,days_away,event_date,id,name,planned_in_window,sessions_projected,tsb	doc	properties.events.items
+events.json	atl,ctl,days_away,event_date,id,name,planned_in_window,sessions_projected,tsb,unprojected	atl,ctl,days_away,event_date,id,name,planned_in_window,sessions_projected,tsb,unprojected	doc	properties.events.items
 events.json	baseline_known,events,ftp_known,projected_from	baseline_known,events,ftp_known,projected_from	doc	$
+events.json	date,reason,target_literal	date,reason,target_literal	-	properties.events.items.properties.unprojected.items
 import.json	imported,skipped	imported,skipped	doc	$
 init.json	initialized	initialized	-	$
 load.json	atl,ctl,day,tsb,tss	atl,ctl,day,tsb,tss	-	items

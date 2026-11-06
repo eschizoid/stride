@@ -494,7 +494,7 @@ expect {
 expect Str.ends_with(Str.join_with(Board.ev_lines(Text.font_stub, "one two three four five six seven eight nine ten eleven twelve thirteen", 10.0), " "), "...")
 
 # the projection names where it ends - the event only when the plan reaches
-# it - and how many of the window's sessions carry a target
+# it - and how many of the window's sessions carry load
 expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.True, ctl: 46.0, tsb: 14.3, considered: 4, projected: 1 }) == ["plan to 11-08: fit 46.0, form 14.3", "1 of 4 sessions carry load"]
 expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 40, projected: 12 }) == ["at event: fit 52.5, form -3.2", "12 of 40 sessions carry load"]
 expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0 }) == []
