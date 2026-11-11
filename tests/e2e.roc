@@ -1030,12 +1030,11 @@ run_notes! = || {
 }
 
 # ── the two non-complete stop reasons (#218) ─────────────────────────────────
-# Until the read limits became env-overridable, reaching `budget_reached` honestly
-# cost 940 reads and `rate_limited` cost two 15-minute sleeps — so of the three
-# StopReason values only `complete` was ever observed, and a transposition in BOTH
-# the WindowFull and DayFull arms (`stored: counted.skipped`) passed the entire suite.
-# These two runs are what catches THAT (the check-count floor
-# below catches a whole branch going dead, which is a different failure).
+# The read limits are env-overridable so these runs reach `budget_reached` and
+# `rate_limited` in milliseconds rather than 940 reads and two 15-minute sleeps. They
+# are the only guard on the WindowFull and DayFull arms carrying the right counts (a
+# transposed `stored: counted.skipped` is invisible to every other driver); the
+# check-count floor below catches a whole branch going dead, a different failure.
 run_stops! : () => Try({}, _)
 run_stops! = || {
 	reset_checks!({})?
@@ -1724,10 +1723,10 @@ b_init_config! = |ctx| {
 	# commands — they answer a retired name with a pointer. The sort hints left the list
 	# when the enum expansion started accounting for them.
 	check!("every sub-form the parser has is accounted for, bar the two redirect arms (got: ${unaccounted})", unaccounted == "plan add|plan all|")?
-	# Non-zero, not a literal count. A literal here is bump-bait: it changed the moment
-	# enum expansion started accounting for two more paths, and its failure could not say
-	# which direction to look. What this guards is that the accounted side produced
-	# SOMETHING, so the comm above is not comparing against an empty file.
+	# Non-zero, not a literal count: what this guards is that the accounted side
+	# produced SOMETHING, so the comm above is not comparing against an empty file. A
+	# literal would move with every new sub-form and its failure could not say which way
+	# to look.
 	check!("...and the table accounted for some of them, so that was not a comparison against nothing", Str.trim(sh!("wc -l < '${pair_dir}/table' | tr -d ' '")) != "0")?
 	# The REVERSE direction. `comm -23` is parser-minus-table, so a token the
 	# TABLE invents is invisible to it: giving `week` an `opt("recent")`
@@ -1775,10 +1774,10 @@ b_init_config! = |ctx| {
 	check!("every form declaring mutates:false leaves the database contents unmoved", dirty == "")?
 	# The guard that matters: how many forms REACHED their handler — counting the jq
 	# list reports green on a sweep where every invocation bounced off the parser.
-	# Compared to the OTHER COUNT from the same run, not a literal: a literal was
-	# bump-bait whose natural repair (edit the number) removes the guard. Two counts
-	# cannot be reconciled that way, and a new read-only command needs no edit. The
-	# loop names the forms that did not arrive.
+	# Compared to the OTHER COUNT from the same run, not a literal, because editing a
+	# literal is the natural repair and it removes the guard; two counts cannot be
+	# reconciled that way, and a new read-only command needs no edit. The loop names
+	# the forms that did not arrive.
 	stalled = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | ${fillers} | { while read -r line; do code=$(HOME='${ro_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true; } | tr '\\n' ' '"))
 	declared_ro = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select(.mutates == false)] | length'"))
 	check!("...and every read-only form actually reached its handler (stalled: ${stalled})", stalled == "")?
@@ -1818,10 +1817,10 @@ b_init_config! = |ctx| {
 	check!("...and all four stay exit 0", stride_status!(ctx.bin, ctx.home, []) == 0 and stride_status!(ctx.bin, ctx.home, ["--help"]) == 0 and stride_status!(ctx.bin, ctx.home, ["-h"]) == 0 and stride_status!(ctx.bin, ctx.home, ["help"]) == 0)?
 	check!("humans still get the help screen", Str.contains(stride_human!(ctx.bin, ctx.home, []), "USAGE") and !(Str.contains(stride_human!(ctx.bin, ctx.home, []), "schema_version")))?
 	check!("...and still exits non-zero", stride_status!(ctx.bin, ctx.home, ["sync", "extra"]) == 1)?
-	# the FLAG path owns the exit code too (#162's re-exec wrapper): without
+	# the FLAG path owns the exit code too (the re-exec wrapper): without
 	# Err(Exit(child_code)) the parent collapses every child status to 1 and
-	# stacks a platform banner on the child's own message. Deleting that arm
-	# passed the entire suite before this check existed.
+	# stacks a platform banner on the child's own message. This is the only
+	# check on that arm.
 	check!("an error through --json propagates the child's status", stride_status!(ctx.bin, ctx.home, ["--json", "activity", "99999999"]) == 1)?
 	# (a db-free success: at this point in the fixture almost every query is
 	# legitimately an error, and --version exercises the same re-exec path)
@@ -3394,8 +3393,7 @@ b_seed_analyze! = |ctx| {
 	# relative to today — d1/d2 can both land in the PREVIOUS week, leaving the
 	# payload empty and the item schema (15 required keys, one of them the status enum)
 	# evaluated against nothing. Seed a session dated TODAY and assert the array
-	# is non-empty before trusting the validation. Third instance of this trap
-	# in this PR; the assertion is the cheap half.
+	# is non-empty before trusting the validation.
 	wk_sess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.today}", "endurance", "week schema probe", "r"], ".data.id"))
 	check!("the week payload has rows to validate", strjq!(ctx, ["week"], ".data | length > 0") == "true")?
 	check!("week conforms (with rows)", validate!("week", "week") == "")?
@@ -3678,11 +3676,9 @@ b_seed_analyze! = |ctx| {
 	check!("...and removing the bad override restores the count", pf!("activities_awaiting_metrics_known") == "true")?
 	check!("...to a real zero, not merely a known one", pf!("activities_awaiting_metrics") == "0")?
 	# ── last_sync (#221) ────────────────────────────────────────────────
-	# This driver never syncs, so the CORRECT value here is "" — which is also what every
-	# broken implementation produces. Asserting "" would be the vacuous absence check this
-	# file warns about, and it showed: deleting the whole lookup, and returning the raw
-	# stored epoch unconverted, BOTH passed the entire suite. The only real test is to
-	# write the key, which costs one line.
+	# This driver never syncs, so the correct value here is "", which is also what a
+	# missing lookup or an unconverted epoch produce. Asserting "" would be a vacuous
+	# absence check, so the key is written and its conversion to UTC ISO asserted.
 	_ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key,value) VALUES ('last_sync_epoch','1700000000');")
 	check!("last_sync is the stored epoch as UTC ISO, not the raw value", pf!("last_sync") == "2023-11-14T22:13:20Z")?
 	# arg_i64 takes plain integers only, so exponent notation is the unparseable case.
@@ -3775,13 +3771,10 @@ b_seed_analyze! = |ctx| {
 	_ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE rationale = 'unbreakable-detail-probe';")
 	check!("the unbreakable-token probe was inserted", tok_rows == "1")?
 	check!("...and none exceeds the budget when a detail is one unbreakable token", wide_tok == "")?
-	# #201: the 2026-08-17 compiler widened from_str to accept exponent notation —
-	# "1e1" became 10 and reached MUTATING commands (`skip 1e1` addressed planned
-	# session 10, an unrecoverable judgment-tier write) with nothing exercising an
-	# exponent argument. #197 pinned the accepting behaviour and said that if #201
-	# narrowed the parse this check should be INVERTED rather than deleted; this is
-	# that inversion — the assertion is the REFUSAL, so a future stdlib change
-	# cannot quietly hand the accident back.
+	# the stdlib's from_str accepts exponent notation, so "1e1" would read as 10 and
+	# reach MUTATING commands (`skip 1e1` addressing planned session 10, an
+	# unrecoverable judgment-tier write). The assertion is the REFUSAL, so a stdlib
+	# change cannot quietly hand the accident back.
 	# Assert the RESULT, not the envelope: `schema_version` appears in the error
 	# arm too, so an envelope check stays green in exactly the state under test.
 	check!("exponent notation is refused in a count arg", Str.contains(stride!(ctx.bin, ctx.home, ["activities", "1e1"]), "bad_count"))?
@@ -5155,8 +5148,7 @@ b_agent_loop! = |ctx| {
 	# 9220 has to move it, and nothing in a per-command test relates the two.
 	check!("...and the activity stops counting as unplanned, a fact from another query", str_to_i64(pj!(".data.adherence_28d.unplanned_activities")) == base_unplanned - 1)?
 	# ...and the OTHER link. `Plan.roc`'s unplanned query excludes activities
-	# referenced by EITHER link, and only the completion half was tested — deleting the
-	# substitute clause from the query passed the entire suite, this scenario included.
+	# referenced by EITHER link, and this is the only check on the substitute half.
 	# A substitution is `skip <id> "<reason>" <activity>`: the session did not happen, the
 	# activity did, and it stops being unplanned just the same.
 	_ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (9221,'agent loop substitute','Ride','${ctx.d2}T08:00:00Z',3600,20000,180,180,140);")
@@ -8462,12 +8454,11 @@ sh! = |script|
 
 # run SQL against the db. The query is fed via a quoted heredoc so it can
 # contain BOTH single quotes (SQL literals) and double quotes (embedded JSON
-# fixtures) without shell-quoting breakage. Two guards (#226): `.timeout
-# 5000`, because the sqlite3 CLI defaults to busy_timeout 0; and the failure
-# log, because a failing write is otherwise invisible three times over
-# (sqlite3 reports on stderr, sh! discards stderr AND the exit code, and
-# most call sites discard the return), surfacing later as an
-# unrelated-looking assertion about state. sh!'s `Err(_) => ""` arm can also
+# fixtures) without shell-quoting breakage. Two guards: `.timeout 5000`,
+# because the sqlite3 CLI defaults to busy_timeout 0; and the failure log,
+# because a failing write is otherwise invisible (sqlite3 reports on stderr,
+# sh! discards stderr AND the exit code, and most call sites discard the
+# return), surfacing later as an unrelated-looking assertion about state. sh!'s `Err(_) => ""` arm can also
 # fire when a child's exit code is lost, and then sqlite3 never runs and
 # sql! returns "", indistinguishable from success.
 #
@@ -8859,19 +8850,17 @@ is_nonempty = |s| !(Str.is_empty(Str.trim(s))) and Str.trim(s) != "null"
 checks_log! : {} => Str
 checks_log! = |{}| ".e2e-checks.${env_or!("E2E_MODE", "e2e")}.$PPID"
 
-# Asserts on the FILE, not the string checks_log! returns — a first cut
-# resolved the path through a separate `sh -c` and never observed the file the
-# appends land in; the natural "harden the shell" edit (single-quoting the
-# path) then stopped `$PPID` expanding, every run appended to a file literally
-# named `.e2e-checks.e2e.$PPID`, and both new checks printed ok while
-# concurrent runs corrupted each other.
+# Asserts on the FILE, not the string checks_log! returns: a path resolved through
+# a separate `sh -c` never observes the file the appends land in, and a
+# single-quoted path stops `$PPID` expanding, so every run would append to a file
+# literally named `.e2e-checks.e2e.$PPID` while concurrent runs corrupt each other.
 # So: look for the file whose name carries this process's pid, require it
 # non-empty — only the real append path makes that true — at the END of a
 # driver, after hundreds of appends (at the start reset_checks! just deleted
 # it, so any statement is true under every implementation). The absence half
-# is the PRE-#266 shared name: reset removes it on entry, so finding it here
-# means something in THIS run wrote it. Called by every driver: the floor
-# drivers are exactly the ones that structurally cannot notice a shared tally.
+# is the old shared name: reset removes it on entry, so finding it here means
+# something in THIS run wrote it. Called by every driver: the floor drivers are
+# exactly the ones that structurally cannot notice a shared tally.
 tally_is_scoped! : {} => Try({}, _)
 tally_is_scoped! = |{}| {
 	mypid = Str.trim(sh!("echo $PPID"))

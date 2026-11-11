@@ -2,13 +2,12 @@
 # Check SKILL.md's documented payload shapes against schemas/v3/*.json.
 #
 # SKILL.md is the coaching agent's instruction sheet; an agent given an undocumented
-# field does not error, it silently never uses it (#292, twice in three days). Membership
-# lives in `tools/skill-shapes.pins`, checked in — NOT measured from the doc, because
-# with the doc as denominator, drift lowers coverage and switches the check off. Any
-# change the pin sees fails the gate; updating it is the moment someone decides whether
-# the field belongs in SKILL.md (#298). What it pins, and what it cannot see, is stated
-# once under "Pin agreement" below — this file used to paraphrase that in six places and
-# every paraphrase was wrong (#345).
+# field does not error, it silently never uses it. Membership lives in
+# `tools/skill-shapes.pins`, checked in — NOT measured from the doc, because with the
+# doc as denominator, drift lowers coverage and switches the check off. Any change the
+# pin sees fails the gate; updating it is the moment someone decides whether the field
+# belongs in SKILL.md. What it pins, and what it cannot see, is stated once under
+# "Pin agreement" below, and nowhere else in this file.
 #
 # Two directions: (1) schema -> doc — every required field of a `doc`-pinned object
 # must be named in that command's documentation; an object pinned `-` is held to the
@@ -90,8 +89,8 @@ sort "$tmp/sig" > "$tmp/sig.sorted"
 
 # Every SKILL.md line documenting a command — rows AND prose (sync/analyze literals
 # live in bullets). A line is attributed to the LONGEST command it names, derived from
-# the join: `stride week add ...` documents `week add`, not `week`. Do NOT reach for a
-# word boundary instead: `([^a-z0-9-]|$)` contains a SPACE, so under it `week` claims
+# the join: `stride week add ...` documents `week add`, not `week`. A word boundary
+# cannot do this: `([^a-z0-9-]|$)` contains a SPACE, so under it `week` claims
 # `week add`'s row and is satisfied by its neighbour's text.
 doc_for() {
   cmd=$1

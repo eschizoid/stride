@@ -913,10 +913,9 @@ Report :: [].{
 	sport_filter_sql : Str -> { frag : Str, binds : List({ name : Str, value : [Null, Real(F64), Integer(I64), String(Str), Bytes(List(U8))] }) }
 	sport_filter_sql = |word|
 		if Str.is_empty(word) {
-			# a lone SPACE, never "": interpolating a compile-time-constant empty
-			# string was the str_concat trap. Fixed upstream in
-			# roc#10595 (closed 2026-08-04, before this pin), so this is now a style
-			# rule rather than survival — non-empty by construction, same as Plan.roc
+			# a lone SPACE, never "": a fragment that is non-empty by construction
+			# keeps the compile-time-constant empty-string interpolation trap (roc#10595)
+			# out of reach, the same rule Plan.roc follows
 			{ frag: " ", binds: [] }
 		} else {
 			fam = Sports.family(word)

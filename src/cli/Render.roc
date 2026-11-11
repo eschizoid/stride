@@ -993,12 +993,10 @@ Render :: [].{
 		# run because drain_note's Complete arm is only reachable with pending > 0 —
 		# precisely the skip case — so both clauses would state one fact twice.
 		#
-		# `skip_for_reason`, not `stop != FromDrain(Complete)`: the question is "does this
-		# reason's own note already state the skip count", a property of the REASON. An
-		# inequality against a literal tag was the last reason-shaped test outside an
-		# exhaustive match — a new reason took the print branch by default and the clause
-		# printed twice in two wordings. The match returns the CLAUSE, not a boolean, so a
-		# new reason must answer.
+		# `skip_for_reason` answers whether a stop reason's own note already states the
+		# skip count, a property of the REASON. It is an exhaustive match returning the
+		# CLAUSE, so a new reason must say whether it prints one; an inequality against one
+		# tag would let a new reason print the count a second time in other words.
 		skip_clause = " (${I64.to_str(p.streams_skipped)} had unreadable stream data)"
 		skip_for_reason : Drain.StopReason -> Str
 		skip_for_reason = |r|
@@ -1703,7 +1701,7 @@ Render :: [].{
 				# session as an identical "4".
 				vals = Str.join_with(List.map(s.reps, |r| seg_value(units, r.avg_signal, p.signal)), " · ")
 				# signed(), not a hardcoded "+": a HR DROP across reps is a real
-				# signal and rendered as "hr +-8" three times on real data.
+				# signal, and a fixed "+" would print it as "hr +-8".
 				hr = if (s.hr_rise_known) " · hr ${signed(s.hr_rise_bpm)}" else ""
 				spread = if (s.uniformity >= 1.15) " · reps ${mmss(s.min_dur_s)}-${mmss(s.max_dur_s)}" else ""
 				"${s.date}  ${vals}  (mean ${seg_value(units, s.mean_signal, p.signal)}, fade ${fade_value(units, (List.first(s.reps)).map_ok(|r| r.avg_signal).ok_or(0.0), (List.last(s.reps)).map_ok(|r| r.avg_signal).ok_or(0.0), p.signal)}${hr}${spread})"
@@ -2389,8 +2387,8 @@ expect {
 		and Render.seg_hr_drift([seg(150.0, True)]) == Err(NotEnough)
 }
 
-# reps_screen: units, sign, caption and census. Every assertion here failed on
-# real data before this round.
+# reps_screen: units, sign, caption and census, each pinned against a shape real
+# data produces.
 expect {
 	rep = |v| { avg_signal: v, ordinal: 0.I64, dur_s: 240.I64 }
 	sess = |date, unif, hr_rise, mean, fade, vals| {
@@ -2476,9 +2474,8 @@ expect {
 		# and "the other 20" together is a contradiction the old test enshrined
 		and Str.contains(power, "≥1 of 21 matched sessions is itself")
 		and Str.contains(power, "up to 20 others")
-		# ...and the HEDGED branch needs the singular too. Fixing number agreement
-		# on the exact branch and not this one left "up to 1 others match", which
-		# is the very defect the round was opened to close.
+		# ...and the HEDGED branch needs the singular too, or it reads "up to 1
+		# others match".
 		and Str.contains(
 			Render.reps_screen(
 				Metric,
@@ -2867,8 +2864,8 @@ expect
 	Render.sync_screen({ synced: 9, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 12, streams_skipped: 1, pending_streams: 40, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: "budget_reached", resumable: True }, FromDrain(BudgetReached), False)
 		== "synced 0 new, 0 updated (9 re-checked in the 30-day window), fetched streams for 12 (1 had unreadable stream data) — filled Strava's 15-minute read window — 40 to go, run `stride sync` again in ~15 minutes"
 
-# a COMPLETE run with skips states the fact ONCE — drain_note owns it there;
-# stating it twice in two wordings is the duplication this suppresses
+# a COMPLETE run with skips states the fact once: drain_note owns it there, so the
+# sync line leaves it out
 expect
 	Render.sync_screen({ synced: 2, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 1, streams_skipped: 1, pending_streams: 1, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: "complete", resumable: True }, FromDrain(Complete), False)
 		== "synced 0 new, 0 updated (2 re-checked in the 30-day window), fetched streams for 1 — 1 had unreadable stream data — they retry next sync"

@@ -2556,9 +2556,8 @@ Metrics :: [].{
 	# The widest spacing between CONSECUTIVE REAL sessions strictly between two rendered
 	# ones. `progress` filters out rides its lens cannot score, so folding the gap
 	# marker over what SURVIVED would merge a dropped ride's two neighbouring intervals
-	# into one and announce a break the athlete never took. Measured on real data:
-	# a 2025-12-06 ride with no HR was dropped from an EF group, turning 62 days + 41 days
-	# into a single 103-day span and printing `··· = a break over 90 days`.
+	# into one and announce a break the athlete never took: a no-HR ride dropped from an
+	# EF group between gaps of 62 and 41 days would read as one 103-day break.
 	#
 	# `all_days` is every session in the group before filtering, ascending. Walking p -> the
 	# real sessions in between -> d and taking the LARGEST step means a marker still appears
@@ -2613,10 +2612,10 @@ Metrics :: [].{
 
 	# Integer parsing for USER ARGUMENTS, deliberately narrower than the stdlib's.
 	#
-	# The 2026-08-17 pin widened `from_str` to accept exponent notation: `skip 1e1`
-	# addressed planned session 10 and performed a judgment-tier write that cannot be
-	# re-derived (ADR 0000 s3). Not even self-consistent — `1e1` parses, `3.3e1` does
-	# not — which is the tell it is a stdlib side effect, not a designed input format.
+	# The stdlib's `from_str` accepts exponent notation, so `skip 1e1` would address
+	# planned session 10 and make a judgment-tier write that cannot be re-derived (ADR
+	# 0000 s3). It is not even self-consistent — `1e1` parses, `3.3e1` does not — the
+	# mark of a stdlib side effect, not a designed input format.
 	# An id or count typed by a human is digits, optionally signed; rejecting the rest
 	# BEFORE the stdlib pins the accepted SHAPE here rather than to the compiler pin.
 	# Overflow stays the stdlib's call ("99999999999999999999" passes the shape, fails
@@ -3612,16 +3611,15 @@ expect Str.contains(Metrics.rank_ts_sql("a.start_local", Asc), "END) DESC,")
 expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "END) DESC,")
 expect Str.ends_with(Metrics.rank_ts_sql("a.start_local", Asc), " ASC")
 expect Str.ends_with(Metrics.rank_ts_sql("a.start_local", Desc), " DESC")
-# ...and both halves of rankability are present. Each is separately deletable and each
-# survived a fixture aimed only at the other.
+# ...and both halves of rankability are present. Each is separately deletable, and a
+# fixture aimed at one does not catch the other's removal.
 expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "datetime(substr(a.start_local, 1, 19)) IS NOT NULL")
 expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "date(substr(a.start_local, 1, 10))")
-# ...and the KEY's own domain, which is the invariant this whole change is about turned
-# on the helper enforcing it. Shrinking the key to `substr(col, 1, 10)` while leaving the
-# guard at 1..19 passed the entire suite: guard domain 19, consumer domain 10, inside
-# `rank_ts_sql`. It collapses every intra-day comparison to a tie, which falls through to
-# `a.id` at six sites, and to NOTHING in Plan's open-session scan and Strava's newest-first
-# sync query, the two that ORDER BY it without appending `a.id`.
+# ...and the KEY's own domain: the sort key must span the same 19 characters the
+# guard checks. A key cut to `substr(col, 1, 10)` collapses every intra-day comparison
+# to a tie, which falls through to `a.id` where a query appends it and to nothing in the
+# queries that ORDER BY the key alone (Plan's open-session scan, Strava's newest-first
+# sync query). This expect is the only guard on that width.
 expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "THEN substr(a.start_local, 1, 19) ELSE NULL END")
 # the caller's column reaches every term — a helper that hardcoded one would be wrong at
 # any caller that ranks on a bare `start_local` rather than `a.start_local`
@@ -3694,7 +3692,7 @@ expect {
 	(tss - 55.0).abs() < 0.001
 }
 
-# zone classification against Mariano-shaped bounds
+# zone classification against an athlete-shaped set of bounds
 expect {
 	zb = { z1_max: 123.0, z2_max: 153.0, z3_max: 168.0, z4_max: 183.0 }
 	Metrics.zone_of(100.0, zb) == 1 and Metrics.zone_of(140.0, zb) == 2 and Metrics.zone_of(160.0, zb) == 3 and Metrics.zone_of(175.0, zb) == 4 and Metrics.zone_of(190.0, zb) == 5
@@ -4390,7 +4388,7 @@ expect {
 }
 
 # ── form trend (#111) ────────────────────────────────────────────────
-# Mariano's real shape: a month inside one band, so the label never moved while form
+# A real athlete shape: a month inside one band, so the label never moved while form
 # actually swung 7 points. The delta is the thing that carries the information.
 expect {
 	series = [
@@ -5041,10 +5039,9 @@ expect {
 # stream stays as the regression anchor. The other two failure modes reduce to
 # clean synthetic shapes (plus the near-flat and floor expects above).
 
-# Mariano's 2026-08-16 "45 min Metallica Ride with Kendall Toole" (activity
-# 19773062126): a textbook 3x12 min @ ~250-268 W with 3 min recoveries — the
-# prescribed threshold session, ~80% work samples. v1's distribution gates
-# reported ZERO segments on it. Mean watts per 15 s bucket, from the stored
+# A real recorded ride (activity 19773062126): a textbook 3x12 min @ ~250-268 W
+# with 3 min recoveries, the prescribed threshold session, ~80% work samples, which
+# distribution gates alone detect no segments in. Mean watts per 15 s bucket, from the stored
 # stream; regenerate only from the activity, never by hand.
 expect {
 	profile : List(I64)

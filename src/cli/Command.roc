@@ -132,9 +132,9 @@ Command := [
 			["sync"] => Ok(Sync(False))
 			["sync", "--all"] => Ok(Sync(True))
 
-			## Retired in #232, with a pointer rather than a bare unknown_command. Every
-			## README, skill and shell history said `stride backfill` until that commit,
-			## and the plan->week rename beside it sets the precedent for redirecting.
+			## A retired verb answers with a pointer to its replacement rather than a bare
+			## unknown_command: shell history and old docs still name it, as the plan->week
+			## redirect beside it does for the renamed verb.
 			["backfill", ..] => Err(Usage("sync — `backfill` is retired; `stride sync` drains all missing streams, and `stride sync --all` re-lists from scratch"))
 			["analyze"] => Ok(Analyze)
 			["summary"] => Ok(Summary)
