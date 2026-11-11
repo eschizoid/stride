@@ -364,7 +364,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1420)?
+	checks_ran_exactly!(1425)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -988,19 +988,20 @@ run_notes! = || {
 	check!("deleting a stored row re-queues it, out-of-window or not", sq!(".data.notes_fetched") == "2")?
 	_ = sh!("HOME='${home}' STRIDE_FORMAT=json '${bin}' analyze >/dev/null 2>&1")
 	check!("analyze parses the note into two set rows", Str.trim(sql!(db, "SELECT COUNT(*) FROM strength_sets WHERE activity_id = 503;")) == "2")?
-	# ordinal 1 is the reps/side • lbs/side line: 8 reps/side -> 16 total, each
-	# moving one side's 25 lbs = 11.33980925 kg (asserted at mm-of-kg precision
-	# through an integer, floats having no Eq in SQL any more than in Roc)
+	# ordinal 1 is the reps/side • lbs/side line: 8 reps/side -> 16 total, at
+	# the per-hand 25 lbs = 11.33980925 kg (asserted at gram precision through
+	# an integer, floats having no Eq in SQL any more than in Roc)
 	check!("...with the /side semantics resolved at parse time", Str.trim(sql!(db, "SELECT sets || '/' || reps || '/' || CAST(ROUND(weight_kg * 1000) AS INTEGER) FROM strength_sets WHERE activity_id = 503 AND ordinal = 1;")) == "3/16/11340")?
 	check!("...each row naming its provenance", Str.trim(sql!(db, "SELECT COUNT(DISTINCT source) || ':' || MIN(source) FROM strength_sets WHERE activity_id = 503;")) == "1:peloton")?
 	check!("...while the null-description session contributes no rows — the honest gap", Str.trim(sql!(db, "SELECT COUNT(*) FROM strength_sets WHERE activity_id = 505;")) == "0")?
-	# 3*8*27.2155 + 3*16*11.3398 = 1197.48… in 503's July; 504's month sums
+	# 3*8*13.6078 + 3*16*11.3398 = 870.90… in 503's July (per-hand weights);
+	# 504's month sums
 	# its swing and its heavier Crush repeat to 562.45 — two months, each the
 	# sum of ITS sessions, which is what makes the spine an arc rather than a
 	# total. July is 1 of 2
 	# covered (503 carries sets, 505's null description never can) — above the
 	# one-third bar, so it draws; the bar itself is pinned by the probes below.
-	check!("the aged month earns a tonnage spine row", Str.trim(sql!(db, "SELECT kind || '/' || fam || '/' || CAST(ROUND(value) AS INTEGER) FROM monthly_threshold WHERE kind = 'tonnage' AND month = '2026-07';")) == "tonnage/WeightTraining/1197")?
+	check!("the aged month earns a tonnage spine row", Str.trim(sql!(db, "SELECT kind || '/' || fam || '/' || CAST(ROUND(value) AS INTEGER) FROM monthly_threshold WHERE kind = 'tonnage' AND month = '2026-07';")) == "tonnage/WeightTraining/871")?
 	check!("...and the recent month its own, at full coverage", Str.trim(sql!(db, "SELECT CAST(ROUND(value) AS INTEGER) FROM monthly_threshold WHERE kind = 'tonnage' AND month <> '2026-07';")) == "562")?
 	check!("...with the coverage view stating both denominators", Str.trim(sql!(db, "SELECT covered || '/' || total FROM strength_coverage WHERE month = '2026-07';")) == "1/2")?
 	# the one-third bar, pinned from BOTH sides: a third July session that
@@ -1034,9 +1035,9 @@ run_notes! = || {
 	stq! = |filter| Str.trim(sh!("jq -r '${filter}' '${sto}' 2>&1"))
 	_ = sh!("HOME='${home}' STRIDE_FORMAT=json '${bin}' strength >'${sto}' 2>/dev/null")
 	check!("the strength payload conforms to its schema", Str.trim(sh!("jq '.data' '${sto}' 2>&1 | jq -r --slurpfile schema schemas/v3/strength.json -f tools/validate.jq 2>&1")) == "")?
-	# 30 lbs/side both-hands = 27.2155422 kg top; 3*8*27.2155… = 653.17 kg·reps
-	check!("a per-exercise point carries the day's top set and kg-reps", stq!("[.data.exercises[] | select(.exercise == \"Dumbbell Crush Press\") | .points[0] | ((.top_kg * 1000) | round), (.kg_reps | round)] | join(\"/\")") == "27216/653")?
-	check!("a drawing month reports its tonnage with its denominators", stq!("[.data.monthly[] | select(.month == \"2026-07\") | (.kg | round), (.tonnage_known | tostring), .covered, .total] | join(\"/\")") == "1197/true/1/2")?
+	# 30 lbs/side is one 30 lb dumbbell per hand, 13.6077711 kg top; 3*8*13.6078… = 326.59 kg·reps
+	check!("a per-exercise point carries the day's top set and kg-reps", stq!("[.data.exercises[] | select(.exercise == \"Dumbbell Crush Press\") | .points[0] | ((.top_kg * 1000) | round), (.kg_reps | round)] | join(\"/\")") == "13608/327")?
+	check!("a drawing month reports its tonnage with its denominators", stq!("[.data.monthly[] | select(.month == \"2026-07\") | (.kg | round), (.tonnage_known | tostring), .covered, .total] | join(\"/\")") == "871/true/1/2")?
 	check!("the session counts split the gaps into their kinds", stq!("[.data.sessions.total, .data.sessions.with_sets, .data.sessions.pasted_unparsed] | join(\"/\")") == "3/2/0")?
 	# a paste that parsed to NOTHING is a different fact from no paste, and
 	# the count sees it without an analyze: it reads notes against sets
@@ -2191,8 +2192,8 @@ b_config_ftp! = |ctx| {
 	# to remove" — no routing sentence, scored as ROUTED — so `unseeded` is
 	# asserted at 0: the probe must prove it could speak before its silence
 	# counts.
-	unset_sweep = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; { awk '/plain_keys = \\[/,/\\]/' src/cli/Config.roc; awk '/secret_keys = \\[/,/\\]/' src/cli/Config.roc; } | grep -o '\"[^\"]*\"' | tr -d '\"' > $h/keys; n=0; u=0; z=0; while read -r k; do n=$((n+1)); case \"$k\" in units) v=metric;; *) v=7;; esac; HOME=$h '${ctx.bin}' config set \"$k\" \"$v\" >/dev/null 2>&1; m=$(HOME=$h '${ctx.bin}' config unset \"$k\" 2>&1 | head -1); case \"$m\" in *'starts refusing'*) u=$((u+1));; esac; case \"$m\" in *'was not stored'*) z=$((z+1));; esac; done < $h/keys; echo \"probed=$n unrouted=$u unseeded=$z\""))
-	check!("every LISTED config key reaches a routed `config unset` branch, enumerated from Config.roc", unset_sweep == "probed=11 unrouted=0 unseeded=0")?
+	unset_sweep = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; { awk '/plain_keys = \\[/,/\\]/' src/cli/Config.roc; awk '/secret_keys = \\[/,/\\]/' src/cli/Config.roc; } | grep -o '\"[^\"]*\"' | tr -d '\"' > $h/keys; n=0; u=0; z=0; while read -r k; do n=$((n+1)); case \"$k\" in units) v=metric;; strength_log_weight) v=total;; *) v=7;; esac; HOME=$h '${ctx.bin}' config set \"$k\" \"$v\" >/dev/null 2>&1; m=$(HOME=$h '${ctx.bin}' config unset \"$k\" 2>&1 | head -1); case \"$m\" in *'starts refusing'*) u=$((u+1));; esac; case \"$m\" in *'was not stored'*) z=$((z+1));; esac; done < $h/keys; echo \"probed=$n unrouted=$u unseeded=$z\""))
+	check!("every LISTED config key reaches a routed `config unset` branch, enumerated from Config.roc", unset_sweep == "probed=12 unrouted=0 unseeded=0")?
 	_ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max_ride", "155"])
 	# ── bare `config` lists what is set. Its first job is answering "which config do I
 	# have?", which nothing did; its second is being the source `just schema-check` fills
@@ -7563,6 +7564,24 @@ b_strength_import! = |ctx| {
 	_ = sh!("printf '%s' '${curl_log("9783")}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - >/dev/null")
 	check!("an imported log takes its session off the list", strjq!(ctx, ["doctor"], ".data.strength_without_sets_ids | ${mine}") == "9784")?
 	_ = sql!(ctx.db, "DELETE FROM strength_sets WHERE activity_id BETWEEN 9781 AND 9786; DELETE FROM strength_logs WHERE activity_id BETWEEN 9781 AND 9786; DELETE FROM strength_notes WHERE activity_id BETWEEN 9781 AND 9786; DELETE FROM activity_metrics WHERE activity_id BETWEEN 9781 AND 9786; DELETE FROM activities WHERE id BETWEEN 9781 AND 9786;")
+	# one weight convention across sources: the same 25 lb dumbbells pasted as
+	# `25 lbs/side` (9791) and logged per hand as `25 lb` (9792) store the same
+	# per-hand weight, so the exercise's top_kg series is flat. Under
+	# strength_log_weight=total the logged dumbbell weight halves and a logged
+	# barbell total does not; a typo is refused at the write.
+	_ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance) VALUES (9791, 'pasted curls', 'WeightTraining', '2019-03-04T07:00:00Z', 1800, 0), (9792, 'logged curls', 'WeightTraining', '2019-03-11T07:00:00Z', 1800, 0); INSERT OR REPLACE INTO strength_notes (activity_id, description) VALUES (9791, 'Dumbbell Hammer Curl\n3 × 10 • 25 lbs/side');")
+	hammer_log = "{\"activity_id\":\"9792\",\"exercise_sets\":[{\"exercise_name\":\"Dumbbell Hammer Curl\",\"weight\":{\"value\":\"25 lb\"},\"reps\":{\"value\":\"10\"}},{\"exercise_name\":\"Barbell Row\",\"weight\":{\"value\":\"40 kg\"},\"reps\":{\"value\":\"8\"}}]}"
+	_ = sh!("printf '%s' '${hammer_log}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - >/dev/null")
+	hammer = "[.data.exercises[] | select(.exercise == \"Dumbbell Hammer Curl\") | .points[] | select(.date | startswith(\"2019-03\")) | ((.top_kg * 100) | round | tostring)] | join(\",\")"
+	check!("a /side paste and a per-hand log of the same dumbbells read the same top_kg", strjq!(ctx, ["strength"], hammer) == "1134,1134")?
+	check!("strength_log_weight refuses a value outside per_hand and total", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "strength_log_weight", "pair"]), "takes per_hand or total"))?
+	_ = stride!(ctx.bin, ctx.home, ["config", "set", "strength_log_weight", "total"])
+	_ = stride!(ctx.bin, ctx.home, ["analyze"])
+	check!("...total halves the logged dumbbell weight and leaves the paste per hand", strjq!(ctx, ["strength"], hammer) == "1134,567")?
+	check!("...and leaves a logged barbell total whole", Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(weight_kg * 100) AS INTEGER) FROM strength_sets WHERE activity_id = 9792 AND exercise = 'Barbell Row';")) == "4000")?
+	check!("unsetting it says logged weights read per hand again", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "unset", "strength_log_weight"]), "per hand again"))?
+	_ = stride!(ctx.bin, ctx.home, ["analyze"])
+	_ = sql!(ctx.db, "DELETE FROM strength_sets WHERE activity_id IN (9791, 9792); DELETE FROM strength_logs WHERE activity_id IN (9791, 9792); DELETE FROM strength_notes WHERE activity_id IN (9791, 9792); DELETE FROM activity_metrics WHERE activity_id IN (9791, 9792); DELETE FROM activities WHERE id IN (9791, 9792);")
 	Ok({})
 }
 
