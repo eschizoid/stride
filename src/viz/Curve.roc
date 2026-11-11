@@ -25,7 +25,7 @@ Curve :: [].{
 		curve = model.curve_family
 		units = model.units
 		# the planned targets this curve carries (marks_for says which)
-		plan_marks = marks_for(curve, model.plan_targets, model.pace_targets)
+		plan_marks = marks_for(curve, (List.first(model.curve_keys.power)).ok_or(""), model.plan_targets, model.pace_targets)
 		win_h = model.win.h
 		pad_l = Theme.pad_l
 		pad_r = Theme.pad_r
@@ -257,8 +257,7 @@ Curve :: [].{
 			List.for_each!(
 				ring_rows,
 				|x| {
-					frame.circle!({ center: { x: x.g.x, y: x.g.y }, radius: 6.0, style: Draw.filled(Color.with_alpha(Theme.gold_c, 200)) })
-					frame.circle!({ center: { x: x.g.x, y: x.g.y }, radius: 3.0, style: Draw.filled(Theme.bg) })
+					dashed_ring!(frame, x.g.x, x.g.y, 5.5)
 					List.for_each!(
 						List.map_with_index(x.g.ts, |t, k| { t, k }),
 						|e| {
@@ -492,9 +491,9 @@ Curve :: [].{
 	}
 
 	# a target label's width at the 10px label size, generous for the
-	# widest form, a pace label such as "MM-DD M:SS/100m NNN%"
+	# widest form, a pace label such as "planned MM-DD M:SS/100m NNN%"
 	ring_label_w : F32
-	ring_label_w = 120.0
+	ring_label_w = 170.0
 
 	# the first label row of each ring, left to right: a ring closer than a
 	# label's width to the one before it starts below that ring's labels, and
@@ -515,21 +514,41 @@ Curve :: [].{
 		List.map(placed, |p| p.base)
 	}
 
-	# a planned target's marker label: its day, its value, and its share of
-	# the window's best at the rep duration (omitted when the window has
-	# none). On a pace curve the share is of speed, so 95% is a target a
-	# little slower than the window's best.
+	# a planned target's marker label: "planned", its day, its value, and its
+	# share of the window's best at the rep duration (omitted when the window
+	# has none). On a pace curve the share is of speed, so 95% is a target a
+	# little slower than the window's best. The "planned" prefix and the
+	# dashed ring keep a prescription from reading as a measured best.
 	target_label : Mark, F32 -> Str
 	target_label = |t, best| {
 		mmdd = Str.from_utf8_lossy(List.drop_first(Str.to_utf8(t.day), 5))
 		pct = if (best <= 0.0) "" else " ${Db.fmt_i(I64.to_f32(t.val) / best * 100.0)}%"
-		"${mmdd} ${t.val_txt}${pct}"
+		"planned ${mmdd} ${t.val_txt}${pct}"
 	}
 
 	target_tip : Mark, F32 -> Str
 	target_tip = |t, best| {
 		share = if (best <= 0.0) "no window best at that duration" else "${Db.fmt_i(I64.to_f32(t.val) / best * 100.0)}% of this window's best at that duration"
-		"${t.day} ${t.typ}: ${t.rep_txt} @ ${t.val_txt} - ${share}"
+		"planned ${t.day} ${t.typ}: ${t.rep_txt} @ ${t.val_txt} - ${share}"
+	}
+
+	# a target ring drawn as dashes, the way a planned point differs from the
+	# filled dots of measured bests: ring_dashes arcs around the centre, each
+	# spanning half its share of the circle
+	ring_dashes : U64
+	ring_dashes = 10
+
+	dashed_ring! : Draw.Frame, F32, F32, F32 => {}
+	dashed_ring! = |frame, x, y, r| {
+		step = 6.2831853 / U64.to_f32(ring_dashes)
+		List.for_each!(
+			List.map_with_index(List.repeat({}, ring_dashes), |_u, k| k),
+			|k| {
+				a0 = U64.to_f32(k) * step
+				a1 = a0 + step / 2.0
+				frame.line!({ start: { x: x + r * F32.cos(a0), y: y + r * F32.sin(a0) }, end: { x: x + r * F32.cos(a1), y: y + r * F32.sin(a1) }, stroke: Draw.stroke(Color.with_alpha(Theme.gold_c, 230), 2) })
+			},
+		)
 	}
 
 	# ── the band above the plot. The range and curve chips fill the top
@@ -981,15 +1000,18 @@ Curve :: [].{
 		}
 
 	# ── planned targets as marks on the curve. A planned session names no
-	# sport, so a power target belongs on every power curve, whichever family
-	# is on screen; a pace target belongs on every pace curve its unit fits
-	# (Sports pace_unit_families), at the speed its pace names and the
-	# duration one rep takes at that speed.
+	# sport, and watts are not comparable across families (a ride's 230 W is
+	# far beyond a row's best), so a power target goes on one curve: the power
+	# family the athlete trains most, the first of CurveKeys.power. A pace
+	# target goes on every pace curve its unit fits (Sports
+	# pace_unit_families), at the speed its pace names and the duration one rep
+	# takes at that speed.
 	Mark : { day : Str, typ : Str, dur_s : I64, val : I64, val_txt : Str, rep_txt : Str }
 
-	marks_for : Str, List(Db.Target), List(Db.PaceTarget) -> List(Mark)
-	marks_for = |curve, power, pace|
+	marks_for : Str, Str, List(Db.Target), List(Db.PaceTarget) -> List(Mark)
+	marks_for = |curve, power_home, power, pace|
 		match Bus.curve_key(curve) {
+			Power(fam) if fam != power_home => []
 			Power(_) =>
 				List.map(power, |t| { day: t.day, typ: t.typ, dur_s: t.dur_s, val: t.watts, val_txt: "${I64.to_str(t.watts)}W", rep_txt: "${I64.to_str(t.reps)}x${Fmt.mmss(t.dur_s)}" })
 			Pace(sp) =>
@@ -1007,11 +1029,15 @@ Curve :: [].{
 		}
 
 	# ── the chips. The range chips (30d 60d 90d) keep the form board's spot
-	# from chip0 = win_w - 420. Right of them sit the mode chips, power and
-	# pace, when the athlete has curves of both kinds; left of them,
-	# right-aligned, the curve chips of the mode on screen, most-used first,
-	# as many as fit between the title and the range chips, the one on
-	# screen always among them.
+	# from chip0 = win_w - 420. Left of them, right-aligned, sit the curve
+	# chips: in power mode every family with power, then each pace sport
+	# whose family has no power curve; in pace mode every pace sport, then
+	# each power family with no pace curve. So every curve on record is one
+	# click away from either mode, most-used first, as many as fit between
+	# the title and the range chips, the one on screen always among them.
+	# Right of the range chips sits the power and pace pair, only when the
+	# sport on screen has a curve of the other kind: a ride has no pace
+	# curve, so a bike curve shows no pace chip.
 	Chip : { key : Str, label : Str, x : F32, on : Bool }
 
 	chip_w : F32
@@ -1023,17 +1049,37 @@ Curve :: [].{
 	title_reserve : F32
 	title_reserve = 340.0
 
+	# the same sport's curve of the other kind: a power family's most-used
+	# pace sport, or a pace sport's power family; '' when it has none
+	counterpart : Db.CurveKeys, Str -> Str
+	counterpart = |keys, cur|
+		match Bus.curve_key(cur) {
+			Power(fam) => (List.first(List.keep_if(keys.pace, |k| pace_family(k) == fam))).ok_or("")
+			Pace(sp) => if (List.contains(keys.power, Sports.canonical(sp))) Sports.canonical(sp) else ""
+		}
+
+	# the family a pace key's sport belongs to; '' for a power key
+	pace_family : Str -> Str
+	pace_family = |k|
+		match Bus.curve_key(k) {
+			Pace(sp) => Sports.canonical(sp)
+			Power(_) => ""
+		}
+
 	curve_chips : F32, Db.CurveKeys, Str -> List(Chip)
 	curve_chips = |win_w, keys, cur| {
 		chip0 = win_w - 420.0
 		pace_on = is_pace(cur)
+		other = counterpart(keys, cur)
 		modes =
-			if (List.is_empty(keys.power) or List.is_empty(keys.pace)) []
+			if (other == "") []
 			else [
-				{ key: if (pace_on) ((List.first(keys.power)).ok_or(cur)) else cur, label: "power", x: chip0 + 176.0, on: !pace_on },
-				{ key: if (pace_on) cur else (List.first(keys.pace)).ok_or(cur), label: "pace", x: chip0 + 234.0, on: pace_on },
+				{ key: if (pace_on) other else cur, label: "power", x: chip0 + 176.0, on: !pace_on },
+				{ key: if (pace_on) cur else other, label: "pace", x: chip0 + 234.0, on: pace_on },
 			]
-		mode_keys = if (pace_on) keys.pace else keys.power
+		mode_keys =
+			if (pace_on) List.concat(keys.pace, List.keep_if(keys.power, |k| counterpart(keys, k) == ""))
+			else List.concat(keys.power, List.keep_if(keys.pace, |k| counterpart(keys, k) == ""))
 		room = chip0 - 14.0 + (chip_pitch - chip_w) - title_reserve
 		n_fit = if (room <= 0.0) 0 else (F32.round_to_u64_try(F32.div_floor_by(room, chip_pitch)) ?? 0)
 		first_n = List.take_first(mode_keys, n_fit)
@@ -1144,36 +1190,38 @@ expect Curve.best_at([{ secs: 600, w: 260 }, { secs: 1200, w: 254 }], 1200) == 2
 # a power target reads in watts on every power curve; its label carries
 # its share of the window's best at the rep duration
 expect {
-	ms = Curve.marks_for("Ride", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])
+	ms = Curve.marks_for("Ride", "Ride", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])
 	match ms {
-		[m] => Curve.target_label(m, 257.0) == "11-05 225W 88%" and Curve.target_label(m, 0.0) == "11-05 225W" and Curve.target_tip(m, 257.0) == "2026-11-05 threshold: 2x15:00 @ 225W - 88% of this window's best at that duration"
+		[m] => Curve.target_label(m, 257.0) == "planned 11-05 225W 88%" and Curve.target_label(m, 0.0) == "planned 11-05 225W" and Curve.target_tip(m, 257.0) == "planned 2026-11-05 threshold: 2x15:00 @ 225W - 88% of this window's best at that duration"
 		_ => Bool.False
 	}
 }
-expect List.len(Curve.marks_for("Rowing", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])) == 1 and List.len(Curve.marks_for("Run", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])) == 1
+# a power target sits on the most-trained power family's curve only: a
+# ride's 230 W drawn on a rowing curve would read as 157% of the row's best
+expect List.len(Curve.marks_for("Rowing", "Rowing", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])) == 1 and List.len(Curve.marks_for("Rowing", "Ride", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])) == 0
 # a pace target lands on every pace curve its unit fits, at the speed its
 # pace names; a distance rep takes the time that distance needs at that
 # pace, and a unit for another sport keeps it off the curve
 expect {
 	run = { day: "2026-11-10", typ: "threshold", reps: 5, dur_s: 240, dist_m: 0, pace_s: 402, unit: "/mi" }
 	swim = { day: "2026-11-11", typ: "threshold", reps: 10, dur_s: 0, dist_m: 100, pace_s: 100, unit: "/100m" }
-	match Curve.marks_for("pace:TrailRun", [], [run, swim]) {
-		[m] => m.val == 4003 and m.dur_s == 240 and m.val_txt == "6:42/mi" and m.rep_txt == "5x4:00" and Curve.target_label(m, 4210.0) == "11-10 6:42/mi 95%"
+	match Curve.marks_for("pace:TrailRun", "Ride", [], [run, swim]) {
+		[m] => m.val == 4003 and m.dur_s == 240 and m.val_txt == "6:42/mi" and m.rep_txt == "5x4:00" and Curve.target_label(m, 4210.0) == "planned 11-10 6:42/mi 95%"
 		_ => Bool.False
 	}
 		and (
-			match Curve.marks_for("pace:Swim", [], [run, swim]) {
+			match Curve.marks_for("pace:Swim", "Ride", [], [run, swim]) {
 				[m] => m.val == 1000 and m.dur_s == 100 and m.rep_txt == "10x100m"
 				_ => Bool.False
 			}
 		)
-		and Curve.marks_for("Ride", [], [run, swim]) == []
+		and Curve.marks_for("Ride", "Ride", [], [run, swim]) == []
 }
 expect Curve.r2_str(0.84) == "0.84" and Curve.r2_str(0.9) == "0.90" and Curve.r2_str(0.05) == "0.05" and Curve.r2_str(1.0) == "1.00" and Curve.r2_str(0.899) == "0.89" and Curve.r2_str(0.8999) == "0.89" and Curve.r2_str(-0.253) == "-0.25"
-# a rung within 5% of the next longer one was not pushed: on the live 60-day
-# ladder the short rungs crowd the 20-minute best, while the 20-minute best
-# stands 5% over the hour; the hour has nothing longer to beat, and an
-# absent rung is neither
+# a rung within 5% of the next longer one was not pushed: in this ladder the
+# short rungs crowd the 20-minute best, while the 20-minute best stands 5%
+# over the hour; the hour has nothing longer to beat, and an absent rung is
+# neither
 expect Curve.flat_ratio == 1.05
 expect Curve.unpushed([290, 272, 265, 262, 255, 254, 248, 236]) == [Bool.False, Bool.True, Bool.True, Bool.True, Bool.True, Bool.True, Bool.False, Bool.False]
 expect Curve.unpushed([400, 0, 300]) == [Bool.False, Bool.False, Bool.False]
@@ -1181,25 +1229,35 @@ expect Curve.unpushed_caption(["5s", "15s", "30s"], [Bool.False, Bool.True, Bool
 expect Curve.unpushed_caption(["5s", "15s"], [Bool.False, Bool.False], 30) == ""
 # a best set more than half the window ago is stale; exactly half is not
 expect !Curve.stale_best(15, 30) and Curve.stale_best(16, 30) and !Curve.stale_best(-1, 30)
-# the family chips sit right of the range chips; a family with no power
-# keeps its chip lit and names the way back
-# the curve chips: the curves of the mode on screen right-aligned against
-# the range chips, most-used first, as many as fit beside the title, the
-# one on screen always among them and lit; the power and pace pair right
-# of the range chips only when the athlete has both kinds
+# the curve chips: right-aligned against the range chips, most-used first,
+# as many as fit beside the title, the one on screen always among them and
+# lit. Power mode lists the power families, then the pace sports with no
+# power family; pace mode the reverse. The power and pace pair appears only
+# when the sport on screen has a curve of the other kind, so a ride, which
+# has no pace curve, shows none.
 expect {
 	keys = { power: ["Ride", "Rowing", "Run"], pace: ["pace:Rowing", "pace:Run", "pace:Swim", "pace:TrailRun", "pace:Walk"] }
-	wide = Curve.curve_chips(1400.0, keys, "Ride")
+	bike = Curve.curve_chips(1400.0, keys, "Ride")
+	row = Curve.curve_chips(1400.0, keys, "Rowing")
 	narrow = Curve.curve_chips(980.0, keys, "pace:TrailRun")
 	labels = |cs| List.map(cs, |c| c.label)
-	labels(wide) == ["bike", "row", "run", "power", "pace"]
-		and List.map(List.keep_if(wide, |c| c.on), |c| c.label) == ["bike", "power"]
+	labels(bike) == ["bike", "row", "run", "swim", "walk"]
+		and List.map(List.keep_if(bike, |c| c.on), |c| c.label) == ["bike"]
+		and labels(row) == ["bike", "row", "run", "swim", "walk", "power", "pace"]
+		and Curve.chip_at(row, 1400.0 - 420.0 + 234.0 + 10.0) == "pace:Rowing"
+		and Curve.chip_at(row, 1400.0 - 420.0 + 176.0 + 10.0) == "Rowing"
+		and Curve.chip_at(bike, 1400.0 - 420.0 + 234.0 + 10.0) == ""
 		and labels(narrow) == ["row", "run", "trail", "power", "pace"]
 		and List.map(List.keep_if(narrow, |c| c.on), |c| c.key) == ["pace:TrailRun", "pace:TrailRun"]
+		and List.map(List.keep_if(narrow, |c| c.label == "power"), |c| c.key) == ["Run"]
 		and List.all(narrow, |c| c.x >= Curve.title_reserve)
-		and Curve.chip_at(wide, 1400.0 - 420.0 + 234.0 + 10.0) == "pace:Rowing"
-		and Curve.chip_at(wide, 1400.0 - 420.0 + 176.0 + 10.0) == "Ride"
-		and Curve.chip_at(wide, 1400.0 - 420.0 - 2.0) == ""
+		and Curve.chip_at(bike, 1400.0 - 420.0 - 2.0) == ""
+}
+# a pace sport's counterpart is its family's power curve, and a power
+# family's is its most-used pace sport; a ride and a pool swim have none
+expect {
+	keys = { power: ["Ride", "Run"], pace: ["pace:TrailRun", "pace:Run", "pace:Swim"] }
+	Curve.counterpart(keys, "Run") == "pace:TrailRun" and Curve.counterpart(keys, "pace:Run") == "Run" and Curve.counterpart(keys, "Ride") == "" and Curve.counterpart(keys, "pace:Swim") == ""
 }
 # one kind of curve on record: no power and pace pair
 expect List.map(Curve.curve_chips(1400.0, { power: [], pace: ["pace:Swim", "pace:OpenWaterSwim"] }, "pace:Swim"), |c| c.label) == ["swim", "open"]
