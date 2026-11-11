@@ -62,9 +62,14 @@ Each of those forms has a literal athletes already write: `HR125-147`, `Z2`,
 6. **Every kind projects a load.** `project`, `events` and the form board price each
    open target on the rung analyze scores a finished session by:
    - **power:** TSS against the ride family's FTP, as before.
-   - **pace:** rTSS against the threshold speed of the first family the unit names that
-     has one (best 20-minute speed over 60 days × 0.95, once two sessions carry it), at
-     that family's exponent. A distance rep's time comes from the target pace.
+   - **pace:** rTSS against the threshold speed of the sport family the unit names
+     whose threshold is nearest the target pace (best 20-minute speed over 60 days ×
+     0.95, pooled over the family, once two sessions carry it), at that family's
+     exponent. A planned session names no sport, so the threshold is the family's;
+     analyze prices the finished session against its own sport type, so a treadmill,
+     trail or virtual session can score differently from its projection. An intensity
+     beyond 1.5, the bound analyze's pace rung enforces, is not priced. A distance
+     rep's time comes from the target pace.
    - **hr:** hrTSS at the per-zone rate of the zone the band's midpoint falls in, under
      the athlete's global zones, because a planned session's sport is not known until
      the day.
@@ -72,7 +77,7 @@ Each of those forms has a literal athletes already write: `HR125-147`, `Z2`,
    - **rpe:** session-RPE load, hours × RPE × 10.
 
    A target its inputs cannot price (no FTP, no zones, no threshold pace for its
-   families) adds nothing, and `project` names it in `unprojected` with the reason,
+   families, or an implausible intensity against it) adds nothing, and `project` names it in `unprojected` with the reason,
    beside every untargeted session. A projection never invents a load to fill the gap.
 
 ## Not doing

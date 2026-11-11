@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 # Builds the viz window as a real macOS app under $VIZ_APP_DIR (default
 # ~/Applications),
 # launchable from Launchpad/Spotlight/Dock like anything else. The bundle carries

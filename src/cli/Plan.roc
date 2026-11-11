@@ -1479,7 +1479,7 @@ Plan :: [].{
 				# walk is arithmetic over (day, tss) with no per-day re-filtering
 				priced = price_window(in_window, inp)
 				proj = Metrics.project_walk({ ctl: base.ctl, atl: base.atl }, base_days, ev_days, priced.loads)
-				{ id: ev.id, event_date: ev.event_date, name: ev.name, days_away: ev_days - today, ctl: proj.ctl, atl: proj.atl, tsb: proj.tsb, planned_in_window: List.len(in_window), sessions_projected: List.len(priced.loads) }
+				{ id: ev.id, event_date: ev.event_date, name: ev.name, days_away: ev_days - today, ctl: proj.ctl, atl: proj.atl, tsb: proj.tsb, planned_in_window: List.len(in_window), sessions_projected: List.len(priced.loads), unprojected: priced.unprojected }
 			},
 		)
 		Output.out!({ projected_from: base.day, baseline_known: base.known, ftp_known, events: projected }, |p| Render.events_screen(p))

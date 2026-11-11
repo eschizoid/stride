@@ -878,8 +878,13 @@ Metrics :: [].{
 	## What a planned target is expected to load, on the same ladder analyze scores
 	## a finished session by, rung chosen by the target's own signal:
 	##   power  TSS against the ride FTP (tss_from_target)
-	##   pace   rTSS against the threshold speed of the first family the pace unit
-	##          names that has one, at that family's exponent
+	##   pace   rTSS against the 60-day threshold speed of the sport FAMILY the
+	##          pace unit names, the one whose threshold is nearest the target
+	##          pace, at that family's exponent. A planned session names no sport,
+	##          so the threshold is pooled over the family; analyze prices the
+	##          finished session against its own sport type, so a treadmill, trail
+	##          or virtual session can score differently from its projection. An
+	##          intensity beyond max_plausible_if is refused, as analyze refuses it.
 	##   hr     hrTSS at the rate of the zone the band's midpoint falls in, under the
 	##          athlete's global zones (the sport is not known until the day)
 	##   zone   hrTSS at that zone's rate; the zone number needs no bounds
@@ -907,10 +912,10 @@ Metrics :: [].{
 			Load(srpe_load({ rpe: (t.rpe).to_f64(), moving_time: t.reps * t.dur_s }))
 		} else if t.kind == "pace" {
 			fams = Sports.pace_unit_families(t.pace_unit)
-			thr = List.first(List.keep_if(inp.pace_thresholds, |p| p.speed > 0.0 and List.contains(fams, p.family)))
 			speed = if (t.pace_s > 0.0) pace_unit_m(t.pace_unit) / t.pace_s else 0.0
+			thr = nearest_threshold(List.keep_if(inp.pace_thresholds, |p| p.speed > 0.0 and List.contains(fams, p.family)), speed)
 			match thr {
-				Ok(p) if speed > 0.0 => {
+				Ok(p) if speed > 0.0 and speed / p.speed <= max_plausible_if => {
 					dur_s = if (t.dist_m > 0.0) (t.reps).to_f64() * t.dist_m / speed else ((t.reps * t.dur_s)).to_f64()
 					Load(pace_tss({ ngp_speed: speed, threshold_speed: p.speed, dur_s, exponent: Sports.pace_tss_exponent(p.family) }))
 				}
@@ -920,6 +925,21 @@ Metrics :: [].{
 			Unprojected("no_target")
 		}
 	}
+
+	# the threshold whose speed is closest to the target's: a pace unit names
+	# several families (/km reads run and walk), and the nearest threshold is the
+	# family the target pace belongs to
+	nearest_threshold : List({ family : Str, speed : F64 }), F64 -> Try({ family : Str, speed : F64 }, [ListWasEmpty])
+	nearest_threshold = |cands, speed|
+		List.fold(
+			cands,
+			Err(ListWasEmpty),
+			|best, c|
+				match best {
+					Ok(b) => if ((c.speed - speed).abs() < (b.speed - speed).abs()) Ok(c) else Ok(b)
+					Err(_) => Ok(c)
+				},
+		)
 
 	# the hrTSS-per-hour rate of HR zone n, 1-5; the top rate above zone 5
 	hr_zone_rate : I64 -> F64
@@ -5844,6 +5864,17 @@ expect {
 		and near(load_of("1x1:00:00@1:15/100m", inp), (4.0 / 3.0).pow(3.0) * 100.0)
 		# a /km target reads any family the unit names: a walker's threshold prices it
 		and near(load_of("1x1:00:00@10:00/km", { ..inp, pace_thresholds: [{ family: "Walk", speed: 1000.0 / 600.0 }] }), 100.0)
+		# of the families a unit names, the threshold nearest the target pace prices
+		# it: a hike pace (12:00/km) goes to walk (1.45 m/s), not run (3.8 m/s)
+		and near(load_of("1x2:00:00@12:00/km", { ..inp, pace_thresholds: [{ family: "Run", speed: 3.8 }, { family: "Walk", speed: 1.45 }] }), (1000.0 / 720.0 / 1.45).pow(2.0) * 200.0)
+		# and a run pace to run, whichever family is listed first
+		and near(load_of("1x1:00:00@4:10/km", { ..inp, pace_thresholds: [{ family: "Walk", speed: 1.45 }, { family: "Run", speed: 4.0 }] }), 100.0)
+		# an intensity beyond max_plausible_if is refused, as analyze refuses it: a
+		# run pace against a walker's only threshold is not a projection
+		and reason_of(tgt("1x1:00:00@4:30/km"), { ..inp, pace_thresholds: [{ family: "Run", speed: 0.0 }, { family: "Walk", speed: 1.52 }] }) == "no_threshold_pace"
+		# just inside the bound still prices (4.0 / 2.68 = 1.49); just past it does not
+		and near(load_of("1x1:00:00@4:10/km", { ..inp, pace_thresholds: [{ family: "Run", speed: 2.68 }] }), (4.0 / 2.68).pow(2.0) * 100.0)
+		and reason_of(tgt("1x1:00:00@4:10/km"), { ..inp, pace_thresholds: [{ family: "Run", speed: 2.66 }] }) == "no_threshold_pace"
 		# the zone a target names, not the bounds, sets its rate
 		and near(load_of("1x1:00:00@Z4", { ..inp, zones: NoZones }), 80.0)
 		and reason_of(tgt("1x1:00:00@1:55/500m"), inp) == "no_threshold_pace"

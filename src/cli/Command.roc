@@ -213,8 +213,8 @@ Command := [
 			["week"] => Ok(WeekView)
 			["week", "all"] => Ok(WeekViewAll)
 			# optional fifth argument: a structured target `<reps>x<rep>@<signal>` on
-			# power, heart rate, an HR zone or pace (ADR 0014, ADR 0019) — validated in
-			# Plan (bad_target), stored beside the prose
+			# power, heart rate, an HR zone, a session rating (RPE) or pace (ADR 0014,
+			# ADR 0019), validated in Plan (bad_target) and stored beside the prose
 			["week", "add", date, session_type, detail, rationale, target] => Ok(WeekAddT(date, session_type, detail, rationale, target))
 			["week", "add", date, session_type, detail, rationale] => Ok(WeekAdd(date, session_type, detail, rationale))
 

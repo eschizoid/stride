@@ -196,15 +196,18 @@ reason `--json` and still answers in JSON).
 - `stride event add <YYYY-MM-DD> "<name>" --json` (future dates only, else `bad_date`)
   returns `{id, event_date, name, days_away}`; `stride event remove <id> --json` deletes
   it. `stride events --json` returns
-  `{projected_from, baseline_known, ftp_known, events:[{id, event_date, name, days_away, ctl, atl, tsb, planned_in_window, sessions_projected}]}`:
+  `{projected_from, baseline_known, ftp_known, events:[{id, event_date, name, days_away, ctl, atl, tsb, planned_in_window, sessions_projected, unprojected}]}`:
   CTL/ATL/TSB projected onto each event date over the open plan's targets, window
   `(projected_from, event_date]`. Each target kind is priced on the rung analyze scores
-  by: power as TSS against the ride FTP, pace as rTSS against its family's 60-day
-  threshold speed, a heart-rate band or zone as hrTSS (a band at its midpoint's zone,
-  under the global zones), a rating as session-RPE load. A session with no target, or
-  none its inputs can price, contributes zero, so the gap between `planned_in_window`
-  and `sessions_projected` is how blind the projection is. `ftp_known: false` means
-  power targets add nothing. `baseline_known: false` means no computed history. A
+  by: power as TSS against the ride FTP, pace as rTSS against the 60-day threshold
+  speed of its sport family (pooled over the family, the one nearest the target pace;
+  analyze prices the finished session against its own sport type, so a treadmill,
+  trail or virtual session can differ), a heart-rate band or zone as hrTSS (a band at
+  its midpoint's zone, under the global zones), a rating as session-RPE load. A session
+  with no target, or none its inputs can price, contributes zero, so the gap between
+  `planned_in_window` and `sessions_projected` is how blind the projection is, and
+  `unprojected` names each such session with its reason, as `project` does.
+  `ftp_known: false` means power targets add nothing. `baseline_known: false` means no computed history. A
   session dated on the baseline day is excluded because the baseline already contains
   today. Negative `days_away` echoes the current baseline, not a projection.
 - `stride project <YYYY-MM-DD> ["<date>=<target>,..."] --json` returns

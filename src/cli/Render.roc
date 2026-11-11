@@ -1563,11 +1563,26 @@ Render :: [].{
 		if (lit == "") why else "${lit}: ${why}"
 	}
 
+	# why an event's unpriced sessions add no load, counted per reason in a fixed
+	# order: an event window can span months of untargeted rest days, so a count
+	# reads where a list of every session would not
+	unprojected_tally : List({ date : Str, target_literal : Str, reason : Str }) -> Str
+	unprojected_tally = |ups| {
+		parts = List.keep_oks(
+			["no_target", "no_ftp", "no_hr_zones", "no_threshold_pace"],
+			|r| {
+				n = List.count_if(ups, |u| u.reason == r)
+				if (n == 0) Err(None) else Ok("${n.to_str()} ${unprojected_reason("", r)}")
+			},
+		)
+		if (List.is_empty(parts)) "" else "\n      no load: ${Str.join_with(parts, ", ")}"
+	}
+
 	## event targets (#138): the projection as numbers in plain indented rows, its inputs
 	## in the lead line and the degraded-baseline note, and NO verdict line — "are you on
 	## track" is the coach's sentence, and ADR 0010 notes the denylist would not even
 	## catch it, so nothing here says it.
-	events_screen : { projected_from : Str, baseline_known : Bool, ftp_known : Bool, events : List({ id : I64, event_date : Str, name : Str, days_away : I64, ctl : F64, atl : F64, tsb : F64, planned_in_window : U64, sessions_projected : U64 }) } -> Str
+	events_screen : { projected_from : Str, baseline_known : Bool, ftp_known : Bool, events : List({ id : I64, event_date : Str, name : Str, days_away : I64, ctl : F64, atl : F64, tsb : F64, planned_in_window : U64, sessions_projected : U64, unprojected : List({ date : Str, target_literal : Str, reason : Str }) }) } -> Str
 	events_screen = |p|
 		if List.is_empty(p.events) {
 			"no event targets on file — `stride event add <YYYY-MM-DD> \"<name>\"` records one"
@@ -1580,7 +1595,7 @@ Render :: [].{
 					if (e.days_away < 0)
 						"  #${I64.to_str(e.id)}  ${e.event_date}  ${I64.to_str(-e.days_away)}d ago — baseline shown, `stride load` holds the event-day reading  ${e.name}"
 					else
-						"  #${I64.to_str(e.id)}  ${e.event_date}  in ${I64.to_str(e.days_away)}d  ctl ${fmt1(e.ctl)}  atl ${fmt1(e.atl)}  tsb ${fmt1(e.tsb)}  (${(e.sessions_projected).to_str()} of ${(e.planned_in_window).to_str()} planned sessions carry a projectable load)  ${e.name}",
+						"  #${I64.to_str(e.id)}  ${e.event_date}  in ${I64.to_str(e.days_away)}d  ctl ${fmt1(e.ctl)}  atl ${fmt1(e.atl)}  tsb ${fmt1(e.tsb)}  (${(e.sessions_projected).to_str()} of ${(e.planned_in_window).to_str()} planned sessions carry a projectable load)  ${e.name}${unprojected_tally(e.unprojected)}",
 			)
 			base_note =
 				if (!(p.baseline_known)) "\nno computed history to project from — every number above is decay over zero; `stride analyze` first"
@@ -2739,10 +2754,10 @@ expect {
 		# the denylist, which is why the screen carries no verdict line AT ALL, and the
 		# sweep is backstop rather than proof
 		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [] }),
-		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 38.2, atl: 22.1, tsb: 16.1, planned_in_window: 4, sessions_projected: 2 }] }),
-		Render.events_screen({ projected_from: "2026-08-30", baseline_known: False, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 0.0, atl: 0.0, tsb: 0.0, planned_in_window: 0, sessions_projected: 0 }] }),
-		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 12.0, atl: 3.0, tsb: 9.0, planned_in_window: 2, sessions_projected: 0 }] }),
-		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [{ id: 2, event_date: "2026-08-01", name: "Past Race", days_away: -29, ctl: 40.0, atl: 50.0, tsb: -10.0, planned_in_window: 0, sessions_projected: 0 }] }),
+		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 38.2, atl: 22.1, tsb: 16.1, planned_in_window: 4, sessions_projected: 2, unprojected: [{ date: "2026-09-02", target_literal: "", reason: "no_target" }, { date: "2026-09-03", target_literal: "1x1:00:00@4:10/km", reason: "no_threshold_pace" }] }] }),
+		Render.events_screen({ projected_from: "2026-08-30", baseline_known: False, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 0.0, atl: 0.0, tsb: 0.0, planned_in_window: 0, sessions_projected: 0, unprojected: [] }] }),
+		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 12.0, atl: 3.0, tsb: 9.0, planned_in_window: 2, sessions_projected: 0, unprojected: [{ date: "2026-09-02", target_literal: "3x12:00@230W", reason: "no_ftp" }, { date: "2026-09-04", target_literal: "3x12:00@230W", reason: "no_ftp" }] }] }),
+		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [{ id: 2, event_date: "2026-08-01", name: "Past Race", days_away: -29, ctl: 40.0, atl: 50.0, tsb: -10.0, planned_in_window: 0, sessions_projected: 0, unprojected: [] }] }),
 		# project_screen (#189) joins on arrival: recorded, hypothetical, and both notes
 		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "recorded", ctl: 30.0, atl: 20.0, tsb: 10.0, sessions_considered: 3, sessions_projected: 2, unprojected: [], hypothetical: [] }),
 		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "hypothetical", ctl: 30.0, atl: 20.0, tsb: 10.0, sessions_considered: 1, sessions_projected: 1, unprojected: [{ date: "2026-09-20", target_literal: "1x1:00:00@HR125-147", reason: "no_hr_zones" }, { date: "2026-09-21", target_literal: "", reason: "no_target" }], hypothetical: [{ date: "2026-09-15", target_kind: "power", target_literal: "3x12:00@230W", reps: 3, dur_s: 720, watts: 230.0 }] }),
@@ -2861,3 +2876,7 @@ expect
 # the events empty state is a CLOSED output — full-string equality per ADR 0012's hard
 # guard, so no verdict can ever ride into it unpinned
 expect Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [] }) == "no event targets on file — `stride event add <YYYY-MM-DD> \"<name>\"` records one"
+# an event whose window holds unpriced sessions names why, counted per reason in a
+# fixed order; a window with none adds no line
+expect Render.unprojected_tally([{ date: "2026-09-04", target_literal: "3x12:00@230W", reason: "no_ftp" }, { date: "2026-09-02", target_literal: "", reason: "no_target" }, { date: "2026-09-05", target_literal: "3x12:00@230W", reason: "no_ftp" }]) == "\n      no load: 1 no structured target, 2 no 60d best-20min power on file"
+expect Render.unprojected_tally([]) == ""
