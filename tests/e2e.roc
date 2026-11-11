@@ -44,7 +44,7 @@ import pf.Sleep
 import http.Response
 
 # `tz` rides on Ctx so every scenario that touches the clock reads the SAME zone the
-# dates were computed in. A second literal is exactly how #200 got in.
+# dates were computed in. A second literal lets the two zones drift apart.
 Ctx : { bin : Str, home : Str, db : Str, today : Str, d1 : Str, d2 : Str, tz : Str }
 
 Context : {}
@@ -98,7 +98,7 @@ init! = ||
 
 # ── mock mode: serve the four Strava endpoints sync/auth/ftp use ─────────────
 # Deterministic fixtures; page 2+ is empty so fetch_pages! terminates. Routing
-# matches the reconstructed path?query, as the old bw-0.13.1 mock matched req.uri.
+# matches the reconstructed path?query.
 respond! : Server.Request, Context => Try(Server.Outcome, [ServerErr(Str)])
 respond! = |req, _ctx| {
 	uri =
@@ -128,7 +128,7 @@ respond! = |req, _ctx| {
 			Ok(mock_json(body))
 		}
 	} else if Str.contains(uri, "/api/v3/athlete/activities") {
-		# 429 on the LISTING (#235). Nothing exercised this before — the rate-limit arm
+		# 429 on the LISTING. Nothing exercised this before — the rate-limit arm
 		# below refuses a STREAM read only, which is how the list path could abort the run
 		# at exit 1 while a 429 twenty lines later stopped gracefully at exit 0, with no
 		# test able to tell the two apart.
@@ -184,12 +184,12 @@ respond! = |req, _ctx| {
 			# undecodable body). 502 drains first (ORDER BY start_local DESC) and stores its
 			# marker, so the error arrives with work already committed, which is the whole
 			# point: it is what makes "everything already stored is saved" a claim rather
-			# than a platitude. Salvaged from #225.
+			# than a platitude.
 			Ok(Server.respond(Response.from_status(500).with_body(Str.to_utf8("boom"))))
 		} else if Str.contains(uri, "/activities/501/") and env_or!("E2E_STREAM_401", "") == "1" {
 			# 401 forever on 501 ONLY, so the drain enters the token-refresh arm. That
 			# arm recurses on the SAME id with unchanged state, so without the bound
-			# (#232) it would spend the daily read cap in under a minute with no
+			# it would spend the daily read cap in under a minute with no
 			# terminal state. 502 drains first (ORDER BY start_local DESC) and stores
 			# its marker, so a bounded run still did work.
 			Ok(Server.respond(Response.from_status(401).with_body(Str.to_utf8("unauthorized"))))
@@ -203,7 +203,7 @@ respond! = |req, _ctx| {
 			# a realistic 1 Hz stream (constant 200W, HR sawtooth 120-179): long enough
 			# that best_20min_w -> derived FTP 190 -> TSS ~110.8. 3600 samples, matching
 			# 501's declared moving_time: at 1300 the stream spanned 0.36 of the session
-			# and #311's coverage gate refused it silently (501's assertions are all TSS).
+			# and the stream-coverage gate refused it silently (501's assertions are all TSS).
 			# Lengthened the STREAM rather than shortening moving_time, which would move
 			# the pinned TSS.
 			Ok(mock_json(mock_power_stream_json(3600, 200)))
@@ -216,7 +216,7 @@ respond! = |req, _ctx| {
 			# nothing and counts the failed fetch, so the id stays pending and
 			# retries next run until the attempt cap. This is the only way to
 			# reach `complete` with pending > 0, which is the state `resumable`
-			# exists for (#218). Served by a SECOND mock instance so the
+			# exists for. Served by a SECOND mock instance so the
 			# 404-marker fixture above stays untouched.
 			Ok(mock_bad_utf8)
 		} else {
@@ -283,7 +283,7 @@ shutdown! = |_reason, _ctx| Ok({})
 run_all! : () => Try({}, _)
 run_all! = || {
 	# ── the litter sweep's safety property, exercised through the SHIPPED CALL
-	# PATH (#266). Sentinels are planted BEFORE `reset_checks!` and read after
+	# PATH. Sentinels are planted BEFORE `reset_checks!` and read after
 	# it, so what is under test is "reset_checks! collects litter", not
 	# "sweep_litter! would if called": a direct call passes with the call site
 	# deleted. The sweep keys on pid liveness, not a blanket `rm -f`, because a
@@ -316,7 +316,7 @@ run_all! = || {
 	check!("...and skips a suffix that is not a pid at all", Str.trim(sh!("[ -e '.e2e-checks.${probe_mode}.notapid' ] && echo kept || echo swept")) == "kept")?
 	_ = sh!("rm -f '.e2e-checks.${probe_mode}.'*")
 	reset_sqlite_errors!({})
-	# ── #266: the tally the guard at the end of this driver counts must belong to
+	# ── the tally the guard at the end of this driver counts must belong to
 	# THIS process — asserted rather than trusted, because the property was
 	# documented for months while the code did not have it. Two halves, both
 	# needed: the positive alone passes if the path gains a pid AND keeps the
@@ -328,7 +328,7 @@ run_all! = || {
 	# with `date -u` while the fixture configured `timezone America/Chicago`, so
 	# between 00:00 and 05:00 UTC every remaining date check compared a UTC harness
 	# date against a Chicago binary — a whole day apart, and `analyze` regenerates
-	# daily_load to the BINARY's today, so the series came up one row short (#200).
+	# daily_load to the BINARY's today, so the series came up one row short.
 	# CI only saw it when a run landed in that window.
 	tz = fixture_tz
 	today = need("date +%F", Str.trim(sh!("TZ=${tz} date +%F")))?
@@ -356,7 +356,7 @@ run_all! = || {
 			Err(e)?
 		}
 	}
-	# #226: an sqlite3 fixture write that ERRORED, in EITHER sandbox this run touched —
+	# an sqlite3 fixture write that ERRORED, in EITHER sandbox this run touched —
 	# the log is run-scoped, so b_migration!'s second HOME is covered by this one check.
 	# Checked here as well as on the abort path above, so a failure with no downstream
 	# symptom is still named. The text is printed by check!, not spliced into the name.
@@ -447,7 +447,7 @@ run_sync! = || {
 	_ = sync_stride!(bin, home, base, ["config", "set", "hr_z3_max", "168"])
 	_ = sync_stride!(bin, home, base, ["config", "set", "hr_z4_max", "183"])
 
-	# ── auth, end to end against the mock (#259). The ONE payload path no other
+	# ── auth, end to end against the mock. The ONE payload path no other
 	# pass reaches: `just schema-check` selects mutates/network/interactive ==
 	# false, and auth sets all three the other way (the ADR 0000 s9c set), so
 	# without this arm the success envelope is pinned by nothing — `authorized:
@@ -498,14 +498,14 @@ run_sync! = || {
 	tok = Str.trim(sql!(db, "SELECT value FROM config WHERE key='strava_access_token';"))
 	check!("expired token refreshed via /oauth/token (stale-access -> mock-access)", tok == "mock-access")?
 
-	# #112: the first sync sees both mock activities for the first time, so both are NEW.
+	# the first sync sees both mock activities for the first time, so both are NEW.
 	# Asserting 2/0 rather than just "some number" — a classifier stuck on Updated, or one
 	# that counted every re-listed row as new, would both pass a looser check.
 	check!("first sync reports 2 new", Str.contains(first_sync, "\"new_activities\":2"))?
 	check!("...and 0 updated", Str.contains(first_sync, "\"updated_activities\":0"))?
 
-	# ONE further sync, not two: each extra `sync` multiplied this driver's exposure
-	# to #105 (three syncs per attempt passed 1 run in 6 while that bug lived).
+	# ONE further sync, not two: each extra `sync` adds another exposure
+	# to a flaky mock round-trip, so this driver keeps to the fewest syncs it needs.
 	# Edit 501 locally to stand in for a Strava-side edit: the next sync re-lists
 	# the mock's ORIGINAL name and must see it differ. 502 stays untouched in the
 	# same run, so one sync proves three things — a changed row counts as updated,
@@ -521,7 +521,7 @@ run_sync! = || {
 
 	_ = sync_stride!(bin, home, base, ["analyze"])
 	check!("2 mock activities synced", sync_strjq!(bin, home, base, ["activities"], ".data | length") == "2")?
-	# an FTP needs two sessions of the family with a best (#574), so 501 gets a
+	# an FTP needs two sessions of the family with a best, so 501 gets a
 	# mate the mock never lists: `synced_at NULL` exempts it from prune_deleted!
 	# on every later sync (incremental and --all), its stream is seeded here and
 	# again after the drain block's unscoped wipe so no drain ever fetches it and
@@ -530,12 +530,12 @@ run_sync! = || {
 	_ = sql!(db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) VALUES (599,'Mock Power Ride Mate','Ride','2026-07-20T10:00:00Z',1300,8000.0,0.0,NULL);")
 	_ = seed_power_stream!(db, 599, 1300, 200)
 	_ = sync_stride!(bin, home, base, ["analyze"])
-	# 501's mock streams are a constant 200W. FTP is DERIVED, not configured (#26): best 20-min
+	# 501's mock streams are a constant 200W. FTP is DERIVED, not configured: best 20-min
 	# power 200 x 0.95 = 190, so NP 200 @ derived FTP 190 => IF 1.053, TSS ~110.8 for the hour.
 	# Pin the exact value (not just >0) so the whole stream->best20->deriveFTP->NP->TSS path is checked.
 	check_near!("501 power streams score ~110.8 TSS (NP200 @ derived FTP190)", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 110.8, 1.0)?
 
-	# ── sync's machine contract (#218, #232) ──────────────────────────────────
+	# ── sync's machine contract ──────────────────────────────────
 	#
 	# The stream drain goes through out! like every query command, with progress
 	# on stderr (ADR 0007), so `--json` delivers an envelope for it. HERE rather
@@ -582,7 +582,7 @@ run_sync! = || {
 	check!("...and reports complete once drained", bfq!(".data.stopped") == "complete")?
 	check!("...still not resumable, having finished the queue", bfq!(".data.resumable") == "false")?
 
-	# ── the drain has NO per-run cap (#234) ────────────────────────────────────
+	# ── the drain has NO per-run cap ────────────────────────────────────
 	# The invariant that justified retiring `backfill`: the queue query carried
 	# `LIMIT 60`, and restoring it passed every driver, because with two fixture
 	# activities any residual cap of 2+ is structurally invisible. Seed past it:
@@ -646,7 +646,7 @@ run_sync! = || {
 	# it is worth restoring: a future check placed after this block would otherwise fail
 	# for a reason that has nothing to do with what it is testing.
 	_ = sync_stride!(bin, home, base, ["analyze"])
-	# ── `sync --all` (#232)
+	# ── `sync --all`
 	# ────────────────────────────────────────────────────
 	#
 	# The flag's entire job is the UNBOUNDED prune: an incremental run only
@@ -694,7 +694,7 @@ run_sync! = || {
 	_ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync --all >'${bo}' 2>/dev/null")
 	check!("...and the `stride sync --all` its message names restores Strava's date", Str.trim(sql!(db, "SELECT start_local FROM activities WHERE id = 501;")) == "2026-07-28T10:00:00Z")?
 
-	# #208: the two config reads on the SYNC path. Both swallowed an unreadable
+	# the two config reads on the SYNC path. Both swallowed an unreadable
 	# value — last_sync_epoch folded into "never synced" (a silent full re-pull,
 	# conservative and therefore invisible), strava_expires_at raised a tag nothing
 	# handled (internal_error about the athlete's own config). Written with sql!
@@ -780,7 +780,7 @@ b_stream_retry! = |ctx| {
 	Ok({})
 }
 
-# ── sync against a mock whose stream bodies do not decode (#218, #232) ───────
+# ── sync against a mock whose stream bodies do not decode ───────
 # The one state run_sync! cannot reach: a run that DRAINS its queue and still has
 # work left. store_stream_response! stores no body it cannot decode and counts the
 # failed fetch, so that id stays pending and retries next run — making `complete`
@@ -792,7 +792,7 @@ run_skips! : () => Try({}, _)
 run_skips! = || {
 	reset_checks!({})?
 	# Every driver resets the run-scoped failure log on entry and asserts it empty
-	# before finishing (#226); a driver without both leaves fixture-write errors
+	# before finishing; a driver without both leaves fixture-write errors
 	# unreported.
 	reset_sqlite_errors!({})
 	bin = env_or!("STRIDE_BIN", "./stride")
@@ -902,7 +902,7 @@ run_skips! = || {
 	Stdout.line!("SKIPS E2E CHECKS PASS")
 }
 
-# ── the notes drain: a strength session's pasted set breakdown (#478) ────────
+# ── the notes drain: a strength session's pasted set breakdown ────────
 # Against a mock whose page carries a Workout (id 503) and whose detail endpoint
 # serves the issue's verbatim Peloton share text. The chain under test spans
 # three stages that only agree end-to-end: sync stores the description (and
@@ -935,14 +935,14 @@ run_notes! = || {
 	check!("...with the run complete and not resumable", sq!(".data.stopped") == "complete" and sq!(".data.resumable") == "false")?
 	check!("the sync payload conforms to its schema with the notes keys", Str.trim(sh!("jq '.data' '${so}' 2>&1 | jq -r --slurpfile schema schemas/v3/sync.json -f tools/validate.jq 2>&1")) == "")?
 	check!("the stored note carries the pasted text", Str.contains(sql!(db, "SELECT description FROM strength_notes WHERE activity_id = 503;"), "Dumbbell Crush Press"))?
-	# the two directions of the cache policy in one run (#519): a description is
+	# the two directions of the cache policy in one run: a description is
 	# written AFTER the activity, so a stored copy inside the listing's rolling
 	# window re-reads every sync, while one outside it is permanent
 	_ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${so}' 2>/dev/null")
 	check!("a second run re-reads only the in-window description — the aged row is retired", sq!(".data.notes_fetched") == "1" and sq!(".data.pending_notes") == "0")?
 	check!("...and stays not resumable: the re-read is maintenance, not owed work", sq!(".data.resumable") == "false")?
 	# an EDIT lands: tamper the stored copy and let the re-read overwrite it —
-	# the failure #519 reproduces is a paste that never counts because the
+	# the failure this guards against is a paste that never counts because the
 	# first fetch cached an empty description forever
 	_ = sql!(db, "UPDATE strength_notes SET description = 'stale by hand' WHERE activity_id = 504;")
 	_ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${so}' 2>/dev/null")
@@ -952,7 +952,7 @@ run_notes! = || {
 	# is reachable from the CLI, without the raw-SQL delete
 	_ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync --all >'${so}' 2>/dev/null")
 	check!("sync --all re-reads every stored description, window or not", sq!(".data.notes_fetched") == "3")?
-	# the manual refresh #519 requires stays safe: deleting a row is the
+	# the manual refresh stays safe: deleting a row is the
 	# not-yet-fetched state, and the next run refetches it (plus the in-window
 	# re-read — two rows, which is what tells this apart from the steady state)
 	_ = sql!(db, "DELETE FROM strength_notes WHERE activity_id = 503;")
@@ -992,7 +992,7 @@ run_notes! = || {
 	check!("...while the fully covered month keeps its row", Str.trim(sql!(db, "SELECT COUNT(*) FROM monthly_threshold WHERE kind = 'tonnage' AND month <> '2026-07';")) == "1")?
 	_ = sql!(db, "DELETE FROM activities WHERE id IN (506, 507);")
 	check!("...and returns when the coverage does", Str.trim(sql!(db, "SELECT COUNT(*) FROM monthly_threshold WHERE kind = 'tonnage' AND month = '2026-07';")) == "1")?
-	# ── the strength report reads the same truths back (#522) ──────────
+	# ── the strength report reads the same truths back ──────────
 	# per-exercise points, the monthly table INCLUDING withheld months, and
 	# the session counts that make the gaps visible — each against values
 	# this driver planted, so a report drifting from its views fails here
@@ -1028,7 +1028,7 @@ run_notes! = || {
 	Stdout.line!("NOTES E2E CHECKS PASS")
 }
 
-# ── the two non-complete stop reasons (#218) ─────────────────────────────────
+# ── the two non-complete stop reasons ─────────────────────────────────
 # Until the read limits became env-overridable, reaching `budget_reached` honestly
 # cost 940 reads and `rate_limited` cost two 15-minute sleeps — so of the three
 # StopReason values only `complete` was ever observed, and a transposition in BOTH
@@ -1084,7 +1084,7 @@ run_stops! = || {
 	bf_elapsed = str_to_i64(Str.trim(sh!("date +%s"))) - bf_start
 
 	if env_or!("E2E_EXPECT_LIST_429", "") == "1" {
-		# A 429 on the LISTING (#235) must behave like a 429 on a stream: a success
+		# A 429 on the LISTING must behave like a 429 on a stream: a success
 		# envelope, not exit 1, which breaks every cron wrapper. The two damage
 		# assertions matter most: prune_deleted! removes what the listing did NOT
 		# re-list, so running it against a partial list deletes activities that were
@@ -1115,7 +1115,7 @@ run_stops! = || {
 		check!("...and the human screen blames the LIST too, not the drain", Str.contains(sh!("HOME='${home}' STRIDE_API_BASE='${base}' '${bin}' sync 2>&1"), "rate-limited the activity list"))?
 		# ...but with the day's allowance spent it is the DAILY cap, not the window. The
 		# drain's 429 arm asks which limit refused and the list's did not, so the
-		# fifteen-minute remedy survived here — #246's defect on the other endpoint that
+		# fifteen-minute remedy must not leak in here, on the other endpoint that
 		# can 429. Counter one below the cap, so the list read itself lands exactly on it,
 		# which is where a real run ends up.
 		lcap_day = Str.trim(sh!("date -u +%s | awk '{ print int($1 / 86400) }'"))
@@ -1140,8 +1140,8 @@ run_stops! = || {
 		_ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_reads_day','${lcap_day}'),('strava_reads_today','9');")
 		lcap_human = sh!("HOME='${home}' STRIDE_API_BASE='${base}' STRIDE_READS_PER_DAY=10 '${bin}' sync 2>&1")
 		# BOTH facts on one screen, asserted separately, because either alone is satisfied
-		# by a version that dropped the other: the fold kept "tomorrow" and lost the
-		# listing, and #235's original kept the listing and said "~15 minutes".
+		# by a version that dropped the other: one could say "tomorrow" and lose the
+		# listing, the other keep the listing and say "~15 minutes".
 		check!("...and its human line says tomorrow rather than ~15 minutes", Str.contains(lcap_human, "again tomorrow"))?
 		check!("...while still saying the listing is incomplete, the fact the fold lost", Str.contains(lcap_human, "the activity list, so it is incomplete"))?
 		_ = sql!(db, "DELETE FROM config WHERE key IN ('strava_reads_day','strava_reads_today');")
@@ -1192,8 +1192,8 @@ run_stops! = || {
 		check!("...and stores no duplicates", Str.trim(sql!(part_db, "SELECT count(*) FROM activities;")) == "200")?
 		_ = sh!("rm -rf '${part_home}'")
 	} else if env_or!("E2E_EXPECT_500", "") == "1" {
-		# A drain that dies with rows already committed. Salvaged from #225, minus its
-		# stored-count assertion: #233 reports the queue total at the boundary, and the
+		# A drain that dies with rows already committed. Minus its
+		# stored-count assertion: sync reports the queue total at the boundary, and the
 		# per-id progress frame above it carries "how far did it get" at finer resolution.
 		# a clean queue: the shared run above this if-chain already drained, so without
 		# this the branch sees one id, dies on it immediately, and the frame never advances
@@ -1215,7 +1215,7 @@ run_stops! = || {
 		# That frame is the only carrier of "how far did it get" on the error path.
 		check!("...and the progress frame recorded the id it retired", Str.contains(err500, "1/2"))?
 	} else if daily_cap {
-		# #246: the advice must fit the stop. A window stop clears in ~15 minutes; a
+		# the advice must fit the stop. A window stop clears in ~15 minutes; a
 		# daily-cap stop clears tomorrow. ~95 reads a window over 96 windows a day
 		# far exceeds Strava's 1000-a-day cap, so following "~15 minutes" advice on
 		# a daily stop would have every read refused for the rest of the day.
@@ -1343,7 +1343,7 @@ run_stops! = || {
 		# read as CI being slow rather than as a failing check.
 		check!("a rate-limited sync returns at once instead of sleeping", bf_elapsed < 10)?
 		check!("a 429 stops the run outright", bfq!(".data.stopped") == "rate_limited")?
-		# Salvaged from #227. A rate-limited run is a PARTIAL SUCCESS: it did real work
+		# A rate-limited run is a PARTIAL SUCCESS: it did real work
 		# before Strava capped it, so it exits 0 while the identically-named error code
 		# exits 1. Nothing else in this suite asserts sync's exit code at all — sh! and
 		# stride_env! both discard it — so a regression emitting the right payload and
@@ -1360,7 +1360,7 @@ run_stops! = || {
 		_ = run_sync_bf!("human")
 		check!("humans are told to try again in ~15 minutes", Str.contains(Str.trim(sh!("cat '${bo}'")), "in ~15 minutes"))?
 		# ...and the SAME 429 means something different once the day's allowance is
-		# spent — the path #246 travels in production, which the daily arm's own driver
+		# spent — the path production takes, which the daily arm's own driver
 		# cannot reach (it sets stride's cap so far below Strava's that the mock never
 		# refuses).
 		# Seeded to ONE BELOW the cap, not at it, and that is the whole difficulty: at
@@ -1381,7 +1381,7 @@ run_stops! = || {
 		check!("...with the untouched id still pending", bfq!(".data.pending_streams") == "1")?
 		check!("...and resumable, because work remains", bfq!(".data.resumable") == "true")?
 
-		# THE convergence proof, and the reason `backfill` could be deleted (#232): a
+		# THE convergence proof, and the reason `backfill` could be deleted: a
 		# first run that stops on the read budget is not a dead end. Run it again and it
 		# finishes, with no flag, no second command, and nothing for the user to know.
 		# Without this, every other check here is satisfied by a sync that stops forever.
@@ -1499,7 +1499,7 @@ b_init_config! = |ctx| {
 	check!("missing-config error code", Str.contains(stride!(ctx.bin, ctx.home, ["summary"]), "missing_config"))?
 	# the MACHINE message must carry the same onboarding content the human help
 	# does: an agent-driven install sees only this string, and a bare "see
-	# `stride config`" leaves it one hop short of the four keys (#498)
+	# `stride config`" leaves it one hop short of the four keys
 	mc_out = stride!(ctx.bin, ctx.home, ["summary"])
 	check!("missing-config envelope names the four keys and where to find them", Str.contains(mc_out, "hr_z1_max") and Str.contains(mc_out, "hr_z4_max") and Str.contains(mc_out, "strava.com/settings/heartrate"))?
 	# ...and the HUMAN help stays gated too: every key name it offers must be one
@@ -1513,7 +1513,7 @@ b_init_config! = |ctx| {
 	# bare phrase: the missing_config envelope opens with the same words, so a phrase-level
 	# match could be satisfied by the wrong surface.
 	check!("doctor names the absent zone bounds rather than reporting a count", Str.contains(stride!(ctx.bin, ctx.home, ["doctor"]), "\"config_error\":\"hr zone bounds are not set"))?
-	# ── platform failures reach the caller as the contract (#183) ────────
+	# ── platform failures reach the caller as the contract ────────
 	#
 	# A query before `stride init` must answer with an envelope and a code, not
 	# a `Program exited with error: SqliteErr(CanNotOpen, …)` banner on stderr
@@ -1538,7 +1538,7 @@ b_init_config! = |ctx| {
 	inband = sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' sync 2>/dev/null")
 	check!("in-band errors still arrive as themselves", Str.contains(inband, "not_authenticated"))?
 	check!("...exactly once — the boundary must not re-wrap Exit", Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' sync 2>/dev/null | grep -c schema_version")) == "1")?
-	# #232: `backfill` is retired — `sync` is the only command that pulls data, and
+	# `backfill` is retired — `sync` is the only command that pulls data, and
 	# it answers `--json` with an envelope on every path including refusal. Asserting the
 	# command is GONE rather than merely unused: a dispatch left behind would still run.
 	bf_gone = Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' backfill 2>/dev/null"))
@@ -1550,7 +1550,7 @@ b_init_config! = |ctx| {
 	_ = sh!("mkdir -p '${ctx.home}/freshinit'")
 	check!("...and init on a fresh home still succeeds", stride_status!(ctx.bin, "${ctx.home}/freshinit", ["init"]) == 0)?
 	_ = sh!("rm -rf '${nodb}' '${corrupt}' '${ctx.home}/freshinit'")
-	# ── exit status (#163): the envelope is unchanged, the STATUS now carries
+	# ── exit status: the envelope is unchanged, the STATUS now carries
 	# success/failure so shell callers stop reading errors as success.
 	check!("an error envelope exits non-zero", stride_status!(ctx.bin, ctx.home, ["summary"]) == 1)?
 	check!("an unknown command is an invocation error", stride_status!(ctx.bin, ctx.home, ["wat"]) == 1)?
@@ -1563,11 +1563,11 @@ b_init_config! = |ctx| {
 	# a REAL command with wrong arguments must not claim the command is unknown
 	argerr = stride!(ctx.bin, ctx.home, ["sync", "extra"])
 	check!("wrong arity on a real command is a usage error, not 'unknown'", Str.contains(argerr, "sync") and !(Str.contains(argerr, "unknown_command")))?
-	# ── every machine response is an envelope (#180) ─────────────────────
+	# ── every machine response is an envelope ─────────────────────
 	# These were the last two paths that handed a tool caller bare prose: a
 	# usage error printed `usage: stride ...` as text, and a bare invocation
 	# printed the whole human help screen.
-	# `config get` with no key, not bare `config`, which became the listing in #254. The
+	# `config get` with no key, not bare `config`, which is now the listing. The
 	# form still has to exist for this to test anything, so both halves moved together.
 	check!("a usage error is an envelope for machines", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get"]), "\"code\":\"usage\""))?
 	check!("...and stays a plain line for humans", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "get"]), "usage: stride config") and !(Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "get"]), "schema_version")))?
@@ -1577,7 +1577,7 @@ b_init_config! = |ctx| {
 	check!("a bare call answers with the command list, as data", strjq!(ctx, [], "[.data.commands[].name] | index(\"summary\") != null") == "true")?
 	check!("--help answers identically for machines", strjq!(ctx, ["--help"], "[.data.commands[].name] | index(\"plan\") != null") == "true")?
 
-	# ── the command table describes, it does not merely name (#219) ─────
+	# ── the command table describes, it does not merely name ─────
 	# A name list lets an agent enumerate and nothing more. These pin the four facts
 	# it needs to CALL, and — more importantly — pin them against something other
 	# than the table itself, because a table checked only against itself is a
@@ -1642,7 +1642,7 @@ b_init_config! = |ctx| {
 	spec_verbs = "HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[].name | split(\" \")[0]' | LC_ALL=C sort -u"
 	_ = sh!("rm -rf '${verbs_dir}' && mkdir -p '${verbs_dir}' && ${parser_verbs} > '${verbs_dir}/parser' && ${spec_verbs} > '${verbs_dir}/spec'")
 	# `backfill` and nothing else. It is the one arm that answers a name with a pointer
-	# instead of a command (#232), so it must NOT be advertised — and pinning it as a
+	# instead of a command, so it must NOT be advertised — and pinning it as a
 	# value means a second undescribed command changes this string and fails, where a
 	# filter rule would have quietly absorbed it.
 	undescribed = Str.trim(sh!("LC_ALL=C comm -23 '${verbs_dir}/parser' '${verbs_dir}/spec' | tr '\\n' ' '"))
@@ -1763,9 +1763,9 @@ b_init_config! = |ctx| {
 	ro_probe = "${ctx.home}/.ro-probe"
 	_ = sh!("rm -rf '${ro_probe}' && mkdir -p '${ro_probe}' && cp -R '${ctx.home}/.stride' '${ro_probe}/.stride'")
 	_ = sql!("${ro_probe}/.stride/db.sqlite", "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (1,'ro probe','Ride','${ctx.d1}T10:00:00Z',3600,20000,180,180,140);")
-	# FROM THE TABLE (#257), not from the placeholder TEXT: re-deriving a value per
+	# FROM THE TABLE, not from the placeholder TEXT: re-deriving a value per
 	# shape here disagreed with `just schema-check`, so the safety proof and the
-	# executed invocation were not the same call — the whole of #257.
+	# executed invocation were not the same call — the whole point.
 	# `select(.example != "")` on required args: an empty example is `<activity_id>`,
 	# whose value comes from the data; those forms drop out of the sweep rather than
 	# being invoked with a guess — the boundary the type records.
@@ -1817,10 +1817,10 @@ b_init_config! = |ctx| {
 	check!("...and all four stay exit 0", stride_status!(ctx.bin, ctx.home, []) == 0 and stride_status!(ctx.bin, ctx.home, ["--help"]) == 0 and stride_status!(ctx.bin, ctx.home, ["-h"]) == 0 and stride_status!(ctx.bin, ctx.home, ["help"]) == 0)?
 	check!("humans still get the help screen", Str.contains(stride_human!(ctx.bin, ctx.home, []), "USAGE") and !(Str.contains(stride_human!(ctx.bin, ctx.home, []), "schema_version")))?
 	check!("...and still exits non-zero", stride_status!(ctx.bin, ctx.home, ["sync", "extra"]) == 1)?
-	# the FLAG path owns the exit code too (#162's re-exec wrapper): without
+	# the FLAG path owns the exit code too (the re-exec wrapper): without
 	# Err(Exit(child_code)) the parent collapses every child status to 1 and
-	# stacks a platform banner on the child's own message. Deleting that arm
-	# passed the entire suite before this check existed.
+	# stacks a platform banner on the child's own message. This check is the
+	# only guard on that arm.
 	check!("an error through --json propagates the child's status", stride_status!(ctx.bin, ctx.home, ["--json", "activity", "99999999"]) == 1)?
 	# (a db-free success: at this point in the fixture almost every query is
 	# legitimately an error, and --version exercises the same re-exec path)
@@ -1830,7 +1830,7 @@ b_init_config! = |ctx| {
 	_ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max", "153"])
 	_ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z3_max", "168"])
 	_ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z4_max", "183"])
-	# #154 ""-arm: no activities yet, so TSB is unknown and analyze must say so
+	# the "" arm: no activities yet, so TSB is unknown and analyze must say so
 	# honestly — form_state "" (absent), never a fabricated band id
 	check!("analyze form_state is honestly empty pre-data", strjq!(ctx, ["analyze"], ".data.form_state == \"\" and .data.form_tsb_known == false") == "true")?
 	Ok({})
@@ -1846,7 +1846,7 @@ b_auth! = |ctx| {
 	# refresh branch, and credless sync must answer with the same remedy as
 	# `auth!`, not `internal_error … please open an issue` for a state one
 	# `stride auth` fixes. (`internal_error` is universal, so that envelope
-	# would validate, #279.) Asserted on the CODE explicitly — the remedy text
+	# would validate.) Asserted on the CODE explicitly — the remedy text
 	# is shared with the auth arm, so wording alone would pass if the catch-all
 	# quoted it. Staged, because the path needs tokens PRESENT and creds ABSENT:
 	# with no tokens sync short-circuits at not_authenticated and never reaches
@@ -1871,7 +1871,7 @@ b_auth! = |ctx| {
 	# while `sync` emits something it does not declare.
 	check!("...and `sync` DECLARES the code it can raise", Str.contains(strjq!(ctx, ["--help"], "[.data.commands[] | select(.name == \"sync\") | .error_codes[]]"), "missing_client_creds"))?
 	_ = sql!(ctx.db, "DELETE FROM config WHERE key IN ('strava_access_token','strava_refresh_token','strava_expires_at');")
-	# ── #259: with creds present, auth reaches the paste prompt and then hits EOF —
+	# ── with creds present, auth reaches the paste prompt and then hits EOF —
 	# `stdin_closed`, the code whose purpose is telling an UNATTENDED caller there
 	# was no terminal, so the one most likely to be parsed rather than read.
 	# stdout ALONE, deliberately: `sh!` merges streams elsewhere in this file, which
@@ -1916,7 +1916,7 @@ b_auth! = |ctx| {
 	# Authorize in the browser tab that just opened (URL below if it didn't)" BELOW the URL
 	# it points at.
 	check!("...and the steps are in order, which a line count cannot see", Str.starts_with(Str.trim(sh!("${creds} STRIDE_FORMAT=human '${ctx.bin}' auth < /dev/null 2>/dev/null | head -1")), "1) "))?
-	# ── the browser gate itself, in BOTH directions (#259): `just test` must
+	# ── the browser gate itself, in BOTH directions: `just test` must
 	# open no browser tab, and a real user must get one.
 	#
 	# A stub `open` on PATH in a throwaway dir, touching a marker. `open` is
@@ -1939,12 +1939,10 @@ b_auth! = |ctx| {
 	# ...and the half that matters more, because the inversion passed everything else: a
 	# REAL base must still open one. Without this, "never open a browser" is green.
 	check!("...while a real base still does, which is the whole flow", Str.trim(sh!("rm -f '${stub}/opened'; PATH=\"${stub}:$PATH\" env STRAVA_CLIENT_ID=e2e-id STRAVA_CLIENT_SECRET=e2e-secret HOME='${ctx.home}' '${ctx.bin}' auth < /dev/null 2>&1 | grep -qi 'stdin closed' && { [ -e '${stub}/opened' ] && echo opened || echo quiet; } || echo 'auth did not run'")) == "opened")?
-	# ...and the xdg-open FALLBACK, which this PR made unreachable everywhere. Before the
-	# loopback base landed in `creds`, the seven b_auth! invocations set none, so on Linux
-	# CI `open` was absent and this arm executed seven times a run — executed, never
-	# asserted. Now the gate returns early for all seven and probe 2 supplies a working
-	# `open`, so nothing reaches it on any platform: a downgrade from weak coverage to
-	# none, on the arm carrying the documented hang hazard.
+	# ...and the xdg-open FALLBACK. The b_auth! invocations all use the loopback base,
+	# so the gate returns early for them, and probe 2 supplies a working `open`, so
+	# nothing else in the suite reaches this arm on any platform, and it is the arm
+	# carrying the documented hang hazard.
 	#
 	# A stub `open` that EXITS 1 drives it, with no PATH surgery beyond what is already
 	# here — `open_browser!` tries `open` first and falls through on Err.
@@ -1984,13 +1982,13 @@ b_config_ftp! = |ctx| {
 	check!("setting a derived key is refused", Str.contains(set_out, "derived_key"))?
 	check!("refusal explains where FTP comes from", Str.contains(set_out, "power history"))?
 	check!("reading a derived key is refused too", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "ftp_ride"]), "derived_key"))?
-	# #201: a numeric key is validated at the WRITE. Narrowing only the READ made
+	# a numeric key is validated at the WRITE. Narrowing only the READ made
 	# `config set hr_z1_max 1.18e2` succeed, echo back, and then report missing_config --
 	# a stored value that parses nowhere, which is the same trap as one read nowhere.
 	# `utc_offset_minutes +330` was the silent version: it became UTC instead of +05:30.
 	check!("a numeric key refuses exponent notation at set time", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z1_max", "1.18e2"]), "bad_value"))?
-	# "+330" parsed fine on both pins -- it becomes 0 only because THIS PR narrowed the
-	# read in Db.roc, which is why the refusal has to live at the write.
+	# "+330" parses as an integer elsewhere but the READ in Db.roc does not accept it,
+	# which is why the refusal has to live at the write.
 	# the write gate must accept exactly what the READ can parse. It checked syntax only,
 	# so an overflowing but well-formed integer stored fine and then failed every read --
 	# a value permanently ignored, which is the trap this gate exists to prevent. Only the
@@ -2000,7 +1998,7 @@ b_config_ftp! = |ctx| {
 	check!("...and refuses a leading +, which this narrowing would otherwise coalesce to 0", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "utc_offset_minutes", "+330"]), "bad_value"))?
 	check!("...while the plain forms still store", strjq!(ctx, ["config", "set", "hr_z1_max", "118.5"], ".data.value") == "118.5")?
 	check!("...and a free-text key is untouched by the rule", strjq!(ctx, ["config", "set", "timezone", ctx.tz], ".data.value") == ctx.tz)?
-	# #206: a LEGACY row -- written by SQL, as one written before the write-side
+	# a LEGACY row -- written by SQL, as one written before the write-side
 	# validation existed would be -- must be reported, not coalesced. `+330` parsed fine
 	# on both compiler pins, so this is exactly what an athlete could have stored.
 	_ = sql!(ctx.db, "DELETE FROM config WHERE key='timezone'; INSERT OR REPLACE INTO config VALUES ('utc_offset_minutes','+330');")
@@ -2040,9 +2038,9 @@ b_config_ftp! = |ctx| {
 	check!("config set emits the JSON envelope", strjq!(ctx, ["config", "set", "timezone", ctx.tz], ".data.value") == ctx.tz)?
 	check!("config set human line", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "set", "timezone", ctx.tz]), "timezone = ${ctx.tz}"))?
 	check!("value stored + read back (human)", Str.trim(stride_human!(ctx.bin, ctx.home, ["config", "get", "timezone"])) == ctx.tz)?
-	# ── explicit format flags (#162): the flag beats the environment, works in
+	# ── explicit format flags: the flag beats the environment, works in
 	# any argv position, last flag wins. stride_env! pins STRIDE_FORMAT so each
-	# check is a real precedence fight. #181: STRIDE_FORMAT is the ONLY
+	# check is a real precedence fight. STRIDE_FORMAT is the ONLY
 	# environment input to the mode — no other variable, whatever a harness
 	# exports, may produce machine output.
 	#
@@ -2069,7 +2067,7 @@ b_config_ftp! = |ctx| {
 	check!("...and the requested format still wins", Str.contains(term_out, "schema_version"))?
 	_ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${term_sess};")
 	check!("config get json value", strjq!(ctx, ["config", "get", "timezone"], ".data.value") == ctx.tz)?
-	# #254: `nope` is not a key stride reads, and that is a different fact from
+	# `nope` is not a key stride reads, and that is a different fact from
 	# "this key is empty". Answering `not_set` for both would read as "the key
 	# is fine, just empty" and send the reader to `config set nope <value>` — a
 	# write nothing ever reads back. The pair below separates them, and BOTH
@@ -2092,18 +2090,18 @@ b_config_ftp! = |ctx| {
 	# ...but a TYPO of one is not. `known_key` borrowing `is_secret` fails here:
 	# that `_token`/`_secret` suffix rule is deliberately fail-OPEN so an
 	# unlisted future secret is still redacted — so every misspelling of a credential key
-	# kept answering "(not set)", the exact scenario #254 is about, in the family where
+	# would answer "(not set)", the case this pins, in the family where
 	# following that advice means pasting a real secret under a key nothing reads.
 	check!("...while a TYPO of a secret is not recognised", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "strava_acess_token"]), "unknown_key"))?
-	# ...and the same for the zone family, whose first-cut pattern was `starts_with("hr_z")
-	# and contains("_max")` while its comment claimed to mirror `hr_z[1-4]_max_?*`
+	# ...and the same for the zone family, whose pattern must be exactly
+	# `hr_z[1-4]_max_?*`; a looser `starts_with("hr_z") and contains("_max")` lets typos in.
 	check!("...and a mistyped zone key is not recognised either", Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "hr_z1_maxx"]), "unknown_key") and Str.contains(stride!(ctx.bin, ctx.home, ["config", "get", "hr_z9_max"]), "unknown_key"))?
-	# ── the WRITE half. Guarding only `config get` was worse than guarding neither: the
-	# CLI confirmed a write and then denied the key existed. Both verbs, one predicate.
+	# ── the WRITE half. Guarding only `config get` is worse than guarding neither: the
+	# CLI would confirm a write and then deny the key existed. Both verbs, one predicate.
 	check!("config set refuses an unknown key rather than storing it", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "timezon", "America/Chicago"]), "unknown_key"))?
 	check!("...and stores nothing, so get and set cannot disagree", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'timezon';")) == "0")?
 	check!("...while a real key still writes", Str.contains(stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max_ride", "155"]), "hr_z2_max_ride"))?
-	# ...and it can be REMOVED, the scenario #276 opens with: `config set
+	# ...and it can be REMOVED, which is the case this pins: `config set
 	# hr_z2_max_ride ""` answered `bad_value` (numeric_key calls `hr_z*` Decimal),
 	# so sqlite3 was the only way to drop a per-sport override — and setting it to
 	# the global value instead PINS the number, stopping later global changes from
@@ -2122,7 +2120,7 @@ b_config_ftp! = |ctx| {
 	# ...and the CLIENT-credential branch: `strava_client_id` must not fall to
 	# the catch-all, whose "will re-fetch it as needed" is false for it — the
 	# next sync asks the user to supply it by hand — and must say what its
-	# sibling says (#276). Both members are asserted, because the two are routed
+	# sibling says. Both members are asserted, because the two are routed
 	# separately.
 	_ = stride!(ctx.bin, ctx.home, ["config", "set", "strava_client_id", "probe-id"])
 	check!("removing a client credential says the user must supply it, not that stride will", Str.contains(stride_human!(ctx.bin, ctx.home, ["config", "unset", "strava_client_id"]), "until you supply it again"))?
@@ -2188,7 +2186,7 @@ b_config_ftp! = |ctx| {
 	conf_sec = stride!(ctx.bin, ctx.home, ["config"])
 	check!("...naming a set secret without printing it", Str.contains(conf_sec, "strava_access_token") and Str.contains(conf_sec, "\"redacted\":true") and !(Str.contains(conf_sec, "sekrit-e2e")))?
 	# ── rows the binary does not read are MARKED, not hidden. Filtering them instead
-	# makes a pre-#254 leftover (`config set timezon x` once succeeded) unreadable,
+	# makes a leftover (`config set timezon x` once succeeded) unreadable,
 	# unwritable AND unlistable — visible only to sqlite3. For an issue about a row nothing
 	# reads, turning a visible dead row into an invisible one is the wrong direction.
 	_ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key, value) VALUES ('timezon', 'left over from before #254'), ('ftp_ride', '243');")
@@ -2217,7 +2215,7 @@ b_config_ftp! = |ctx| {
 	#
 	# `config unset`, not `config set <key> ""`: that gesture meant THREE things by
 	# key class (removal / bad_value / an empty WRITE that left a token row reading
-	# as SET, costing sync a request to be told 401, #276), and its removal payload
+	# as SET, costing sync a request to be told 401), and its removal payload
 	# failed config.json's required `value`. One verb, one shape, own schema.
 	# It DELETES rather than storing "": `numeric_key` calls `hr_z*` Decimal so an
 	# empty value was refused, and `Analyze.load_config!` requires every `hr_z*`
@@ -2225,8 +2223,9 @@ b_config_ftp! = |ctx| {
 	check!("...and clearing an unrecognised row is allowed", Str.contains(stride!(ctx.bin, ctx.home, ["config", "unset", "timezon"]), "\"removed\":true"))?
 	check!("...which DELETES it rather than emptying it, so nothing can choke on the row", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'timezon';")) == "0")?
 	check!("...and it reaches the zone misspellings, which an empty write could not", Str.contains(stride!(ctx.bin, ctx.home, ["config", "unset", "hr_z1_maxx"]), "\"removed\""))?
-	# ...and the DERIVED family, which `is_derived` refused before this arm ran. Those are
-	# the rows the schema itself calls most likely to be on a real database.
+	# ...and the DERIVED family, which `is_derived` refuses on set but unset must
+	# reach. Those are the rows the schema itself calls most likely to be on a real
+	# database.
 	check!("...and a derived row, which derived_key refused before it", Str.contains(stride!(ctx.bin, ctx.home, ["config", "unset", "ftp_ride"]), "\"removed\":true"))?
 	check!("...leaving it gone rather than emptied", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM config WHERE key = 'ftp_ride';")) == "0")?
 	# ...while it is not an ENTRANCE. An empty write was `INSERT OR REPLACE`, so
@@ -2273,10 +2272,7 @@ b_config_ftp! = |ctx| {
 	# no utc_offset_minutes, doctor must report the UTC fallback rather than an error.
 	check!("absent timezone falls back to UTC, not an error", Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "UTC") and strjq!(ctx, ["doctor"], ".data.time_ok") == "true")?
 	# ...then put it back, because the harness is anchored to ${tz}: an absent row
-	# leaves the binary on UTC and the two disagree for the rest of the run. (This
-	# DELETE was NOT the cause of #200 — on main both sides defaulted to UTC, so it
-	# returned them to agreement; the line that broke the run was the
-	# `validate!("config set timezone ...")` in b_seed_analyze!.)
+	# leaves the binary on UTC and the two disagree for the rest of the run.
 	_ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ctx.tz])
 	Ok({})
 }
@@ -2315,7 +2311,7 @@ b_seed_analyze! : Ctx => Try({}, _)
 b_seed_analyze! = |ctx| {
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,weighted_avg_watts,avg_watts) VALUES (101,'power ride','Ride','${ctx.d1}T10:00:00Z',3600,30000,100,200,200);")
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (102,'hr row','Rowing','${ctx.d2}T10:00:00Z',3600,9000,0,150);")
-	# a real 200W stream so the ride derives an FTP (best-20min 200 x 0.95 = 190). Post-#26
+	# a real 200W stream so the ride derives an FTP (best-20min 200 x 0.95 = 190).
 	# FTP is derived from stream power, not config, so a summary-watts-only ride scores 0
 	# only while its sport family has no stream power at all. Once this stream lands the
 	# Ride family HAS a derived FTP, and a later summary-watts ride scores against it
@@ -2324,7 +2320,7 @@ b_seed_analyze! = |ctx| {
 	# unscored case — a family with no stream anywhere.
 	_ = seed_power_stream!(ctx.db, 101, 3600, 200)
 	# the ride alone first: pass 1 scores both rows with no FTP, and pass 2 has
-	# nothing to rescore because a lone session derives none (#574): 2. The
+	# nothing to rescore because a lone session derives none: 2. The
 	# summary measures its best and estimates no FTP from it
 	check!("analyze computes 2 while the ride is alone (nothing to rescore without an FTP)", strjq!(ctx, ["analyze"], ".data.computed") == "2")?
 	lone_ftp = strjq!(ctx, ["summary"], ".data.ftp | (.best_20min_w_60d | round | tostring) + \"/\" + (.estimated_ftp_w | round | tostring)")
@@ -2332,7 +2328,7 @@ b_seed_analyze! = |ctx| {
 	lone_human = stride_human!(ctx.bin, ctx.home, ["summary"])
 	check!("...and the human summary says an FTP needs two sessions rather than printing 0 W derived from 200 W", Str.contains(lone_human, "an FTP needs two") and !Str.contains(lone_human, "~0W"))?
 	# an FTP needs two sessions of the family with a 20-minute best in the
-	# trailing window (#574), so a second, short power ride two hours BEFORE 101
+	# trailing window, so a second, short power ride two hours BEFORE 101
 	# on d1 sits inside 101's own window whatever older history later fixtures
 	# seed. It carries about 40 TSS of its own, which the load checks below
 	# count. The companion itself, the earlier of the pair, derives through the
@@ -2366,10 +2362,10 @@ b_seed_analyze! = |ctx| {
 	check!("analyze form_delta_known is a boolean, not a string", strjq!(ctx, ["analyze"], ".data.form_delta_known | type") == "boolean")?
 	check!("analyze form_tsb_known is a boolean too", strjq!(ctx, ["analyze"], ".data.form_tsb_known | type") == "boolean")?
 	check!("summary as_of is today", strjq!(ctx, ["summary"], ".data.as_of") == ctx.today)?
-	# #154: the stable machine id for the form band — one of the five enum values,
+	# the stable machine id for the form band — one of the five enum values,
 	# never prose, never coaching vocabulary
 	check!("summary form_state is a stable band id", strjq!(ctx, ["summary"], ".data.form_state | IN(\"high_modeled_fatigue\",\"modeled_fatigue_building\",\"balanced\",\"fresh\",\"very_fresh\")") == "true")?
-	# ── stimulus features (#159): measurements only. Fixture 101 (power ride,
+	# ── stimulus features: measurements only. Fixture 101 (power ride,
 	# threshold-plus for an hour) is hard by the POWER-AWARE predicate; the flags
 	# are typed booleans (the "True"-string trap), and window identities hold.
 	check!("hard-session counts are live and d14 <= d28", strjq!(ctx, ["summary"], ".data.hard_days | (.d28 >= 1) and (.d14 <= .d28)") == "true")?
@@ -2381,7 +2377,7 @@ b_seed_analyze! = |ctx| {
 	# window the fixture must read known=false AND value 0 — a genuinely
 	# falsifiable pair, not a tautology of the implementation
 	check!("ftp trajectory prior window is flagged honestly", strjq!(ctx, ["summary"], ".data.ftp | ((.prior_60d_known | type) == \"boolean\") and (.prior_60d_known == false) and (.prior_60d_best_20min_w == 0)") == "true")?
-	# ── load coverage (#157): TSS-weighted confidence tiers on the aggregates.
+	# ── load coverage: TSS-weighted confidence tiers on the aggregates.
 	# The invariant is EXACT-100 (largest-remainder rounding, pure-pinned in
 	# Metrics); the fixture mixes power_stream and HR/RPE-scored rows so both
 	# high and medium tiers are live, and known is a typed boolean (ADR 0009).
@@ -2389,7 +2385,7 @@ b_seed_analyze! = |ctx| {
 	# ── units: a DISPLAY preference, and the whole contract is that it changes the human
 	# tables and NOTHING else. The JSON assertion below is the load-bearing one —
 	# `distance_m` is a pinned field the coaching agent reads, so a setting that moved it
-	# would make an agent's reasoning depend on how a human likes their numbers (#349).
+	# would make an agent's reasoning depend on how a human likes their numbers.
 	units_si_metric = strjq!(ctx, ["summary"], ".data.last_7d.distance_m")
 	_ = stride!(ctx.bin, ctx.home, ["config", "set", "units", "imperial"])
 	units_si_imperial = strjq!(ctx, ["summary"], ".data.last_7d.distance_m")
@@ -2421,7 +2417,7 @@ b_seed_analyze! = |ctx| {
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9003,'Track Session','Run','${ctx.today}T23:00:00Z',1800,8000,10,160);")
 	# 9003 carries all three speed rungs so `pace-curve` has a REAL fit to sweep — the
 	# units arm below is otherwise blind, since a payload of all zeros moves with no setting
-	# and would certify nothing (#188). All THREE rungs are seeded so `fit_points` reaches 3,
+	# and would certify nothing. All THREE rungs are seeded so `fit_points` reaches 3,
 	# which is the only value at which `fit_r2` carries information — no integration test
 	# reached that branch otherwise. Seeding best_20min_speed does NOT disturb the 60-day
 	# threshold-pace derivation: no `analyze` runs between this insert and 9003's delete, so
@@ -2450,7 +2446,7 @@ b_seed_analyze! = |ctx| {
 	# count, so a leg going quiet names itself rather than hiding in a total.
 	# `activity` is swept because `interval_summary` is a REQUIRED payload field built
 	# once in ReportSessions and used BOTH in the payload record and the human output — the
-	# one-value-two-consumers shape that leaked into progress's groups[].name in #350, with
+	# one-value-two-consumers shape progress's groups[].name also has, with
 	# `units` already resolved at the top of that function.
 	#
 	# The sweep and the certificate below must exercise the SAME invocation. Two copies of
@@ -2558,8 +2554,7 @@ b_seed_analyze! = |ctx| {
 	#   examined   a new unit-naming site, or the pattern matching nothing
 	#   formatted  an EXISTING site rewritten out of the fmt shape while dropping the
 	#              conversion — `unconverted` cannot see it, because the fmt filter
-	#              `continue`s first. Measured: that half-bug at `stride activity` passed
-	#              the whole suite rc=0 before this was pinned.
+	#              `continue`s first, so this counter is the only guard against it
 	#   unconverted the half-bug itself, at a site still in the fmt shape
 	#
 	# `src/cli/*.roc`, not a hand-listed set. Plan.roc and Report.roc both resolve `Db.units!`
@@ -2575,7 +2570,7 @@ b_seed_analyze! = |ctx| {
 	# legend and `top`'s header name a unit and render no number. The pace column renders
 	# one — a pace string — and DOES convert, via `pace_per_dist`, which the fmt filter does
 	# not match; it is exempt for that reason, not for rendering nothing. `pace-curve`
-	# (#188) adds two more of the same kind: its table header names a unit and renders no
+	# adds two more of the same kind: its table header names a unit and renders no
 	# number, and its Critical Speed line converts via `pace_from_speed`, which the fmt
 	# filter does not match either. Both are pinned by Render expects (metric AND imperial
 	# arms) instead — and so is D′, whose line writes the literal "m"/"yd" rather than
@@ -2609,7 +2604,7 @@ b_seed_analyze! = |ctx| {
 	# with fixtures loaded TSB is known, so the enum arm is required here; the
 	# ""-unknown arm is pinned separately on the pre-fixture empty db
 	check!("analyze form_state is a stable band id once scored", strjq!(ctx, ["analyze"], ".data.form_state | IN(\"high_modeled_fatigue\",\"modeled_fatigue_building\",\"balanced\",\"fresh\",\"very_fresh\")") == "true")?
-	# ── missing-vs-zero (#156): the flags distinguish what the magnitudes cannot.
+	# ── missing-vs-zero: the flags distinguish what the magnitudes cannot.
 	# Activity 101 has a REAL power stream -> power_known true with np_w > 0;
 	# activity 102 is HR-only -> power_known false AND np_w 0 (absence, not zero
 	# watts); both flags are proper JSON booleans, never "True" strings.
@@ -2630,8 +2625,8 @@ b_seed_analyze! = |ctx| {
 	check!("top rows carry the trio", strjq!(ctx, ["top", "tss", "3"], "[.data[] | has(\"power_known\") and has(\"intensity_known\") and has(\"hr_known\")] | all") == "true")?
 	# ...and `top hr` no longer ranks on presence alone. `WHERE ${col} > 0` is a presence
 	# test, and `stride top hr 700` on the real database returned the same three readings
-	# #294 taught `progress` to refuse and #305 taught `activity` to refuse — ordered so a
-	# 250 bpm one leads, published as the athlete's BEST heart-rate session (#315).
+	# that `progress` and `activity` refuse — ordered so a
+	# 250 bpm one leads, published as the athlete's BEST heart-rate session.
 	#
 	# 481 is out of band and must not appear; 482 is a plausible neighbour and must, which
 	# is what proves the bound removed a row rather than the query returning nothing.
@@ -2714,7 +2709,7 @@ b_seed_analyze! = |ctx| {
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 	check!("plan recent rows carry the flag set", strjq!(ctx, ["plan"], "[.data.recent_activities_14d[] | has(\"power_known\") and has(\"zones_known\") and has(\"load_model\")] | all") == "true")?
 
-	# ── personal baselines (#160): 101 vs its own prior comparables. Probe 99
+	# ── personal baselines: 101 vs its own prior comparables. Probe 99
 	# sits 5 days earlier, same family (Ride) and duration band (3600s), with
 	# summary watts + HR so it scores an np and an EF — one comparable.
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr,device_watts) SELECT 99,'baseline probe','Ride',date(start_local,'-5 days')||'T09:00:00Z',3500,28000,180,180,140,1 FROM activities WHERE id=101;")
@@ -2739,10 +2734,10 @@ b_seed_analyze! = |ctx| {
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr,device_watts) SELECT 97,'ski probe','Ski',date(start_local,'-4 days')||'T09:00:00Z',3600,0,300,300,150,1 FROM activities WHERE id=101;")
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 	check!("comparability excludes other families", strjq!(ctx, ["activity", "101"], ".data.baselines.np.sample_count") == "1")?
-	# ...and an IMPOSSIBLE heart rate is refused here too: #294 taught the
-	# `progress` lenses to disbelieve these numbers and `activity` went on building
+	# ...and an IMPOSSIBLE heart rate is refused here too: the
+	# `progress` lenses disbelieve these numbers, and `activity` must not build
 	# a verdict on them — a rowing session averaging 18 bpm published `ef.current
-	# 6.60`, `percentile 100` (#305).
+	# 6.60`, `percentile 100`.
 	# Probe 96 is comparable to 101 in every way that matters and differs only in
 	# the 18 bpm average. Two sites must hold, separated by the two checks: the
 	# `known` flag on the row's OWN block, and exclusion from a NEIGHBOUR's
@@ -2759,7 +2754,7 @@ b_seed_analyze! = |ctx| {
 	# reads the number.
 	check!("an 18 bpm session publishes no EF verdict of its own", strjq!(ctx, ["activity", "96"], ".data.baselines.ef.known") == "false")?
 	check!("...and no EF NUMBER either, which the flag alone does not guarantee", strjq!(ctx, ["activity", "96"], ".data.baselines.ef.current") == "0")?
-	# ...and the LOAD LADDER's HR rung (#313), guarded here at the binary level:
+	# ...and the LOAD LADDER's HR rung, guarded here at the binary level:
 	# the pure expects pin the bound, but `src/cli/Analyze.roc` (the call site)
 	# is not in the `roc test` list, so only this check stops an impossible
 	# heart rate scoring training load.
@@ -2787,18 +2782,18 @@ b_seed_analyze! = |ctx| {
 	check!("...and its EF does not enter a neighbour's comparables, which would move the median", strjq!(ctx, ["activity", "101"], ".data.baselines.ef.sample_count") == "1")?
 	_ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (96,97,98,99); DELETE FROM activity_metrics WHERE activity_id IN (96,97,98,99); DELETE FROM activities WHERE id IN (96,97,98,99);")
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
-	# ── #311: EF is scored from the STREAM's in-band mean, not the stored summary.
+	# ── EF is scored from the STREAM's in-band mean, not the stored summary.
 	# The 35-220 bound refuses an impossible STORED average and is blind to a
 	# plausible one computed from broken data — on the real database 11 to 3
 	# against (14 sessions store an average >15 bpm from their own in-band stream
 	# mean; 11 sit inside the bound, one of them the highest remaining EF sample in
-	# #305's own headline example).
+	# the motivating example).
 	#
 	# 611 stores 86 and streams 150. 86 is PLAUSIBLE — that is the point: the bound
 	# cannot see this row, so a check that only pins the bound passes whether or
-	# not #311 exists. moving_time 1300 matches the 1300-sample stream: the stream
-	# must SPAN the session or the coverage gate refuses it (discovered the hard
-	# way at 3600 s, a span of 0.36 against the 0.5 the gate wants).
+	# not the stream mean is used. moving_time 1300 matches the 1300-sample stream: the stream
+	# must SPAN the session or the coverage gate refuses it (at 3600 s it would
+	# span 0.36, under the 0.5 the gate wants).
 	_ = seed_ride!(ctx.db, "611", "Stream HR Ride", "2026-02-10T09:00:00Z", "1300", "12000", "200", "86")
 	_ = seed_power_hr_stream!(ctx.db, 611, 1300, 200, 150)
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
@@ -2806,7 +2801,7 @@ b_seed_analyze! = |ctx| {
 	# NUMBER rather than a bound, because "roughly right" would accept either divisor at a
 	# loose enough tolerance and both are the same order of magnitude.
 	check_near!("EF divides by the stream's in-band mean, not the stored average", sfloat(strjq!(ctx, ["activity", "611"], ".data.baselines.ef.current")), 200.0 / 150.0, 0.01)?
-	# ...and the stored value is still what the payload PUBLISHES. #311 changes scoring only;
+	# ...and the stored value is still what the payload PUBLISHES. The stream mean changes scoring only;
 	# a reader comparing stride against Strava must still see the number the device reported,
 	# and `activity` is one of the surfaces documented as echoing it raw.
 	check!("...while the payload still publishes the stored average unchanged", strjq!(ctx, ["activity", "611"], ".data.avg_hr") == "86")?
@@ -2847,8 +2842,8 @@ b_seed_analyze! = |ctx| {
 	check!("...and the payload publishes the divisor beside the stored reading", strjq!(ctx, ["progress", "2026-02-11"], "[.data.groups[] | select(.name == \"Stream HR Refused\") | .sessions[0] | \"\\(.avg_hr)/\\(.avg_hr_scored)\"] | first") == "18/150")?
 	check!("...and the human hr column shows the scored one, which the legend describes", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress", "2026-02-11"]), "150"))?
 	check!("...while hr_known still reports what was RECORDED, not what was usable", strjq!(ctx, ["activity", "612"], ".data.hr_known") == "true")?
-	# ...and the COVERAGE GATE, which keeps this change from re-admitting the rows
-	# #305 removed. 613 is the shape the gate exists for: a 3600 s session whose
+	# ...and the COVERAGE GATE, which keeps the stream mean from re-admitting rows
+	# the bound refuses. 613 is the shape the gate exists for: a 3600 s session whose
 	# stream stops at 1300 s — a strap dying mid-ride. Its surviving samples
 	# average a perfectly plausible 150, so no bound would question the number; it
 	# is only unrepresentative. (Ungated, such a row replaced a 1.385 EF outlier
@@ -2875,11 +2870,11 @@ b_seed_analyze! = |ctx| {
 	# two numbers disagreeing with nothing to distinguish them is the gap this change opened.
 	# `progress` and `activity` printed 148 and 86 for one session with no label on either.
 	check!("...and the human line shows the scored average with the recorded one named", Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "614"]), "avg 150 (recorded 18)"))?
-	# ...and the LISTING carries it too (#319), which is the only surface that answers the
+	# ...and the LISTING carries it too, which is the only surface that answers the
 	# question in one call. `activity` needs one invocation per id, and `progress` reports a
-	# count with no ids at all, so before this an agent auditing a broken strap had to apply
-	# the bound itself to `avg_hr` — a test that stopped identifying refused rows the moment
-	# the engine began scoring from streams, since 614 stores 18 and scores perfectly well.
+	# count with no ids at all. Applying the bound to `avg_hr` instead does not identify the
+	# refused rows, since the engine scores from streams: 614 stores 18 and scores perfectly
+	# well.
 	check!("the listing publishes the divisor, so a refusal is predictable from one call", strjq!(ctx, ["activities", "400"], "[.data[] | select(.id == 614) | \"\\(.avg_hr)/\\(.avg_hr_scored)\"] | first") == "18/150")?
 	# ...and the FALLBACK arm, the only check on `a.avg_hr` in the listing's
 	# COALESCE: every other fixture reaching it carries a stream. A CSV import,
@@ -2952,7 +2947,7 @@ b_seed_analyze! = |ctx| {
 	_ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 612; DELETE FROM activity_segments WHERE activity_id = 612; DELETE FROM activity_metrics WHERE activity_id = 612; DELETE FROM activities WHERE id = 612;")
 	_ = sql!(ctx.db, "DELETE FROM streams WHERE activity_id = 611; DELETE FROM activity_segments WHERE activity_id = 611; DELETE FROM activity_metrics WHERE activity_id = 611; DELETE FROM activities WHERE id = 611;")
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
-	# #93: ramp carries BOTH fields, and a short history reports an honest 0 rather than
+	# ramp carries BOTH fields, and a short history reports an honest 0 rather than
 	# today's whole CTL — which is what treating "no data 7 days back" as a CTL of 0 would
 	# produce. The fixture has only a couple of days, so 0 is the correct answer here.
 	# `| type` rather than `has(...)`: the value check below compares against 0.0, and
@@ -2964,7 +2959,7 @@ b_seed_analyze! = |ctx| {
 	check_near!("short history ramps to an honest 0", sfloat(strjq!(ctx, ["summary"], ".data.ramp_7d")), 0.0, 0.001)?
 	check_near!("...and so does the 28d average", sfloat(strjq!(ctx, ["summary"], ".data.ramp_28d_avg")), 0.0, 0.001)?
 	check!("ctl_warming_up agrees it is short", strjq!(ctx, ["summary"], ".data.ctl_warming_up") == "true")?
-	# #111: the form verdict carries a weekly delta. Same non-vacuity trick as the ramp
+	# the form verdict carries a weekly delta. Same non-vacuity trick as the ramp
 	# checks above — assert the JSON type, because sfloat of a missing field is also 0.0
 	# and value-alone would pass if the field disappeared.
 	check!("summary form_delta_7d is a number", strjq!(ctx, ["summary"], ".data.form_delta_7d | type") == "number")?
@@ -2973,7 +2968,7 @@ b_seed_analyze! = |ctx| {
 	# whole reason the field exists.
 	check!("summary form_delta_known is a boolean too", strjq!(ctx, ["summary"], ".data.form_delta_known | type") == "boolean")?
 
-	# ── interval detection (ADR 0008, #95) ──────────────────────────────
+	# ── interval detection (ADR 0008) ──────────────────────────────
 	# a stream with 3 clean 180s@250W reps over a 120s@100W floor must detect
 	# EXACTLY 3 work segments; the constant-200W ride (101) must detect NONE —
 	# a steady effort has no interval structure, and inventing reps there is the
@@ -2985,7 +2980,7 @@ b_seed_analyze! = |ctx| {
 	check!("steady ride detects zero segments", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_segments WHERE activity_id=101;")) == "0")?
 	check!("work reps sit near 250W", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_segments WHERE activity_id=103 AND kind='work' AND avg_signal BETWEEN 235 AND 265;")) == "3")?
 	# the activity payload carries the structure — WIRING check (count + non-empty
-	# summary), not just types, per the #127 lesson
+	# summary), not just types: a type-only check passes on an unwired field
 	check!("activity JSON carries 3 work segments", strjq!(ctx, ["activity", "103"], "[.data.segments[] | select(.kind == \"work\")] | length") == "3")?
 	check!("activity JSON interval_summary is non-empty", strjq!(ctx, ["activity", "103"], ".data.interval_summary | length > 3") == "true")?
 	check!("activity JSON says detection was attempted", strjq!(ctx, ["activity", "103"], ".data.detection_attempted") == "true")?
@@ -3006,7 +3001,7 @@ b_seed_analyze! = |ctx| {
 	_ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=103; DELETE FROM activity_metrics WHERE activity_id=103;")
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 	check!("segments rebuild with the metrics row", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_segments WHERE activity_id=103 AND kind='work';")) == "3")?
-	# ── pace decoupling (#134/#135) ─────────────────────────────────────
+	# ── pace decoupling ─────────────────────────────────────
 	# a run with pace+HR streams gets a real decoupling number (HR steps up in the
 	# second half at constant speed => positive drift); a meter-less RIDE with the
 	# same streams stays NULL — terrain speed over HR is not efficiency
@@ -3040,7 +3035,7 @@ b_seed_analyze! = |ctx| {
 	check!("altitude-less run drift is labeled speed", strjq!(ctx, ["activity", "107"], ".data.decoupling_signal") == "speed")?
 	_ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id=107; DELETE FROM activity_segments WHERE activity_id=107; DELETE FROM streams WHERE activity_id=107; DELETE FROM activities WHERE id=107;")
 
-	# #142: a run whose stream CARRIES a watts channel flagged device_watts=0
+	# a run whose stream CARRIES a watts channel flagged device_watts=0
 	# must still label its drift "pace" — the label is stored provenance from
 	# analyze's gated routing, never re-derived from the raw stream
 	_ = sql!(ctx.db, "UPDATE activities SET device_watts = 0 WHERE id = 104;")
@@ -3048,13 +3043,13 @@ b_seed_analyze! = |ctx| {
 	_ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id=104; DELETE FROM activity_segments WHERE activity_id=104;")
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 	check!("estimated-watts run still labels drift as pace", strjq!(ctx, ["activity", "104"], ".data.decoupling_signal") == "pace")?
-	# progress rows carry the per-session drift with its known flag (#135), pinned
+	# progress rows carry the per-session drift with its known flag, pinned
 	# PER SESSION so a flag inversion cannot pass on some other session's row
 	check!("the drift run's session is known and positive", strjq!(ctx, ["progress", "${ctx.d2}"], "[.data.groups[] | select(.name | contains(\"drift run\")) | .sessions[] | select(.date == \"${ctx.d2}\")] | .[0] | (.decoupling_known == true and .decoupling_pct > 0)") == "true")?
 	# ...and every group publishes `hidden`, so `sessions | length` is never read
 	# as the whole history — the payload is the half the coaching agent reads, and
 	# a group holding one session with `hidden: 10` is a workout done eleven times
-	# (#292). PRESENT-ON-EVERY-GROUP, not one: a producer emitting it for some
+	# PRESENT-ON-EVERY-GROUP, not one: a producer emitting it for some
 	# groups would satisfy a single-group check. `has("hidden")`, not `.hidden >=
 	# 0`: absent reads as null, and `null >= 0` is false — the shape check is the
 	# one that speaks.
@@ -3089,7 +3084,7 @@ b_seed_analyze! = |ctx| {
 	_ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id=108; DELETE FROM activities WHERE id=108;")
 	_ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (104,105,106); DELETE FROM activity_metrics WHERE activity_id IN (104,105,106); DELETE FROM streams WHERE activity_id IN (104,105,106); DELETE FROM activities WHERE id IN (104,105,106);")
 
-	# ── sport words (#150): human words widen to Strava families, and an empty
+	# ── sport words: human words widen to Strava families, and an empty
 	# result names the sports that exist instead of a silent empty table ──
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (310,'gravel jaunt','GravelRide','${ctx.d1}T10:00:00Z',3600,30000);")
 	check!("'bike' finds Ride AND GravelRide", strjq!(ctx, ["top", "distance", "10", "bike"], "[.data[].sport] | unique | length >= 2") == "true")?
@@ -3110,7 +3105,7 @@ b_seed_analyze! = |ctx| {
 	check!("activities honors the family too", strjq!(ctx, ["activities", "10", "bike"], "[.data[].sport] | unique | length >= 2") == "true")?
 	_ = sql!(ctx.db, "DELETE FROM activities WHERE id = 310;")
 
-	# ── power population invariant (#151): FTP derives from the sport FAMILY. A
+	# ── power population invariant: FTP derives from the sport FAMILY. A
 	# GravelRide with no gravel power history inherits the family's 20-min best
 	# (activity 101's 200W stream -> FTP 190) instead of scoring against an
 	# empty window — the curve and the FTP it explains read the same population.
@@ -3132,7 +3127,7 @@ b_seed_analyze! = |ctx| {
 	check!("update trigger re-canonicalizes the family", Str.trim(sql!(ctx.db, "SELECT COALESCE(sport_family,'?') FROM activities WHERE id=321;")) == "Run")?
 	_ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id IN (320,321); DELETE FROM activity_metrics WHERE activity_id IN (320,321); DELETE FROM activities WHERE id IN (320,321);")
 
-	# ── skill contract drift guard (#155): the coach skill is a CLIENT of the
+	# ── skill contract drift guard: the coach skill is a CLIENT of the
 	# CLI contract, so it must never instruct a command the CLI refuses, such as
 	# `config set ftp_ride`. Retired interfaces must never reappear in the
 	# shipped skill.
@@ -3189,7 +3184,7 @@ b_seed_analyze! = |ctx| {
 	# copy of the routing description is SKILL.md's own frontmatter. A shim
 	# reappearing would resurrect the drift surface the plugin removed.
 	check!("no repo-local Claude shim exists to drift", Str.is_empty(Str.trim(sh!("ls .claude/skills 2>/dev/null || true"))))?
-	# #181: the skill must TELL the coach to pass --json, and must not teach the
+	# the skill must TELL the coach to pass --json, and must not teach the
 	# retired environment detection as a way to get machine output
 	check!("skill instructs passing --json", Str.contains(skill_text, "PASS `--json` ON EVERY QUERY"))?
 	# the skill must not teach ANY environment sniffing as a way to get machine
@@ -3202,7 +3197,7 @@ b_seed_analyze! = |ctx| {
 	check!("help text documents the flag", Str.contains(help_text_out, "--json"))?
 	check!("skill teaches no environment detection", !(Str.contains(skill_text, "CLAUDECODE")) and !(Str.contains(skill_text, "detected automatically")))?
 
-	# ── the JSON contract as a tested artifact (#164) ────────────────────
+	# ── the JSON contract as a tested artifact ────────────────────
 	#
 	# schemas/v3/*.json is the ONE source of truth for the machine interface;
 	# tools/validate.jq checks a payload and prints one line per violation.
@@ -3220,7 +3215,7 @@ b_seed_analyze! = |ctx| {
 	# interval ride and carries every segment kind, so it is what actually
 	# exercises those declarations. It is deleted at the end of the schema block, far below.
 	check!("interval activity conforms (non-empty segments)", validate!("activity 103", "activity") == "")?
-	# ── spending the CP model (#186/#187) ────────────────────────────────
+	# ── spending the CP model ────────────────────────────────
 	# The fixture has no 5/10/20-min power bests spread widely enough to fit a
 	# CP model, so both features must REFUSE rather than invent one — which is
 	# the behaviour that matters most, since a fabricated CP would silently
@@ -3244,19 +3239,19 @@ b_seed_analyze! = |ctx| {
 	check!("infinity is refused", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "Infinity"]), "bad_watts"))?
 	check!("an absurd power is refused", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "1e9"]), "bad_watts"))?
 	# 5000 reaches the RANGE guard; nan/Infinity/1e9 above do not, because
-	# #201's arg_f64 refuses them at the parse layer first. This keeps the `w >
-	# 3000.0` ceiling and the `!(w > 0.0)` form (#183) pinned.
+	# the strict arg_f64 refuses them at the parse layer first. This keeps the `w >
+	# 3000.0` ceiling and the `!(w > 0.0)` form pinned.
 	check!("a power over the ceiling is refused BY THE CEILING", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "5000"]), "under 3000"))?
 	check!("...and zero is refused by the same guard", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "0"]), "positive number"))?
 	check!("a plausible power is NOT refused by the ceiling", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "3000"]), "no_cp_fit"))?
 	check!("without a fit, W' balance is flagged unknown rather than zeroed", strjq!(ctx, ["activity", "101"], ".data.w_prime_balance | (.known == false) and ((.known | type) == \"boolean\")") == "true")?
 	check!("...and the fit it would have used travels with it", strjq!(ctx, ["activity", "101"], ".data.w_prime_balance | has(\"cp_used\") and has(\"fit_points\")") == "true")?
-	# ── rep-level comparison (#149) ──────────────────────────────────────
+	# ── rep-level comparison ──────────────────────────────────────
 	# 103 is the fixture's interval ride, so it anchors `reps`. The shape block
 	# is the comparability rule made visible; a session whose rep COUNT or
 	# rep-duration BAND differs must not appear beside it.
 	check!("reps anchors on the interval ride", strjq!(ctx, ["reps"], ".data.anchor_activity_id") == "103")?
-	# ...and an unrankable timestamp cannot steal that anchor (#255): the date
+	# ...and an unrankable timestamp cannot steal that anchor: the date
 	# guards inspect substr(start_local, 1, 10) only, so a valid date with
 	# `T37:00:00` sails through and simply wins the `ORDER BY … LIMIT 1` — a
 	# wrong anchor silently reframes every comparison. Of the sites ranking by
@@ -3297,9 +3292,9 @@ b_seed_analyze! = |ctx| {
 	# hr span: HR on the MIDDLE rep only must read unknown, not a narrowed span
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,weighted_avg_watts,avg_watts,device_watts) VALUES (334,'middle hr','Ride','Ride',date('${ctx.d1}','-17 days')||'T06:00:00Z',1800,200,200,1);")
 	_ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal,avg_hr) VALUES (334,0,'work',0,300,200.0,'power',140.0),(334,1,'work',400,300,200.0,'power',150.0),(334,2,'work',800,300,200.0,'power',NULL);")
-	# HR on reps 1 and 2 but NOT the last: the old semantics reported a
-	# "first-to-last" rise that actually spanned reps 1-2. Two HR-bearing reps
-	# is what makes this discriminate — a single one reads unknown either way.
+	# HR on reps 1 and 2 but NOT the last: a "first-to-last" rise must not be
+	# reported from reps 1-2. Two HR-bearing reps is what makes this
+	# discriminate — a single one reads unknown either way.
 	check!("hr rise is unknown unless BOTH end reps carry it", strjq!(ctx, ["reps"], "[.data.sessions[] | select(.id == 334) | .hr_rise_known] | .[0] == false") == "true")?
 	# ── the ranking itself, pinned ───────────────────────────────────────
 	# A dedicated anchor (uniformity 1.36 — inside the 1.6x gate but NOT the most
@@ -3366,7 +3361,7 @@ b_seed_analyze! = |ctx| {
 	# into the command slot crashed str_concat before roc#10595, and --help returns the
 	# identical discovery payload
 	check!("the command list conforms to its schema", validate!("--help", "commands") == "")?
-	# the remaining query payloads (#164; the coach reads all of these). Each
+	# the remaining query payloads (the coach reads all of these). Each
 	# runs the real command against the fixture db.
 	check!("activities conforms", validate!("activities 30", "activities") == "")?
 	check!("top conforms", validate!("top tss 20", "top") == "")?
@@ -3393,8 +3388,7 @@ b_seed_analyze! = |ctx| {
 	# relative to today — d1/d2 can both land in the PREVIOUS week, leaving the
 	# payload empty and the item schema (15 required keys, one of them the status enum)
 	# evaluated against nothing. Seed a session dated TODAY and assert the array
-	# is non-empty before trusting the validation. Third instance of this trap
-	# in this PR; the assertion is the cheap half.
+	# is non-empty before trusting the validation.
 	wk_sess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.today}", "endurance", "week schema probe", "r"], ".data.id"))
 	check!("the week payload has rows to validate", strjq!(ctx, ["week"], ".data | length > 0") == "true")?
 	check!("week conforms (with rows)", validate!("week", "week") == "")?
@@ -3409,9 +3403,9 @@ b_seed_analyze! = |ctx| {
 	# config SET rather than get: set always returns the payload, while get on a
 	# key the fixture has not written is the not_set ERROR envelope (a different
 	# shape). Re-setting the value the suite already configured is idempotent.
-	# NOTE this validate! EXECUTES its argument, so it is a clock write, not a read.
-	# On main this was the line that actually caused #200 -- it flipped the binary to
-	# Chicago for the whole remainder of the run while the harness was still on UTC.
+	# NOTE this validate! EXECUTES its argument, so it is a clock write, not a read:
+	# it must set the same zone the harness is anchored to, or the binary and the
+	# harness disagree on "today" for the rest of the run.
 	check!("config conforms", validate!("config set timezone ${ctx.tz}", "config") == "")?
 	# ...and the REMOVAL shape under its own schema. `schema-check` cannot cover it
 	# (`config unset` is mutates: true, excluded by construction), and adding a
@@ -3426,12 +3420,10 @@ b_seed_analyze! = |ctx| {
 	# `complete` — BOTH forms (ADR 0000 s9c counts it among the validated nine):
 	# `just schema-check` and the conformance loop select `mutates == false`, so
 	# init/rate/relabel/event add/event remove are validated by neither (the pinned
-	# list in the contract-guards block). #258 learned the cost of a missing arm the
-	# expensive way — `replaced_activity` was made REQUIRED on the two-argument
-	# form and the rest form silently stopped conforming to its own contract.
-	# `skip` was wrong the same way (`substitute_activity` vs the declared
-	# `substitute_activity_id`), and only the bare arm was ever exercised — hence
-	# the substitute form below.
+	# list in the contract-guards block). Each FORM is validated separately: a field
+	# made REQUIRED on one arm (`replaced_activity` on the two-argument form) can
+	# leave a sibling arm out of its own contract, and a misnamed field on one arm
+	# (`skip`'s substitute form) passes while only the bare arm is exercised.
 	rest_sess = Str.trim(strjq!(ctx, ["week", "add", "2099-11-13", "rest", "schema rest probe", "r"], ".data.id"))
 	check!("complete (rest form) conforms", validate!("complete ${rest_sess}", "complete") == "")?
 	done_sess = Str.trim(strjq!(ctx, ["week", "add", "2099-11-14", "endurance", "schema complete probe", "r"], ".data.id"))
@@ -3495,7 +3487,7 @@ b_seed_analyze! = |ctx| {
 	# speaks on validated forms.
 	unvalidated = Str.trim(sh!("for f in init rate relabel event_add event_remove; do n=$(grep -cE \"\\\"$f\\\"\\)|$f\\.json\" tests/e2e.roc); [ \"$n\" = \"0\" ] || printf '%s has %s arms; ' \"$f\" \"$n\"; done"))
 	check!("s9c's never-validated list matches this file's own arms (${unvalidated})", unvalidated == "")?
-	# ── the two directions of the error-code declaration (#239) ─────────────────
+	# ── the two directions of the error-code declaration ─────────────────
 	# Done in jq, NOT with `comm` and process substitution. `sh!` runs under /bin/sh, which
 	# on macOS is bash 3.2 in POSIX mode, where `<(...)` is a SYNTAX ERROR — both
 	# operands come back empty and `"" == ""` passes. This file has been bitten by
@@ -3542,7 +3534,7 @@ b_seed_analyze! = |ctx| {
 	check!("plan arrays are populated for this check", strjq!(ctx, ["plan"], "(.data.open_sessions | length > 0) and (.data.plan_history_28d | length > 0)") == "true")?
 	check!("plan with populated arrays conforms", validate!("plan", "plan") == "")?
 
-	# ── data freshness (#221) ───────────────────────────────────────────
+	# ── data freshness ───────────────────────────────────────────
 	# The schema check above proves SHAPE, and shape is exactly what a hardcoded zero
 	# satisfies. These pin the counts to state the test controls, in both directions, so a
 	# constant fails: the fixture is analyzed here, so metrics reads 0 and streams reads
@@ -3578,10 +3570,10 @@ b_seed_analyze! = |ctx| {
 	# of any query.
 	check!("...and that date is the fixture's own d2, not merely what sqlite agrees to", newest_sql == ctx.d2)?
 	# as_of and newest_activity pinned side by side, as DIFFERENT dates with different
-	# provenance. Three rounds of prose on this PR described their relationship wrongly —
-	# "the gap is days since the last ride", "the gap goes to zero on stale data" — and a
-	# comment cannot catch the fourth. analyze has just run, so as_of is floored at today
-	# while newest_activity stays on the last activity's own date, one day earlier.
+	# provenance: the gap between them is neither "days since the last ride" nor zero
+	# on stale data, and only an assertion holds that. analyze has just run, so as_of is
+	# floored at today while newest_activity stays on the last activity's own date, one
+	# day earlier.
 	check!("analyze floors as_of at today...", Str.trim(strjq!(ctx, ["plan"], ".data.summary.as_of")) == ctx.today)?
 	check!("...while newest_activity stays on the last activity's date, a different day", pf!("newest_activity") == ctx.d2 and ctx.today != ctx.d2)?
 	# ...and that as_of FREEZES when analyze does not run, which is the half the pair above
@@ -3600,7 +3592,7 @@ b_seed_analyze! = |ctx| {
 	n_stale = pf!("activities_awaiting_metrics")
 	check!("a stale metrics_rev puts every scored row back in the queue", n_stale != "0")?
 	check!("...which doctor's `unanalyzed` still reads as 0, being a coverage number", Str.trim(strjq!(ctx, ["doctor"], ".data.unanalyzed")) == "0")?
-	# ...and doctor's own awaiting_metrics DOES see it (#238). Asserted equal to plan's,
+	# ...and doctor's own awaiting_metrics DOES see it. Asserted equal to plan's,
 	# not merely non-zero: the two commands answer the same question through the same
 	# function, and a check that only said "> 0" would pass while they disagreed.
 	check!("...while doctor's awaiting_metrics sees it, agreeing with plan exactly", Str.trim(strjq!(ctx, ["doctor"], ".data.awaiting_metrics")) == n_stale)?
@@ -3631,10 +3623,10 @@ b_seed_analyze! = |ctx| {
 	check!("...on both counts", pf!("activities_awaiting_streams") == "1")?
 	check!("...and newest_activity is back where it started", pf!("newest_activity") == newest_sql)?
 	# The count needs the FULL zone config, including per-sport overrides, where the rest
-	# of `plan` needs only the four global keys. Propagating that stricter read killed the
-	# whole command — no summary, no sessions, no adherence — on a database that planned
-	# fine before this feature existed. `config set` refuses this value today, but the
-	# write gate is newer than the key, so a database written earlier can still hold one.
+	# of `plan` needs only the four global keys. Propagating that stricter read would kill
+	# the whole command — no summary, no sessions, no adherence — on a database `plan`
+	# otherwise reads fine. `config set` refuses this value, but the write gate is newer
+	# than the key, so an older database can still hold one.
 	check!("the metrics count is known on a healthy config", pf!("activities_awaiting_metrics_known") == "true")?
 	_ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key,value) VALUES ('hr_z2_max_ride','1.6e2');")
 	# Compared against `summary`, which is unaffected by this key, rather than merely
@@ -3648,7 +3640,7 @@ b_seed_analyze! = |ctx| {
 	# ...and the human line SPEAKS on that state rather than staying silent, which is the
 	# whole point of the known flag: the count is 0 there.
 	check!("...and the human line names it instead of going quiet", Str.contains(sh!("HOME='${ctx.home}' '${ctx.bin}' plan 2>/dev/null"), "awaiting-metrics count unreadable"))?
-	# ...and doctor NAMES THE KEY (#238). `plan` degrades silently and correctly
+	# ...and doctor NAMES THE KEY. `plan` degrades silently and correctly
 	# — a planning read should not lecture about config — so doctor, the command
 	# whose job is to say what is wrong with the installation, is where the
 	# condition is reported.
@@ -3676,7 +3668,7 @@ b_seed_analyze! = |ctx| {
 	check!("...and removing it restores doctor's count too", Str.trim(strjq!(ctx, ["doctor"], ".data.awaiting_metrics_known")) == "true")?
 	check!("...and removing the bad override restores the count", pf!("activities_awaiting_metrics_known") == "true")?
 	check!("...to a real zero, not merely a known one", pf!("activities_awaiting_metrics") == "0")?
-	# ── last_sync (#221) ────────────────────────────────────────────────
+	# ── last_sync ────────────────────────────────────────────────
 	# This driver never syncs, so the CORRECT value here is "" — which is also what every
 	# broken implementation produces. Asserting "" would be the vacuous absence check this
 	# file warns about, and it showed: deleting the whole lookup, and returning the raw
@@ -3694,7 +3686,7 @@ b_seed_analyze! = |ctx| {
 	check!("...and a negative one does not become a malformed timestamp", pf!("last_sync") == "")?
 	_ = sql!(ctx.db, "DELETE FROM config WHERE key = 'last_sync_epoch';")
 	check!("...and with the key gone it is empty again", pf!("last_sync") == "")?
-	# ── the human line (#221) ───────────────────────────────────────────
+	# ── the human line ───────────────────────────────────────────
 	# Render.freshness_note is called ONLY from the human path, so the pure expects prove
 	# the formatting and nothing proves the wiring. Deleting the print block outright
 	# passed the whole suite. The block already sits on non-zero state, so this costs one
@@ -3722,7 +3714,7 @@ b_seed_analyze! = |ctx| {
 	check!("...and the fixture is back to its resting 1 awaiting stream", pf!("activities_awaiting_streams") == "1")?
 	check!("...with nothing awaiting metrics", pf!("activities_awaiting_metrics") == "0")?
 
-	# ── season: blocks bounded by absence (#139, ADR 0011) ──────────────
+	# ── season: blocks bounded by absence (ADR 0011) ──────────────
 	#
 	# The fixture's dates exercise the boundary rule: a gap OPENS a block, a
 	# one-week gap does NOT, and the count is a consequence of the dates. The
@@ -3751,7 +3743,7 @@ b_seed_analyze! = |ctx| {
 	_ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 9005; DELETE FROM activities WHERE id = 9005;")
 	# ...and again with a cell that has NO break opportunity, which is what
 	# gives the sweep above teeth: on the fixture every table sits inside the
-	# budget, so it passes even on a binary whose squeeze does not work (#194).
+	# budget, so it passes even on a binary whose squeeze does not work.
 	# The lever is a user-supplied token — `week add`'s detail is free text, so
 	# a hyphenated no-space phrase is one unbreakable word in the widest column.
 	# Inflating daily_load does NOT work: season's block cell is a fixed-width
@@ -3774,13 +3766,10 @@ b_seed_analyze! = |ctx| {
 	_ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE rationale = 'unbreakable-detail-probe';")
 	check!("the unbreakable-token probe was inserted", tok_rows == "1")?
 	check!("...and none exceeds the budget when a detail is one unbreakable token", wide_tok == "")?
-	# #201: the 2026-08-17 compiler widened from_str to accept exponent notation —
-	# "1e1" became 10 and reached MUTATING commands (`skip 1e1` addressed planned
-	# session 10, an unrecoverable judgment-tier write) with nothing exercising an
-	# exponent argument. #197 pinned the accepting behaviour and said that if #201
-	# narrowed the parse this check should be INVERTED rather than deleted; this is
-	# that inversion — the assertion is the REFUSAL, so a future stdlib change
-	# cannot quietly hand the accident back.
+	# the stdlib's from_str accepts exponent notation, so without the strict parse
+	# "1e1" becomes 10 and reaches MUTATING commands (`skip 1e1` would address planned
+	# session 10, an unrecoverable judgment-tier write). The assertion is the
+	# REFUSAL, so a stdlib change cannot quietly hand that back.
 	# Assert the RESULT, not the envelope: `schema_version` appears in the error
 	# arm too, so an envelope check stays green in exactly the state under test.
 	check!("exponent notation is refused in a count arg", Str.contains(stride!(ctx.bin, ctx.home, ["activities", "1e1"]), "bad_count"))?
@@ -3837,9 +3826,9 @@ b_seed_analyze! = |ctx| {
 	check!("...and still agree when an activity has no metrics row yet", strjq!(ctx, ["season"], "([.data.blocks[].sessions] | add) == ([.data.months[].sessions] | add)") == "true")?
 	_ = sql!(ctx.db, "DELETE FROM activities WHERE id = 921; DELETE FROM daily_load WHERE day = '2010-01-05';")
 	# An activity that scored NO load inside an absence belongs to a month and
-	# to no block -- correct, and the reason equality is not an invariant. The
-	# earlier guard inserted a daily_load row alongside the activity, which put
-	# it inside a block and guaranteed the answer it was checking.
+	# to no block -- correct, and the reason equality is not an invariant. No
+	# daily_load row is inserted alongside the activity: one would put it inside
+	# a block and guarantee the answer being checked.
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (922,'unloaded in a gap','WeightTraining','WeightTraining','2010-06-15T06:00:00Z',3600);")
 	# the month row itself comes from daily_load, so the month must EXIST for
 	# the activity to be visible to it -- a zero-load day is exactly that:
@@ -3858,10 +3847,8 @@ b_seed_analyze! = |ctx| {
 	_ = sql!(ctx.db, "CREATE TABLE dl_bak AS SELECT * FROM daily_load; DELETE FROM daily_load;")
 	# anchored to ctx.today, NOT to SQLite's 'now': 'now' is UTC while the binary is on
 	# ${tz}, so on a Monday between 00:00 and 05:00 UTC the harness's Monday and the
-	# binary's this_week were a week apart and the `closed` checks failed. Same bug as
-	# #200, weekly rather than daily -- the first fix anchored the three shell `date`
-	# reads and left three more: these two SQLite ones and a jq `now | strftime` about
-	# 40 lines above.
+	# binary's this_week would be a week apart and the `closed` checks would fail.
+	# Every clock read in this driver goes through ctx.today for the same reason.
 	mon = "date('${ctx.today}', '-' || ((CAST(strftime('%w','${ctx.today}') AS INTEGER) + 6) % 7) || ' days')"
 	# two clear weeks short of the gap: a session today would EXTEND this block
 	_ = sql!(ctx.db, "INSERT INTO daily_load (day,tss,ctl,atl,tsb) VALUES (date(${mon}, '-14 days'), 50.0, 5.0, 5.0, 0.0);")
@@ -3879,7 +3866,7 @@ b_seed_analyze! = |ctx| {
 	_ = sql!(ctx.db, "INSERT OR REPLACE INTO daily_load (day, tss, ctl, atl, tsb) VALUES ('not-a-date', 30.0, 5.0, 5.0, 0.0);")
 	bad_day = stride!(ctx.bin, ctx.home, ["season"])
 	# The CODE is asserted, not `contains "error"`, which internal_error
-	# satisfies: an "unhandled failure … please open an issue" answer (#243)
+	# satisfies: an "unhandled failure … please open an issue" answer
 	# would pass. Asserting the CODE is the difference between "it refused" and
 	# "it refused for the reason it names". A `contains` accepts every
 	# superstring.
@@ -3896,13 +3883,13 @@ b_seed_analyze! = |ctx| {
 	# separate `is_canonical_date` test, and a check placed there asserts the
 	# wrong mechanism and goes red.
 	check!("...and `compare` refuses the same anchor rather than answering with an empty month", strjq!(ctx, ["compare", "month"], ".error.code") == "unreadable_daily_load_day")?
-	# ...and `load`, the LAST reader of this column still absorbing (#249): it
+	# ...and `load`, the LAST reader of this column still absorbing: it
 	# collapsed an unreadable day to epoch 0 and rendered a real-looking
 	# `1969-12-29` week with real load numbers at exit 0, on the same database
 	# where summary, compare and season all refused. A plausible wrong date is
 	# worse than a missing one. Guarded in Report.load_series! rather than Render:
 	# a pure renderer can DROP the row but cannot NAME it, and naming the row is
-	# the whole of #243 — dropping would also under-count the rollup silently.
+	# the whole point — dropping would also under-count the rollup silently.
 	check!("...and `load` too, which invented a 1969 week rather than refusing", strjq!(ctx, ["load"], ".error.code") == "unreadable_daily_load_day")?
 	check!("...so no fabricated week reaches the human table", !(Str.contains(stride_human!(ctx.bin, ctx.home, ["load"]), "1969")))?
 	# ...and the verdict LINE, not just the table row. `List.last(ordered)` made the
@@ -3916,21 +3903,20 @@ b_seed_analyze! = |ctx| {
 	# plan and compare all declare it, so the union was satisfied by three other forms
 	# while this one was wrong — green for the wrong reason.
 	check!("...and `load` DECLARES the code it can raise", Str.contains(strjq!(ctx, ["--help"], "[.data.commands[] | select(.name == \"load\") | .error_codes[]]"), "unreadable_daily_load_day"))?
-	# ...and a NULL day, the OTHER half of this column, left out of the first pass:
-	# fourteen activities.start_local reads got a COALESCE, none of the six
-	# daily_load.day reads did — so every guard above was unreachable for NULL and
-	# all five readers answered `internal_error`, the exact shape #243 was opened
-	# to remove, on the column #249 calls out first.
+	# ...and a NULL day, the OTHER half of this column: a daily_load.day read
+	# without a COALESCE fails the decode on NULL, so every guard above would be
+	# unreachable and each reader would answer `internal_error` instead of naming
+	# the row.
 	_ = sql!(ctx.db, "CREATE TABLE dl_bak249n AS SELECT * FROM daily_load; DELETE FROM daily_load; INSERT INTO daily_load (day,tss,ctl,atl,tsb) VALUES (NULL, 30.0, 5.0, 5.0, 0.0);")
 	check!("a NULL daily_load day refuses by name on every reader, not internal_error", strjq!(ctx, ["load"], ".error.code") == "unreadable_daily_load_day" and strjq!(ctx, ["summary"], ".error.code") == "unreadable_daily_load_day" and strjq!(ctx, ["compare", "month"], ".error.code") == "unreadable_daily_load_day" and strjq!(ctx, ["season"], ".error.code") == "unreadable_daily_load_day" and strjq!(ctx, ["plan"], ".error.code") == "unreadable_daily_load_day")?
 	_ = sql!(ctx.db, "DELETE FROM daily_load; INSERT INTO daily_load SELECT * FROM dl_bak249n; DROP TABLE dl_bak249n;")
 	check!("...with daily_load restored, poisoned row and all", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM daily_load WHERE day = 'not-a-date';")) == "1")?
 
-	# ── #249: an unreadable date must not become a wrong ANSWER ──────────────────────
+	# ── an unreadable date must not become a wrong ANSWER ──────────────────────
 	#
-	# #243 made the readers refuse a POISONED date. This is the other half: the sites that
-	# ABSORBED one — into an empty string, an epoch day, a fabricated trend — and answered
-	# at exit 0. Nine sites, and the rule they follow is not "guard every read". It is a
+	# The readers refuse a POISONED date. This is the other half: the sites that would
+	# ABSORB one — into an empty string, an epoch day, a fabricated trend — and answer
+	# at exit 0. The rule they follow is not "guard every read". It is a
 	# SPLIT by what the command DOES with the date:
 	#
 	#   report — `activities` and `top` list or rank, so a wrong date cannot become a wrong
@@ -3939,17 +3925,14 @@ b_seed_analyze! = |ctx| {
 	#            90-day window, a comparables filter, a trend, an ordering key, a TSS), so
 	#            a wrong date IS a wrong answer and they name the row instead
 	#
-	# Reporting everywhere instead has a measured cost:
-	# `progress` moved its verdict from "improving (28%)" to "improving (19%)" and
-	# printed `best: 1.49 ()`, because an empty date is not a missing cell — it is a
-	# POSITION, and `ORDER BY a.name, a.start_local` sorts it first. Every number real, the
-	# conclusion wrong, nothing marking it. On origin/main that command answered
-	# internal_error, so reporting would have traded a loud failure for a quiet fabrication.
+	# Reporting everywhere instead would fabricate: in `progress` an empty date is not a
+	# missing cell but a POSITION, and `ORDER BY a.name, a.start_local` sorts it first, so
+	# the verdict shifts and `best:` prints an empty date, every number real and the
+	# conclusion wrong with nothing marking it.
 	#
-	# A NULL start_local is the reachable form and needs hand-written SQL, which is why it
-	# outlived #243: the column is nullable, and every `substr(start_local, 1, 10)` without
-	# a COALESCE failed the decode with UnexpectedType(Null) — `internal_error`, "please
-	# open an issue", the exact shape #243 was opened to remove.
+	# A NULL start_local is the reachable form and needs hand-written SQL: the column is
+	# nullable, and a `substr(start_local, 1, 10)` without a COALESCE fails the decode with
+	# UnexpectedType(Null), which would surface as `internal_error` rather than a named row.
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (940,'null date','Ride','Ride',NULL,3600);")
 	check!("a NULL start_local does not answer internal_error", strjq!(ctx, ["activities"], ".error.code // \"none\"") != "internal_error")?
 	check!("...and the row is listed with an empty date rather than an invented one", Str.contains(strjq!(ctx, ["activities"], "[.data[] | select(.id == 940) | .date]"), "\"\""))?
@@ -3999,12 +3982,12 @@ b_seed_analyze! = |ctx| {
 	check!("...while a readable row says true, so the flag is not simply always false", strjq!(ctx, ["activities"], "[.data[] | select(.date_known == true)] | length > 0") == "true")?
 	# ...and a BLOB `start_local`, which took the whole command down: `substr()` on
 	# a BLOB returns a BLOB, so the decode raised UnexpectedType(Bytes) and
-	# `activities` — the listing whose job since #249 is surfacing rows that need
+	# `activities` — the listing whose job is surfacing rows that need
 	# repair — was the one command that could not open the file. `config get`
 	# already reported the same class of cell as DATA, so the codebase had decided
 	# the question and then contradicted itself one command over. CAST makes the
 	# read total; the existing `date_known` predicate rejects the value on its own
-	# terms (#296).
+	# terms.
 	# id 952, not 951: 951 is the "impossible minute" fixture. Safe today only
 	# because this block's DELETE runs first — a coupling nobody reading either
 	# block would see.
@@ -4035,7 +4018,7 @@ b_seed_analyze! = |ctx| {
 	# swapping one handled code for another — it has to keep both, and a missing
 	# CAST on any of the seven sites puts `internal_error` into the string.
 	check!("...and the six other commands reading that column degrade instead of crashing", blob_cmds == "unreadable_activity_date unreadable_daily_load_day")?
-	# ...and the CLASS (#296, #307): a blob is possible in every TEXT column,
+	# ...and the CLASS: a blob is possible in every TEXT column,
 	# and the same `Sqlite.str` decode crashes wherever it meets one. Planted in
 	# three columns at once — the point is the class — and the assertion is that
 	# NO command answers `internal_error` about a fault that is entirely the
@@ -4075,7 +4058,7 @@ b_seed_analyze! = |ctx| {
 	# deleted immediately: `doctor`'s undateable count is pinned at 4 just below, and
 	# a probe row that outlives its own checks moves a number asserted for another reason.
 	_ = sql!(ctx.db, "DELETE FROM activities WHERE id = 952;")
-	# `doctor`'s COUNT, which is the whole of #265 and had nothing asserting its behaviour.
+	# `doctor`'s COUNT, which is the whole point and had nothing asserting its behaviour.
 	# The schema loop validates the key's presence and type on `doctor` and `top`, so a
 	# predicate that drifted to always-0 passed everything. All four SQL sites now share
 	# `Report.date_known_sql`, so the fixture above holds them by construction — but the
@@ -4085,13 +4068,13 @@ b_seed_analyze! = |ctx| {
 	# predicate. Without this the clause could hoist everything and still pass above.
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (948,'readable low','Ride','Ride','1000-01-01T10:00:00Z',3600);")
 	check!("...while a readable early date stays in date order, so the hoist is not hoisting everything", strjq!(ctx, ["activities"], "[.data[0:5][].id] | map(select(. == 948)) | length") == "0")?
-	# ...and the SECONDARY key, which the hoist does not cover (#255): among the
+	# ...and the SECONDARY key, which the hoist does not cover: among the
 	# rows below the hoisted group the tie-break was the raw column, so a valid
 	# date with an impossible TIME outranked every real row on its own day — and
 	# `date_known` is 1 for it, so doctor's undateable count did not see it
 	# either. Both halves closed and asserted below: `rankable` publishes the
 	# predicate the hoist keys on, and `unrankable_activities` counts that same
-	# population (#281, #282).
+	# population.
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (949,'impossible time','Ride','Ride',(SELECT substr(start_local,1,10) FROM activities WHERE id=101) || 'T37:00:00Z',3600);")
 	# `activities 3`, not the default 30. With a ten-row fixture there is no limit for a
 	# sunk row to fall below, so this assertion could not show what its name claims — and
@@ -4110,7 +4093,7 @@ b_seed_analyze! = |ctx| {
 	# stays TRUE on this row and that is correct — the date component really is readable —
 	# so the pair is asserted together: a check on `rankable` alone would pass on a build
 	# that had simply widened `date_known` and broken every existing consumer's reading of
-	# it, which is the resolution #281 explicitly did not take.
+	# it.
 	check!("...and the row publishes date_known TRUE with rankable FALSE, so the pair says which half is broken", strjq!(ctx, ["activities"], "[.data[] | select(.id == 949) | (.date_known == true) and (.rankable == false)] | join(\",\")") == "true")?
 	# ...and a readable row says true for BOTH, so neither flag is simply a constant.
 	check!("...while a readable row is true on both halves", strjq!(ctx, ["activities"], "[.data[] | select(.id == 101) | (.date_known == true) and (.rankable == true)] | join(\",\")") == "true")?
@@ -4184,8 +4167,8 @@ b_seed_analyze! = |ctx| {
 	# reader to `DELETE FROM activities WHERE start_local=''` — zero rows for a
 	# NULL. Output.roc carries the same rule one value along, for 'garbage-da'.
 	check!("...and says NULL rather than quoting an empty string back", Str.contains(strjq!(ctx, ["activity", "940"], ".error.message"), "no usable start_local"))?
-	# ...and the three commands #249 names as exemplars, none of which had a check
-	# while 940 existed (`season` measured internal_error on this row). The
+	# ...and three more commands that read the same column, each checked while 940
+	# exists (without its guard, `season` answers internal_error on this row). The
 	# poisoned daily_load row has to come OUT for the duration: with it in place
 	# all three refuse on `unreadable_daily_load_day` first — a correct refusal,
 	# for the other column — so a check here would either go red or pass without
@@ -4216,7 +4199,7 @@ b_seed_analyze! = |ctx| {
 	# Plan.roc makes a plain NULL reach it on every week.
 	check!("`week` refuses on any week, not only the ones the calendar allows", strjq!(ctx, ["week"], ".error.code") == "unreadable_activity_date")?
 	# BOTH analyze runs rewrite daily_load, so the backup goes up before the FIRST:
-	# even the refusing run reaches the rebuild (#243's policy is walk and write
+	# even the refusing run reaches the rebuild (the policy is walk and write
 	# every readable day, then refuse), so the refusal itself deletes the
 	# 'not-a-date' row and the failure lands on checks tens of lines away, reading
 	# as a bug in `compare`. The restore is asserted against the row COUNT taken
@@ -4245,7 +4228,7 @@ b_seed_analyze! = |ctx| {
 	# ...and the BARE form, which picks its own anchor and is a different guard
 	# on a different query. Naming a date skips that subquery entirely, so the
 	# check above cannot reach the anchor guard; one check cannot cover two
-	# sites (#243). The anchor is `ORDER BY start_local DESC LIMIT 1` over
+	# sites. The anchor is `ORDER BY start_local DESC LIMIT 1` over
 	# scored activities and NULLs sort LAST there, so the unreadable row becomes
 	# the anchor only when it is the only scored one; the probe clears
 	# activity_metrics down to that and restores it.
@@ -4265,7 +4248,7 @@ b_seed_analyze! = |ctx| {
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time,distance) VALUES (944,'reps probe','Ride','Ride',NULL,3600,20000);")
 	_ = sql!(ctx.db, "INSERT INTO activity_segments (activity_id,ordinal,kind,start_s,dur_s,avg_signal,signal) VALUES (944,1,'work',0,720,200.0,'power'),(944,2,'work',900,720,200.0,'power'),(944,3,'work',1800,720,200.0,'power');")
 	check!("`reps` refuses rather than answering 0 of 0 over a database that holds one", strjq!(ctx, ["reps"], ".error.code") == "unreadable_activity_date" and Str.contains(strjq!(ctx, ["reps"], ".error.message"), "944"))?
-	# ...and a poisoned COMPARABLE — a different site from the anchor (#270):
+	# ...and a poisoned COMPARABLE — a different site from the anchor:
 	# `reps` must refuse an unreadable comparable date as it refuses an
 	# unreadable anchor date. The comparables query has NO lower date bound, so
 	# a second work-segmented row sorting under the anchor reaches it — no
@@ -4476,9 +4459,8 @@ b_seed_analyze! = |ctx| {
 	# "the table happens to be empty" — the distinction the whole block is about.
 	check!("...and nothing was rated", Str.trim(sql!(an_db, "SELECT count(*) FROM ratings;")) == "0")?
 	_ = sql!(an_db, "DELETE FROM activities WHERE id = 810;")
-	# ...and a NULL start_local is NAMED rather than crashing the decoder. One commit of
-	# this PR dropped the COALESCE and it regressed to `internal_error` — "please open an
-	# issue" — which is the shape #243 exists to remove, on a write path.
+	# ...and a NULL start_local is NAMED rather than crashing the decoder: without the
+	# COALESCE this write path answers `internal_error` instead of naming the row.
 	_ = sql!(an_db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (820,'null date','Ride','Ride',NULL,3600);")
 	an_null = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' rate latest 6 2>/dev/null")
 	check!("a NULL start_local is named, not answered with internal_error", Str.contains(an_null, "unreadable_activity_date") and !(Str.contains(an_null, "internal_error")))?
@@ -4491,8 +4473,8 @@ b_seed_analyze! = |ctx| {
 	# dropped the bound let `summary` anchor on year 999 and report it as as_of at exit 0.
 	_ = sql!(an_db, "INSERT OR REPLACE INTO daily_load (day,tss,ctl,atl,tsb) VALUES ('999-01-01', 30.0, 5.0, 5.0, 0.0);")
 	check!("a year-999 day is refused, not accepted as canonical because it round-trips", Str.contains(sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>/dev/null"), "unreadable_daily_load_day"))?
-	# ...and the OTHER definition of the rule agrees, which is the thing that went wrong:
-	# `week add` kept the bound while every stored-date guard lost it, in one binary.
+	# ...and the OTHER definition of the rule agrees: `week add` and the stored-date
+	# guards must hold the same bound, in one binary.
 	check!("...and `week add` refuses the same year, so one rule means one answer", Str.contains(sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' week add 999-01-01 endurance x y 2>/dev/null"), "bad_date"))?
 	_ = sql!(an_db, "DELETE FROM daily_load WHERE day = '999-01-01';")
 	_ = sql!(an_db, "DELETE FROM ratings; DELETE FROM activities WHERE id IN (700,701);")
@@ -4679,7 +4661,7 @@ b_seed_analyze! = |ctx| {
 	_ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id=103; DELETE FROM activity_metrics WHERE activity_id=103; DELETE FROM streams WHERE activity_id=103; DELETE FROM activities WHERE id=103;")
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 	check!("form_delta_known is false on a short history", strjq!(ctx, ["summary"], ".data.form_delta_known") == "false")?
-	# #123: the verdict NAMES the state and stops prescribing. Asserting the absence of the
+	# the verdict NAMES the state and stops prescribing. Asserting the absence of the
 	# old advice AND the presence of the label, so it cannot pass by the line disappearing.
 	check!("form_band_days is a number", strjq!(ctx, ["summary"], ".data.form_band_days | type") == "number")?
 	# The TYPE check alone is satisfied by a stub: a hard-coded `form_band_days:
@@ -4705,7 +4687,7 @@ b_seed_analyze! = |ctx| {
 	check_near!("28d tss ~206 (111 + 40 power, 55 hr)", sfloat(strjq!(ctx, ["summary"], ".data.last_28d.tss")), 205.8, 1.0)?
 	mp = sfloat(strjq!(ctx, ["summary"], ".data.last_28d.measured_pct"))
 	check!("measured_pct ~73 (68..78)", mp >= 68.0 and mp <= 78.0)?
-	# FTP is derived now (the config-FTP `stale` flag was removed in #26)
+	# FTP is derived now (the config-FTP `stale` flag was removed )
 	check_near!("derived FTP ~190 (best-20min 200 x 0.95)", sfloat(strjq!(ctx, ["summary"], ".data.ftp.estimated_ftp_w")), 190.0, 1.0)?
 	check!("fitness_ctl > 0", sfloat(strjq!(ctx, ["summary"], ".data.fitness_ctl")) > 0.0)?
 	check!("fatigue_atl > 0", sfloat(strjq!(ctx, ["summary"], ".data.fatigue_atl")) > 0.0)?
@@ -4757,7 +4739,7 @@ b_narration! = |ctx| {
 	Ok({})
 }
 
-# ── zone + metrics_rev auto-invalidation. Config-FTP invalidation was removed in #26
+# ── zone + metrics_rev auto-invalidation. Config-FTP invalidation was removed
 # (FTP is derived, not set); the derived-FTP recompute path is covered by
 # b_seed_analyze!'s "computes 3 with the companion" convergence. ─────────────────────────────────────────
 b_invalidation! : Ctx => Try({}, _)
@@ -4781,7 +4763,7 @@ b_invalidation! = |ctx| {
 	Ok({})
 }
 
-## The `schema` field's VALUE, checked by running each form (#219). Its own scenario, and
+## The `schema` field's VALUE, checked by running each form. Its own scenario, and
 ## registered LATE, because it has to run where the fixture has data: sitting inside
 ## b_init_config! it validated only the seven commands that succeed on an empty database,
 ## and neither `pz` nor `stats` was among them — so pointing either at the wrong existing
@@ -4810,7 +4792,7 @@ b_command_schemas! = |ctx| {
 	schema_skipped = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select(.network == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | ([.name] + [.args[] | select(.required) | .example] | join(\" \"))' | while read -r n; do HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null | jq -e '.data' >/dev/null 2>&1 || printf '%s ' \"$n\"; done"))
 	check!("...and the only forms with no payload to validate are the three that legitimately have none (got: ${schema_skipped})", schema_skipped == "viz tte 300 reps")?
 
-	# ── args arity, both bounds (#219) — the only dimension of the six with no
+	# ── args arity, both bounds — the only dimension of the six with no
 	# derivation check. Both probes run against a THROWAWAY COPY (`week add`
 	# writes). Networked forms are excluded — filling `sync`'s arguments would
 	# reach Strava from the OFFLINE driver; their arity is unchecked here. UPPER
@@ -4832,7 +4814,7 @@ b_command_schemas! = |ctx| {
 	# ones (optional `<YYYY-MM-DD>`, not statically knowable).
 	dropped = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | select([.args[] | select(.example == \"\")] | length > 0) | .name' | sort | tr '\\n' ' '"))
 	check!("...and only two forms have an argument the fill must drop (got: ${dropped})", dropped == "progress reps")?
-	# ── the ARITY bounds for EVERY non-network form, using a junk token (#257).
+	# ── the ARITY bounds for EVERY non-network form, using a junk token.
 	# The tension dissolves on one observation: `usage` is an ARITY verdict, not a
 	# VALUE verdict — a token satisfying nothing still separates the bounds
 	# (`activity x` -> activity_not_found; `activity x x` -> usage; likewise
@@ -4898,8 +4880,8 @@ b_command_schemas! = |ctx| {
 	# The rejected set, not just `usage`: a rejection is a rejection whichever
 	# code carries it, and the import codes are here by measurement.
 	# HAND-MAINTAINED — the one non-derived thing here: telling "argument
-	# unusable" from "database has nothing to say" needs a `kind` per declared
-	# error code, #257's stated endgame, deliberately not attempted.
+	# unusable" from "database has nothing to say" would need a `kind` per declared
+	# error code, which the contract does not carry.
 	badex = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | [.name] + [.args[] | select(.example != \"\") | .example] | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); case \"$code\" in usage|bad_*|unknown_command|unknown_key|derived_key|unzip_failed|empty_csv|no_activities_csv) echo \"$line -> $code\" ;; esac; done; true; } | tr '\\n' '|'"))
 	check!("every example the table declares is a value the binary accepts (bad: ${badex})", badex == "")?
 	# LOWER bound: one FEWER than the declared required count must BE a usage error.
@@ -4950,7 +4932,7 @@ b_command_schemas! = |ctx| {
 	Ok({})
 }
 
-## The closed agent loop (#220): observe state, write intent, reconcile against real
+## The closed agent loop: observe state, write intent, reconcile against real
 ## training, observe again — with the reconciliation reflected.
 ##
 ## Every leg of this is already covered by a per-command check. What is NOT covered, and
@@ -5060,7 +5042,7 @@ b_agent_loop! = |ctx| {
 	# session's story, say — every delta below would compare against an unchanged payload
 	# and the failures would point at the assertions rather than at the cause.
 	done_out = stride!(ctx.bin, ctx.home, ["complete", sid, "9220"])
-	# ...and it reports having replaced NOTHING, which is the zero direction of #258. Both
+	# ...and it reports having replaced NOTHING, which is the zero direction of the replaced-activity report. Both
 	# directions are needed in one place, because a field that is always 0 — or always the
 	# activity — satisfies exactly one of them. The re-complete below is the other half.
 	check!("...reporting that this first completion replaced nothing, as an INTEGER 0", strjq!(ctx, ["complete", "${sid}", "9220"], ".data.replaced_activity | tojson") == "0")?
@@ -5080,7 +5062,7 @@ b_agent_loop! = |ctx| {
 	# `done`, not `completed` — the status enum is open|done|skipped. Pinned against the
 	# schema's own vocabulary, which is what a coach branches on.
 	check!("...but keeps it in plan_history_28d, now done", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .status]") == "[\n  \"done\"\n]")?
-	# ...and the completion REPORTS what it replaced (#258): `complete` on an
+	# ...and the completion REPORTS what it replaced: `complete` on an
 	# already-done session overwrites, so a mistyped SESSION id must not report
 	# plain success while rewriting real history. Both directions in one place,
 	# because either alone is satisfied by a constant: 0 on a first completion
@@ -5088,7 +5070,7 @@ b_agent_loop! = |ctx| {
 	_ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (9222,'recomplete probe','Ride','${ctx.d2}T09:00:00Z',3600,21000,185,185,142);")
 	recomp = strjq!(ctx, ["complete", "${sid}", "9222"], ".data.replaced_activity")
 	check!("...and a RE-complete names the activity whose completion it just erased", recomp == "9220")?
-	# ...and the erased id is RECORDED, not just reported — the whole of #274: the
+	# ...and the erased id is RECORDED, not just reported — the whole point: the
 	# payload named it and the human line printed the restore command, but the
 	# record lived in one line of stdout, once. Asserted on the COLUMN and the
 	# PAYLOAD, because they fail apart: a written-but-unpublished column is
@@ -5139,7 +5121,7 @@ b_agent_loop! = |ctx| {
 	check!("...which is a different day from the target, so that check can tell them apart", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .target_date]") == "[\n  \"${ctx.d1}\"\n]")?
 	# ...and its own CONTENTS: `open_sessions` has its session_type and detail
 	# pinned, and `plan_history_28d` needs the same, or a bogus type and detail
-	# on every history row would pass (#251). These are the two fields an agent
+	# on every history row would pass. These are the two fields an agent
 	# branches on to describe what was actually done.
 	check!("...carrying the type and detail it was created with, which nothing read before", pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .session_type]") == "[\n  \"endurance\"\n]" and pj!("[.data.plan_history_28d[] | select(.id == ${sid}) | .detail]") == "[\n  \"agent loop probe\"\n]")?
 	# `d1` is today-3 and `d2` today-1 by construction, so they can never
@@ -5197,7 +5179,7 @@ b_agent_loop! = |ctx| {
 	# action, so it is neutral to the ratio.
 	check!("...and completion_pct agrees with the counts it is derived from", str_to_i64(pj!(".data.adherence_28d.completion_pct")) == ((str_to_i64(pj!(".data.adherence_28d.completed"))).to_f64() / (str_to_i64(pj!(".data.adherence_28d.planned")) - str_to_i64(pj!(".data.adherence_28d.rested"))).to_f64() * 100.0).round_to_i64_try().ok_or(-1))?
 
-	# ── leg 2.5: an aged rest day the athlete in fact rested (#504) ─────
+	# ── leg 2.5: an aged rest day the athlete in fact rested ─────
 	# Rest is the one session type whose prescription is the absence of evidence,
 	# so an open rest row whose date passed with no load on the day is resolved
 	# in fact — the payload counts it `rested`, out of still_open and out of
@@ -5221,7 +5203,7 @@ b_agent_loop! = |ctx| {
 	check!("an aged zero-load rest row counts as rested", str_to_i64(pj!(".data.adherence_28d.rested")) == rested_r + 1)?
 	check!("...never entering still_open", str_to_i64(pj!(".data.adherence_28d.still_open")) == open_r)?
 	check!("...while planned still counts it", str_to_i64(pj!(".data.adherence_28d.planned")) == planned_r + 1)?
-	# the sharp consequence (#504): an aged zero-load rest row is excluded from
+	# the sharp consequence: an aged zero-load rest row is excluded from
 	# the denominator, so it cannot drag the pct down
 	check!("...and completion_pct does not move — the rest owed nothing", str_to_i64(pj!(".data.adherence_28d.completion_pct")) == pct_r)?
 	check!("...with the identity holding while rested is non-zero", str_to_i64(pj!(".data.adherence_28d.rested")) > 0 and str_to_i64(pj!(".data.adherence_28d.planned")) == str_to_i64(pj!(".data.adherence_28d.completed")) + str_to_i64(pj!(".data.adherence_28d.skipped")) + str_to_i64(pj!(".data.adherence_28d.rested")) + str_to_i64(pj!(".data.adherence_28d.still_open")))?
@@ -5256,18 +5238,17 @@ b_agent_loop! = |ctx| {
 	# envelopes; in machine mode no handled failure may exit non-zero with empty
 	# stdout — the shape an agent cannot branch on.
 	# The EXPECTED CODE, not merely that one exists: shape-only cannot tell
-	# "reached the failure this probe names" from "fell off the command table" —
-	# run through a non-word-splitting shell, all six probes came back
-	# `unknown_command` and satisfied the old assertion while five never reached
-	# the path their label named. The harness splices `${args}` unquoted, so a
-	# future argument with a space reroutes a probe the same way, silently.
+	# "reached the failure this probe names" from "fell off the command table":
+	# through a non-word-splitting shell every probe comes back `unknown_command`,
+	# which a shape-only check accepts. The harness splices `${args}` unquoted, so a
+	# future argument with a space would reroute a probe the same way, silently.
 	err_probe! = |args, want, label| {
 		out = "${ctx.home}/.err-probe.out"
 		st = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' ${args} > '${out}' 2>/dev/null; echo $?"))
 		code = Str.trim(sh!("jq -r '.error.code // \"\"' '${out}' 2>/dev/null"))
 		check!("${label}: exits non-zero with `${want}` on stdout (exit ${st}, code '${code}')", st != "0" and code == want)
 	}
-	# OBSERVED -> DECLARED (#239): every code a probe gets back must be one the
+	# OBSERVED -> DECLARED: every code a probe gets back must be one the
 	# command table says that form can return — universal, or declared on the
 	# form. The direction the schema-level checks cannot reach: nothing in a
 	# static file knows what a command produces at runtime, so wiring it to the
@@ -5310,7 +5291,7 @@ b_agent_loop! = |ctx| {
 	# ── the rows this scenario did NOT create ───────────────────────────
 	#
 	# Everything above pins facts about three known ids, leaving the payload
-	# unconstrained wherever the loop did not put something (#251): membership
+	# unconstrained wherever the loop did not put something: membership
 	# pinned by naming ids cannot see a phantom that is none of them, so
 	# `open_p` could serve skipped sessions and an agent would plan against a
 	# session the athlete already skipped.
@@ -5364,23 +5345,23 @@ b_agent_loop! = |ctx| {
 }
 
 # `week` and `plan` read the same two tables and answer the same question about them, and
-# they are DELIBERATELY allowed to disagree in exactly one place. Nothing tested that (#250).
+# they are DELIBERATELY allowed to disagree in exactly one place. Nothing tested that.
 #
 # The assertion is not "they agree". It is: for every session in the shared window they
 # classify identically, EXCEPT that an activity whose skip tombstone was superseded is
 # `unplanned` to `week` and is not counted as unplanned by `plan`. Plan.roc states the
 # divergence in a comment and gives the reason — for adherence, counting it would make one
-# ride both substituted and unplanned — and until now a comment was the whole enforcement.
+# ride both substituted and unplanned.
 #
-# Its OWN scenario rather than a leg of the agent loop, which is the choice #220's issue
-# argued for: that loop's thesis is that ONE payload is self-consistent, and a cross-command
+# Its OWN scenario rather than a leg of the agent loop, which is the right home for it:
+# that loop's thesis is that ONE payload is self-consistent, and a cross-command
 # red there would be ambiguous between "plan drifted", "week drifted", and "the sanctioned
 # difference moved".
 #
 # Runs AFTER b_agent_loop! and before the database rebuilds, for the same reason it does:
 # the comparison needs a populated adherence window, and an empty one would make every set
 # equality below true.
-# ── #465: `complete latest` resolves BOTH ids - the latest activity and the
+# ── `complete latest` resolves BOTH ids - the latest activity and the
 # open session on that activity's own day - and hands them to the unchanged
 # completion path. The checks below pin the resolution, not the completion:
 # that it picks the right pair, refuses by name when the day holds no open
@@ -5533,12 +5514,12 @@ b_week_plan! = |ctx| {
 # ── plan lifecycle: revise-in-place, skip, re-plan, done ─────────────
 b_plan! : Ctx => Try({}, _)
 b_plan! = |ctx| {
-	# #100: a bad date is refused at the door — planned_sessions is judgment tier,
+	# a bad date is refused at the door — planned_sessions is judgment tier,
 	# so a typo there cannot be re-derived and would belong to no training week.
 	# The rejects below include shapes that PARSE — the last two would be silently
 	# normalized to a different day than the one typed.
-	# Apostrophes must round-trip byte-for-byte: written when #105's workaround
-	# spliced text into SQL, kept as the regression test for ever reaching for a
+	# Apostrophes must round-trip byte-for-byte: they guard against any code path that
+	# splices text into SQL, and against ever reaching for a
 	# splice again — a broken round trip either corrupts the text or fails the
 	# INSERT loudly. stride! (direct exec) rather than strjq!: the sh-based jq
 	# wrapper single-quotes its args, so an apostrophed arg breaks the TEST's own
@@ -5570,7 +5551,7 @@ b_plan! = |ctx| {
 	check!("complete nonexistent session", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "999", "101"]), "session_not_found"))?
 	# complete_rest! is a SEPARATE parse from the two-argument form above
 	check!("an exponent id is refused by the rest-day complete", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "2e0"]), "bad_id"))?
-	# #201 on the OTHER judgment-tier writes. `2e0` is session 2 and `3e2` is
+	# The strict id parse on the OTHER judgment-tier writes. `2e0` is session 2 and `3e2` is
 	# activity 300 under the widened stdlib -- both real rows here, so these
 	# fail if the narrowing goes instead of trading one error for another. NOT
 	# `1.01e2`: a fractional mantissa does not parse either way, so that form
@@ -5579,7 +5560,7 @@ b_plan! = |ctx| {
 
 	check!("complete nonexistent activity", Str.contains(stride!(ctx.bin, ctx.home, ["complete", "2", "88888"]), "activity_not_found"))?
 	check!("skip nonexistent session", Str.contains(stride!(ctx.bin, ctx.home, ["skip", "999", "x"]), "session_not_found"))?
-	# ── substitutions (#144): a skip can name the activity that replaced the plan ──
+	# ── substitutions: a skip can name the activity that replaced the plan ──
 	# today-dated so the ThisWeek window sees both the session and the activity
 	today_sess = Str.trim(strjq!(ctx, ["week", "add", "${ctx.today}", "threshold", "sub test", "r"], ".data.id"))
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (300,'unplanned spin','Ride','${ctx.today}T08:00:00Z',3600,20000,120);")
@@ -5607,7 +5588,7 @@ b_plan! = |ctx| {
 	# unplanned row — ties must order sessions first, never reversed
 	check!("session precedes unplanned on the same day", strjq!(ctx, ["week"], "[.data[] | select(.target_date == \"${ctx.today}\") | .status] | index(\"unplanned\") > 0") == "true")?
 	check!("skip with substitute refuses a bogus activity", Str.contains(stride!(ctx.bin, ctx.home, ["skip", today_sess, "x", "88888"]), "activity_not_found"))?
-	# #201 on skip's SUBSTITUTE id: 3e2 is activity 300, which the next line
+	# The strict id parse on skip's SUBSTITUTE id: 3e2 is activity 300, which the next line
 	# links for real, so this fails if the narrowing goes rather than trading
 	# one not-found for another.
 	check!("skip refuses an exponent substitute id", Str.contains(stride!(ctx.bin, ctx.home, ["skip", today_sess, "x", "3e2"]), "bad_id"))?
@@ -5635,7 +5616,7 @@ b_plan! = |ctx| {
 	# offered. ...and complete it ONCE first with a different activity, so the
 	# steal lands on an already-done session — the only payload in the suite
 	# carrying non-zero `replaced_activity` and `released_substitute_of`
-	# together, the ReleasedFrom arm of #258, and the only check on that arm.
+	# together, the ReleasedFrom arm, and the only check on that arm.
 	# TWO scenarios, not one fused: the fused state is UNREACHABLE through the
 	# CLI — every write setting `completed_activity_id` NULLs
 	# `substitute_activity_id` in the same statement, and `skip`'s Sub arm
@@ -5732,8 +5713,8 @@ b_plan! = |ctx| {
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (304,'real evidence','Ride','${ctx.d1}T18:00:00Z',1800,9000);")
 	comp_sub = stride!(ctx.bin, ctx.home, ["complete", resess, "304"])
 	check!("completion clears the substitute link", Str.trim(sql!(ctx.db, "SELECT COALESCE(substitute_activity_id,0) FROM planned_sessions WHERE id = ${resess};")) == "0")?
-	# ...and SAYS which link it destroyed. This clearing was pinned green while nothing
-	# reported it, and reading only `completed_activity_id` (the #258 gap) makes that
+	# ...and SAYS which link it destroyed. The clearing alone can pass while nothing
+	# reports it, and reading only `completed_activity_id` makes that
 	# worse rather than better: this call — which erases the only record that the athlete
 	# did 303 in place of this session — answers `replaced_activity: 0`, an affirmative
 	# "nothing was replaced". `skip` treats the same column as worth reporting in both
@@ -5816,8 +5797,8 @@ b_plan! = |ctx| {
 	check!("a steal names the session it released", Str.contains(steal_out, "released_substitute_of"))?
 	_ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${relsess}, ${relsup}, ${dc2sess}); DELETE FROM activities WHERE id = 305;")
 
-	# a DONE session refuses skip (#148): the old flip left a skipped row
-	# displaying a completion — falsified adherence, guarded at the mechanism now
+	# a DONE session refuses skip: flipping it would leave a skipped row
+	# displaying a completion — falsified adherence, guarded at the mechanism
 	done_skip = stride!(ctx.bin, ctx.home, ["skip", resess, "trying to unskip history"])
 	check!("skipping a done session is refused, naming the activity", Str.contains(done_skip, "session_done") and Str.contains(done_skip, "activity 304"))?
 	check!("...and the row is untouched", Str.trim(sql!(ctx.db, "SELECT status || '|' || COALESCE(completed_activity_id,0) FROM planned_sessions WHERE id = ${resess};")) == "done|304")?
@@ -5839,7 +5820,7 @@ b_plan! = |ctx| {
 	check!("a completed rest day refuses skip in the NULL-link wording", Str.contains(stride!(ctx.bin, ctx.home, ["skip", restsess, "x"]), "completed rest day"))?
 	# ...and the INVARIANT the whole scenario leans on, measured rather than
 	# claimed: a row cannot hold both a completion and a substitute (Plan.roc),
-	# which is what makes #258's remedy exactly invertible.
+	# which is what makes the replace-and-restore remedy exactly invertible.
 	#
 	# The pairing count ALONE is not a measurement: every scenario above clears
 	# the substitute link as it goes, so "none paired" over an empty half is true
@@ -5862,7 +5843,7 @@ b_plan! = |ctx| {
 	_ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${inv_sub};")
 	_ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (${today_sess}, ${extra_sess}, ${replan}, ${resess}, ${restsess}); DELETE FROM activities WHERE id IN (300, 303, 304);")
 
-	# ── plan history + adherence (#158): planned-vs-actual from ONE call.
+	# ── plan history + adherence: planned-vs-actual from ONE call.
 	# Self-contained probes on in-window dates (the 2099 lifecycle sessions
 	# above sit outside the 28d window on purpose), cleaned up after.
 	ph1 = Str.trim(strjq!(ctx, ["week", "add", "${ctx.d1}", "endurance", "history probe skip", "r"], ".data.id"))
@@ -5905,10 +5886,10 @@ b_plan! = |ctx| {
 	near_refusal = stride!(ctx.bin, ctx.home, ["complete", near_id])
 	check!("a refusal lists the activity ids actually near that date", Str.contains(near_refusal, "Activities near that date"))?
 	check!("...naming the real activity, not a placeholder", Str.contains(near_refusal, "101"))?
-	# ...and an UNRANKABLE timestamp cannot be candidate #1 (#255): this list is
+	# ...and an UNRANKABLE timestamp cannot be candidate #1: this list is
 	# the write path's shortlist — the pick becomes `completed_activity_id` — so
 	# a valid date with an impossible time (`T37:00:00`) must not sort above
-	# every real row. #247's rule applies — the guard's domain must equal its
+	# every real row. The guard's domain must equal its
 	# consumer's — and unrankable rows sort LAST rather than being excluded: a
 	# row that needs repair must stay visible.
 	_ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (7701,'impossible time','Ride','${near_date}T37:00:00Z',3600,20000);")
@@ -5955,14 +5936,14 @@ b_plan! = |ctx| {
 	check!("fully-skipped day shows ONE row", strjq!(ctx, ["week"], "[.data[] | select(.target_date==\"${ctx.today}\")] | length") == "1")?
 	check!("fully-skipped day shows the FINAL tombstone", strjq!(ctx, ["week"], ".data[] | select(.target_date==\"${ctx.today}\") | .id") == "6")?
 	check!("week all keeps every draft", strjq!(ctx, ["week", "all"], "[.data[] | select(.target_date==\"${ctx.today}\")] | length") == "2")?
-	# #84 follow-up: a session completed by an activity from ANOTHER day rendered exactly
-	# like one completed on time, so the plan quietly implied the work happened on the date
+	# A session completed by an activity from ANOTHER day must not render exactly
+	# like one completed on time, or the plan implies the work happened on the date
 	# it was prescribed for. The completing activity's own day is shown when they differ.
 	# Activity 101 lives on ctx.d1, so target a fixed date it cannot coincide with.
 	_ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','2025-01-15','endurance','early ride','r','open');")
 	early_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions;"))
 	date_101 = Str.trim(sql!(ctx.db, "SELECT substr(start_local,1,10) FROM activities WHERE id=101;"))
-	# 101 already completes session 2, and one activity tells one story (#146):
+	# 101 already completes session 2, and one activity tells one story:
 	# the early session completes with its own activity on 101's date
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (302,'early evidence','Ride','${date_101}T08:00:00Z',1800,10000);")
 	_ = stride!(ctx.bin, ctx.home, ["complete", early_id, "302"])
@@ -5972,7 +5953,7 @@ b_plan! = |ctx| {
 	_ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','${date_101}','endurance','same day ride','r','open');")
 	ontime_id = Str.trim(sql!(ctx.db, "SELECT MAX(id) FROM planned_sessions;"))
 	# 101 already completes early_id, and one activity tells one story now
-	# (#146 guard) — the on-time control gets its own same-day activity
+	# — the on-time control gets its own same-day activity
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (301,'same day spin','Ride','${date_101}T12:00:00Z',1800,10000);")
 	_ = stride!(ctx.bin, ctx.home, ["complete", ontime_id, "301"])
 	ontime_status = strjq!(ctx, ["week", "all"], ".data[] | select(.id==${ontime_id}) | .status_shown")
@@ -5984,7 +5965,7 @@ b_plan! = |ctx| {
 	check!("the early one carries its real completion date", Str.starts_with(early_status, "done (") and Str.contains(early_status, date_101))?
 	_ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${ontime_id}; DELETE FROM activities WHERE id IN (301, 302);")
 	_ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${early_id};")
-	# #97: `week all` sections. Partition is by WEEK so no row appears twice, and rows
+	# `week all` sections. Partition is by WEEK so no row appears twice, and rows
 	# older than last week are COUNTED rather than silently dropped — `week all` still
 	# means all, and the JSON payload keeps every row.
 	_ = sql!(ctx.db, "INSERT INTO planned_sessions (created_at, target_date, session_type, detail, rationale, status) VALUES ('0','2099-06-01','vo2max','far future session','r','open');")
@@ -6038,7 +6019,7 @@ b_plan! = |ctx| {
 	Ok({})
 }
 
-# ── relabel: label-only edit of a session in ANY status (#330) ─────────────────────
+# ── relabel: label-only edit of a session in ANY status ─────────────────────
 # The frozen case: a done session's label was uneditable — `week add` only revises OPEN
 # dates, so a day-swap left "endurance / long easy ride" on a completed threshold and the
 # only fixes were a duplicate row plus a skip tombstone, or hand-run SQL. Everything here
@@ -6075,7 +6056,7 @@ b_relabel! = |ctx| {
 	Ok({})
 }
 
-# ── structured prescription targets (#198, ADR 0014) ────────────────────────────────
+# ── structured prescription targets (ADR 0014) ────────────────────────────────
 # Self-contained and LAST among the planned-session scenarios: every session id is
 # CAPTURED from week add, every inserted row deleted at the end. Activity 977 gets its
 # work segments inserted directly (the reps fixtures' pattern) and analyze is
@@ -6111,7 +6092,7 @@ b_targets! = |ctx| {
 	tid3 = Str.trim(strjq!(ctx, ["week", "add", "2099-09-07", "endurance", "plain", "r"], ".data.id"))
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (979,'plain ride','Ride','2099-09-07T10:00:00Z',3600,30000);")
 	check!("an untargeted completion reports both flags false", strjq!(ctx, ["complete", tid3, "979"], "[.data.target_known, .data.detected_known] | join(\",\")") == "false,false")?
-	# ── every other signal (#636, ADR 0019): a heart-rate band, an HR zone and a pace,
+	# ── every other signal (ADR 0019): a heart-rate band, an HR zone and a pace,
 	# each scored on completion against the linked activity's own signal. Ids are
 	# captured and every row this leg inserts is deleted with the rest below.
 	hid = Str.trim(strjq!(ctx, ["week", "add", "2099-09-08", "endurance", "z2 by heart rate", "base", "1x60:00@HR125-147"], ".data.id"))
@@ -6174,7 +6155,7 @@ b_targets! = |ctx| {
 	Ok({})
 }
 
-# ── event targets and the CTL/ATL/TSB projection (#138, ADR 0010) ───────────────────
+# ── event targets and the CTL/ATL/TSB projection (ADR 0010) ───────────────────
 # Self-contained: event ids and session ids are captured, every inserted row deleted.
 # The decay leg is pinned against the CLOSED FORM — ctl_n = ctl_0·(1-α)^n computed by
 # sqlite's power() from the same daily_load row the projection starts from — so the
@@ -6219,7 +6200,7 @@ b_events! = |ctx| {
 	_ = stride!(ctx.bin, ctx.home, ["event", "remove", eid])
 	_ = stride!(ctx.bin, ctx.home, ["event", "remove", eid10])
 	check!("removal really removes — the listing is empty again", strjq!(ctx, ["events"], ".data.events | length") == "0")?
-	# ── taper projection (#189) rides the same fixtures. tsid is DONE here (the
+	# ── taper projection rides the same fixtures. tsid is DONE here (the
 	# double-count check above marked it), so the +10d window holds no live target:
 	# a bare project must equal the SAME closed form events was pinned against —
 	# two commands, one arithmetic, cross-pinned through one expected value.
@@ -6248,7 +6229,7 @@ b_events! = |ctx| {
 	check!("...and a malformed pair target with the target's", strjq!(ctx, ["project", ten_days_out!(ctx), "2099-12-25=junk"], ".error.code") == "bad_target")?
 	check!("the project payload conforms to its schema", validate_schema!(ctx, "project ${ten_days_out!(ctx)}", "project") == "")?
 	_ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${tsid};")
-	# ── every target kind is priced (#636, ADR 0019). Two run sessions inside the
+	# ── every target kind is priced (ADR 0019). Two run sessions inside the
 	# 60-day window give the run family a threshold of 6.0 × 0.95 = 5.7 m/s, so
 	# 2:55/km (1000/175 m/s) is intensity ~1.0: about 100 load for the hour. The
 	# fixture's zones put an HR125-147 band's midpoint (136) in zone 2, 55 an hour,
@@ -6293,7 +6274,7 @@ five_days_out! = |ctx| Str.trim(sh!("TZ='${ctx.tz}' date -v+5d +%F 2>/dev/null |
 b_activities! : Ctx => Try({}, _)
 b_activities! = |ctx| {
 	check!("3 activities (the power ride, its companion, the HR row)", strjq!(ctx, ["activities"], ".data | length") == "3")?
-	# NP 200 @ derived FTP 190 (config-FTP removed in #26): TSS ~110.8, IF ~1.05
+	# NP 200 @ derived FTP 190 (config-FTP removed ): TSS ~110.8, IF ~1.05
 	check_near!("101 tss ~111 (NP200 @ derived FTP 190)", sfloat(strjq!(ctx, ["activities"], ".data[] | select(.id==101) | .tss")), 110.8, 1.0)?
 	check_near!("101 intensity ~1.05 (200/190)", sfloat(strjq!(ctx, ["activities"], ".data[] | select(.id==101) | .intensity")), 1.053, 0.02)?
 	check_near!("102 hrTSS ~55", sfloat(strjq!(ctx, ["activities"], ".data[] | select(.id==102) | .tss")), 55.0, 1.0)?
@@ -6323,13 +6304,13 @@ b_load_stats! = |ctx| {
 	# `ctx.today` is read once from `date +%F` when the fixture is built; the binary reads
 	# its own clock when `load` runs, minutes later. A run crossing local midnight compared
 	# two different days and failed with nothing wrong — observed 2026-09-02, passing on an
-	# immediate re-run (#357).
+	# immediate re-run.
 	#
 	# The anchor stays a real CALENDAR day. Comparing the series end against `summary.as_of`
 	# instead looked like it removed the harness clock, but both come from the same stored
 	# row — Report reaches the latest day with `ORDER BY day DESC LIMIT`, twice, once for the
 	# series and once for as_of — so no database state can make them disagree, and that check
-	# could not see the series failing to reach today at all, which is the #200 regression
+	# could not see the series failing to reach today at all, which is the failure
 	# this exists for.
 	#
 	# So: rebuild the series HERE, bracketed by two clock reads. `analyze` calls
@@ -6341,10 +6322,10 @@ b_load_stats! = |ctx| {
 	# agree — every run but the vanishingly rare one — the assertion is STRICT, with no
 	# tolerance arm at all. Only when midnight fell inside that window is either day taken.
 	#
-	# The earlier form of this fix put the tolerance on `ctx.today` instead, which hid a
-	# genuine one-day lag on most straddling runs: the series end was frozen at an `analyze`
-	# far upstream, so a healthy series and a lagging one were indistinguishable. Rebuilding
-	# here is what removes that, rather than widening what the check will accept.
+	# The tolerance is NOT on `ctx.today`: there it would hide a genuine one-day lag on
+	# most straddling runs, because the series end is frozen at an `analyze` far
+	# upstream and a healthy series and a lagging one look alike. Rebuilding here removes
+	# that, rather than widening what the check will accept.
 	before_day = need("date +%F before rebuild", Str.trim(sh!("TZ=${ctx.tz} date +%F")))?
 	# The rebuild's exit code is ASSERTED, not discarded. `stride!` returns
 	# stdout even when the command exits non-zero — it captures
@@ -6380,7 +6361,7 @@ b_activity_detail! = |ctx| {
 	check!("no power streams -> w60 honest 0", strjq!(ctx, ["activity", "102"], ".data.power_bests.w60") == "0")?
 	check!("activity not-found", Str.contains(stride!(ctx.bin, ctx.home, ["activity", "999"]), "activity_not_found"))?
 
-	# ── aerobic decoupling (#94) ─────────────────────────────────────
+	# ── aerobic decoupling ─────────────────────────────────────
 	# 101 has power streams but NO heart rate, so drift is not computable. It must report
 	# honest ABSENCE, not 0 — a 0 would render a session with no strap identically to a
 	# perfectly steady ride, which is the whole reason the flag exists.
@@ -6422,7 +6403,7 @@ b_junk_filter! = |ctx| {
 	check!("corrupt streams flagged unreadable", strjq!(ctx, ["activity", "101"], ".data.streams_unreadable") == "true")?
 	# force 101 to recompute so analyze re-decodes the now-corrupt stream: the SQL stream
 	# swap above bypassed store_streams! (which is what deletes metrics on stream change),
-	# and config-FTP no longer invalidates anything post-#26.
+	# and config writes invalidate no metrics.
 	_ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 101;")
 	check!("analyze reports stream decode errors", sfloat(strjq!(ctx, ["analyze"], ".data.stream_errors")) >= 1.0)?
 	check!("activities non-numeric count", Str.contains(stride!(ctx.bin, ctx.home, ["activities", "banana"]), "bad_count"))?
@@ -6434,7 +6415,7 @@ b_junk_filter! = |ctx| {
 	# fixture, the bad date breaks `stride season` for the rest of every offline
 	# run — season is the one command that walks every activity date. A
 	# malformed date reaching the boundary as the catch-all instead of a named
-	# error is #243's subject.
+	# error is what this pins.
 	_ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 103; DELETE FROM activities WHERE id = 103;")
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 	check!("...and removing it lets season run again, which is how the leak was found", Str.contains(stride!(ctx.bin, ctx.home, ["season"]), "blocks"))?
@@ -6454,7 +6435,7 @@ b_junk_filter! = |ctx| {
 # rescored every time a today-anchored 60-day window slides.
 b_period_ftp! : Ctx => Try({}, _)
 b_period_ftp! = |ctx| {
-	# an FTP needs two sessions of the family in its window (#574), so each era
+	# an FTP needs two sessions of the family in its window, so each era
 	# has a mate five days earlier, and the checks pin the POWER rung with the
 	# era's own FTP rather than a load any rung could produce
 	_ = seed_ride!(ctx.db, "801", "Old Ride", "2024-01-10T09:00:00Z", "3600", "30000", "200", "150")
@@ -6484,7 +6465,7 @@ b_period_ftp! = |ctx| {
 	Ok({})
 }
 
-# ── ADR 0005 (amended): the PACE threshold is period-accurate too (#79) ──
+# ── ADR 0005 (amended): the PACE threshold is period-accurate too ──
 #
 # The pace twin of b_period_ftp!. A faster swim two years later must not
 # rescore the old one, as a single global threshold (best 20-min speed over
@@ -6492,7 +6473,7 @@ b_period_ftp! = |ctx| {
 # one number and requeue all history.
 b_period_pace! : Ctx => Try({}, _)
 b_period_pace! = |ctx| {
-	# a threshold needs two sessions in its window (#567), so each swim has a mate
+	# a threshold needs two sessions in its window, so each swim has a mate
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (810,'Old Swim Mate','Swim','2024-02-03T09:00:00Z',1800,2400),(811,'Old Swim','Swim','2024-02-10T09:00:00Z',1800,2400);")
 	_ = seed_pace_stream!(ctx.db, 810, 1300, 1)
 	_ = seed_pace_stream!(ctx.db, 811, 1300, 1)
@@ -6510,7 +6491,7 @@ b_period_pace! = |ctx| {
 	thr_new = sfloat(Str.trim(sql!(ctx.db, "SELECT ROUND(threshold_pace_used,3) FROM activity_metrics WHERE activity_id=812;")))
 	check!("each swim carries its OWN period threshold", thr_old < thr_new)?
 
-	# The blast radius (#79): sync deletes the metrics for its rolling window,
+	# The blast radius: sync deletes the metrics for its rolling window,
 	# and that must requeue only the affected rows, not every activity of that
 	# sport in history. A sentinel, not a count: `computed` accumulates across
 	# fixed-point passes, so the dropped row legitimately recomputes more than
@@ -6551,13 +6532,13 @@ b_period_pace! = |ctx| {
 	_ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (813,818); DELETE FROM activity_metrics WHERE activity_id IN (813,818); DELETE FROM streams WHERE activity_id IN (813,818);")
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 
-	# The #505 shape, end to end: a stroll logged as a run must not turn a short
+	# The stroll shape, end to end: a stroll logged as a run must not turn a short
 	# hard session into four-figure TSS. The stroll (40 min of stop-and-go,
 	# 0.6 m/s on average but 1 m/s while moving, which is what its 20-minute
 	# best measures) is the only best in the 15-minute session's trailing
 	# window (900 moving seconds
 	# is under the 1200-second best window, so the session has none of its own),
-	# and one session cannot anchor a threshold (#567): that arm yields nothing,
+	# and one session cannot anchor a threshold: that arm yields nothing,
 	# and the forward-fill arm scores the first sixty days of the sport against
 	# the long control's honest best instead, so the short session carries the
 	# same threshold the long run does and scores rtss at a sane magnitude. A
@@ -6576,7 +6557,7 @@ b_period_pace! = |ctx| {
 	_ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (814,815,816); DELETE FROM activity_metrics WHERE activity_id IN (814,815,816); DELETE FROM streams WHERE activity_id IN (814,815,816);")
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 
-	# #567: a lone session's threshold would be its own best, so a sport type with
+	# a lone session's threshold would be its own best, so a sport type with
 	# ONE pace-bearing session in the window derives no threshold and falls to the
 	# humble rungs; the second session gives both a threshold, and the first is
 	# rescored through the threshold-change invalidation. A hike, so the class
@@ -6601,11 +6582,11 @@ b_period_pace! = |ctx| {
 	_ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (819,820,822); DELETE FROM activity_metrics WHERE activity_id IN (819,820,822); DELETE FROM streams WHERE activity_id IN (819,820,822);")
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 
-	# The #565 shape, end to end: a strength-like session with a distance
+	# The walking-Workout shape, end to end: a strength-like session with a distance
 	# stream (a Workout whose watch kept recording a walk) must score neither
 	# the pace rung nor the pace intensity split from the threshold its sport
 	# type derives. A second Workout with a stream sits beside it so the
-	# threshold IS derived (the two-session rule of #567 is not what decides
+	# threshold IS derived (the two-session rule is not what decides
 	# this) and the check pins the class gate, not the absence of a threshold:
 	# the session falls to the humble HR rung with no hard seconds from pace.
 	# Same 2020 era so no other fixture's Workout sits inside the trailing window.
@@ -6634,8 +6615,8 @@ b_period_pace! = |ctx| {
 	# this pins - the refused ratio must not be stored as intensity_factor: a
 	# NULL there is what keeps intensity_known honest in the payload. The
 	# anchor itself scores power_stream at its own sane intensity (control).
-	# First, alone: one powered session derives no FTP (#574, the power twin of
-	# #567), so the anchor scores a lesser rung and the summary ride has no FTP
+	# First, alone: one powered session derives no FTP (the power twin of
+	# two-session rule), so the anchor scores a lesser rung and the summary ride has no FTP
 	# to be judged against; a second soft pedal gives the family its FTP 57.
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr,weighted_avg_watts,device_watts) VALUES (817,'Soft Pedal','Ride','2020-03-01T09:00:00Z',2400,10000,NULL,NULL,1),(818,'Summary Only Ride','Ride','2020-03-05T09:00:00Z',1800,15000,150,240,1);")
 	_ = seed_power_stream!(ctx.db, 817, 2400, 60)
@@ -6660,7 +6641,7 @@ b_period_pace! = |ctx| {
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 	check!("the second soft pedal gives the family its FTP and the first is rescored onto power", Str.trim(sql!(ctx.db, "SELECT load_model || '/' || CAST(ROUND(COALESCE(ftp_used, 0)) AS INTEGER) FROM activity_metrics WHERE activity_id=817;")) == "power_stream/57")?
 	# the session report's power split reads the FTP the session was scored
-	# with (#582): 60 W is hard against its era's 57 and easy against today's
+	# with: 60 W is hard against its era's 57 and easy against today's
 	# 190, so the report's hard seconds equal the split analyze stored and are
 	# not zero
 	rep817 = Str.trim(strjq!(ctx, ["activity", "817"], ".data.power_intensity.hard_s | tostring"))
@@ -6698,7 +6679,7 @@ b_progress_a! = |ctx| {
 	# then has nothing to read. Real power gives the lens real input.
 	_ = seed_power_stream!(ctx.db, 201, 1300, 180)
 	_ = seed_power_stream!(ctx.db, 202, 1300, 210)
-	# an FTP needs two sessions of the family with a best in the window (#574),
+	# an FTP needs two sessions of the family with a best in the window,
 	# so each era gets a companion of its own class (Companion Spin cannot group
 	# with Test Class) inside the trailing 60 days: the FTP those rides score by
 	# is still their era's own, and the EF lens still has np_w to read
@@ -6714,7 +6695,7 @@ b_progress_a! = |ctx| {
 	check!("progress chronological (earliest first)", strjq!(ctx, ["progress", "2025-06-01"], ".data.groups[0].sessions[0].date") == "2025-01-01")?
 	check_near!("progress EF[0] ~1.20", sfloat(strjq!(ctx, ["progress", "2025-06-01"], ".data.groups[0].sessions[0].score")), 1.20, 0.01)?
 	check_near!("progress EF[1] ~1.40", sfloat(strjq!(ctx, ["progress", "2025-06-01"], ".data.groups[0].sessions[1].score")), 1.40, 0.01)?
-	# #96: a workout with only ONE session must say so in its own terms — "one
+	# a workout with only ONE session must say so in its own terms — "one
 	# comparable session" read as though it pointed at some other session. Seeded
 	# as its own uniquely-named class so it cannot group with Test Class.
 	# id 204, not 203: b_progress_b! re-seeds 203 as a different activity, and
@@ -6723,7 +6704,7 @@ b_progress_a! = |ctx| {
 	# correctness depend on cleanup that looks redundant.
 	_ = seed_ride!(ctx.db, "204", "Solo Class", "2025-03-03T10:00:00Z", "3600", "20000", "190", "150")
 	_ = seed_power_stream!(ctx.db, 204, 1300, 190)
-	# its own era's companion (#574), another class, so Solo Class stays lone
+	# its own era's companion, another class, so Solo Class stays lone
 	_ = seed_ride!(ctx.db, "2041", "Companion Spin", "2025-02-20T10:00:00Z", "1300", "8000", "190", "150")
 	_ = seed_power_stream!(ctx.db, 2041, 1300, 190)
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
@@ -6759,7 +6740,7 @@ b_progress_b! = |ctx| {
 	_ = seed_power_stream!(ctx.db, 213, 1300, 170)
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 	check!("auto-name distance-gated to 2 sessions", strjq!(ctx, ["progress", "2025-03-01"], ".data.groups[0].sessions | length") == "2")?
-	# ── #294: an impossible heart rate is not a light session ─────────────────
+	# ── an impossible heart rate is not a light session ─────────────────
 	# `lens_score` tested `avg_hr > 0.0` while `valid_hr` (35-220) sat in the same
 	# module and decoupling already applied it — the codebase disbelieved a number
 	# in one place and built a training verdict on it in another: two rowing
@@ -6775,10 +6756,10 @@ b_progress_b! = |ctx| {
 	_ = seed_power_stream!(ctx.db, 233, 1300, 160)
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 	# the 18 bpm row would score 155/18 = 8.6 against ~1.1 for the real ones, so
-	# under the old predicate it becomes the "best" session and every trend reads
+	# under a presence-only predicate it becomes the "best" session and every trend reads
 	# off it. `doctor` reads the same column, and `> 0` is a presence test where
 	# this is a coverage measure — how many sessions the engine can USE a heart
-	# rate from (#312). What the change buys is not a smaller number (672 either
+	# rate from. What the change buys is not a smaller number (672 either
 	# way): a `has_hr` that cannot disagree with `with_hr`, and a CAST that stops
 	# a BLOB reading as strapless.
 	#
@@ -6807,12 +6788,12 @@ b_progress_b! = |ctx| {
 	# `avg_hr BETWEEN 35 AND 220` is FALSE for a BLOB (SQLite sorts BLOB above
 	# every number) while `> 0` was TRUE for it, an over-count fixed by an
 	# under-count on the same value class.
-	# 235 is the stream case (impossible STORED average, clean 150 stream, #311);
+	# 235 is the stream case (impossible STORED average, clean 150 stream);
 	# 236 is the CAST case (a BLOB of the bytes "100", which every other consumer
 	# casts and treats as 100 bpm).
 	before_hr = strjq!(ctx, ["doctor"], ".data.with_hr")
 	# moving_time 1300 to match the 1300-sample stream. Declared at 3600 the
-	# stream spans 0.36 of the session and #311's coverage gate refuses it —
+	# stream spans 0.36 of the session and the stream-coverage gate refuses it —
 	# correctly, that is a strap that died a third of the way in — so the row
 	# would fall back to its stored 18 and this check would measure a delta of 1
 	# where it means to measure 2.
@@ -6824,7 +6805,7 @@ b_progress_b! = |ctx| {
 	# version did, and it passed against the missing-CAST mutation it exists to catch.
 	_ = seed_power_stream!(ctx.db, 236, 1300, 200)
 	# 239 is the ZONE arm. Stored average 18, and a stream that stops at 1300 s
-	# of a 3600 s ride — span 0.36, so #311's coverage gate refuses it and
+	# of a 3600 s ride — span 0.36, so the stream-coverage gate refuses it and
 	# `avg_hr_stream` is NULL. Neither scalar can classify it. But the analyzer
 	# built zone seconds from those same samples, and the ladder scores load
 	# from them, so the engine demonstrably CAN use a heart rate here.
@@ -6848,8 +6829,8 @@ b_progress_b! = |ctx| {
 	# ...and it is scored `hr_zones`, which is what makes it the live row's shape rather
 	# than merely a row with zone seconds. Seeded with watts instead, the ladder takes the
 	# power rung and the `hr_zones` claim describes a different row.
-	# Scored this way it reproduces the contradiction end to end: the same payload counts it
-	# in `medium (HR / RPE)` and, before this change, excluded it from `with_hr`.
+	# Scored this way it is the contradiction end to end: the same payload counts it in
+	# `medium (HR / RPE)`, so `with_hr` must count it too.
 	check!("...and its load really was computed FROM heart rate, which is the contradiction", strjq!(ctx, ["activity", "239"], ".data.load_model") == "hr_zones")?
 	# ...and `has_hr` agrees. It is a separate query on a separate predicate,
 	# and this is its only check. A row doctor calls strapless in one field
@@ -6899,7 +6880,7 @@ b_progress_b! = |ctx| {
 	# than by the assertion — true today, invisible to anyone reading the check tomorrow.
 	check!("an 18 bpm row is refused by the speed/HR lens as well", strjq!(ctx, ["progress", "2025-02-15"], "[.data.groups[] | select(.name | startswith(\"HR Sanity Row\")) | \"\\(.lens)/\\(.sessions | length)\"] | join(\",\")") == "speed_hr/2")?
 	_ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (241,242,243); DELETE FROM activities WHERE id IN (241,242,243);")
-	# ── #300's half: the COMBINED reason. The agreement rule and both counts
+	# ── the COMBINED reason. The agreement rule and both counts
 	# are asserted only here. Reaching the both-causes arm needs an AUTO-NAMED
 	# group (only those truncate by distance; `is_auto_name` keys on the first
 	# word, so "Evening Ride" qualifies). A distinct prefix from the `Morning
@@ -6921,7 +6902,7 @@ b_progress_b! = |ctx| {
 	check!("a group hidden by BOTH gates counts each cause, and they sum to the total", ev_split == "1/1/2")?
 	ev_human = stride_human!(ctx.bin, ctx.home, ["progress", "2025-05-16"])
 	# The counts are asserted IN the sentence, not just in the payload. "or" was compatible
-	# with 1/1 and with 22/1 alike, which is the whole of #300: the machine surface knew the
+	# with 1/1 and with 22/1 alike, which is the whole point: the machine surface knew the
 	# split and the person was told a disjunction.
 	check!("...and the human line carries both numbers, not a disjunction", Str.contains(ev_human, "(1 hidden: a different distance for this workout; 1 shown unscored: needs power and HR)"))?
 	check!("...and does not offer the reader a guess between the two causes", !(Str.contains(ev_human, "a different distance for this workout, or")))?
@@ -6995,9 +6976,9 @@ b_progress_b! = |ctx| {
 	check!("bare progress has sessions", sfloat(strjq!(ctx, ["progress"], ".data.groups[0].sessions | length")) >= 1.0)?
 	check!("rowing anchor uses speed_hr lens", strjq!(ctx, ["progress"], ".data.groups[0].lens") == "speed_hr")?
 	check!("SpeedHr lens shows pace column", Str.contains(stride_human!(ctx.bin, ctx.home, ["progress"]), "pace (min/km)"))?
-	# ── #293: the gap fold END TO END ────────────────
+	# ── the gap fold END TO END ────────────────
 	#
-	# The gap marker folds over the UNFILTERED day series (#287). Direct Render
+	# The gap marker folds over the UNFILTERED day series. Direct Render
 	# calls with hand-built arguments cannot see the path from query through
 	# keep_scored into the renderer, so this drives it end to end: with
 	# `all_days = []` in ReportSessions.roc the fold runs over survivors on real
@@ -7017,11 +6998,9 @@ b_progress_b! = |ctx| {
 	# 1 = the legend alone. Counted, not `Str.contains`, for the reason above.
 	check!("a dropped ride does not fabricate a gap between the rows that remain (marks: ${U64.to_str(gp_marks)})", gp_marks == 1)?
 	# ...and the dropped ride is DECLARED, so this is a filtered view rather than
-	# a wrong one. The assertion pins the FULL clause, not "1 hidden": with ten
-	# more HR-less rides the render said "(11 hidden: …)" and the check still
-	# printed ok, because "11 hidden" contains "1 hidden". #286 reworded the
-	# clause to "shown unscored" — the property carried over, not the words: the
-	# FULL clause, so it cannot pass on the 11-count form.
+	# a wrong one. The assertion pins the FULL clause, not "1 shown unscored": with
+	# ten more HR-less rides the render says "(11 shown unscored: …)", which contains
+	# "1 shown unscored", so only the FULL clause cannot pass on the 11-count form.
 	check!("...and the group says one session was withheld", Str.contains(gap_probe, "(1 shown unscored: needs power and HR)"))?
 	_ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (221,222,223); DELETE FROM streams WHERE activity_id IN (221,222,223); DELETE FROM activities WHERE id IN (221,222,223);")
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
@@ -7072,7 +7051,7 @@ b_progress_b! = |ctx| {
 	check!("progress desc keeps the chronological verdict", Str.contains(desc_h, "declining") and Str.contains(asc_h, "declining"))?
 	check!("progress rejects a bad sort word", Str.contains(stride!(ctx.bin, ctx.home, ["progress", "2025-07-01", "sideways"]), "asc|desc"))?
 
-	# #84: the anchor session is not exempt from its own lens. Two rides sharing a name and
+	# the anchor session is not exempt from its own lens. Two rides sharing a name and
 	# distance so they group together, neither with power so the lens is speed/HR: the anchor
 	# has NO hr and drops out, the sibling stays. That kept the group non-empty, so the
 	# unscorable branch never fired and the table rendered as though the trend included the
@@ -7081,13 +7060,13 @@ b_progress_b! = |ctx| {
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (216,'Anchor Probe Ride','Ride','2025-04-20T08:00:00Z',3600,20000,140);")
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 	anchor_h = stride_human!(ctx.bin, ctx.home, ["progress", "2025-04-01"])
-	# The banner must not say the row "isn't shown in its own table": since #286
+	# The banner must not say the row "isn't shown in its own table":
 	# the row is rendered, with its lens cells blank, so it says where to look
 	# instead.
 	check!("an unscorable anchor says it is shown WITHOUT a score, not that it is missing", Str.contains(anchor_h, "is shown below WITHOUT a score"))?
 	check!("...and does not still claim the row is absent", !(Str.contains(anchor_h, "isn't shown in its own table")))?
 	check!("and the table still shows the scorable sibling", Str.contains(anchor_h, "2025-04-20"))?
-	# ...and the anchor ITSELF is in the table, which is the whole of #286's second half and
+	# ...and the anchor ITSELF is in the table, which is the whole point and
 	# what the banner now promises. Asserting the date alone would pass on the ⚠ line, which
 	# names it — so this asserts the TABLE ROW, by its leading border glyph.
 	check!("...and the unscorable anchor is rendered too, rather than dropped", Str.contains(anchor_h, "│ 2025-04-01 ◀"))?
@@ -7095,10 +7074,10 @@ b_progress_b! = |ctx| {
 	# here, so the row must carry "-" where the pace/HR figure would be; a `0.00` with an
 	# empty bar would read as a measured worst-ever session rather than an absent one.
 	check!("...with its lens cells blank, not a fabricated zero", !(Str.contains(anchor_h, "0.00")))?
-	# ...and the same row as the NEWEST session — a different code path, and the
-	# one that regressed: `last_vs_best` still read the unfiltered rows, so an
-	# unscorable newest session produced "last: 0.00 — 100% below your best", a
-	# fabricated zero in a SENTENCE two lines under a table printing "-" for it.
+	# ...and the same row as the NEWEST session — a different code path: if
+	# `last_vs_best` read the unfiltered rows, an unscorable newest session would
+	# produce "last: 0.00 — 100% below your best", a fabricated zero in a SENTENCE
+	# two lines under a table printing "-" for it.
 	# The fixture above cannot see it (its unscorable row is the OLDER one).
 	# Two rows, both load-bearing: 218 is a SECOND scored session (with one, the
 	# group takes the only-session arm and the line is absent — a check that
@@ -7205,7 +7184,7 @@ b_progress_b! = |ctx| {
 	Ok({})
 }
 
-# ── structure-first progress grouping (#96) ─────────────────────────────────────────
+# ── structure-first progress grouping ─────────────────────────────────────────
 # The two failure directions from the issue, reproduced in one fixture. NARROW: the same
 # 3×3min power workout ridden under three DIFFERENT class names — name grouping shows a
 # group of one, structure grouping must find all three. BROAD: a session SHARING the
@@ -7232,7 +7211,7 @@ b_progress_structure! = |ctx| {
 	# give: a ramp ride (five minutes at 320 W, then 200 W) on the 10th gives the
 	# family best_300 320, best_600 260 and best_20min 230, so every ride dated
 	# after it in the 90-day window fits a critical power. Against that fit the
-	# tank model does not run on an estimated-watts stream (#582): 1041 reads
+	# tank model does not run on an estimated-watts stream: 1041 reads
 	# not known while the measured 975 beside it is, so a missing fit cannot
 	# pass the first half. Both the ramp and 1041 leave before the progress
 	# checks below, and the rescore puts 975 and 976 back on their own FTP
@@ -7315,7 +7294,7 @@ b_import! = |ctx| {
 	check!("analyze after import", Str.contains(stride!(ctx.bin, ctx.home, ["analyze"]), "\"computed\":"))?
 	tss9001 = Str.trim(sql!(ctx.db, "SELECT ROUND(tss) FROM activity_metrics WHERE activity_id=9001;"))
 	check!("imported power ride gets TSS", tss9001 != "" and tss9001 != "0.0")?
-	# #112: invalidation must fire on a REAL change, not on every re-write. `sync` re-lists
+	# invalidation must fire on a REAL change, not on every re-write. `sync` re-lists
 	# a rolling 30-day window every run, so invalidating on re-list deleted a month of
 	# metrics per sync and left reports under-reporting load until the next analyze.
 	# `import` shares upsert_activity!, so it exercises the same mechanism without network.
@@ -7510,9 +7489,9 @@ b_rpe! = |ctx| {
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 	check!("sensorless strength scores none", Str.trim(sql!(ctx.db, "SELECT load_model FROM activity_metrics WHERE activity_id=301;")) == "none")?
 	check!("rpe over 10 refused", Str.contains(stride!(ctx.bin, ctx.home, ["rate", "301", "11"]), "bad_rpe"))?
-	# #201's headline case: `1e1` parses to 10.0, clears the 1..10 range guard, and
+	# The strict-parse headline case: `1e1` parses to 10.0, clears the 1..10 range guard, and
 	# writes a rating -- judgment-tier data that cannot be re-derived. The id argument
-	# of this same command was narrowed first and this one was left open.
+	# of this same command is narrowed the same way.
 	check!("an exponent RPE is refused", Str.contains(stride!(ctx.bin, ctx.home, ["rate", "301", "1e1"]), "bad_rpe"))?
 	check!("an exponent activity id is refused by rate", Str.contains(stride!(ctx.bin, ctx.home, ["rate", "3e2", "5"]), "bad_id"))?
 	check!("...and a fractional RPE still works", Str.contains(stride!(ctx.bin, ctx.home, ["rate", "301", "7.5"]), "\"rated\":301"))?
@@ -7566,12 +7545,12 @@ b_compare! = |ctx| {
 }
 
 # ── doctor: coverage + provenance + honest gaps + time mode ─────────
-# ── #440: the numbers both surfaces publish, asserted equal through both, and
+# ── the numbers both surfaces publish, asserted equal through both, and
 # a hostile bus that must not move the CLI. The window itself cannot run here,
-# but post-#448 every cross-surface value has ONE definition in a SQL view, so
+# but every cross-surface value has ONE definition in a SQL view, so
 # parity is provable as CLI JSON vs the very SELECTs the loaders run. The
 # window-side application of hostile directives is refusals_for's job — its
-# range set is the one the #439 parity pin in b_viz_caps! gates; THIS pass
+# range set is the one the parity pin in b_viz_caps! gates; THIS pass
 # proves the engine's answers do not move no matter what lands on the bus.
 b_cross_surface! : Ctx => Try({}, _)
 b_cross_surface! = |ctx| {
@@ -7759,7 +7738,7 @@ b_cross_surface! = |ctx| {
 	check!("the window's plan-strip query, read from its source, counts what the week command counts, with a done session seeded (${strip_done})", !Str.is_empty(plan_q) and strip_done != "0" and strip_done == week_done)?
 	check!("...and week_bounds' anchor would NOT count it, which is why the strip stays on the calendar (${bounds_done})", bounds_done == "0")?
 	_ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id = ${cs_done}; DELETE FROM activities WHERE id = 9502;")
-	# the window's anchor is the ATHLETE's day, not the machine's (#557). What
+	# the window's anchor is the ATHLETE's day, not the machine's. What
 	# this pins is the anchor's shape and sqlite's arithmetic on it: the
 	# expression read from the window's source, with the modifier a zone at
 	# UTC+14 resolves to (840 minutes), evaluated by a sqlite3 whose own zone is
@@ -7823,7 +7802,7 @@ b_cross_surface! = |ctx| {
 	Ok({})
 }
 
-# ── #439: bus capability discovery is served from the DATABASE, never a doc.
+# ── bus capability discovery is served from the DATABASE, never a doc.
 # The window cannot run headless here, so this pass plays the window's part:
 # it writes a small publish in publish_caps!'s exact shape and spellings (a
 # 2-view/1-field subset, not the full eight-and-five) and asserts the CLI
@@ -7929,7 +7908,7 @@ b_viz_caps! = |ctx| {
 	# a capture travels with its directive: history carries what was asked and
 	# the file the window wrote, and `captures` lists only the directives that
 	# asked for one, newest first, so an agent reads a file path without
-	# scanning the table (#579)
+	# scanning the table
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, capture, consumed, status, result, applied_at) VALUES (1, 'png', 1, 'applied', 'captures/power.png', datetime('now'));")
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (capture, consumed, status, error, applied_at) VALUES ('webm_stop', 1, 'applied_partial', 'capture webm_stop: no recording is running', datetime('now'));")
 	check!("history carries each directive's capture and result, empty for the rest", strjq!(ctx, ["viz"], "[.data.history[] | .capture + \"=\" + .result] | join(\",\")") == "webm_stop=,png=captures/power.png,=,=")?
@@ -8037,7 +8016,7 @@ b_viz_tick! = |ctx| {
 	check!("with every row closed a tick finds nothing", strjq!(ctx, ["viz", "tick"], ".data.found") == "false")?
 	# a capture needs a frame, which the tick has not: a valid kind is refused
 	# by name, a misspelt one with the vocabulary, and the mark records the
-	# refusal with no file (#579)
+	# refusal with no file
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, capture) VALUES (1, 'png');")
 	check!("the headless tick refuses a capture by name and marks the row partial with no file", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .capture + \"/\" + .error") == "applied_partial/png/capture png refused: the headless tick has no window to capture" and Str.trim(sql!(ctx.db, "SELECT status || '|' || COALESCE(error, '') || '|' || COALESCE(result, 'NULL') FROM viz_directives WHERE capture = 'png';")) == "applied_partial|capture png refused: the headless tick has no window to capture|NULL")?
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (capture) VALUES ('gif');")
@@ -8085,7 +8064,7 @@ b_viz_tick! = |ctx| {
 b_doctor! : Ctx => Try({}, _)
 b_doctor! = |ctx| {
 	check!("doctor activities > 0", sfloat(strjq!(ctx, ["doctor"], ".data.activities")) > 0.0)?
-	# #92 watchdog. Every assertion selects its OWN field with jq rather than matching the
+	# The junk-data watchdog. Every assertion selects its OWN field with jq rather than matching the
 	# whole report, so a number appearing elsewhere cannot satisfy it by accident.
 	# Seeded dated AFTER the fixture activities so they are genuinely the most recent —
 	# the streak is a newest-first walk, and rows seeded in the past would prove nothing.
@@ -8100,7 +8079,7 @@ b_doctor! = |ctx| {
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9404,'strapped ride','Ride','2099-03-04T10:00:00Z',3600,30000,0,140);")
 	check!("a strapped ride resets the streak", strjq!(ctx, ["doctor"], ".data.hr_missing_streak") == "0")?
 
-	# ...and an UNRANKABLE timestamp cannot head that walk (#255) — the site where
+	# ...and an UNRANKABLE timestamp cannot head that walk — the site where
 	# a wrong order is a wrong ANSWER: the streak is a leading-prefix fold over
 	# `ORDER BY … LIMIT 200`, so the published number is a function of the order.
 	# A strapless row with an impossible time on the newest day sorts to the head
@@ -8117,7 +8096,7 @@ b_doctor! = |ctx| {
 	est_after = sfloat(strjq!(ctx, ["doctor"], ".data.estimated_power_count_30d"))
 	check_near!("an estimated-power ride is counted in 30d", est_after, est_before + 1.0, 0.001)?
 	_ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (9401,9402,9403,9404,9405);")
-	# #92 junk%: pooled share over the window AND the worst single session, which answer
+	# junk%: pooled share over the window AND the worst single session, which answer
 	# different questions — pooled is the trend, worst is the incident. Counters are
 	# written where valid_hr / valid_watts run, so they are seeded directly here rather
 	# than by re-analyzing.
@@ -8167,21 +8146,20 @@ b_doctor! = |ctx| {
 	# to NoTz. That equivalence was assumed elsewhere and asserted nowhere; on
 	# main this write was the LAST statement of the body, leaking the blank zone
 	# into every scenario after it. Staged with SQL rather than `config set
-	# timezone ""` (now refused for every key class, #276): the equivalence is
+	# timezone ""` (now refused for every key class): the equivalence is
 	# about how Db.roc READS the column, and an older stride or a restored
 	# database can still hold an empty cell.
 	_ = sql!(ctx.db, "INSERT OR REPLACE INTO config (key, value) VALUES ('timezone', '');")
 	check!("empty timezone is the absent state, not an invalid one", strjq!(ctx, ["doctor"], ".data.time_ok") == "true" and Str.contains(strjq!(ctx, ["doctor"], ".data.time"), "UTC"))?
 	# restore before returning: three scenarios run after this one, and leaving the zone
 	# blank -- or on the unresolvable name set just above, which also resolves to UTC --
-	# hands them a binary on a different clock than the harness -- the same defect
-	# this PR fixes at b_config_ftp!. Latent today (nothing after here is date-sensitive)
-	# and a trap for the next date-sensitive check appended to the suite.
+	# hands them a binary on a different clock than the harness, a trap for any
+	# date-sensitive check appended to the suite.
 	_ = stride!(ctx.bin, ctx.home, ["config", "set", "timezone", ctx.tz])
 	Ok({})
 }
 
-# ── #73: estimated watts must not outrank honest fallbacks ──────────
+# ── estimated watts must not outrank honest fallbacks ──────────
 # Twin rides on ctx.d1 (ride 101's derived FTP 190 is in force): identical watts/HR,
 # only the device_watts flag differs. NULL (legacy rows, CSV imports) = measured;
 # 0 = Strava's estimate, which must fall through to the HR rung.
@@ -8195,7 +8173,7 @@ b_device_watts! = |ctx| {
 	# an estimated-watts STREAM is a model's output too: analyze drops it before
 	# any power figure, and the session report drops it the same way, so the
 	# report's split equals the stored one (both empty) rather than a split of
-	# Strava's estimate against the family's FTP (#582). The stream leaves
+	# Strava's estimate against the family's FTP. The stream leaves
 	# with the check; 401 stays as it was
 	_ = seed_power_stream!(ctx.db, 401, 1300, 200)
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
@@ -8209,7 +8187,7 @@ b_device_watts! = |ctx| {
 	# one pace-scored activity that SURVIVES to b_doctor!, so the confidence
 	# cross-check can guard the rtss rung — b_period_pace! seeds one and deletes
 	# it, so the rung is invisible there. A threshold speed needs two sessions
-	# of the sport in its window (#567), so the swim has a mate two days
+	# of the sport in its window, so the swim has a mate two days
 	# earlier. This row is the only guard on 'rtss' in high_models_sql.
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (404,'doctor pace swim mate','Swim',date('${ctx.d1}', '-2 days') || 'T05:00:00Z',1800,2400),(403,'doctor pace swim','Swim','${ctx.d1}T05:00:00Z',1800,2400);")
 	_ = seed_pace_stream!(ctx.db, 404, 1300, 1)
@@ -8261,7 +8239,7 @@ b_human! = |ctx| {
 	check!("and stops there — anchor-14 is outside the window", !(Str.contains(recent_block, first_out)))?
 	# ...and the JSON stays a list of REAL activities — no pseudo-rows without an id
 	check!("json recent list has no placeholder rows", strjq!(ctx, ["plan"], "[.data.recent_activities_14d[] | select(.id == null or .id == 0)] | length") == "0")?
-	# #103: the bundle exists to answer a planning question in ONE call, so its
+	# the bundle exists to answer a planning question in ONE call, so its
 	# activity rows carry the fields `activities` returns for the same rows —
 	# avg_hr above all, since "was that ride actually easy" is an average-HR
 	# question. Assert every row carries the full shape, not just the first.
@@ -8270,7 +8248,7 @@ b_human! = |ctx| {
 	Ok({})
 }
 
-# ── a reader must never be able to abort a writer (#80) ─────────────
+# ── a reader must never be able to abort a writer ─────────────
 # analyze rebuilds daily_load in one transaction. Under the rollback journal that locked
 # the whole db, and with busy_timeout 0 a concurrent reader failed instantly — a single
 # `stride week` in another terminal killed a running analyze and discarded its work.
@@ -8387,7 +8365,7 @@ need : Str, Str -> Try(Str, [SetupFailed(Str)])
 need = |what, v| if (Str.is_empty(v)) Err(SetupFailed(what)) else Ok(v)
 
 # stdout of a shell one-liner. The script's own exit status is NOT the assertion
-# here — since #163 a stride error exits non-zero, and the interesting output is
+# here — a stride error exits non-zero, and the interesting output is
 # the envelope it printed on the way out, which the Err payload carries.
 sh! : Str => Str
 sh! = |script|
@@ -8399,7 +8377,7 @@ sh! = |script|
 
 # run SQL against the db. The query is fed via a quoted heredoc so it can
 # contain BOTH single quotes (SQL literals) and double quotes (embedded JSON
-# fixtures) without shell-quoting breakage. Two guards (#226): `.timeout
+# fixtures) without shell-quoting breakage. Two guards: `.timeout
 # 5000`, because the sqlite3 CLI defaults to busy_timeout 0; and the failure
 # log, because a failing write is otherwise invisible three times over
 # (sqlite3 reports on stderr, sh! discards stderr AND the exit code, and
@@ -8472,7 +8450,7 @@ report_sandbox! = |home| {
 }
 
 # pace + HR stream: constant speed, HR drifting up in the second half — the
-# shape pace decoupling (#134) exists to measure.
+# shape pace decoupling exists to measure.
 seed_pace_hr_stream! : Str, I64, U64, U64 => {}
 seed_pace_hr_stream! = |db, id, n, mps| {
 	times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
@@ -8517,7 +8495,7 @@ seed_stalled_pace_stream! = |db, id, n, mps| {
 # metres) as Strava-style raw_json - the clean-motion counterpart of the
 # stalled seed above. With num below den the stream is stop-and-go: each second
 # moves 0 or 1 m, the pace stream drops the stopped seconds, and the measured
-# speed is 1 m/s while the average is num/den (3/5 is the stroll the #505
+# speed is 1 m/s while the average is num/den (3/5 is what the stroll
 # scenario seeds). With num at or above den every second moves and the two agree.
 seed_steady_pace_stream! = |db, id, n, num, den| {
 	times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
@@ -8529,7 +8507,7 @@ seed_steady_pace_stream! = |db, id, n, num, den| {
 
 # seed a constant-power stream (n 1 Hz samples at w watts) as Strava-style
 # raw_json, so an analyzed ride computes best_20min_w -> a derived per-sport
-# FTP (post-#26, FTP derives from stream power, not config). Inserted via the
+# FTP (, FTP derives from stream power, not config). Inserted via the
 # heredoc sql! — the JSON's double-quotes sit fine inside the single-quoted
 # SQL literal.
 seed_power_stream! : Str, I64, U64, U64 => {}
@@ -8595,7 +8573,7 @@ seed_hr_stream! = |db, id, n, hr| {
 
 # power + HR stream: constant watts and constant HR. The point of the pair is that the
 # ride's STORED summary avg_hr is set independently by the fixture, so a check can make the
-# two disagree — which is the whole of #311. In the real data they disagree because of
+# two disagree — which is the whole point. In the real data they disagree because of
 # dropout (a session storing 86.4 whose own stream means 147.7 across 42% missing samples);
 # a constant stream reproduces the disagreement without reproducing the dropout.
 seed_power_hr_stream! : Str, I64, U64, U64, U64 => {}
@@ -8635,8 +8613,8 @@ int_seq_go = |n, acc| if (n == 0) acc else int_seq_go(n - 1, List.prepend(acc, n
 # a 1 Hz power stream as JSON for the mock endpoint: time 0..n-1, constant w watts, and a
 # repeating HR sawtooth (120 + i%60, so 120–179 cycling every 60 s — enough for HR zones).
 # n must be >= 1200 so best_20min_w (and thus the derived FTP) is computed — the http twin of
-# seed_power_stream!. The old hardcoded 60-sample/30s stream was too sparse: resample_1s treats
-# 30s gaps as pauses, leaving < 1200 samples, so the 20-min best never populated and TSS was 0.
+# seed_power_stream!. A sparse stream (30 s steps) would not do: resample_1s treats 30 s gaps
+# as pauses, leaving < 1200 samples, so the 20-min best never populates and TSS reads 0.
 mock_power_stream_json : U64, U64 -> Str
 mock_power_stream_json = |n, w| {
 	times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
@@ -8659,7 +8637,7 @@ stride_env! = |bin, home, sargs, extra| {
 		.args(List.map(sargs, OsStr.from_str))
 		.env(OsStr.from_str("HOME"), OsStr.from_str(home))
 	cmd = List.fold(extra, base, |c, pair| c.env(OsStr.from_str(pair.0), OsStr.from_str(pair.1)))
-	# errors now exit non-zero (#163) and the platform surfaces that as
+	# errors now exit non-zero and the platform surfaces that as
 	# Err(NonZeroExitCode) — whose payload CARRIES the stdout we assert on. A
 	# bare Err(_) => "" would blind every error-code check in this suite.
 	match cmd.exec_output!() {
@@ -8669,7 +8647,7 @@ stride_env! = |bin, home, sargs, extra| {
 	}
 }
 
-# exit STATUS of a stride invocation (#163): 0 on success, 1 on any error
+# exit STATUS of a stride invocation: 0 on success, 1 on any error
 # envelope. Separate from the output helpers so a check can assert the process
 # contract without re-deriving it from text.
 # stride_status! cannot reach the mock — it sets only HOME and STRIDE_FORMAT — so no
@@ -8720,7 +8698,7 @@ seed_ride! = |db, id, name, date, secs, meters, watts, hr|
 spike_json! : {} => Str
 spike_json! = |{}|
 	# 1300 samples (>= the 1200-sample best_20min_w window) so the ride derives an FTP
-	# post-#26 (FTP now comes from stream power, not config); one 9999W spike at i=60 to
+	# (FTP now comes from stream power, not config); one 9999W spike at i=60 to
 	# verify junk-power filtering. Baseline 200W -> best_20min_w 200 -> derived FTP 190.
 	Str.trim(sh!("awk 'BEGIN{t=\"\";w=\"\";for(i=0;i<1300;i++){if(i>0){t=t\",\";w=w\",\"} t=t i; w=w (i==60?\"9999.0\":\"200.0\")} printf \"{\\\"time\\\":{\\\"data\\\":[%s]},\\\"watts\\\":{\\\"data\\\":[%s]}}\", t, w}'"))
 
@@ -8731,7 +8709,7 @@ write_csv! = |dir| {
 	r1 = "9001,\\\"Jul 1, 2025, 6:30:00 AM\\\",\\\"Morning ride, easy one\\\",Ride,3700,20.10,55,3600,20100.0,150,,180,190"
 	r2 = "9002,\\\"Jul 2, 2025, 7:00:00 PM\\\",Evening Row,Rowing,1900,5.00,30,1800,5000.0,0,145,,"
 	junk = "junk,not a date,Broken Row,Ride,x,y,z,q,w,e,r,t,y"
-	# #201: an exponent in the ID imported as 700 on the widened stdlib, and
+	# an exponent in the ID imported as 700 on the widened stdlib, and
 	# upsert_activity! is an UPSERT on that key -- it would overwrite whatever real
 	# activity holds id 700. An exponent in the DATE stored start_local as
 	# "2025-07-100T...", which every week filter compares as a STRING while
@@ -8774,7 +8752,7 @@ is_nonempty : Str -> Bool
 is_nonempty = |s| !(Str.is_empty(Str.trim(s))) and Str.trim(s) != "null"
 
 # print a check result; abort the run on the first failure.
-# #226: the failing check is where a botched fixture write SURFACES, so the
+# the failing check is where a botched fixture write SURFACES, so the
 # real cause is printed here — check! knows no db and no HOME, and with one
 # fixed log path it does not need to.
 # ONE line per check that PASSED (a failing check aborts anyway), so a driver
@@ -8784,7 +8762,7 @@ is_nonempty = |s| !(Str.is_empty(Str.trim(s))) and Str.trim(s) != "null"
 # PASS — and counting is the only thing that catches that shape (`if/else if`
 # on a Bool gets no redundancy analysis; a `match` on a tag would have been a
 # build error).
-# PER PROCESS, not a fixed path (#266): `sh` is a child of this binary, so
+# PER PROCESS, not a fixed path: `sh` is a child of this binary, so
 # `$PPID` in the script is this driver's pid — each invocation gets its own
 # tally. Roles repeat (`E2E_MODE=stops` runs six times per `just e2e-sync`), so
 # the mode was never a per-run identity: two drivers on one file inflate each
@@ -8806,7 +8784,7 @@ checks_log! = |{}| ".e2e-checks.${env_or!("E2E_MODE", "e2e")}.$PPID"
 # non-empty — only the real append path makes that true — at the END of a
 # driver, after hundreds of appends (at the start reset_checks! just deleted
 # it, so any statement is true under every implementation). The absence half
-# is the PRE-#266 shared name: reset removes it on entry, so finding it here
+# is the old shared tally name: reset removes it on entry, so finding it here
 # means something in THIS run wrote it. Called by every driver: the floor
 # drivers are exactly the ones that structurally cannot notice a shared tally.
 tally_is_scoped! : {} => Try({}, _)
@@ -8857,8 +8835,8 @@ sweep_litter! = |{}| {
 reset_checks! : {} => Try({}, _)
 reset_checks! = |{}| {
 	_ = sh!("rm -f ${checks_log!({})}")
-	# ...and the PRE-#266 name, once, on entry: every checkout that ran the old
-	# code holds a stale `.e2e-checks.<mode>` (18 of 19 sibling worktrees did), so
+	# ...and the old shared tally name, once, on entry: every checkout that ran the old
+	# code holds a stale `.e2e-checks.<mode>`, so
 	# the end-of-driver absence assertion would fire on the first run after
 	# upgrading, in a worktree where nothing wrote it. Removing HERE and asserting
 	# absence at the END makes the assertion mean "this run did not write it".

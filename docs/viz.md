@@ -527,7 +527,7 @@ comparison: a workout and a ride both plot bpm and still answer no question
 side by side. The pair is re-judged whenever the live session changes, so a
 ghost cannot outlive a switch to a session of another kind.
 
-This is the view #372 calls "auditable". A table of segments can tell you the
+This is the auditable view. A table of segments can tell you the
 detector found seven work blocks; only the overlay tells you whether a block
 started before the power did.
 

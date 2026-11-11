@@ -1052,9 +1052,9 @@ Db :: [].{
 		}
 
 	# every family's month-close threshold in tenths, all families in ONE read
-	# of the expensive monthly_threshold view - the read the old per-family
-	# loader repeated. A month/family with no threshold simply has no row here,
-	# and the assembler above scores it 0.
+	# of the expensive monthly_threshold view, rather than one read per family.
+	# A month/family with no threshold simply has no row here, and the
+	# assembler above scores it 0.
 	load_all_thresholds! : Sqlite.Db => List({ fam : Str, month : Str, ftp10 : I64 })
 	load_all_thresholds! = |db|
 		match db.query!("SELECT CAST(fam AS TEXT) AS f, CAST(month AS TEXT) AS m, CAST(ROUND(value * 10) AS INTEGER) AS f10 FROM monthly_threshold", []) {
