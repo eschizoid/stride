@@ -189,6 +189,7 @@ Ui :: [].{
 		plan_hint : Text.Prepared,
 		nav : List({ p : Text.Prepared, v : U8 }),
 		heat : List(Db.HeatDay),
+		strength : Db.StrengthView,
 		heat_events : List(Str),
 		heat_title : Text.Prepared,
 		heat_hint : Text.Prepared,

@@ -894,7 +894,7 @@ Db :: [].{
 						Ok(x) => x
 						Err(_) => ""
 					}
-					vn = if (v == 0) "form" else if (v == 1) "power" else if (v == 2) "trace" else if (v == 3) "table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else if (v == 8) "career" else if (v >= 0) "view ${I64.to_str(v)} (ignored)" else ""
+					vn = if (v == 0) "form" else if (v == 1) "power" else if (v == 2) "trace" else if (v == 3) "table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else if (v == 8) "career" else if (v == 9) "lifts" else if (v >= 0) "view ${I64.to_str(v)} (ignored)" else ""
 					rgp = if (rg > 0) "${I64.to_str(rg)}d" else ""
 					joined = Str.join_with(List.keep_if([vn, rgp], |s2| s2 != ""), " / ")
 					parts = if (joined == "") "steer" else joined
@@ -1010,9 +1010,11 @@ Db :: [].{
 	# picker caches its sessions.
 	CareerSpine : { fam : Str, kind : Str, rows : List(CareerMonth) }
 	CareerSport : { sport : Str, sessions : I64, hours10 : I64, dist_m : F64 }
+	# Strength has its own tab, which reads lifts rather than monthly tonnage,
+	# so the career spine leaves the tonnage kind out.
 	load_spine_fams! : Sqlite.Db => List(SpineFam)
 	load_spine_fams! = |db|
-		match db.query!("SELECT CAST(fam AS TEXT) AS f, CAST(kind AS TEXT) AS k, COUNT(*) AS n FROM monthly_threshold GROUP BY fam, kind ORDER BY n DESC, fam", []) {
+		match db.query!("SELECT CAST(fam AS TEXT) AS f, CAST(kind AS TEXT) AS k, COUNT(*) AS n FROM monthly_threshold WHERE kind <> 'tonnage' GROUP BY fam, kind ORDER BY n DESC, fam", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(
@@ -1555,6 +1557,157 @@ Db :: [].{
 		{ rows, pasted }
 	}
 
+	# ── the strength view's data. The strength family is Sports' own, under
+	# its head sport type, the same head activity_family_month files every
+	# strength session under, so Workout and WeightTraining read as one.
+	LiftPt : { day : Str, kg : F64 }
+	Lift : { exercise : Str, points : List(LiftPt) }
+	StrengthWeek : { mon : Str, total : I64, with_sets : I64 }
+	TonMonth : { month : Str, kg : F64, covered : I64, total : I64, partial : Bool }
+	LastLift : { id : I64, day : Str, name : Str, log : StrengthLog }
+	Unlogged : { day : Str, name : Str }
+	StrengthView : { lifts : List(Lift), last : LastLift, unlogged : List(Unlogged), weeks : List(StrengthWeek), tonnage : List(TonMonth), mass : [Metric, Imperial] }
+
+	empty_strength_view : StrengthView
+	empty_strength_view = { lifts: [], last: { id: -1, day: "", name: "", log: { rows: [], pasted: Bool.False } }, unlogged: [], weeks: [], tonnage: [], mass: Metric }
+
+	# Which session the strength view shows: the newest one with sets stored,
+	# and every newer session that has none, so a class taken without logging
+	# never hides the last lifting the athlete did record. Sessions arrive
+	# newest first; with none logged the newest is shown with its absence.
+	RecentLift : { id : I64, day : Str, name : Str, has_sets : Bool }
+	pick_last : List(RecentLift) -> { shown : [Shown(RecentLift), NoneYet], newer : List(Unlogged) }
+	pick_last = |recent| {
+		newer = List.map(List.take_first(recent, (List.find_first_index(recent, |r| r.has_sets)).ok_or(0)), |r| { day: r.day, name: r.name })
+		shown = match List.find_first(recent, |r| r.has_sets) {
+			Ok(r) => Shown(r)
+			Err(_) =>
+				match List.first(recent) {
+					Ok(r) => Shown(r)
+					Err(_) => NoneYet
+				}
+		}
+		{ shown, newer }
+	}
+
+	# The unit the strength view weighs in. A set `units` config decides it.
+	# Unset, the stored weights decide: an athlete who loads plates and
+	# dumbbells in pounds stores whole pounds (25 lb is 11.34 kg), one who
+	# loads in kilograms stores whole or half kilograms, and the larger group
+	# wins, pounds on a tie.
+	mass_units : Str, List(F64) -> [Metric, Imperial]
+	mass_units = |config, kgs|
+		if config != "" {
+			Units.units_of(config)
+		} else {
+			whole = |v| (v - I64.to_f64((F64.round_to_i64_try(v)) ?? 0)).abs() < 0.06
+			lb_n = List.len(List.keep_if(kgs, |k| k > 0.0 and whole(k / Units.lb_kg)))
+			kg_n = List.len(List.keep_if(kgs, |k| k > 0.0 and whole(k * 2.0)))
+			if (lb_n >= kg_n) Imperial else Metric
+		}
+
+	strength_head : Str
+	strength_head = (List.first(Sports.family("strength"))).ok_or("WeightTraining")
+
+	# rows of (exercise, day, heaviest weight that day), ordered by exercise
+	# then day, folded into one Lift per exercise. A lift needs two days to
+	# show a direction, so a single-day lift is left out; the most-trained
+	# lift (most days) comes first.
+	lifts_from_rows : List({ exercise : Str, day : Str, kg : F64 }) -> List(Lift)
+	lifts_from_rows = |rows| {
+		by_lift = List.fold(
+			rows,
+			[],
+			|acc, r|
+				match List.last(acc) {
+					Ok(l) if l.exercise == r.exercise => List.append(List.take_first(acc, List.len(acc) - 1), { ..l, points: List.append(l.points, { day: r.day, kg: r.kg }) })
+					_ => List.append(acc, { exercise: r.exercise, points: [{ day: r.day, kg: r.kg }] })
+				},
+		)
+		List.sort_with(
+			List.keep_if(by_lift, |l| List.len(l.points) >= 2),
+			|a, b| {
+				na = List.len(a.points)
+				nb = List.len(b.points)
+				if (na >= nb) Before else After
+			},
+		)
+	}
+
+	load_strength_view! : Sqlite.Db, Str => StrengthView
+	load_strength_view! = |db, today_mod| {
+		head = strength_head
+		lift_rows = match db.query!("SELECT CAST(s.exercise AS TEXT) AS lx, CAST(substr(a.start_local, 1, 10) AS TEXT) AS ld, CAST(MAX(s.weight_kg) AS REAL) AS lkg FROM strength_sets s JOIN activities a ON a.id = s.activity_id WHERE s.weight_kg > 0 AND s.reps > 0 GROUP BY s.exercise, substr(a.start_local, 1, 10) ORDER BY s.exercise, substr(a.start_local, 1, 10)", []) {
+			Err(_) => []
+			Ok(rs) =>
+				List.keep_oks(
+					rs,
+					|r| {
+						ex = r.str("lx") ? |_| "bad lx"
+						d = r.str("ld") ? |_| "bad ld"
+						kg = r.f64("lkg") ? |_| "bad lkg"
+						Ok({ exercise: ascii_safe(ex), day: d, kg })
+					},
+				)
+		}
+		recent = match db.query!("SELECT a.id AS sid, CAST(substr(a.start_local, 1, 10) AS TEXT) AS sd, CAST(COALESCE(a.name, '') AS TEXT) AS sn, EXISTS (SELECT 1 FROM strength_sets s WHERE s.activity_id = a.id) AS shs FROM activities a JOIN activity_family_month fm ON fm.activity_id = a.id WHERE fm.fam = :h ORDER BY a.start_local DESC LIMIT 30", [{ name: ":h", value: String(head) }]) {
+			Err(_) => []
+			Ok(rs) =>
+				List.keep_oks(
+					rs,
+					|r| {
+						sid = r.i64("sid") ? |_| "bad sid"
+						sd = r.str("sd") ? |_| "bad sd"
+						sn = r.str("sn") ? |_| "bad sn"
+						hs = r.i64("shs") ? |_| "bad shs"
+						Ok({ id: sid, day: sd, name: ascii_safe(sn), has_sets: hs == 1 })
+					},
+				)
+		}
+		picked = pick_last(recent)
+		last = match picked.shown {
+			Shown(r) => { id: r.id, day: r.day, name: r.name, log: load_sets!(db, r.id) }
+			NoneYet => empty_strength_view.last
+		}
+		config_units = match db.query!("SELECT CAST(value AS TEXT) AS v FROM config WHERE key = 'units'", []) {
+			Ok(rs) => (List.first(rs)).map_ok(|r| r.str("v") ?? "").ok_or("")
+			Err(_) => ""
+		}
+		kgs = match db.query!("SELECT CAST(weight_kg AS REAL) AS w FROM strength_sets WHERE weight_kg > 0", []) {
+			Ok(rs) => List.keep_oks(rs, |r| r.f64("w"))
+			Err(_) => []
+		}
+		weeks = match db.query!("WITH RECURSIVE w(mon, k) AS (SELECT date(date('now', '${today_mod}'), '-6 days', 'weekday 1'), 0 UNION ALL SELECT date(mon, '-7 days'), k + 1 FROM w WHERE k < 11), s AS (SELECT date(substr(a.start_local, 1, 10), '-6 days', 'weekday 1') AS m, CASE WHEN EXISTS (SELECT 1 FROM strength_sets ss WHERE ss.activity_id = a.id) THEN 1 ELSE 0 END AS ws FROM activities a JOIN activity_family_month fm ON fm.activity_id = a.id WHERE fm.fam = :h) SELECT CAST(w.mon AS TEXT) AS wm, CAST(COUNT(s.m) AS INTEGER) AS wn, CAST(COALESCE(SUM(s.ws), 0) AS INTEGER) AS wws FROM w LEFT JOIN s ON s.m = w.mon GROUP BY w.mon ORDER BY w.mon", [{ name: ":h", value: String(head) }]) {
+			Err(_) => []
+			Ok(rs) =>
+				List.keep_oks(
+					rs,
+					|r| {
+						m = r.str("wm") ? |_| "bad wm"
+						n = r.i64("wn") ? |_| "bad wn"
+						ws = r.i64("wws") ? |_| "bad wws"
+						Ok({ mon: m, total: n, with_sets: ws })
+					},
+				)
+		}
+		tonnage = match db.query!("SELECT CAST(c.month AS TEXT) AS tm, CAST(c.covered AS INTEGER) AS tc, CAST(c.total AS INTEGER) AS tt, CAST(COALESCE((SELECT SUM(s.sets * s.reps * s.weight_kg) FROM strength_sets s JOIN activity_family_month f2 ON f2.activity_id = s.activity_id WHERE f2.fam = c.fam AND f2.month = c.month), 0) AS REAL) AS tkg, (c.month = strftime('%Y-%m', date('now', '${today_mod}'))) AS tp FROM strength_coverage c ORDER BY c.month", []) {
+			Err(_) => []
+			Ok(rs) =>
+				List.keep_oks(
+					rs,
+					|r| {
+						m = r.str("tm") ? |_| "bad tm"
+						cv = r.i64("tc") ? |_| "bad tc"
+						tt = r.i64("tt") ? |_| "bad tt"
+						kg = r.f64("tkg") ? |_| "bad tkg"
+						pt = r.i64("tp") ? |_| "bad tp"
+						Ok({ month: m, kg, covered: cv, total: tt, partial: pt == 1 })
+					},
+				)
+		}
+		{ lifts: lifts_from_rows(lift_rows), last, unlogged: picked.newer, weeks, tonnage: List.take_last(tonnage, 12), mass: mass_units(config_units, kgs) }
+	}
+
 	load_splits! : Sqlite.Db, I64, F64 => List(Series.Split)
 	load_splits! = |db, aid, split_m|
 		Series.splits(load_dist_pairs!(db, aid), [], [], split_m)
@@ -1820,3 +1973,33 @@ expect Db.grouped(0) == "0" and Db.grouped(999) == "999" and Db.grouped(1000) ==
 expect Db.grouped(-1234) == "-1,234" and Db.grouped(-999) == "-999" and Db.grouped(-9_223_372_036_854_775_807 - 1) == "-9,223,372,036,854,775,808"
 expect Db.num_unit(447, "h") == "447 h" and Db.num_unit(13201, "mi") == "13,201 mi"
 expect Db.trace_step(0) == 1 and Db.trace_step(800) == 1 and Db.trace_step(1599) == 1 and Db.trace_step(1600) == 2 and Db.trace_step(14349) == 17
+
+# lifts fold per exercise in day order; a one-day lift shows no direction and
+# is left out; the lift trained on the most days leads
+expect {
+	ls = Db.lifts_from_rows([{ exercise: "Curl", day: "2026-10-01", kg: 9.0 }, { exercise: "Curl", day: "2026-10-08", kg: 11.0 }, { exercise: "Press", day: "2026-10-01", kg: 20.0 }, { exercise: "Row", day: "2026-09-01", kg: 13.0 }, { exercise: "Row", day: "2026-09-08", kg: 13.0 }, { exercise: "Row", day: "2026-10-08", kg: 15.0 }])
+	List.map(ls, |l| l.exercise) == ["Row", "Curl"] and List.map(ls, |l| List.len(l.points)) == [3, 2]
+}
+expect Db.strength_head == "WeightTraining"
+# the newest session with sets is shown, and the newer unlogged ones are
+# named; with nothing logged the newest is shown as it is
+expect {
+	r = |id, d, hs| { id, day: d, name: "s${I64.to_str(id)}", has_sets: hs }
+	p = Db.pick_last([r(3, "2026-11-07", Bool.False), r(2, "2026-11-04", Bool.False), r(1, "2026-11-01", Bool.True)])
+	p.shown == Shown(r(1, "2026-11-01", Bool.True)) and List.map(p.newer, |u| u.day) == ["2026-11-07", "2026-11-04"]
+}
+expect {
+	r = |id, d, hs| { id, day: d, name: "s", has_sets: hs }
+	p = Db.pick_last([r(2, "2026-11-07", Bool.True), r(1, "2026-11-01", Bool.True)])
+	p.shown == Shown(r(2, "2026-11-07", Bool.True)) and List.is_empty(p.newer)
+}
+expect {
+	p = Db.pick_last([{ id: 5, day: "2026-11-07", name: "s", has_sets: Bool.False }])
+	p.shown == Shown({ id: 5, day: "2026-11-07", name: "s", has_sets: Bool.False }) and List.is_empty(p.newer)
+}
+expect Db.pick_last([]).shown == NoneYet
+# a set units config decides; unset, whole-pound weights win, and whole or
+# half kilograms lose to them only when they are the larger group
+expect Db.mass_units("metric", [11.34, 22.68]) == Metric and Db.mass_units("imperial", [10.0, 20.0]) == Imperial
+expect Db.mass_units("", [11.3398, 22.6796, 15.9, 10.0]) == Imperial
+expect Db.mass_units("", [10.0, 20.0, 12.5, 11.3398]) == Metric

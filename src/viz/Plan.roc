@@ -2,6 +2,7 @@ import rr.Color
 import rr.Draw
 import rr.Text
 import core.Fmt
+import Days
 import Db
 import Theme
 import Ui
@@ -118,7 +119,7 @@ Plan :: [].{
 		win_h = model.win.h
 		ink_muted = Theme.ink_muted
 		ink_faint = Theme.ink_faint
-		model.plan_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+		model.plan_title.draw!(frame, { pos: { x: Days.title_x, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		# ── the week as a quest: one pip per weekday, Monday first, colored by
 		# what became of that day, and the label counts the done sessions.
 		# The whole row pulses when every prescribed session is done.

@@ -87,7 +87,7 @@ Everything lives in `~/.stride/db.sqlite`. Query it with `sqlite3`, back it up w
 
 ## The desktop app
 
-`Stride.app` reads the same database in a window: the form board, power and pace curves, a session trace with detected intervals, a day table, the week's plan with each session's result, a year heat map, weekly zones and ramp, and a career view. `TAB` cycles the views. Releases ship it for macOS, Linux and Windows, the installer offers it on macOS, and `just viz-app` builds it from source. A coach can steer the window through the database and capture what it shows; [docs/viz.md](docs/viz.md) has the details.
+`Stride.app` reads the same database in a window: the form board, power and pace curves, a session trace with detected intervals, one day-by-day tab (the week's plan with each session's result, a day table, and a year heat map), a lifts tab with each lift's heaviest weight over time, weekly zones and ramp, and a career view. `TAB` cycles the views. Releases ship it for macOS, Linux and Windows, the installer offers it on macOS, and `just viz-app` builds it from source. A coach can steer the window through the database and capture what it shows; [docs/viz.md](docs/viz.md) has the details.
 
 <table>
   <tr>
