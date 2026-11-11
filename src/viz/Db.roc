@@ -929,6 +929,23 @@ Db :: [].{
 	# `days` is how many of the week's seven days the series covers, through
 	# series_clock's today: 7 for every finished week, fewer for the current one.
 	ZoneWeek : { wk : Str, days : I64, z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, easy : I64, moderate : I64, hard : I64 }
+	# the sport suffixes of the per-sport HR zone keys in config
+	# (hr_z2_max_ride names "ride"), each once, sorted; empty when every sport
+	# shares the global zones
+	load_zone_overrides! : Sqlite.Db => List(Str)
+	load_zone_overrides! = |db|
+		match db.query!("SELECT DISTINCT CAST(substr(key, 11) AS TEXT) AS s FROM config WHERE key GLOB 'hr_z[1-4]_max_?*' ORDER BY s", []) {
+			Err(_) => []
+			Ok(rows) =>
+				List.keep_oks(
+					rows,
+					|r| {
+						v = r.str("s") ? |_| "bad"
+						Ok(v)
+					},
+				)
+		}
+
 	load_zone_weeks! : Sqlite.Db => List(ZoneWeek)
 	load_zone_weeks! = |db|
 		match db.query!("WITH mondays(wk) AS (SELECT date(mon, '-77 days') FROM week_bounds UNION ALL SELECT date(wk, '+7 days') FROM mondays WHERE wk < (SELECT mon FROM week_bounds)), agg AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, SUM(z1_s) AS z1, SUM(z2_s) AS z2, SUM(z3_s) AS z3, SUM(z4_s) AS z4, SUM(z5_s) AS z5, SUM(CASE WHEN polarized = 1 THEN easy_s ELSE 0 END) AS easy, SUM(CASE WHEN polarized = 1 THEN moderate_s ELSE 0 END) AS moderate, SUM(CASE WHEN polarized = 1 THEN hard_s ELSE 0 END) AS hard FROM activity_intensity WHERE day >= (SELECT date(mon, '-77 days') FROM week_bounds) GROUP BY awk) SELECT CAST(m.wk AS TEXT) AS wk, CAST(MIN(7, MAX(0, julianday((SELECT today FROM series_clock)) - julianday(m.wk) + 1)) AS INTEGER) AS dys, CAST(COALESCE(a.z1, 0) AS INTEGER) AS z1, CAST(COALESCE(a.z2, 0) AS INTEGER) AS z2, CAST(COALESCE(a.z3, 0) AS INTEGER) AS z3, CAST(COALESCE(a.z4, 0) AS INTEGER) AS z4, CAST(COALESCE(a.z5, 0) AS INTEGER) AS z5, CAST(COALESCE(a.easy, 0) AS INTEGER) AS easy, CAST(COALESCE(a.moderate, 0) AS INTEGER) AS moderate, CAST(COALESCE(a.hard, 0) AS INTEGER) AS hard FROM mondays m LEFT JOIN agg a ON a.awk = m.wk ORDER BY m.wk ASC", []) {
@@ -1025,7 +1042,7 @@ Db :: [].{
 				rows = List.map(
 					base,
 					|b| {
-						ftp10 = List.fold(thr, 0, |acc, x| if (x.fam == f.fam and x.month == b.month) x.ftp10 else acc)
+						ftp10 = List.fold(thr, 0, |acc, x| if (x.fam == f.fam and x.kind == f.kind and x.month == b.month) x.ftp10 else acc)
 						{ month: b.month, load: b.load, ftp10, partial: b.partial }
 					},
 				)
@@ -1073,22 +1090,24 @@ Db :: [].{
 				)
 		}
 
-	# every family's month-close threshold in tenths, all families in ONE read
-	# of the expensive monthly_threshold view, so the view runs once per load
-	# however many families there are. A month/family with no threshold has no
-	# row here, and the assembler above scores it 0.
-	load_all_thresholds! : Sqlite.Db => List({ fam : Str, month : Str, ftp10 : I64 })
+	# every family's month-close threshold in tenths, every kind, in ONE read
+	# of the expensive monthly_threshold view. A family can carry two kinds (a
+	# run with a power meter has both a power and a pace threshold), so a row
+	# names its kind. A month/family/kind with no threshold has no row here,
+	# and the assembler above scores it 0.
+	load_all_thresholds! : Sqlite.Db => List({ fam : Str, kind : Str, month : Str, ftp10 : I64 })
 	load_all_thresholds! = |db|
-		match db.query!("SELECT CAST(fam AS TEXT) AS f, CAST(month AS TEXT) AS m, CAST(ROUND(value * 10) AS INTEGER) AS f10 FROM monthly_threshold", []) {
+		match db.query!("SELECT CAST(fam AS TEXT) AS f, CAST(kind AS TEXT) AS k, CAST(month AS TEXT) AS m, CAST(ROUND(value * 10) AS INTEGER) AS f10 FROM monthly_threshold", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(
 					rows,
 					|r| {
 						f = r.str("f") ? |_| "bad"
+						k = r.str("k") ? |_| "bad"
 						m = r.str("m") ? |_| "bad"
 						f10 = r.i64("f10") ? |_| "bad"
-						Ok({ fam: f, month: m, ftp10: f10 })
+						Ok({ fam: f, kind: k, month: m, ftp10: f10 })
 					},
 				)
 		}
@@ -1284,8 +1303,16 @@ Db :: [].{
 	# still outranks everything (a meter is the most direct measurement on
 	# the chart). The family gate keeps rides off the pace channel: a ride's
 	# distance stream is real but nobody reads a ride in min/km.
+	# the families whose trace is pace when no power stream exists: every
+	# family a pace target can be written for (Sports.pace_target_families),
+	# as an SQL list, so adding a pace family there adds its trace here
+	pace_trace_fams_sql : Str
+	pace_trace_fams_sql = Str.join_with(List.map(Sports.pace_target_families, |f| "'${f}'"), ",")
+
+	expect pace_trace_fams_sql == "'Run','Walk','Swim','Rowing'"
+
 	trace_menu_q : Str
-	trace_menu_q = "SELECT a.id AS id, CAST(substr(a.start_local, 1, 10) AS TEXT) AS day, CAST(COALESCE(a.name,'') AS TEXT) AS name, CAST(COALESCE(a.sport_family,'') AS TEXT) AS sport, CASE WHEN json_extract(st.raw_json,'$.watts.data') IS NOT NULL THEN '$.watts.data' WHEN a.sport_family IN ('Run','Walk','Swim') AND json_extract(st.raw_json,'$.distance.data') IS NOT NULL AND json_extract(st.raw_json,'$.time.data') IS NOT NULL THEN 'pace' ELSE '$.heartrate.data' END AS chan FROM activities a JOIN streams st ON st.activity_id = a.id WHERE json_extract(st.raw_json,'$.watts.data') IS NOT NULL OR json_extract(st.raw_json,'$.heartrate.data') IS NOT NULL OR (a.sport_family IN ('Run','Walk','Swim') AND json_extract(st.raw_json,'$.distance.data') IS NOT NULL AND json_extract(st.raw_json,'$.time.data') IS NOT NULL) ORDER BY a.start_local DESC LIMIT :lim"
+	trace_menu_q = "SELECT a.id AS id, CAST(substr(a.start_local, 1, 10) AS TEXT) AS day, CAST(COALESCE(a.name,'') AS TEXT) AS name, CAST(COALESCE(a.sport_family,'') AS TEXT) AS sport, CASE WHEN json_extract(st.raw_json,'$.watts.data') IS NOT NULL THEN '$.watts.data' WHEN a.sport_family IN (${pace_trace_fams_sql}) AND json_extract(st.raw_json,'$.distance.data') IS NOT NULL AND json_extract(st.raw_json,'$.time.data') IS NOT NULL THEN 'pace' ELSE '$.heartrate.data' END AS chan FROM activities a JOIN streams st ON st.activity_id = a.id WHERE json_extract(st.raw_json,'$.watts.data') IS NOT NULL OR json_extract(st.raw_json,'$.heartrate.data') IS NOT NULL OR (a.sport_family IN (${pace_trace_fams_sql}) AND json_extract(st.raw_json,'$.distance.data') IS NOT NULL AND json_extract(st.raw_json,'$.time.data') IS NOT NULL) ORDER BY a.start_local DESC LIMIT :lim"
 
 	# The cap runs AFTER the ascii_safe gate, because the gate can grow what
 	# it maps (an arrow becomes "->"): capping first would let a gated name
@@ -1330,22 +1357,40 @@ Db :: [].{
 
 	# The y axis names what the chosen channel counts, so the label cannot
 	# disagree with the samples underneath it. Pace speaks the sport's own
-	# unit - per 100 m for a swim, the athlete's kilometre or mile on foot -
-	# and the samples stay SI m/s, only the label converts.
+	# unit - per 100 m for a swim, per 500 m on the erg, the athlete's
+	# kilometre or mile on foot - and the samples stay SI m/s, only the label
+	# converts.
 	trace_unit : Str, [Metric, Imperial], Str -> Str
 	trace_unit = |chan, units, sport|
 		if (chan == hr_chan) ("bpm")
-		else if (chan == pace_chan) (if (Sports.canonical(sport) == "Swim") swim_pace_unit else Units.pace_unit(units))
+		else if (chan == pace_chan) (if (fixed_pace_fam(sport)) (Str.concat("min", Sports.pace_unit(Sports.canonical(sport)).label)) else Units.pace_unit(units))
 		else "W"
+
+	# a family paced over a fixed distance in every unit culture (Sports
+	# pace_label_for): the swim's 100 m and the erg's 500 m
+	fixed_pace_fam : Str -> Bool
+	fixed_pace_fam = |sport| {
+		fam = Sports.canonical(sport)
+		fam == "Swim" or fam == "Rowing"
+	}
 
 	swim_pace_unit : Str
 	swim_pace_unit = Str.concat("min", Sports.pace_unit("Swim").label)
+
+	# a split is one pace unit's distance: 100 m for a swim, 500 m on the
+	# erg, the athlete's kilometre or mile on foot
+	split_len_for : [Metric, Imperial], Str -> F64
+	split_len_for = |units, sport|
+		if (fixed_pace_fam(sport)) (I64.to_f64(Sports.pace_unit(Sports.canonical(sport)).dist_m)) else Units.split_len(units)
+
+	expect split_len_for(Imperial, "Swim") == 100.0 and split_len_for(Metric, "VirtualRow") == 500.0 and split_len_for(Imperial, "TrailRun") == 1609.344
 
 	expect trace_unit(watts_chan, Metric, "Ride") == "W"
 	expect trace_unit(hr_chan, Imperial, "Run") == "bpm"
 	expect trace_unit(pace_chan, Metric, "Run") == Units.pace_unit(Metric)
 	expect trace_unit(pace_chan, Imperial, "TrailRun") == Units.pace_unit(Imperial)
 	expect trace_unit(pace_chan, Imperial, "OpenWaterSwim") == "min/100m" and trace_unit(pace_chan, Metric, "Swim") == swim_pace_unit
+	expect trace_unit(pace_chan, Imperial, "Rowing") == "min/500m"
 
 	# the channel said as a word - for prose (the subtitle, a ghost refusal)
 	# where a unit string would beg the units question prose does not have
