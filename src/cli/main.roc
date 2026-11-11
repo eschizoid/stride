@@ -8,11 +8,8 @@ app [main!] {
 # stride — a local-first multi-sport training engine.
 #
 # This module is argv -> dispatch, plus the handful of effects that have no better
-# home yet (`init!` and the four `config_*` effects) and a set of platform imports
-# left over from when it owned everything: alpha4 could not type-check a wide
-# decoder once effects were injected into a module. The new compiler lifted that
-# wall, so effects now live with
-# their concern — Db (SQLite + migrations), Strava (OAuth + sync), Analyze/Plan/
+# home yet (`init!` and the four `config_*` effects) and the platform imports they
+# need. Every other effect lives with its concern — Db (SQLite + migrations), Strava (OAuth + sync), Analyze/Plan/
 # Import, and the report family (Report plus ReportSessions/ReportHealth/
 # ReportSeason, split by read-command family in #196). See ADR 0001.
 #
@@ -55,6 +52,7 @@ import Analyze
 import Report
 import ReportHealth
 import ReportStrength
+import ReportReview
 import ReportSeason
 import ReportSessions
 import Plan
@@ -106,6 +104,7 @@ help_text =
 	\\                                (power→EF, distance→speed/HR, rated→RPE);
 	\\                                latest by default, oldest-first — desc reverses
 	\\    compare [week|month]        this period vs the one before it (default week)
+	\\    review [week|YYYY-MM-DD]    one Mon-Sun week: sessions and how they went, load, intensity, sports
 	\\    season                      training blocks, monthly load, polarization, FTP
 	\\    strength                    per-exercise top-set progression + monthly
 	\\                                tonnage, each with its coverage stated
@@ -197,7 +196,7 @@ main! = |raw_args| {
 	# The child's args are prefixed with `--` so its own parse treats every
 	# token as literal: that is what makes recursion impossible AND what keeps
 	# an escaped `stride skip 5 -- --human` from being re-read as a flag by the
-	# child (review of #177 caught both). Argv is re-encoded via OsStr.display,
+	# child. Argv is re-encoded via OsStr.display,
 	# which is lossy for non-UTF8 bytes — only on the flag path, and stride
 	# arguments are ids, dates and words in practice.
 	split = Command.split_format_args(args)
@@ -322,11 +321,9 @@ run_command! = |cmd|
 		# each call site: several commands load config, and the remedy is identical for
 		# all of them -- name the key, echo the stored text (#206).
 		Err(UnreadableConfig(key, raw)) => Output.unreadable_config!(key, raw)
-		# ...and the sibling tag: `MissingEnv` was handled by `auth!` and nothing else,
-		# so the SAME tag surfacing through `get_valid_token!`'s refresh branch fell to
-		# the catch-all — `sync` answered `internal_error … please open an issue` for a
-		# state `stride auth` fixes in one command. (`internal_error` is universal, so
-		# the envelope validated and nothing flagged it, #279.)
+		# ...and the sibling tag: a missing client credential surfaces here from any
+		# command that refreshes a token, and its remedy is the setup instructions, not
+		# `internal_error`.
 		#
 		# Safe to key on the TAG because `MissingEnv` has exactly one raiser,
 		# `Strava.client_cred!`, and every call passes a client credential — so every
@@ -342,10 +339,9 @@ run_command! = |cmd|
 		# a different failure, named separately.
 		Err(BadActivityDate(raw, id)) => Output.unreadable_activity_date!(raw, id)
 		# Same CODE, different wording. The time half's `raw` is a COMPONENT of start_local,
-		# never the column, so rendering it through the date message put a string that is not
-		# stored inside a parenthetical Output.roc documents as the reproduction handle —
-		# `DELETE FROM activities WHERE start_local='T37:00:00'` matches zero rows, which is
-		# the third instance of that exact defect in this file's history.
+		# never the column, so the date message's reproduction handle would name a string
+		# that is not stored: `DELETE FROM activities WHERE start_local='T37:00:00'` matches
+		# zero rows.
 		Err(BadActivityTime(raw, id)) => Output.unreadable_activity_time!(raw, id)
 		Err(BadDailyLoadDay(raw)) => Output.unreadable_daily_load_day!(raw)
 		Err(SqliteErr(NotADatabase, _)) =>
@@ -374,8 +370,7 @@ run_command! = |cmd|
 				Output.err_out!("strava_error", "Strava returned HTTP ${(status).to_str()}: ${clip_msg(body)}")
 			}
 		# Strava never answered: DNS, TLS, connection refused. The payload is a
-		# byte list, and inspecting it raw is the unreadable shape #183 was filed
-		# about — decode it.
+		# byte list, decoded so the message is readable.
 		Err(HttpErr(Other(bytes))) =>
 			Output.err_out!("network_unreachable", "could not reach the Strava API (${clip_msg(Str.from_utf8_lossy(bytes))}) — check the connection and retry")
 		Err(HttpErr(e)) =>
@@ -421,6 +416,7 @@ dispatch! = |cmd|
 		# answers in the envelope like every other query (#182)
 		Command.Version => Output.out!({ version: version }, |p| p.version)
 		Command.Compare(period) => Report.compare!(period)
+		Command.Review(date) => ReportReview.review!(date)
 		Command.Activities(c, sport) => ReportSessions.activities!(c, sport)
 		Command.Top(metric, c, sport) => ReportSessions.top!(metric, c, sport)
 		Command.Import(src) => Import.import_archive!(src)
@@ -471,10 +467,8 @@ config_show! = |key|
 			"derived_key",
 			"${key} is derived from your power history, not configured. Any value stored under this key is ignored (older databases may still hold one). `stride summary` shows the value actually in use.",
 		)
-	# ...and a key the engine looks up NOTHING for is its own answer (#254). This was
-	# `not_set`, which reads as "the key is fine, it is just empty" — so the next step after
-	# `config get timezon` is `config set timezon <value>`, and that succeeded too, so both
-	# halves of the round trip agreed the key was real while nothing ever read it.
+	# ...and a key the engine looks up NOTHING for is its own answer, not `not_set`: that
+	# reads as "the key is fine, it is just empty" and invites storing a value nothing reads.
 	#
 	# Before the db is opened, because whether the binary recognises a key is a fact about
 	# the BINARY: a typo gets the same answer on a fresh install as on a populated one.
@@ -506,8 +500,6 @@ config_show! = |key|
 				# reports the identical UTC fallback for each — so `config get` answering
 				# success with `value: ""` is the outlier: it makes this command
 				# disagree with bare `config`, which lists only keys holding a value.
-				# A key that reads as configured while nothing consults it is the shape of
-				# #254 itself, one layer in.
 				Found(v) =>
 					if (v == "")
 						Output.err_out!("not_set", "(not set)")
@@ -519,19 +511,17 @@ config_show! = |key|
 	}
 
 # Bare `config`: the keys that hold a value, in reading order — "which config do
-# I have set?", which nothing answered (`doctor` reports counts, not names).
+# I have set?" (`doctor` reports counts, not names).
 #
 # Values are NOT returned: a listing that returned them would dump every secret,
 # defeating `config get`'s redaction by going around it. `redacted` marks which
 # entries `config get` would refuse, so "set, and I may read it" is separable
 # without a call per key.
 #
-# Every row that holds a value, MARKED, not filtered: dropping the rows the
-# engine does not read made the command unable to answer its own question and
-# turned a visible dead row invisible — for an issue whose subject is "a row
-# nothing reads", backwards. `status` says which: `settable`, `managed` (stride's
-# own bookkeeping), `derived` (stored, ignored), `unrecognised` (retired name or
-# pre-#254 typo). `just schema-check` selects the settable/managed rows rather than
+# Every row that holds a value, MARKED, not filtered: a row the engine does not
+# read stays visible, so a dead row can be seen and removed. `status` says which:
+# `settable`, `managed` (stride's own bookkeeping), `derived` (stored, ignored),
+# `unrecognised` (a retired name or a typo). `just schema-check` selects the settable/managed rows rather than
 # trusting an upstream filter. The emptiness test is the SAME rule `config get`
 # uses, decided in SQL once.
 config_list! : {} => Try({}, _)
@@ -653,11 +643,9 @@ unknown_key_message = |key|
 numeric_refusal : Str, Str -> Str
 # arg_i64/arg_f64, NOT is_plain_int/is_plain_decimal. The predicates check SYNTAX; the
 # readers use arg_*, which is the predicate PLUS from_str -- and from_str also rejects
-# overflow. Gating the write on the syntax half alone let `config set utc_offset_minutes
-# 99999999999999999999` succeed and then be unparseable at every read, which is a value
-# stored and permanently ignored: the exact trap #206 is about, created by the gate meant
-# to prevent it. The write must accept exactly what the read can parse, so it calls the
-# same function the read does.
+# overflow. On the syntax half alone `config set utc_offset_minutes 99999999999999999999`
+# would store a value unparseable at every read, so ignored forever. The write must accept
+# exactly what the read can parse, so it calls the same function the read does.
 numeric_refusal = |key, val|
 	match Config.numeric_key(key) {
 		Free => ""
@@ -669,17 +657,10 @@ numeric_refusal = |key, val|
 
 config_store! : Str, Str => Try({}, _)
 config_store! = |key, val|
-	# An empty value is REFUSED for every key class; the removal it used to mean
-	# lives in `config unset`. History in #276 and config_unset!'s comment —
-	# restating deleted behaviour above its replacement is how a reader gets told
-	# the opposite of what runs.
+	# An empty value is REFUSED for every key class: it is not a write, and removal is
+	# `config unset`. Accepting it would leave a row that reads as SET, so `sync` would
+	# spend a round trip on an empty credential to be told 401.
 	if (val == "")
-	# An empty value is not a WRITE, and `config set` says so instead of guessing. It
-	# would otherwise mean three things by key class — removal, `bad_value`, or an
-	# empty WRITE that leaves a row reading as SET so `sync` spends a round trip to be
-	# told 401 (#276). The removal payload also failed config.json's `value` requirement,
-	# unseen because the form is `mutates: true` and schema-check covers read-only
-	# forms. `config unset` carries the removal shape under its own schema now.
 		Output.err_out!(
 			"bad_value",
 			"an empty value is not a setting — use `stride config unset ${key}` to remove the row, or give ${key} a value",
@@ -691,12 +672,9 @@ config_store! = |key, val|
 			"derived_key",
 			"${key} is derived from your power history, not configured — stride uses the sport family's best 20-min power x 0.95 over the 60 days up to each activity. Nothing to set; `stride summary` shows the current value.",
 		)
-	# ...and the WRITE half of #254: guarding only `config get` produced a CLI that
-	# confirmed a write and then denied the key existed (`set timezon x` printed
-	# `timezon = x`; `get timezon` answered `unknown_key`). Internal writers call
+	# A write to a key the engine never reads is refused, matching `config get`: storing
+	# it would confirm a value nothing will ever consult. Internal writers call
 	# `Db.config_set!` directly and never pass through here.
-	# A NON-empty write to an unknown key is the trap itself: "you are storing a
-	# value nothing will ever consult".
 	else if (!(Config.known_key(key)))
 		Output.err_out!("unknown_key", unknown_key_message(key))
 	# The enum half of the same rule numeric_refusal enforces for numbers. Not folded into

@@ -84,7 +84,8 @@
           "power",
           "hr",
           "zone",
-          "pace"
+          "pace",
+          "rpe"
         ],
         "description": "The signal of the session's structured target (ADR 0019); empty for a prose-only session and for unplanned rows."
       },
