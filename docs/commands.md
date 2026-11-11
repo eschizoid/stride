@@ -121,6 +121,10 @@ _Is my training working over time?_ Daily fitness/fatigue/form rows for windows 
 
 _Is this period better than the last?_ The last rolling window (7 or 28 days) beside the one before it — load, sessions, hard minutes, easy %, and end-of-window fitness — with signed deltas and a ramp/fitness verdict.
 
+### `stride review [week|YYYY-MM-DD]`
+
+_How did the week go?_ One Monday-to-Sunday week in one call, across every sport: each planned session with how it went on its own target (the fields `complete` reports), the activities no session claims, planned beside actual load per day, the easy/moderate/hard split and the hard days, a row per sport family, strength sessions with and without sets or a rating, and fitness at both ends of the week. A date picks the week holding it. It states measurements only; whether the week went well is the coach's call.
+
 ### `stride activity <id>`
 
 _How did one session actually go?_ Deep view of a single activity: load, intensity, zone minutes, hard time, and power bests (1/3/5/20 min) computed from its streams. The session-review tool.
