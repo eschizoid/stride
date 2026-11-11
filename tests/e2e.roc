@@ -7857,7 +7857,7 @@ b_cross_surface! = |ctx| {
 	anchor_sites = Str.trim(sh!("grep -c \"'now', '..today_mod.'\" src/viz/Db.roc"))
 	local_sites = Str.trim(sh!("grep -c \"'now', 'localtime')\\|date('now', '-'\\|strftime('%Y-%m', 'now')\" src/viz/Db.roc"))
 	check!("the window's calendar anchor, read from its source, names the athlete's day under a far zone and never the machine's (${window_today} vs ${athlete_today}/${machine_today})", !Str.is_empty(anchor_expr) and window_today == athlete_today and window_today != machine_today)?
-	check!("...and every window loader that reads the calendar spells that anchor (the plan strip, the plan rows, both curve windows, the 20-minute best's age, the planned power and pace targets, the most-trained family, the open month); none anchors on localtime or on UTC's now (${anchor_sites}/${local_sites})", anchor_sites == "9" and local_sites == "0")?
+	check!("...and every window loader that reads the calendar spells that anchor (the plan strip, the plan rows, both curve windows, the 20-minute best's age, the planned power and pace targets, the most-trained family, the open month, the strength weeks and the strength month in progress); none anchors on localtime or on UTC's now (${anchor_sites}/${local_sites})", anchor_sites == "11" and local_sites == "0")?
 	# end-of-week CTL: weekly_ramp's newest week vs the load series on that
 	# week's last loaded day, both in thousandths
 	wk_ctl = Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(ctl_end * 1000) AS INTEGER) FROM weekly_ramp ORDER BY wk DESC LIMIT 1;"))

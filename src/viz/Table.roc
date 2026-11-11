@@ -1,6 +1,7 @@
 import rr.Color
 import rr.Draw
 import rr.Text
+import Days
 import Db
 import Theme
 import Ui
@@ -225,7 +226,7 @@ Table :: [].{
 		# master-detail: with the panel open, the whole table lives left of it -
 		# no element draws underneath the card
 		edge = table_edge(win_w, model.detail_day)
-		model.table_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+		model.table_title.draw!(frame, { pos: { x: Days.title_x, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		List.for_each!(
 			List.map_with_index(model.table_head, |h, i| { h, i }),
 			|x| {

@@ -58,12 +58,22 @@ past the plan's last day a projection is only decay, so the board names the
 day it stops ("plan to 11-08") and says "at event" only when the plan reaches
 it. The subtitle always carries the as-of day, and the TSB zero rule is
 captioned "fresh above", at whichever end of the rule no line crosses the
-caption. The fourth TAB view is the artifact's data table, with as many rows
-as the window height holds.
+caption.
+
+## The day tab: week, log and year
+
+One nav pill, `plan`, holds three day-by-day modes, picked by chips at the
+left of the header: `week` (the plan view below, the default), `log` (the
+data table, with as many rows as the window height holds) and `year` (the
+heat view). Each mode keeps its own view id on the bus - 4 for week, 3 for
+log, 5 for year - so a directive for any of them lands on this tab in that
+mode, and a capture is named for its mode (`plan.png`, `data-table.png`,
+`heat.png`). Clicking the pill from another view opens `week`; clicking it
+from inside the tab keeps the mode on screen.
 
 ## The plan view
 
-The fifth TAB stop answers "what do I do today" and "how did the week go"
+The week mode answers "what do I do today" and "how did the week go"
 without asking anyone. A card holds today's prescription and its rationale,
 or, once the day has an outcome, that outcome. The ladder below lists the
 whole Monday-to-Sunday week and the six days after today, each row with its
@@ -89,7 +99,7 @@ machine is set.
 
 ## The heat view
 
-The sixth stop is a year of training at a glance: a contributions-style
+The year mode is a year of training at a glance: a contributions-style
 calendar, one cell per day, Monday-started weeks as columns, cell intensity
 scaled to the biggest TSS day in the shown window. As many weeks as the
 window width holds, newest at the right edge, month ticks along the top.
@@ -129,6 +139,25 @@ the `weekly_ramp` view - the one definition of weekly ramp. A directive with vie
 
 ![The ramp view](img/ramp.png)
 
+## The strength view
+
+Strength's own tab, the `lifts` pill (view 9, captured as `lifts.png`). Its headline is per lift: one row per exercise
+trained on at least two days with a weight logged, most-trained first, each
+with a sparkline of the heaviest weight it moved per day, the first and
+latest weights (whole pounds, or kilograms to one decimal: config `units` when set, else the unit most stored weights were entered in), and an up, flat or down mark (a move
+of more than 2% either way). Beside the lifts: the latest strength session's
+sets (when the newest session has none, the newest one that does, with a muted line naming the newer unlogged ones); twelve Monday-started
+weeks of strength sessions as bars split into sessions with sets logged and
+without, the current week muted; and monthly tonnage as a small chart under
+the caption "volume, not strength". Tonnage rises and falls with how many
+sessions had their sets logged, so a month counts as measured only when at
+least half its sessions have sets: measured months join with a solid line, a
+thin month is a hollow point joined dashed, and the month in progress is a
+hollow point joined dashed and muted. One fixed caption row names the last
+complete month and the month in progress, each with its `covered/total`
+coverage. The strength family is Sports' own, so Workout and WeightTraining
+read as one, and the career view leaves the tonnage spine to this tab.
+
 ## Controls
 
 | key / gesture | effect |
@@ -141,7 +170,8 @@ the `weekly_ramp` view - the one definition of weekly ramp. A directive with vie
 | `G` | toggle the glow pass - the scene renders offscreen and its bright parts come back blurred and added on top; if the GPU refuses any of it, the app draws exactly as before the pass existed |
 | `V` | toggle a WebM recording of the screen into `./captures`, named for the view it started on; FixedStep timing, so the same data replays to the same file |
 | nav pills (top right) | click any view directly; the active one is filled - each wears its vector mark, drawn from primitives (no sprite sheet, crisp at any DPI) |
-| `TAB` | cycle views: form board / power view / session trace / data table / plan / heat / zones / ramp |
+| `TAB` | cycle the nav left to right: form board / power view / session trace / the day tab / lifts / zones / ramp / career; from any day mode it steps on to lifts |
+| `week` / `log` / `year` chips (day tab) | switch the day tab between the plan, the data table and the heatmap |
 | `1` / `2` / `3` or the chips (power view) | re-window the blue ladder and CP fit to 30/60/90 days |
 | `shift+[` / `shift+]` (trace view) | summon / walk the ghost overlay through sessions of the live one's KIND - same sport, same unit; the walk skips the live session itself, and stepping past the last compatible one dismisses it |
 | `C` (trace view) | clear the ghost in one press, from any state |
@@ -283,7 +313,8 @@ INSERT INTO viz_directives (view, capture) VALUES (1, 'png');
 -- vocabulary is refused by name, and so is a valid one the athlete has no
 -- data for.
 INSERT INTO viz_directives (view, family) VALUES (1, 'pace:Run');
--- view 0..8 (form/power/trace/table/plan/heat/zones/ramp/career) - but read
+-- view 0..9 (form/power/trace/table/plan/heat/zones/ramp/career/lifts;
+-- 3, 4 and 5 are the day tab's log, week and year modes) - but read
 -- the list from `stride viz --json`, which the running binary publishes,
 -- rather than from this comment. A directive naming a view outside the
 -- published range leaves the VIEW unchanged; its other fields still land,

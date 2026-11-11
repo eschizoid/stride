@@ -34,7 +34,9 @@ import Zones
 import Table
 import Curve
 import Career
+import Days
 import Db
+import Strength
 import DisplayScale
 import Hud
 import Theme
@@ -206,7 +208,7 @@ load_logo! = |acc, boot|
 # face, so a window that cannot reach the athlete's data says why.
 skeleton : Str -> _
 skeleton = |err|
-	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], zo: [], ph: "", b20: -1, tg: [], rw: [], csp: [], ctm: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric, cf: "", keys: { power: [], pace: [] }, ptg: [] }
+	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], zo: [], ph: "", b20: -1, tg: [], rw: [], csp: [], ctm: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric, cf: "", keys: { power: [], pace: [] }, ptg: [], sv: Db.empty_strength_view }
 
 # boot=True builds the instant skeleton the splash renders over: no database
 # and no engine call - the window opens on frame one and the real load runs
@@ -271,7 +273,8 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 			prs = Db.load_prs!(db, cf)
 			nts = Db.load_day_notes!(db)
 			cpv = Db.load_curve_prev!(db, curve_days, tm, cf)
-			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, zo, ph, b20, tg, rw, csp, ctm, cs, cfm, prs, tcache, un, cf, keys, ptg }
+			sv = Db.load_strength_view!(db, tm)
+			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, zo, ph, b20, tg, rw, csp, ctm, cs, cfm, prs, tcache, un, cf, keys, ptg, sv }
 		}
 		Err(NoStrideDir) => skeleton("no stride directory — the launcher passes it as the first argument")
 		Err(Unreachable) => skeleton("cannot open ${acc.dir}/db.sqlite")
@@ -407,7 +410,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		trace_sport: "",
 		curve_hint: mk!("1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 		trace_hint: mk!("[ / ]  older/newer session      X  sport filter      shift+[ / shift+]  ghost older/newer      C  clear ghost      wheel zoom  drag pan  0 reset      TAB  data table      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-		table_hint: mk!("arrows  scroll days      TAB  plan      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+		table_hint: mk!("arrows  scroll days      TAB  lifts      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 		table_title: mk!("data table", 15)?,
 		table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?, mk!("session", 13)?],
 		kpis: [
@@ -454,6 +457,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		plan_week: loaded.pw,
 		bus_note: loaded.bn,
 		heat: loaded.ht,
+		strength: loaded.sv,
 		heat_events: loaded.hev,
 		zone_weeks: loaded.zw,
 		zone_overrides: loaded.zo,
@@ -471,20 +475,19 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		last_directive: { id: -1.I64, refused: "", result: "" },
 		glow_on: Bool.False,
 		ramp_title: mk!("the ramp - weekly load and how fast fitness is climbing", 15)?,
-		ramp_hint: mk!("hover a week to read it      TAB  form board      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+		ramp_hint: mk!("hover a week to read it      TAB  career      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 		zones_title: mk!("time in zone - twelve weeks, and the 80/20 story", 15)?,
 		zones_hint: mk!("hover a week to read it      TAB  ramp      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 		heat_title: mk!("training heat - one cell per day", 15)?,
-		heat_hint: mk!("hover a cell to read the day      TAB  zones      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-		plan_title: mk!("this week and the days ahead - plan and progress", 15)?,
-		plan_hint: mk!("TAB  heat      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+		heat_hint: mk!("hover a cell to read the day      TAB  lifts      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+		plan_title: mk!("the week and the days ahead", 15)?,
+		plan_hint: mk!("week / log / year  modes      TAB  lifts      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 		nav: [
 			{ p: mk!("form", 13)?, v: 0.U8 },
 			{ p: mk!("power", 13)?, v: 1.U8 },
 			{ p: mk!("trace", 13)?, v: 2.U8 },
-			{ p: mk!("table", 13)?, v: 3.U8 },
 			{ p: mk!("plan", 13)?, v: 4.U8 },
-			{ p: mk!("heat", 13)?, v: 5.U8 },
+			{ p: mk!("lifts", 13)?, v: 9.U8 },
 			{ p: mk!("zones", 13)?, v: 6.U8 },
 			{ p: mk!("ramp", 13)?, v: 7.U8 },
 			{ p: mk!("career", 13)?, v: 8.U8 },
@@ -1147,7 +1150,7 @@ refusals_for : { has_d : Bool, id : I64, view : I64, range : I64, cursor_day : S
 refusals_for = |dv, cdir, wsel, cur_sel, ids, rec_active, cap_pending| {
 	segs = List.keep_if(
 		[
-			(if (dv.view > 8 or dv.view < -1) ("view ${I64.to_str(dv.view)} unknown") else ""),
+			(if (dv.view > 9 or dv.view < -1) ("view ${I64.to_str(dv.view)} unknown") else ""),
 			(if (dv.range != -1 and dv.range != 30 and dv.range != 60 and dv.range != 90) ("range ${I64.to_str(dv.range)} not 30/60/90") else ""),
 			(if (dv.cursor_day != "" and cdir == -2) ("cursor_day ${dv.cursor_day} not in the series") else ""),
 			# a day beside an id is not judged: the resolver reads the id and never
@@ -1658,7 +1661,7 @@ Msg : [
 # whole classes of windows (at the 150% scale default, common laptop
 # displays report less logical width than such a threshold asks), so each
 # pill holds both. The constants are shared by the render and both
-# hit-tests, and at the minimum window width the nine pills clear the title
+# hit-tests, and at the minimum window width the eight pills clear the title
 # row's scale chip.
 nav_pitch : F32
 nav_pitch = 76.0
@@ -1693,24 +1696,24 @@ load_tcache! = |db, units, ids|
 # miscompiles, and a call compiles correctly
 focus_view_code : U8 -> I64
 focus_view_code = |v|
-	if (v == 0) (0) else if (v == 1) (1) else if (v == 2) (2) else if (v == 3) (3) else if (v == 4) (4) else if (v == 5) (5) else if (v == 6) (6) else if (v == 7) (7) else 8
+	if (v == 0) (0) else if (v == 1) (1) else if (v == 2) (2) else if (v == 3) (3) else if (v == 4) (4) else if (v == 5) (5) else if (v == 6) (6) else if (v == 7) (7) else if (v == 8) (8) else 9
 
 # ONE view->basename map for every capture format: png and webm derive
 # from it, so a capture is named for its view in both
 view_basename : U8 -> Str
 view_basename = |v|
-	if (v == 0) "form-board" else if (v == 1) "power" else if (v == 2) "session-trace" else if (v == 3) "data-table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else "career"
+	if (v == 0) "form-board" else if (v == 1) "power" else if (v == 2) "session-trace" else if (v == 3) "data-table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else if (v == 8) "career" else "lifts"
 
 # what the bus accepts, as data. caps_views derives from view_basename
 # so the published list can never drift from the dispatch; caps_fields must
 # move together with refusals_for - the accepts column states the same rules
 # that function enforces, and both live in this file so an edit sees both.
 caps_views : List({ id : I64, name : Str })
-caps_views = List.map([0.U8, 1, 2, 3, 4, 5, 6, 7, 8], |v| { id: U8.to_i64(v), name: view_basename(v) })
+caps_views = List.map([0.U8, 1, 2, 3, 4, 5, 6, 7, 8, 9], |v| { id: U8.to_i64(v), name: view_basename(v) })
 
 caps_fields : List({ name : Str, kind : Str, accepts : Str })
 caps_fields = [
-	{ name: "view", kind: "integer", accepts: "0..8" },
+	{ name: "view", kind: "integer", accepts: "0..9 (3, 4 and 5 are the day tab's log, week and year modes)" },
 	{ name: "range", kind: "integer", accepts: "30|60|90 (days; omitted leaves the range unchanged)" },
 	{ name: "cursor_day", kind: "date", accepts: "YYYY-MM-DD present in the form-board series" },
 	{ name: "trace_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions; picks that day's newest session, trace_id names one exactly" },
@@ -1934,15 +1937,24 @@ update! = |model0, program_input, io| {
 					},
 				)
 			} else -1
+		# the day tab's mode chips: week, log and year switch between the plan,
+		# table and heat views without leaving the tab
+		day_mode = if (Days.is_day(model.view) and Mouse.button_pressed(d.mouse, Left)) (Days.mode_at(m0.x, m0.y)) else -1
 		view_input =
 			if (nav_click >= 0) (
 				match I64.to_u8_try(nav_click) {
-					Ok(v9) => v9
+					Ok(v9) => Days.from_pill(v9, model.view)
 					Err(_) => model.view
 				}
 			)
-			else if (d.key_pressed(KeyTab)) (if (model.view == 8) 0 else model.view + 1) else model.view
-		view = if (directive.has_d and directive.view >= 0 and directive.view <= 8) (
+			else if (day_mode >= 0) (
+				match I64.to_u8_try(day_mode) {
+					Ok(dm) => dm
+					Err(_) => model.view
+				}
+			)
+			else if (d.key_pressed(KeyTab)) (Days.next_view(model.view)) else model.view
+		view = if (directive.has_d and directive.view >= 0 and directive.view <= 9) (
 			match I64.to_u8_try(directive.view) {
 				Ok(v8) => v8
 				Err(_) => view_input
@@ -2337,7 +2349,7 @@ update! = |model0, program_input, io| {
 		chip0h = win.w - 420.0
 		# per-chip, not one wide band: the 8px gaps between chips are not
 		# clickable and must not claim the pointer
-		over_chip = m.y >= 64.0 and m.y <= 86.0 and (((view2 == 0 or view2 == 1) and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0) or (view2 == 1 and Curve.chip_at(Curve.curve_chips(win.w, model.curve_keys, model.curve_family), m.x) != ""))) or (view2 == 8 and Career.kind_chip_at(Career.kind_chips(model), m.x).is_ok()))
+		over_chip = m.y >= 64.0 and m.y <= 86.0 and (((view2 == 0 or view2 == 1) and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0) or (view2 == 1 and Curve.chip_at(Curve.curve_chips(win.w, model.curve_keys, model.curve_family), m.x) != ""))) or (view2 == 8 and Career.kind_chip_at(Career.kind_chips(model), m.x).is_ok()) or (Days.is_day(view2) and Days.mode_at(m.x, m.y) >= 0))
 		over_row = view2 == 3 and m.x >= 36.0 and m.x < Table.table_edge(win.w, detail_day2) and (
 			match Table.row_at(Table.page_for(model, cursor2), m.y) {
 				Row(_) => Bool.True
@@ -2573,6 +2585,11 @@ nav_icon! = |frame, v, x, y, c| {
 		# of borrowing whichever neighbour a catch-all happened to reach.
 		frame.line!({ start: { x: x + 2.5, y: y + 12.0 }, end: { x: x + 2.5, y: y + 1.0 }, stroke: Draw.stroke(c, 1.5) })
 		frame.rectangle!({ x: x + 3.5, y: y + 1.5, width: 6.5, height: 5.0, style: Draw.filled(c) })
+	} else if v == 9 {
+		# strength: a dumbbell, two plates on a bar
+		frame.line!({ start: { x: x + 2.0, y: y + 6.5 }, end: { x: x + 10.0, y: y + 6.5 }, stroke: Draw.stroke(c, 1.5) })
+		frame.rectangle!({ x: x, y: y + 3.0, width: 3.0, height: 7.0, style: Draw.filled(c) })
+		frame.rectangle!({ x: x + 9.0, y: y + 3.0, width: 3.0, height: 7.0, style: Draw.filled(c) })
 	}
 }
 
@@ -2620,7 +2637,7 @@ scene! = |model, frame| {
 		List.map_with_index(model.nav, |nv, ni| { nv, ni }),
 		|x| {
 			nx = model.win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.ni) * nav_pitch
-			on2 = x.nv.v == model.view
+			on2 = x.nv.v == Days.group(model.view)
 			hov2 = model.mouse_x >= nx and model.mouse_x <= nx + nav_width and model.mouse_y >= 30.0 and model.mouse_y <= 54.0
 			style2 = if (on2) (Draw.filled(Color.with_alpha(Theme.ctl_c, 60))) else if (hov2) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
 			frame.rounded_rectangle!({ x: nx, y: 30.0, width: nav_width, height: 24.0, radius: 7.0, segments: 6, style: style2 })
@@ -2642,7 +2659,9 @@ scene! = |model, frame| {
 		model.leg_form.draw!(frame, { pos: { x: 246.0, y: 70.0 }, color: Theme.tsb_c, align: (Top, Left) })
 	}
 	drawn =
-		if model.view == 8 {
+		if model.view == 9 {
+			Strength.draw!(model, frame)
+		} else if model.view == 8 {
 			Career.draw!(model, frame)
 		} else if model.view == 7 {
 			Ramp.draw!(model, frame)
@@ -2661,6 +2680,9 @@ scene! = |model, frame| {
 		} else {
 			Board.draw!(model, frame)
 		}
+	if Days.is_day(model.view) {
+		Days.draw_chips!(model, frame)
+	}
 	# the XP rail rides the panel's left edge on every view - under the
 	# crossfade veil, so it arrives with the view rather than over it
 	Hud.rail!(model, frame)
