@@ -141,12 +141,12 @@ the `weekly_ramp` view - the one definition of weekly ramp. A directive with vie
 
 ## The strength view
 
-Strength's own tab, the `lifts` pill (view 9). Its headline is per lift: one row per exercise
+Strength's own tab, the `lifts` pill (view 9, captured as `lifts.png`). Its headline is per lift: one row per exercise
 trained on at least two days with a weight logged, most-trained first, each
 with a sparkline of the heaviest weight it moved per day, the first and
-latest weights in the athlete's units, and an up, flat or down mark (a move
+latest weights (whole pounds, or kilograms to one decimal: config `units` when set, else the unit most stored weights were entered in), and an up, flat or down mark (a move
 of more than 2% either way). Beside the lifts: the latest strength session's
-sets, or which absence it is when none are stored; twelve Monday-started
+sets (when the newest session has none, the newest one that does, with a muted line naming the newer unlogged ones); twelve Monday-started
 weeks of strength sessions as bars split into sessions with sets logged and
 without, the current week muted; and monthly tonnage as a small chart under
 the caption "volume, not strength". Tonnage rises and falls with how many
@@ -313,7 +313,7 @@ INSERT INTO viz_directives (view, capture) VALUES (1, 'png');
 -- vocabulary is refused by name, and so is a valid one the athlete has no
 -- data for.
 INSERT INTO viz_directives (view, family) VALUES (1, 'pace:Run');
--- view 0..9 (form/power/trace/table/plan/heat/zones/ramp/career/strength;
+-- view 0..9 (form/power/trace/table/plan/heat/zones/ramp/career/lifts;
 -- 3, 4 and 5 are the day tab's log, week and year modes) - but read
 -- the list from `stride viz --json`, which the running binary publishes,
 -- rather than from this comment. A directive naming a view outside the

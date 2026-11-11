@@ -890,7 +890,7 @@ Db :: [].{
 						Ok(x) => x
 						Err(_) => ""
 					}
-					vn = if (v == 0) "form" else if (v == 1) "power" else if (v == 2) "trace" else if (v == 3) "table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else if (v == 8) "career" else if (v == 9) "strength" else if (v >= 0) "view ${I64.to_str(v)} (ignored)" else ""
+					vn = if (v == 0) "form" else if (v == 1) "power" else if (v == 2) "trace" else if (v == 3) "table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else if (v == 8) "career" else if (v == 9) "lifts" else if (v >= 0) "view ${I64.to_str(v)} (ignored)" else ""
 					rgp = if (rg > 0) "${I64.to_str(rg)}d" else ""
 					joined = Str.join_with(List.keep_if([vn, rgp], |s2| s2 != ""), " / ")
 					parts = if (joined == "") "steer" else joined
@@ -1561,10 +1561,46 @@ Db :: [].{
 	StrengthWeek : { mon : Str, total : I64, with_sets : I64 }
 	TonMonth : { month : Str, kg : F64, covered : I64, total : I64, partial : Bool }
 	LastLift : { id : I64, day : Str, name : Str, log : StrengthLog }
-	StrengthView : { lifts : List(Lift), last : LastLift, weeks : List(StrengthWeek), tonnage : List(TonMonth) }
+	Unlogged : { day : Str, name : Str }
+	StrengthView : { lifts : List(Lift), last : LastLift, unlogged : List(Unlogged), weeks : List(StrengthWeek), tonnage : List(TonMonth), mass : [Metric, Imperial] }
 
 	empty_strength_view : StrengthView
-	empty_strength_view = { lifts: [], last: { id: -1, day: "", name: "", log: { rows: [], pasted: Bool.False } }, weeks: [], tonnage: [] }
+	empty_strength_view = { lifts: [], last: { id: -1, day: "", name: "", log: { rows: [], pasted: Bool.False } }, unlogged: [], weeks: [], tonnage: [], mass: Metric }
+
+	# Which session the strength view shows: the newest one with sets stored,
+	# and every newer session that has none, so a class taken without logging
+	# never hides the last lifting the athlete did record. Sessions arrive
+	# newest first; with none logged the newest is shown with its absence.
+	RecentLift : { id : I64, day : Str, name : Str, has_sets : Bool }
+	pick_last : List(RecentLift) -> { shown : [Shown(RecentLift), NoneYet], newer : List(Unlogged) }
+	pick_last = |recent| {
+		newer = List.map(List.take_first(recent, (List.find_first_index(recent, |r| r.has_sets)).ok_or(0)), |r| { day: r.day, name: r.name })
+		shown = match List.find_first(recent, |r| r.has_sets) {
+			Ok(r) => Shown(r)
+			Err(_) =>
+				match List.first(recent) {
+					Ok(r) => Shown(r)
+					Err(_) => NoneYet
+				}
+		}
+		{ shown, newer }
+	}
+
+	# The unit the strength view weighs in. A set `units` config decides it.
+	# Unset, the stored weights decide: an athlete who loads plates and
+	# dumbbells in pounds stores whole pounds (25 lb is 11.34 kg), one who
+	# loads in kilograms stores whole or half kilograms, and the larger group
+	# wins, pounds on a tie.
+	mass_units : Str, List(F64) -> [Metric, Imperial]
+	mass_units = |config, kgs|
+		if config != "" {
+			Units.units_of(config)
+		} else {
+			whole = |v| (v - I64.to_f64((F64.round_to_i64_try(v)) ?? 0)).abs() < 0.06
+			lb_n = List.len(List.keep_if(kgs, |k| k > 0.0 and whole(k / Units.lb_kg)))
+			kg_n = List.len(List.keep_if(kgs, |k| k > 0.0 and whole(k * 2.0)))
+			if (lb_n >= kg_n) Imperial else Metric
+		}
 
 	strength_head : Str
 	strength_head = (List.first(Sports.family("strength"))).ok_or("WeightTraining")
@@ -1610,16 +1646,32 @@ Db :: [].{
 					},
 				)
 		}
-		last = match db.query!("SELECT a.id AS sid, CAST(substr(a.start_local, 1, 10) AS TEXT) AS sd, CAST(COALESCE(a.name, '') AS TEXT) AS sn FROM activities a JOIN activity_family_month fm ON fm.activity_id = a.id WHERE fm.fam = :h ORDER BY a.start_local DESC LIMIT 1", [{ name: ":h", value: String(head) }]) {
+		recent = match db.query!("SELECT a.id AS sid, CAST(substr(a.start_local, 1, 10) AS TEXT) AS sd, CAST(COALESCE(a.name, '') AS TEXT) AS sn, EXISTS (SELECT 1 FROM strength_sets s WHERE s.activity_id = a.id) AS shs FROM activities a JOIN activity_family_month fm ON fm.activity_id = a.id WHERE fm.fam = :h ORDER BY a.start_local DESC LIMIT 30", [{ name: ":h", value: String(head) }]) {
+			Err(_) => []
 			Ok(rs) =>
-				match List.first(rs) {
-					Ok(r) => {
-						sid = r.i64("sid") ?? -1
-						{ id: sid, day: r.str("sd") ?? "", name: ascii_safe(r.str("sn") ?? ""), log: load_sets!(db, sid) }
-					}
-					Err(_) => empty_strength_view.last
-				}
-			Err(_) => empty_strength_view.last
+				List.keep_oks(
+					rs,
+					|r| {
+						sid = r.i64("sid") ? |_| "bad sid"
+						sd = r.str("sd") ? |_| "bad sd"
+						sn = r.str("sn") ? |_| "bad sn"
+						hs = r.i64("shs") ? |_| "bad shs"
+						Ok({ id: sid, day: sd, name: ascii_safe(sn), has_sets: hs == 1 })
+					},
+				)
+		}
+		picked = pick_last(recent)
+		last = match picked.shown {
+			Shown(r) => { id: r.id, day: r.day, name: r.name, log: load_sets!(db, r.id) }
+			NoneYet => empty_strength_view.last
+		}
+		config_units = match db.query!("SELECT CAST(value AS TEXT) AS v FROM config WHERE key = 'units'", []) {
+			Ok(rs) => (List.first(rs)).map_ok(|r| r.str("v") ?? "").ok_or("")
+			Err(_) => ""
+		}
+		kgs = match db.query!("SELECT CAST(weight_kg AS REAL) AS w FROM strength_sets WHERE weight_kg > 0", []) {
+			Ok(rs) => List.keep_oks(rs, |r| r.f64("w"))
+			Err(_) => []
 		}
 		weeks = match db.query!("WITH RECURSIVE w(mon, k) AS (SELECT date(date('now', '${today_mod}'), '-6 days', 'weekday 1'), 0 UNION ALL SELECT date(mon, '-7 days'), k + 1 FROM w WHERE k < 11), s AS (SELECT date(substr(a.start_local, 1, 10), '-6 days', 'weekday 1') AS m, CASE WHEN EXISTS (SELECT 1 FROM strength_sets ss WHERE ss.activity_id = a.id) THEN 1 ELSE 0 END AS ws FROM activities a JOIN activity_family_month fm ON fm.activity_id = a.id WHERE fm.fam = :h) SELECT CAST(w.mon AS TEXT) AS wm, CAST(COUNT(s.m) AS INTEGER) AS wn, CAST(COALESCE(SUM(s.ws), 0) AS INTEGER) AS wws FROM w LEFT JOIN s ON s.m = w.mon GROUP BY w.mon ORDER BY w.mon", [{ name: ":h", value: String(head) }]) {
 			Err(_) => []
@@ -1649,7 +1701,7 @@ Db :: [].{
 					},
 				)
 		}
-		{ lifts: lifts_from_rows(lift_rows), last, weeks, tonnage: List.take_last(tonnage, 12) }
+		{ lifts: lifts_from_rows(lift_rows), last, unlogged: picked.newer, weeks, tonnage: List.take_last(tonnage, 12), mass: mass_units(config_units, kgs) }
 	}
 
 	load_splits! : Sqlite.Db, I64, F64 => List(Series.Split)
@@ -1925,3 +1977,25 @@ expect {
 	List.map(ls, |l| l.exercise) == ["Row", "Curl"] and List.map(ls, |l| List.len(l.points)) == [3, 2]
 }
 expect Db.strength_head == "WeightTraining"
+# the newest session with sets is shown, and the newer unlogged ones are
+# named; with nothing logged the newest is shown as it is
+expect {
+	r = |id, d, hs| { id, day: d, name: "s${I64.to_str(id)}", has_sets: hs }
+	p = Db.pick_last([r(3, "2026-11-07", Bool.False), r(2, "2026-11-04", Bool.False), r(1, "2026-11-01", Bool.True)])
+	p.shown == Shown(r(1, "2026-11-01", Bool.True)) and List.map(p.newer, |u| u.day) == ["2026-11-07", "2026-11-04"]
+}
+expect {
+	r = |id, d, hs| { id, day: d, name: "s", has_sets: hs }
+	p = Db.pick_last([r(2, "2026-11-07", Bool.True), r(1, "2026-11-01", Bool.True)])
+	p.shown == Shown(r(2, "2026-11-07", Bool.True)) and List.is_empty(p.newer)
+}
+expect {
+	p = Db.pick_last([{ id: 5, day: "2026-11-07", name: "s", has_sets: Bool.False }])
+	p.shown == Shown({ id: 5, day: "2026-11-07", name: "s", has_sets: Bool.False }) and List.is_empty(p.newer)
+}
+expect Db.pick_last([]).shown == NoneYet
+# a set units config decides; unset, whole-pound weights win, and whole or
+# half kilograms lose to them only when they are the larger group
+expect Db.mass_units("metric", [11.34, 22.68]) == Metric and Db.mass_units("imperial", [10.0, 20.0]) == Imperial
+expect Db.mass_units("", [11.3398, 22.6796, 15.9, 10.0]) == Imperial
+expect Db.mass_units("", [10.0, 20.0, 12.5, 11.3398]) == Metric

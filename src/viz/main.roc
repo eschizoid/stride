@@ -1702,7 +1702,7 @@ focus_view_code = |v|
 # from it, so a capture is named for its view in both
 view_basename : U8 -> Str
 view_basename = |v|
-	if (v == 0) "form-board" else if (v == 1) "power" else if (v == 2) "session-trace" else if (v == 3) "data-table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else if (v == 8) "career" else "strength"
+	if (v == 0) "form-board" else if (v == 1) "power" else if (v == 2) "session-trace" else if (v == 3) "data-table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else if (v == 8) "career" else "lifts"
 
 # what the bus accepts, as data. caps_views derives from view_basename
 # so the published list can never drift from the dispatch; caps_fields must

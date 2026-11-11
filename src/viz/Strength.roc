@@ -45,8 +45,44 @@ Strength :: [].{
 		(List.get(names, i)).ok_or(ym)
 	}
 
+	# a weight in the view's unit: whole pounds, the way plates and dumbbells
+	# are labelled, or kilograms to one decimal
+	weight_label : [Metric, Imperial], F64 -> Str
+	weight_label = |mass, kg|
+		match mass {
+			Imperial => "${I64.to_str(F64.round_to_i64_try(kg / Units.lb_kg) ?? 0)} lb"
+			Metric => Units.mass_label(Metric, kg)
+		}
+
+	# monthly volume: tonnes in kilograms, thousands of pounds in pounds
 	ton_label : [Metric, Imperial], F64 -> Str
-	ton_label = |units, kg| Career.spine_label(units, F64.round_to_i64_try(kg * 10.0) ?? 0, "tonnage", Db.strength_head)
+	ton_label = |mass, kg|
+		match mass {
+			Imperial => {
+				hundreds = F64.round_to_i64_try(kg / Units.lb_kg / 100.0) ?? 0
+				"${I64.to_str(hundreds // 10)}.${I64.to_str(hundreds % 10)}k lb"
+			}
+			Metric => Career.spine_label(Metric, F64.round_to_i64_try(kg * 10.0) ?? 0, "tonnage", Db.strength_head)
+		}
+
+	# one stored set run, the trace's set line in this view's unit
+	set_text : [Metric, Imperial], Db.SetRow -> Str
+	set_text = |mass, r| {
+		shape = if (r.hold_s > 0) "${I64.to_str(r.sets)}x${I64.to_str(r.hold_s)}s hold" else "${I64.to_str(r.sets)}x${I64.to_str(r.reps)}"
+		w = if (r.kg > 0.0) " @ ${weight_label(mass, r.kg)}" else ""
+		name = (List.first(Wrap.fit(r.exercise, 28, 1))).ok_or("")
+		"${name}  ${shape}${w}"
+	}
+
+	# the muted line under the shown session naming newer sessions that have
+	# no sets stored
+	unlogged_note : List(Db.Unlogged) -> Str
+	unlogged_note = |us|
+		match us {
+			[] => ""
+			[u] => "newer, no sets logged: ${u.day}"
+			_ => "newer, no sets logged: ${Str.join_with(List.map(us, |u| u.day), ", ")}"
+		}
 
 	# the captions under the tonnage chart: the last complete month and the
 	# month in progress, each with its coverage, one per fixed text row, so no
@@ -70,7 +106,7 @@ Strength :: [].{
 	lift_values : [Metric, Imperial], List(Db.LiftPt) -> Str
 	lift_values = |units, pts|
 		match (List.first(pts), List.last(pts)) {
-			(Ok(a), Ok(b)) => "${Units.mass_label(units, a.kg)} > ${Units.mass_label(units, b.kg)}"
+			(Ok(a), Ok(b)) => "${weight_label(units, a.kg)} > ${weight_label(units, b.kg)}"
 			_ => ""
 		}
 
@@ -101,12 +137,14 @@ Strength :: [].{
 	draw! = |model, frame| {
 		win_w = model.win.w
 		win_h = model.win.h
-		units = model.units
+		# the view's own unit: config units when set, else what the stored
+		# weights were entered in (Db.mass_units)
+		units = model.strength.mass
 		sv = model.strength
 		ink_muted = Theme.ink_muted
 		ink_faint = Theme.ink_faint
 		txt! = |s, sz, x, y, c| Text.from(s, model.font).size(sz).draw!(frame, { pos: { x, y }, color: c, align: (Top, Left) })
-		txt!("strength - the heaviest weight each lift moved, newest on the right", 15, 36.0, 70.0, ink_muted)
+		txt!("lifts - the heaviest weight each lift moved, newest on the right", 15, 36.0, 70.0, ink_muted)
 
 		# ── lifts, the headline
 		lift_top = 108.0
@@ -169,10 +207,16 @@ Strength :: [].{
 		if sv.last.id < 0 {
 			txt!("no strength session yet", 13, rx, lift_top, ink_muted)
 		} else {
-			txt!("last session - ${sv.last.day}", 13, rx, lift_top, Color.white)
+			head = if (List.is_empty(sv.last.log.rows)) "last session - ${sv.last.day}" else "last logged session - ${sv.last.day}"
+			txt!(head, 13, rx, lift_top, Color.white)
 			txt!((List.first(Wrap.fit(sv.last.name, 46, 1))).ok_or(""), 12, rx, lift_top + 18.0, ink_faint)
-			lines = if (List.is_empty(sv.last.log.rows)) [Trace.no_sets_note(sv.last.log.pasted)] else List.map(List.take_first(sv.last.log.rows, 7), |r| (List.first(Wrap.fit(Trace.set_line(units, r), 46, 1))).ok_or(""))
-			List.for_each!(List.map_with_index(lines, |l, i| { l, i }), |x| txt!(x.l, 12, rx, lift_top + 40.0 + U64.to_f32(x.i) * 17.0, ink_muted))
+			note = unlogged_note(sv.unlogged)
+			if note != "" {
+				txt!((List.first(Wrap.fit(note, 46, 1))).ok_or(""), 11, rx, lift_top + 34.0, ink_faint)
+			}
+			first_y = if (note == "") (lift_top + 40.0) else lift_top + 52.0
+			lines = if (List.is_empty(sv.last.log.rows)) [Trace.no_sets_note(sv.last.log.pasted)] else List.map(List.take_first(sv.last.log.rows, 6), |r| (List.first(Wrap.fit(set_text(units, r), 46, 1))).ok_or(""))
+			List.for_each!(List.map_with_index(lines, |l, i| { l, i }), |x| txt!(x.l, 12, rx, first_y + U64.to_f32(x.i) * 17.0, ink_muted))
 		}
 
 		wk_top = lift_top + 40.0 + 7.0 * 17.0 + 16.0
@@ -261,4 +305,13 @@ expect Strength.month_name("2026-11") == "nov" and Strength.month_name("bad") ==
 # the caption names the last complete month and the month in progress, each
 # with its coverage, on one fixed row
 expect Strength.tonnage_caption(Metric, [{ month: "2026-10", kg: 18400.0, covered: 6, total: 10, partial: Bool.False }, { month: "2026-11", kg: 3300.0, covered: 1, total: 3, partial: Bool.True }]) == ["oct 18.4t, 6/10 logged", "nov 3.3t so far, 1/3 logged"]
-expect Strength.lift_values(Imperial, [{ day: "a", kg: 22.6796185 }, { day: "b", kg: 27.2155422 }]) == "50.0 lb > 60.0 lb"
+expect Strength.tonnage_caption(Imperial, [{ month: "2026-10", kg: 8346.0, covered: 6, total: 10, partial: Bool.False }]) == ["oct 18.4k lb, 6/10 logged"]
+expect Strength.lift_values(Imperial, [{ day: "a", kg: 22.6796185 }, { day: "b", kg: 27.2155422 }]) == "50 lb > 60 lb"
+# pounds round to whole pounds; kilograms keep one decimal
+expect Strength.weight_label(Imperial, 11.3398) == "25 lb" and Strength.weight_label(Metric, 11.3398) == "11.3 kg"
+expect Strength.ton_label(Imperial, 8346.0) == "18.4k lb" and Strength.ton_label(Metric, 18400.0) == "18.4t"
+expect Strength.set_text(Imperial, { exercise: "Curl", sets: 3, reps: 8, kg: 11.3398, hold_s: 0 }) == "Curl  3x8 @ 25 lb"
+expect Strength.set_text(Imperial, { exercise: "Curl", sets: 3, reps: 0, kg: 9.0718474, hold_s: 60 }) == "Curl  3x60s hold @ 20 lb"
+# the newer unlogged sessions are named on one muted line
+expect Strength.unlogged_note([]) == "" and Strength.unlogged_note([{ day: "2026-11-07", name: "a" }]) == "newer, no sets logged: 2026-11-07"
+expect Strength.unlogged_note([{ day: "2026-11-07", name: "a" }, { day: "2026-11-04", name: "b" }]) == "newer, no sets logged: 2026-11-07, 2026-11-04"
