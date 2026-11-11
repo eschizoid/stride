@@ -37,7 +37,7 @@ ReportHealth :: [].{
 		# Human table only. The JSON branch below emits the `km` and `hours` fields this schema has
 		# always carried — converted, unit-bearing payload fields, and the only
 		# exceptions to "payloads are SI". Renaming them is an envelope break, so they
-		# stay km and hours, and the setting reaches only the rendered table (#349).
+		# stay km and hours, and the setting reaches only the rendered table.
 		units = Db.units!(path)?
 		today_days = Db.local_today_days!(path)
 		year = (Metrics.civil_from_days(today_days)).y
@@ -46,7 +46,7 @@ ReportHealth :: [].{
 		# date silently removes an activity from a total printed under ALL TIME — the
 		# count drops by one at exit 0. Refuses rather than reports: `stats` LISTS
 		# totals, but the date decides MEMBERSHIP in an aggregate here, so a wrong date is
-		# a wrong total — the compute side of #249's split.
+		# a wrong total.
 		_ = Report.guard_activity_dates!(path)?
 		# all-time reads the career_totals view - the one definition the
 		# window's career view draws from; ytd keeps the cutoff query below
@@ -116,27 +116,22 @@ ReportHealth :: [].{
 		cov = Sql.query!({
 			path: Path.utf8(path),
 			query: \\SELECT COUNT(*) AS total,
-				# A COVERAGE count — how many sessions the engine can actually USE a heart rate
-				# from, which `> 0` (a presence test) was not measuring. The predicate is the
-				# UNION (`Metrics.usable_hr_sql`): a plausible scalar OR nonzero HR zone seconds.
-				# The zone arm is load-bearing — a session scored `hr_zones` has its entire load
-				# computed FROM heart rate and must count, and its scalar can never be rescued: a
-				# stored average is impossible BECAUSE the strap misbehaved, and a misbehaving
-				# strap is exactly what fails #311's coverage gate.
-				#
-				# On the reference database the number does not move (672 either way, the same
-				# 672 rows); what the union buys is a `has_hr` that cannot contradict `with_hr`,
-				# a CAST that stops a BLOB reading as strapless (`Metrics.valid_hr_sql`), and a
-				# count reconcilable from one call:
+				# A coverage count: how many sessions the engine can use a heart rate
+				# from. The predicate is the union in `Metrics.usable_hr_sql`: a plausible
+				# scalar OR nonzero HR zone seconds. The zone arm matters because a session
+				# scored `hr_zones` has its whole load computed from heart rate, while its
+				# stored average can be implausible exactly because the strap misbehaved.
+				# The union keeps `has_hr` from contradicting `with_hr`, the CAST stops a
+				# BLOB reading as strapless (`Metrics.valid_hr_sql`), and the count is
+				# reproducible from one call:
 				#   jq '[.data[] | select(((.avg_hr>=35) and (.avg_hr<=220))
 				#        or ((.z1_s+.z2_s+.z3_s+.z4_s+.z5_s)>0))] | length'
-				# over `activities --json` reproduces it exactly. A `COALESCE(m.avg_hr_stream, …)`
-				# term was here and was DEAD — a non-NULL stream mean implies both arms already —
-				# so it reads the bare column.
+				# over `activities --json`. A non-NULL stream mean implies both arms, so
+				# the bare column is read.
 				#
-				# `hr_known` beside it does NOT move: `_known` companions decode from the STORED
-				# NULL (AGENTS.md). The two answer different questions — "was a heart rate
-				# recorded" vs "can one be used". Per-activity marking is #319.
+				# `hr_known` beside it answers a different question: `_known` companions
+				# decode from the stored NULL (AGENTS.md), so it says whether a heart rate
+				# was recorded, not whether one can be used.
 				\\       COALESCE(SUM(CASE WHEN ${Metrics.usable_hr_sql("a.avg_hr", "COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0)")} THEN 1 ELSE 0 END), 0) AS with_hr,
 				\\       COALESCE(SUM(CASE WHEN COALESCE(a.avg_watts, a.weighted_avg_watts, 0) > 0 THEN 1 ELSE 0 END), 0) AS with_power,
 				\\       COALESCE(SUM(CASE WHEN s.activity_id IS NOT NULL AND s.raw_json <> '{}' THEN 1 ELSE 0 END), 0) AS with_streams,
@@ -231,7 +226,7 @@ ReportHealth :: [].{
 		strength_unrated = List.len(List.keep_if(sports, |r| Sports.class(r.sport) == StrengthLike and r.rated == 0))
 		rated_total = List.len(List.keep_if(sports, |r| r.rated == 1))
 		missing_sets = Report.strength_without_sets_ids!(path)?
-		# ── data-quality watchdog (#92): streaks and counts the engine already knows ──
+		# ── data-quality watchdog: streaks and counts the engine already knows ──
 		# Anchored to the LOCAL day like every other window, not SQLite's `now`, so a user
 		# west of UTC does not get a window that ends tomorrow.
 		cutoff30 = Metrics.days_to_date_str(Db.local_today_days!(path) - 30)
@@ -482,7 +477,7 @@ ReportHealth :: [].{
 			},
 		)
 	}
-	# the window's self-published bus capabilities, relayed (#439). The window
+	# the window's self-published bus capabilities, relayed. The window
 	# rewrites viz_capabilities/viz_views/viz_fields at every launch, so what
 	# this serves is a claim by the BINARY that last ran — never a doc's copy.
 	# Absent or empty tables mean the window has never run against this
@@ -881,7 +876,7 @@ ReportHealth :: [].{
 			}
 		}
 	}
-	# Time to exhaustion at a caller-named power (#187). NOT the same fit
+	# Time to exhaustion at a caller-named power. NOT the same fit
 	# power-curve publishes: that one spans every power sport and includes
 	# today, this one is per-family and excludes its anchor date. They agree
 	# on an athlete whose rides dominate the curve, and only then. Every refusal is explicit:
@@ -893,10 +888,10 @@ ReportHealth :: [].{
 		match Metrics.arg_f64(Str.trim(watts_arg)) {
 			Err(_) => Output.err_out!("bad_watts", "tte needs a power in watts — got '${watts_arg}'")
 			Ok(w) =>
-			# `w <= 0.0` is FALSE for NaN, so a NaN sailed straight through
-			# to the payload and broke the envelope (#183 class). Negate a
-			# POSITIVE test instead: !(w > 0.0) catches NaN, zero, and
-			# negatives together. The ceiling catches +inf and typos.
+			# `w <= 0.0` is false for NaN, which would reach the payload and
+			# break the envelope, so the test is a negated positive one:
+			# !(w > 0.0) catches NaN, zero and negatives together, and the
+			# ceiling catches +inf and typos.
 				if !(w > 0.0) or w > 3000.0 {
 					Output.err_out!("bad_watts", "power must be a positive number of watts under 3000 — got '${watts_arg}'")
 				} else {
@@ -1053,7 +1048,7 @@ ReportHealth :: [].{
 		)
 	}
 
-	# Critical speed: the pace twin of power_curve! (#188). Three grade-adjusted rungs
+	# Critical speed: the pace twin of power_curve!. Three grade-adjusted rungs
 	# (300/600/1200 s), MAXed over the window, fitted to S(t) = D'/t + CS.
 	#
 	# Two deliberate differences from the power side, both required rather than stylistic:
