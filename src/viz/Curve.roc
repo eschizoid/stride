@@ -25,7 +25,7 @@ Curve :: [].{
 		curve = model.curve_family
 		units = model.units
 		# the planned targets this curve carries (marks_for says which)
-		plan_marks = marks_for(curve, model.plan_targets, model.pace_targets)
+		plan_marks = marks_for(curve, (List.first(model.curve_keys.power)).ok_or(""), model.plan_targets, model.pace_targets)
 		win_h = model.win.h
 		pad_l = Theme.pad_l
 		pad_r = Theme.pad_r
@@ -988,15 +988,18 @@ Curve :: [].{
 		}
 
 	# ── planned targets as marks on the curve. A planned session names no
-	# sport, so a power target belongs on every power curve, whichever family
-	# is on screen; a pace target belongs on every pace curve its unit fits
-	# (Sports pace_unit_families), at the speed its pace names and the
-	# duration one rep takes at that speed.
+	# sport, and watts are not comparable across families (a ride's 230 W is
+	# far beyond a row's best), so a power target goes on one curve: the power
+	# family the athlete trains most, the first of CurveKeys.power. A pace
+	# target goes on every pace curve its unit fits (Sports
+	# pace_unit_families), at the speed its pace names and the duration one rep
+	# takes at that speed.
 	Mark : { day : Str, typ : Str, dur_s : I64, val : I64, val_txt : Str, rep_txt : Str }
 
-	marks_for : Str, List(Db.Target), List(Db.PaceTarget) -> List(Mark)
-	marks_for = |curve, power, pace|
+	marks_for : Str, Str, List(Db.Target), List(Db.PaceTarget) -> List(Mark)
+	marks_for = |curve, power_home, power, pace|
 		match Bus.curve_key(curve) {
+			Power(fam) if fam != power_home => []
 			Power(_) =>
 				List.map(power, |t| { day: t.day, typ: t.typ, dur_s: t.dur_s, val: t.watts, val_txt: "${I64.to_str(t.watts)}W", rep_txt: "${I64.to_str(t.reps)}x${Fmt.mmss(t.dur_s)}" })
 			Pace(sp) =>
@@ -1175,30 +1178,32 @@ expect Curve.best_at([{ secs: 600, w: 260 }, { secs: 1200, w: 254 }], 1200) == 2
 # a power target reads in watts on every power curve; its label carries
 # its share of the window's best at the rep duration
 expect {
-	ms = Curve.marks_for("Ride", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])
+	ms = Curve.marks_for("Ride", "Ride", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])
 	match ms {
 		[m] => Curve.target_label(m, 257.0) == "planned 11-05 225W 88%" and Curve.target_label(m, 0.0) == "planned 11-05 225W" and Curve.target_tip(m, 257.0) == "planned 2026-11-05 threshold: 2x15:00 @ 225W - 88% of this window's best at that duration"
 		_ => Bool.False
 	}
 }
-expect List.len(Curve.marks_for("Rowing", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])) == 1 and List.len(Curve.marks_for("Run", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])) == 1
+# a power target sits on the most-trained power family's curve only: a
+# ride's 230 W drawn on a rowing curve would read as 157% of the row's best
+expect List.len(Curve.marks_for("Rowing", "Rowing", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])) == 1 and List.len(Curve.marks_for("Rowing", "Ride", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])) == 0
 # a pace target lands on every pace curve its unit fits, at the speed its
 # pace names; a distance rep takes the time that distance needs at that
 # pace, and a unit for another sport keeps it off the curve
 expect {
 	run = { day: "2026-11-10", typ: "threshold", reps: 5, dur_s: 240, dist_m: 0, pace_s: 402, unit: "/mi" }
 	swim = { day: "2026-11-11", typ: "threshold", reps: 10, dur_s: 0, dist_m: 100, pace_s: 100, unit: "/100m" }
-	match Curve.marks_for("pace:TrailRun", [], [run, swim]) {
+	match Curve.marks_for("pace:TrailRun", "Ride", [], [run, swim]) {
 		[m] => m.val == 4003 and m.dur_s == 240 and m.val_txt == "6:42/mi" and m.rep_txt == "5x4:00" and Curve.target_label(m, 4210.0) == "planned 11-10 6:42/mi 95%"
 		_ => Bool.False
 	}
 		and (
-			match Curve.marks_for("pace:Swim", [], [run, swim]) {
+			match Curve.marks_for("pace:Swim", "Ride", [], [run, swim]) {
 				[m] => m.val == 1000 and m.dur_s == 100 and m.rep_txt == "10x100m"
 				_ => Bool.False
 			}
 		)
-		and Curve.marks_for("Ride", [], [run, swim]) == []
+		and Curve.marks_for("Ride", "Ride", [], [run, swim]) == []
 }
 expect Curve.r2_str(0.84) == "0.84" and Curve.r2_str(0.9) == "0.90" and Curve.r2_str(0.05) == "0.05" and Curve.r2_str(1.0) == "1.00" and Curve.r2_str(0.899) == "0.89" and Curve.r2_str(0.8999) == "0.89" and Curve.r2_str(-0.253) == "-0.25"
 # a rung within 5% of the next longer one was not pushed: in this ladder the

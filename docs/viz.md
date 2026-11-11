@@ -468,8 +468,9 @@ faster) and the CS line speak pace. The CS line follows the CP line's rule:
 drawn only from a fit with r2 at the floor and D' inside 10-600 m, and
 otherwise the caption names what is wrong and the effort that would fix it.
 
-Planned targets show where they belong: a power target on every power curve
-(a planned session names no sport), a pace target on every pace curve its unit fits (`/km` and `/mi` on the run and
+Planned targets show where they belong, drawn as dashed gold rings labelled `planned`: a power target on the curve of
+the power family the athlete trains most (a planned session names no sport, and watts do not compare across families),
+a pace target on every pace curve its unit fits (`/km` and `/mi` on the run and
 walk families, `/100m` on the swim family, `/500m` on the rowing family), at
 the speed its pace names and the time one rep takes at that speed. A
 directive's `family` field steers the same switch, and the focus row reports
