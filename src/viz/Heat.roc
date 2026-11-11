@@ -1,6 +1,7 @@
 import rr.Color
 import rr.Draw
 import rr.Text
+import Days
 import Db
 import Theme
 import Ui
@@ -28,7 +29,7 @@ Heat :: [].{
 		win_h = model.win.h
 		ink_muted = Theme.ink_muted
 		ink_faint = Theme.ink_faint
-		model.heat_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+		model.heat_title.draw!(frame, { pos: { x: Days.title_x, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		if List.is_empty(model.heat) {
 			Text.from("no training history yet", model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 130.0 }, color: ink_muted, align: (Top, Left) })
 		} else {
