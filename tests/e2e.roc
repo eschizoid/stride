@@ -364,7 +364,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1419)?
+	checks_ran_exactly!(1420)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -8448,6 +8448,16 @@ b_migration! = |ctx| {
 	check!("migrating a v38 database queues its stored body that is not JSON, and only that one", Str.trim(sql!(v38db, "SELECT group_concat(activity_id || ':' || attempts) FROM stream_retries;")) == "981:0")?
 	check!("...so the next plain sync owes it a fetch", strjq!({ ..ctx, home: v38home, db: v38db }, ["doctor"], ".data.pending_streams") == "1")?
 	_ = sh!("rm -rf '${v38home}'")
+	# ── v44 to v45: a v44 database has the threshold-test table but not the
+	# plan's target_result column, which the window's plan view selects; a
+	# version that did not move past it would leave every plan row unreadable.
+	v44home = Str.trim(sh!("mktemp -d"))
+	v44db = "${v44home}/.stride/db.sqlite"
+	_ = stride!(ctx.bin, v44home, ["init"])
+	_ = sql!(v44db, "ALTER TABLE planned_sessions DROP COLUMN target_result; PRAGMA user_version = 44;")
+	_ = stride!(ctx.bin, v44home, ["config", "get", "timezone"])
+	check!("migrating a v44 database adds the plan's target_result column", Str.trim(sql!(v44db, "SELECT count(*) FROM pragma_table_info('planned_sessions') WHERE name = 'target_result';")) == "1")?
+	_ = sh!("rm -rf '${v44home}'")
 	Ok({})
 }
 

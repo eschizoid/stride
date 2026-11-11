@@ -303,7 +303,7 @@ Db :: [].{
 	# bump when the schema changes; ensure_schema! re-runs migrations when the db's
 	# PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 	# that post-date the original CREATE statements in Schema.roc.)
-	schema_version = 44
+	schema_version = 45
 
 	run_migrations! : Str => Try({}, _)
 	run_migrations! = |path| {
@@ -371,7 +371,7 @@ Db :: [].{
 		# the projection and the window read; a row with no literal is a power target
 		# written before it, rebuilt from those columns.
 		alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN target_literal TEXT")?
-		# v44: the target's result on its own signal as `complete` rendered it,
+		# v45: the target's result on its own signal as `complete` rendered it,
 		# for readers that cannot run the scoring (the window's plan view). Written by
 		# `complete` and refreshed by `rate`; NULL on a session completed without it.
 		alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN target_result TEXT")?
