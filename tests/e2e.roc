@@ -364,7 +364,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1394)?
+	checks_ran_exactly!(1419)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -416,6 +416,7 @@ run_scenarios! = |ctx| {
 	b_week_plan!(ctx)?
 	b_relabel!(ctx)?
 	b_targets!(ctx)?
+	b_threshold_tests!(ctx)?
 	b_events!(ctx)?
 	b_strength_import!(ctx)?
 	b_review!(ctx)?
@@ -1656,7 +1657,7 @@ b_init_config! = |ctx| {
 	# here is the deliberate-bump discipline: adding a properly described command still
 	# has to change a number a reader sees.
 	overlap = Str.trim(sh!("LC_ALL=C comm -12 '${verbs_dir}/parser' '${verbs_dir}/spec' | wc -l | tr -d ' '"))
-	check!("...and the two lists genuinely overlap on all 36 verbs (got ${overlap})", overlap == "36")?
+	check!("...and the two lists genuinely overlap on all 37 verbs (got ${overlap})", overlap == "37")?
 	_ = sh!("rm -rf '${verbs_dir}'")
 
 	# ...and the HUMAN help names every command the table declares. `help_text`
@@ -1674,7 +1675,7 @@ b_init_config! = |ctx| {
 	_ = sh!("rm -rf '${help_dir}' && mkdir -p '${help_dir}' && ${spec_names} > '${help_dir}/spec' && ${human_help} > '${help_dir}/human'")
 	# Fail-closed: an empty extraction on either side would make the loop below vacuous.
 	help_sizes = Str.trim(sh!("wc -l < '${help_dir}/spec' | tr -d ' '"))
-	check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "44")?
+	check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "46")?
 	missing_from_help = Str.trim(sh!("while IFS= read -r c; do grep -qw -- \"\$c\" '${help_dir}/human' || printf '%s ' \"\$c\"; done < '${help_dir}/spec'"))
 	check!("every command in the table is named in `stride --help` (missing: ${missing_from_help})", missing_from_help == "")?
 	_ = sh!("rm -rf '${help_dir}'")
@@ -4826,11 +4827,12 @@ b_command_schemas! = |ctx| {
 	# FIVE named exceptions, because for these the parser validates the VALUE at parse
 	# time, so `usage` there is a value verdict rather than an arity one — which is the
 	# limit of the observation this whole block rests on. `viz tick` declares the literal
-	# `--no-ack` and refuses anything else; `week` declares the literal `all` the same
-	# way; `reps` and `review` refuse a non-date; `progress` has dedicated `asc`/`desc`
-	# arms and refuses a second token that is neither. Pinned by name so a sixth is a
-	# line in the diff rather than a silent member.
-	check!("...and exactly what the table declares is never one, bar the five that parse-check their value (got: ${shortfall})", shortfall == "viz tick x|review x|progress x x|reps x|week x|")?
+	# `--no-ack` and refuses anything else; `test` declares the literal `--apply-zones`
+	# the same way; `week` declares the literal `all`; `reps` and `review` refuse a
+	# non-date; `progress` has dedicated `asc`/`desc` arms and refuses a second token
+	# that is neither. Pinned by name so a seventh is a line in the diff rather than a
+	# silent member.
+	check!("...and exactly what the table declares is never one, bar the six that parse-check their value (got: ${shortfall})", shortfall == "test x x x|viz tick x|review x|progress x x|reps x|week x|")?
 	# ...and one REQUIRED argument short is always a usage error, which the total-
 	# driven bounds cannot see: flipping an optional to required leaves both
 	# unmoved — and declaring `complete <activity_id>` required erases
@@ -5125,8 +5127,7 @@ b_agent_loop! = |ctx| {
 	# 9220 has to move it, and nothing in a per-command test relates the two.
 	check!("...and the activity stops counting as unplanned, a fact from another query", str_to_i64(pj!(".data.adherence_28d.unplanned_activities")) == base_unplanned - 1)?
 	# ...and the OTHER link. `Plan.roc`'s unplanned query excludes activities
-	# referenced by EITHER link, and only the completion half was tested — deleting the
-	# substitute clause from the query passed the entire suite, this scenario included.
+	# referenced by EITHER link, and this is the only check on the substitute half.
 	# A substitution is `skip <id> "<reason>" <activity>`: the session did not happen, the
 	# activity did, and it stops being unplanned just the same.
 	_ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id,name,sport_type,start_local,moving_time,distance,weighted_avg_watts,avg_watts,avg_hr) VALUES (9221,'agent loop substitute','Ride','${ctx.d2}T08:00:00Z',3600,20000,180,180,140);")
@@ -6141,6 +6142,70 @@ b_targets! = |ctx| {
 	_ = sql!(ctx.db, "DELETE FROM ratings WHERE activity_id = 9808; DELETE FROM activity_metrics WHERE activity_id = 9808; DELETE FROM activities WHERE id = 9808; DELETE FROM planned_sessions WHERE id = ${rid};")
 	_ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id = 9805; DELETE FROM streams WHERE activity_id IN (9801, 9805); DELETE FROM activity_metrics WHERE activity_id = 9803; DELETE FROM activities WHERE id IN (9801, 9802, 9803, 9804, 9805, 9806, 9807); DELETE FROM planned_sessions WHERE id IN (${hid}, ${hid2}, ${zid}, ${pid}, ${pid2}, ${sid}, ${sid2});")
 	_ = sql!(ctx.db, "DELETE FROM activity_segments WHERE activity_id = 977; DELETE FROM activities WHERE id IN (977, 978, 979); DELETE FROM planned_sessions WHERE id IN (${tid}, ${tid2}, ${tid3});")
+	Ok({})
+}
+
+# ── threshold tests (ADR 0020) ─────────────────────────────────
+# Three sessions dated d1, deleted at the end with every row and config key the
+# scenario writes: a Ride of one minute at 500 W then 100 W, at 160 bpm, for 1300 s;
+# a Ride with no stream; and a Run that covers 5 km in 1000 s and then jogs for 400 s.
+# The ride's ramp test is 75% of its best minute, 375 W, while its 20-minute best
+# adds only 114 W to the derivation, so the test sits above every derived FTP the
+# fixture holds and must set the ride's own ftp_used, the summary estimate, the zones
+# and the power curve's test fields; unmarking must hand every one back to the
+# derivation. The run's 5k test, 94% of 5 m/s, sits above what its 20-minute best
+# adds to the derived threshold pace the same way.
+b_threshold_tests! : Ctx => Try({}, _)
+b_threshold_tests! = |ctx| {
+	secs = |n| Iter.fold((0.I64..<n).iter(), [], |acc, t| List.append(acc, I64.to_str(t)))
+	same = |n, v| Iter.fold((0.I64..<n).iter(), [], |acc, _| List.append(acc, v))
+	watts = Iter.fold((0.I64..<1300).iter(), [], |acc, t| List.append(acc, if (t < 60) "500" else "100"))
+	ride_json = "{\"time\":{\"data\":[${Str.join_with(secs(1300), ",")}]},\"watts\":{\"data\":[${Str.join_with(watts, ",")}]},\"heartrate\":{\"data\":[${Str.join_with(same(1300, "160"), ",")}]}}"
+	run_dist = Iter.fold((0.I64..<1400).iter(), [], |acc, t| List.append(acc, I64.to_str(if (t <= 1000) t * 5 else 5000 + (t - 1000))))
+	run_json = "{\"time\":{\"data\":[${Str.join_with(secs(1400), ",")}]},\"distance\":{\"data\":[${Str.join_with(run_dist, ",")}]}}"
+	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9901,'ftp test','Ride','${ctx.d1}T06:00:00Z',1300,10000),(9902,'no stream ride','Ride','${ctx.d1}T07:00:00Z',1300,10000),(9903,'5k test','Run','${ctx.d1}T08:00:00Z',1400,5400);")
+	_ = sql!(ctx.db, "INSERT INTO streams (activity_id, raw_json) VALUES (9901, '${ride_json}'), (9903, '${run_json}');")
+	# the ride's derived FTP before any test, the value removing the test must restore
+	_ = stride!(ctx.bin, ctx.home, ["analyze"])
+	before = Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(ftp_used) AS INTEGER) FROM activity_metrics WHERE activity_id = 9901;"))
+	marked = strjq!(ctx, ["test", "9901", "ramp"], "[.data.signal, (.data.value | round), .data.unit, .data.zones_applied, (.data.zone_sports | length)] | map(tostring) | join(\",\")")
+	check!("a ramp test sets a power threshold of 75% of its best minute (got ${marked})", marked == "power,375,W,false,0")?
+	until = Str.trim(sh!("TZ=${ctx.tz} date -j -v+90d -f %F ${ctx.d1} +%F 2>/dev/null || TZ=${ctx.tz} date -d '${ctx.d1} +90 days' +%F"))
+	check!("...and is in force for 90 days from its own date", strjq!(ctx, ["test", "9901", "ramp"], ".data.in_force_until") == until)?
+	_ = stride!(ctx.bin, ctx.home, ["analyze"])
+	check!("analyze scores the test ride against its own test", Str.trim(sql!(ctx.db, "SELECT CAST(ftp_used AS INTEGER) FROM activity_metrics WHERE activity_id = 9901;")) == "375")?
+	check!("summary's FTP is the test's, and says so", strjq!(ctx, ["summary"], ".data.ftp | [(.estimated_ftp_w | round), .source, .test_known, .test_kind, .test_date] | map(tostring) | join(\",\")") == "375,test,true,ramp,${ctx.d1}")?
+	check!("...while the derivation it beat stays visible beside it", sfloat(strjq!(ctx, ["summary"], ".data.ftp.derived_ftp_w")) < 375.0)?
+	check!("the power zones read the test's FTP", strjq!(ctx, ["zones"], ".data | [.ftp, .source, .test_kind] | map(tostring) | join(\",\")") == "375,test,ramp")?
+	check!("the ride power curve carries the test in force", strjq!(ctx, ["power-curve", "90", "Ride"], ".data | [.test_known, (.test_value | round), .test_kind] | map(tostring) | join(\",\")") == "true,375,ramp")?
+	check!("...and a curve over no named sport carries none", strjq!(ctx, ["power-curve"], ".data.test_known") == "false")?
+	check!("the human summary names the test", Str.contains(stride_human!(ctx.bin, ctx.home, ["summary"]), "from your ramp test on ${ctx.d1}"))?
+	removed = strjq!(ctx, ["test", "remove", "9901"], "[.data.activity_id, .data.removed] | map(tostring) | join(\",\")")
+	check!("test remove unmarks the session", removed == "9901,true")?
+	_ = stride!(ctx.bin, ctx.home, ["analyze"])
+	after = Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(ftp_used) AS INTEGER) FROM activity_metrics WHERE activity_id = 9901;"))
+	check!("...and analyze hands the ride back to its derived FTP (before ${before}, after ${after})", after == before and after != "375")?
+	check!("...as summary does", strjq!(ctx, ["summary"], ".data.ftp | [.source, .test_known] | map(tostring) | join(\",\")") == "derived,false")?
+	check!("removing a session that is no test is refused by name", strjq!(ctx, ["test", "remove", "9901"], ".error.code") == "test_not_found")?
+	# tt30 is the best 20-minute heart rate; --apply-zones writes Friel's ceilings
+	# (85/89/94/99% of 160) to every sport type of the ride family
+	lthr = strjq!(ctx, ["test", "9901", "tt30", "--apply-zones"], "[.data.signal, (.data.value | round), .data.zones_applied, .data.zones.z1_max, .data.zones.z2_max, .data.zones.z3_max, .data.zones.z4_max, (.data.zone_sports | join(\"/\"))] | map(tostring) | join(\",\")")
+	check!("a tt30 test with --apply-zones sets the family's zones from its LTHR (got ${lthr})", lthr == "hr,160,true,136,142,150,158,Ride/VirtualRide/GravelRide/MountainBikeRide")?
+	check!("...writing the per-sport keys analyze reads", Str.trim(sql!(ctx.db, "SELECT value FROM config WHERE key = 'hr_z2_max_virtualride';")) == "142")?
+	check!("a heart-rate test moves no power threshold", strjq!(ctx, ["summary"], ".data.ftp.source") == "derived")?
+	check!("the flag belongs to tt30 alone", strjq!(ctx, ["test", "9901", "ftp20", "--apply-zones"], ".error.code") == "zones_need_lthr")?
+	check!("a swim protocol on a ride is refused", strjq!(ctx, ["test", "9901", "css"], ".error.code") == "test_wrong_sport")?
+	check!("...as is a run protocol", strjq!(ctx, ["test", "9901", "5k"], ".error.code") == "test_wrong_sport")?
+	check!("an unknown kind is refused by name", strjq!(ctx, ["test", "9901", "ftp30"], ".error.code") == "bad_test_kind")?
+	check!("a power test on a ride with no stream names the gap", strjq!(ctx, ["test", "9902", "ftp20"], ".error.code") == "test_needs_power")?
+	check!("an id no activity holds is refused", strjq!(ctx, ["test", "424242", "ftp20"], ".error.code") == "activity_not_found")?
+	# the 5k test: 94% of 5 m/s, scored on the run itself
+	check!("a 5k test sets a threshold speed of 94% of the trial's", strjq!(ctx, ["test", "9903", "5k"], "[.data.signal, .data.unit, (.data.value * 1000 | round)] | map(tostring) | join(\",\")") == "pace,m/s,4700")?
+	_ = stride!(ctx.bin, ctx.home, ["analyze"])
+	check!("...and analyze scores the run against it", Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(threshold_pace_used * 1000) AS INTEGER) FROM activity_metrics WHERE activity_id = 9903;")) == "4700")?
+	check!("the run pace curve carries it", strjq!(ctx, ["pace-curve", "90", "Run"], ".data | [.test_known, .test_kind] | map(tostring) | join(\",\")") == "true,5k")?
+	_ = sql!(ctx.db, "DELETE FROM threshold_tests WHERE activity_id IN (9901,9902,9903); DELETE FROM config WHERE key GLOB 'hr_z[1-4]_max_*ride'; DELETE FROM activity_segments WHERE activity_id IN (9901,9902,9903); DELETE FROM activity_metrics WHERE activity_id IN (9901,9902,9903); DELETE FROM streams WHERE activity_id IN (9901,9902,9903); DELETE FROM activities WHERE id IN (9901,9902,9903);")
+	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 	Ok({})
 }
 

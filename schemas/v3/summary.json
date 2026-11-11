@@ -265,7 +265,13 @@
         "best_20min_w_60d",
         "estimated_ftp_w",
         "prior_60d_best_20min_w",
-        "prior_60d_known"
+        "prior_60d_known",
+        "derived_ftp_w",
+        "source",
+        "test_known",
+        "test_ftp_w",
+        "test_kind",
+        "test_date"
       ],
       "additionalKeys": false,
       "properties": {
@@ -280,6 +286,31 @@
         },
         "prior_60d_known": {
           "type": "boolean"
+        },
+        "derived_ftp_w": {
+          "type": "number",
+          "description": "The 60-day derivation alone: best 20-min power × 0.95 once two sessions carry one, else 0."
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "test",
+            "derived"
+          ],
+          "description": "`test` when a marked test in force is higher than the derivation, so `estimated_ftp_w` is the test's threshold; `derived` otherwise."
+        },
+        "test_known": {
+          "type": "boolean",
+          "description": "Whether a ride-family power test is in force; `test_ftp_w`, `test_kind` and `test_date` are 0 and empty when false."
+        },
+        "test_ftp_w": {
+          "type": "number"
+        },
+        "test_kind": {
+          "type": "string"
+        },
+        "test_date": {
+          "type": "string"
         }
       }
     },

@@ -25,6 +25,9 @@ Db :: [].{
 	expect ascii_safe("wait… — done") == "wait... - done"
 	Seg : { kind : Str, start_s : I64, dur_s : I64 }
 	Fit : { cp : F32, w_prime : F32, r2 : F32, points : F32, ok : Bool }
+	# a marked test in force for the curve's family (ADR 0020): its threshold
+	# in the fit's own units (watts, or a speed in m/s), 0 when none is
+	TestAnchor : { value : F32, kind : Str, date : Str }
 
 	Point : { ctl : F32, atl : F32, tsb : F32, tss : F32 }
 	# integer tenths -> "41.9" / "-8.9"; the rule lives in core.Fmt so the CLI
@@ -1051,6 +1054,25 @@ Db :: [].{
 				)
 		}
 
+	# the months a marked threshold test (ADR 0020) sets a family's spine from:
+	# power and pace tests only, since a heart-rate test moves no spine. An
+	# engine older than the tests table answers with an error, read as none.
+	load_test_months! : Sqlite.Db => List({ fam : Str, month : Str, kind : Str })
+	load_test_months! = |db|
+		match db.query!("SELECT CAST(a.sport_family AS TEXT) AS f, substr(CAST(a.start_local AS TEXT), 1, 7) AS m, CAST(t.kind AS TEXT) AS k FROM threshold_tests t JOIN activities a ON a.id = t.activity_id WHERE t.signal <> 'hr' ORDER BY a.start_local", []) {
+			Err(_) => []
+			Ok(rows) =>
+				List.keep_oks(
+					rows,
+					|r| {
+						f = r.str("f") ? |_| "bad"
+						m = r.str("m") ? |_| "bad"
+						k = r.str("k") ? |_| "bad"
+						Ok({ fam: f, month: m, kind: k })
+					},
+				)
+		}
+
 	# every family's month-close threshold in tenths, all families in ONE read
 	# of the expensive monthly_threshold view, so the view runs once per load
 	# however many families there are. A month/family with no threshold has no
@@ -1567,6 +1589,21 @@ Db :: [].{
 	# one key rather than a parse of the whole document, and one key at a time,
 	# so key ORDER cannot silently break it. "" when the key is absent, which
 	# the caller reads as "the engine did not answer" rather than as a zero.
+	# the string value that follows a key, up to its closing quote, and "" for a
+	# key the document does not carry or whose value is not a string. The
+	# engine's values here are test kinds and dates, which hold no escapes.
+	json_string : Str, Str -> Str
+	json_string = |doc, key|
+		match Str.split_on(doc, "\"${key}\":\"") {
+			[_, rest, ..] =>
+				match Str.split_on(rest, "\"") {
+					[v, ..] => v
+					_ => ""
+				}
+
+			_ => ""
+		}
+
 	json_number : Str, Str -> Str
 	json_number = |doc, key|
 		match Str.split_on(doc, "\"${key}\":") {
@@ -1642,7 +1679,7 @@ Db :: [].{
 	# the engine's fit for a curve key: CP and W' from `stride power-curve`
 	# for a family, critical speed (m/s) and D' (m) from `stride pace-curve`
 	# for a pace sport, carried in the same four fields
-	load_fit! : Cmd.Runner, I64, Str => Fit
+	load_fit! : Cmd.Runner, I64, Str => { fit : Fit, test : TestAnchor }
 	load_fit! = |runner, days, curve| {
 		args = match Bus.curve_key(curve) {
 			Pace(sp) => ["pace-curve", I64.to_str(days), sp, "--json"]
@@ -1662,7 +1699,11 @@ Db :: [].{
 		wp = num(reserve_key)
 		r2 = num("fit_r2")
 		fp = num("fit_points")
-		{ cp, w_prime: wp, r2, points: fp, ok: cp >= 0.0 and wp >= 0.0 and r2 >= 0.0 and fp >= 0.0 }
+		tv = num("test_value")
+		{
+			fit: { cp, w_prime: wp, r2, points: fp, ok: cp >= 0.0 and wp >= 0.0 and r2 >= 0.0 and fp >= 0.0 },
+			test: { value: if (tv > 0.0) tv else 0.0, kind: json_string(out, "test_kind"), date: json_string(out, "test_date") },
+		}
 	}
 
 	find_idx = |days, target|
@@ -1709,6 +1750,11 @@ expect Db.json_number("{\"fit_r2\":-1.25e-3}", "fit_r2") == "-1.25e-3"
 expect Db.json_number("{\"cp\":243.5}", "fit_points") == ""
 # a key whose value is not a number yields "", never the text beside it
 expect Db.json_number("{\"model\":\"power_stream\",\"cp\":9}", "model") == ""
+# ...and its string twin: the text between the quotes, "" for an absent key
+# or a value that is not a string
+expect Db.json_string("{\"test_kind\":\"cp3-12\",\"test_date\":\"2026-11-11\"}", "test_date") == "2026-11-11"
+expect Db.json_string("{\"test_kind\":\"\",\"x\":1}", "test_kind") == ""
+expect Db.json_string("{\"cp\":243.5}", "cp") == "" and Db.json_string("{\"cp\":243.5}", "test_kind") == ""
 
 # the engine's payload, as `stride project` prints it; a baseline it could
 # not measure, or output that is not the payload, projects nothing

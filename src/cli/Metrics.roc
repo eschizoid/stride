@@ -1012,6 +1012,145 @@ Metrics :: [].{
 	ftp_from_best_20min : F64 -> F64
 	ftp_from_best_20min = |best_20min| best_20min * 0.95
 
+	# ── threshold tests ─────────────────────────────────────────────────
+	# A session the athlete marks as a test was ridden, run or swum all-out on
+	# purpose, so the threshold it yields outranks the rolling derivation, which
+	# only ever sees whatever efforts happened. Each kind names the signal its
+	# threshold lives on: power is watts and pools per sport FAMILY (as the derived
+	# FTP does), pace is a speed in m/s and pools per sport TYPE (as the derived
+	# threshold pace does), and hr is a lactate-threshold heart rate in bpm, which
+	# changes scoring only when the athlete applies it to their zones.
+	test_kinds : List(Str)
+	test_kinds = ["ftp20", "ramp", "cp3-12", "tt30", "css", "5k", "3k"]
+
+	test_signal : Str -> Try(Str, [UnknownKind])
+	test_signal = |kind|
+		if (kind == "ftp20" or kind == "ramp" or kind == "cp3-12")
+			Ok("power")
+		else if (kind == "css" or kind == "5k" or kind == "3k")
+			Ok("pace")
+		else if (kind == "tt30")
+			Ok("hr")
+		else
+			Err(UnknownKind)
+
+	# A test sets its population's threshold for this many days from its own date.
+	# Inside that span the higher of the test and the derivation is in force, so a
+	# stronger derived estimate still wins; past it the derivation alone returns,
+	# so an old test cannot hold a detrained athlete's threshold up indefinitely.
+	test_in_force_days : I64
+	test_in_force_days = 90
+
+	# the higher of a test's threshold and the derived one, the value in force
+	# while the test is: a test of 0 (none in force) leaves the derivation
+	threshold_with_test : F64, F64 -> F64
+	threshold_with_test = |derived, test| if (test > derived) test else derived
+
+	# ramp test: 75% of the best one-minute power, the ratio ramp protocols publish
+	ramp_threshold : F64 -> F64
+	ramp_threshold = |best_1min| best_1min * 0.75
+
+	# two-point critical power from all-out 3- and 12-minute efforts: the line
+	# P(t) = W'/t + CP through both points, solved for its intercept. A 12-minute
+	# best at or above the 3-minute one has no positive W' and no physical CP.
+	cp_two_point : F64, F64 -> Try(F64, [Implausible])
+	cp_two_point = |p3, p12|
+		if p12 > 0.0 and p3 > p12 {
+			cp = (p12 * 720.0 - p3 * 180.0) / 540.0
+			if (cp > 0.0) Ok(cp) else Err(Implausible)
+		} else
+			Err(Implausible)
+
+	# critical swim speed (m/s) from all-out 400 m and 200 m times: the 200 m that
+	# separates them divided by the time that separates them
+	css_speed : F64, F64 -> Try(F64, [Implausible])
+	css_speed = |t400, t200|
+		if (t200 > 0.0 and t400 > t200) Ok(200.0 / (t400 - t200)) else Err(Implausible)
+
+	# threshold running speed from a time-trial speed: Daniels' tables put
+	# threshold pace near 94% of 5 km race speed and 90% of 3 km race speed
+	run_test_threshold : Str, F64 -> F64
+	run_test_threshold = |kind, speed| if (kind == "3k") speed * 0.90 else speed * 0.94
+
+	# the distance a run or swim test is timed over, in metres
+	test_distance_m : Str -> F64
+	test_distance_m = |kind|
+		if (kind == "3k") 3000.0 else if (kind == "5k") 5000.0 else 0.0
+
+	# Fastest time (s) to cover `d` metres anywhere in a session, from aligned
+	# cumulative time and distance samples. A window between two samples rarely
+	# spans exactly `d`, so each candidate is scaled to `d` at its own average
+	# speed. NotCovered when no stretch of the session reaches `d`.
+	fastest_cover_s : List(F64), List(F64), F64 -> Try(F64, [NotCovered])
+	fastest_cover_s = |time, dist, d| {
+		best = cover_go(time, dist, d, 0, 0, -1.0)
+		if (d > 0.0 and best > 0.0) Ok(best) else Err(NotCovered)
+	}
+
+	cover_go : List(F64), List(F64), F64, U64, U64, F64 -> F64
+	cover_go = |ts, ds, d, i, j, best| {
+		if j >= List.len(ts) or j >= List.len(ds) {
+			best
+		} else {
+			dj = get_or_zero(ds, j)
+			if i + 1 <= j and dj - get_or_zero(ds, i + 1) >= d {
+				cover_go(ts, ds, d, i + 1, j, best)
+			} else {
+				span = dj - get_or_zero(ds, i)
+				secs = get_or_zero(ts, j) - get_or_zero(ts, i)
+				cand = if (span >= d and span > 0.0 and secs > 0.0) secs * d / span else -1.0
+				next = if (cand > 0.0 and (best < 0.0 or cand < best)) cand else best
+				cover_go(ts, ds, d, i, j + 1, next)
+			}
+		}
+	}
+
+	# The sport family a test kind belongs to, "" when any sport may carry it:
+	# the swim and run protocols time a distance at that sport's pace, while a
+	# power or heart-rate test reads a stream every family can record.
+	test_family : Str -> Str
+	test_family = |kind|
+		if (kind == "css") "Swim" else if (kind == "5k" or kind == "3k") "Run" else ""
+
+	# The threshold a test kind yields from one session's streams: 1 Hz watts and
+	# heart-rate pairs already filtered to valid samples, and aligned cumulative
+	# time and distance. Each failure names what the session lacked.
+	test_threshold : Str, List({ t : I64, v : F64 }), List({ t : I64, v : F64 }), List(F64), List(F64) -> Try(F64, [UnknownKind, NeedsPower, NeedsHr, NeedsDistance, Implausible])
+	test_threshold = |kind, watts, hr, time, dist| {
+		best = |pairs, secs, missing| best_rolling_mean_1s(pairs, secs).map_err(|_| missing)
+		if kind == "ftp20" {
+			best(watts, 1200, NeedsPower).map_ok(ftp_from_best_20min)
+		} else if kind == "ramp" {
+			best(watts, 60, NeedsPower).map_ok(ramp_threshold)
+		} else if kind == "cp3-12" {
+			p3 = best(watts, 180, NeedsPower)?
+			p12 = best(watts, 720, NeedsPower)?
+			cp_two_point(p3, p12).map_err(|_| Implausible)
+		} else if kind == "tt30" {
+			best(hr, 1200, NeedsHr)
+		} else if kind == "css" {
+			t400 = fastest_cover_s(time, dist, 400.0).map_err(|_| NeedsDistance)?
+			t200 = fastest_cover_s(time, dist, 200.0).map_err(|_| NeedsDistance)?
+			css_speed(t400, t200).map_err(|_| Implausible)
+		} else if kind == "5k" or kind == "3k" {
+			d = test_distance_m(kind)
+			secs = fastest_cover_s(time, dist, d).map_err(|_| NeedsDistance)?
+			Ok(run_test_threshold(kind, d / secs))
+		} else {
+			Err(UnknownKind)
+		}
+	}
+
+	# HR zone ceilings from a lactate-threshold heart rate, by Friel's percentages
+	# of LTHR (85 / 89 / 94 / 99), whole bpm. Zone 5 is everything above z4_max,
+	# so the threshold itself sits at the bottom of zone 5. One rule for every
+	# sport: the LTHR it scales is the sport's own, from that sport's test.
+	lthr_zone_bounds : F64 -> { z1_max : F64, z2_max : F64, z3_max : F64, z4_max : F64 }
+	lthr_zone_bounds = |lthr| {
+		r = |pct| (lthr * pct).round_to_i64_try().ok_or(0).to_f64()
+		{ z1_max: r(0.85), z2_max: r(0.89), z3_max: r(0.94), z4_max: r(0.99) }
+	}
+
 	# the standard power-duration ladder (seconds): 5s sprint .. 60min endurance
 	power_curve_durations : List(U64)
 	power_curve_durations = [5, 15, 30, 60, 300, 600, 1200, 3600]
@@ -3471,16 +3610,15 @@ expect Str.contains(Metrics.rank_ts_sql("a.start_local", Asc), "END) DESC,")
 expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "END) DESC,")
 expect Str.ends_with(Metrics.rank_ts_sql("a.start_local", Asc), " ASC")
 expect Str.ends_with(Metrics.rank_ts_sql("a.start_local", Desc), " DESC")
-# ...and both halves of rankability are present. Each is separately deletable and each
-# survived a fixture aimed only at the other.
+# ...and both halves of rankability are present. Each is separately deletable, and a
+# fixture aimed at one does not catch the other's removal.
 expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "datetime(substr(a.start_local, 1, 19)) IS NOT NULL")
 expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "date(substr(a.start_local, 1, 10))")
-# ...and the KEY's own domain, which is the invariant this whole change is about turned
-# on the helper enforcing it. Shrinking the key to `substr(col, 1, 10)` while leaving the
-# guard at 1..19 passed the entire suite: guard domain 19, consumer domain 10, inside
-# `rank_ts_sql`. It collapses every intra-day comparison to a tie, which falls through to
-# `a.id` at six sites, and to NOTHING in Plan's open-session scan and Strava's newest-first
-# sync query, the two that ORDER BY it without appending `a.id`.
+# ...and the KEY's own domain: the sort key must span the same 19 characters the
+# guard checks. A key cut to `substr(col, 1, 10)` collapses every intra-day comparison
+# to a tie, which falls through to `a.id` where a query appends it and to nothing in the
+# queries that ORDER BY the key alone (Plan's open-session scan, Strava's newest-first
+# sync query). This expect is the only guard on that width.
 expect Str.contains(Metrics.rank_ts_sql("a.start_local", Desc), "THEN substr(a.start_local, 1, 19) ELSE NULL END")
 # the caller's column reaches every term — a helper that hardcoded one would be wrong at
 # any caller that ranks on a bare `start_local` rather than `a.start_local`
@@ -3553,7 +3691,7 @@ expect {
 	(tss - 55.0).abs() < 0.001
 }
 
-# zone classification against Mariano-shaped bounds
+# zone classification against an athlete-shaped set of bounds
 expect {
 	zb = { z1_max: 123.0, z2_max: 153.0, z3_max: 168.0, z4_max: 183.0 }
 	Metrics.zone_of(100.0, zb) == 1 and Metrics.zone_of(140.0, zb) == 2 and Metrics.zone_of(160.0, zb) == 3 and Metrics.zone_of(175.0, zb) == 4 and Metrics.zone_of(190.0, zb) == 5
@@ -3934,6 +4072,118 @@ expect {
 expect (Metrics.ftp_from_best_20min(200.0) - 190.0).abs() < 0.001
 expect (Metrics.ftp_from_best_20min(256.0) - 243.2).abs() < 0.001
 
+# threshold tests: every kind names its signal, and nothing else is a kind
+expect Metrics.test_signal("ftp20") == Ok("power") and Metrics.test_signal("ramp") == Ok("power") and Metrics.test_signal("cp3-12") == Ok("power")
+expect Metrics.test_signal("css") == Ok("pace") and Metrics.test_signal("5k") == Ok("pace") and Metrics.test_signal("3k") == Ok("pace")
+expect Metrics.test_signal("tt30") == Ok("hr")
+expect Metrics.test_signal("FTP20") == Err(UnknownKind) and Metrics.test_signal("") == Err(UnknownKind)
+expect List.all(Metrics.test_kinds, |k| Metrics.test_signal(k).is_ok())
+# a test in force wins only when it is higher than the derivation
+expect (Metrics.threshold_with_test(240.0, 252.0) - 252.0).abs() < 0.001
+expect (Metrics.threshold_with_test(260.0, 252.0) - 260.0).abs() < 0.001
+expect (Metrics.threshold_with_test(240.0, 0.0) - 240.0).abs() < 0.001
+expect (Metrics.ramp_threshold(400.0) - 300.0).abs() < 0.001
+# two-point CP: 360 W for 3 min and 280 W for 12 min put CP at 253.33 W
+expect
+	match Metrics.cp_two_point(360.0, 280.0) {
+		Ok(cp) => (cp - 253.333).abs() < 0.01
+		Err(_) => False
+	}
+expect Metrics.cp_two_point(280.0, 280.0) == Err(Implausible)
+expect Metrics.cp_two_point(250.0, 280.0) == Err(Implausible)
+expect Metrics.cp_two_point(360.0, 0.0) == Err(Implausible)
+# 400 m in 6:00 and 200 m in 2:50 is CSS 200 / 190 = 1.0526 m/s (1:35 per 100 m)
+expect
+	match Metrics.css_speed(360.0, 170.0) {
+		Ok(s) => (s - 1.05263).abs() < 0.0001
+		Err(_) => False
+	}
+expect Metrics.css_speed(170.0, 170.0) == Err(Implausible)
+expect Metrics.css_speed(360.0, 0.0) == Err(Implausible)
+expect (Metrics.run_test_threshold("5k", 4.0) - 3.76).abs() < 0.0001
+expect (Metrics.run_test_threshold("3k", 4.0) - 3.6).abs() < 0.0001
+expect (Metrics.test_distance_m("5k") - 5000.0).abs() < 0.001 and (Metrics.test_distance_m("3k") - 3000.0).abs() < 0.001
+# fastest cover: 10 m/s for 50 s then 5 m/s for 50 s; the fastest 200 m is 20 s,
+# and the fastest 600 m takes the 500 fast metres plus 100 slow ones, 70 s
+expect {
+	ts = Iter.fold((0.I64..<101).iter(), [], |acc, t| List.append(acc, t.to_f64()))
+	ds = Iter.fold((0.I64..<101).iter(), [], |acc, t| List.append(acc, if (t <= 50) t.to_f64() * 10.0 else 500.0 + (t - 50).to_f64() * 5.0))
+	fast = Metrics.fastest_cover_s(ts, ds, 200.0)
+	long = Metrics.fastest_cover_s(ts, ds, 600.0)
+	match (fast, long) {
+		(Ok(f), Ok(l)) => (f - 20.0).abs() < 0.001 and (l - 70.0).abs() < 0.001
+		_ => False
+	}
+}
+# a session shorter than the distance never covers it
+expect Metrics.fastest_cover_s([0.0, 10.0, 20.0], [0.0, 100.0, 200.0], 400.0) == Err(NotCovered)
+expect Metrics.fastest_cover_s([], [], 200.0) == Err(NotCovered)
+# a stretch that overshoots the distance is scaled down to it at its own speed
+expect
+	match Metrics.fastest_cover_s([0.0, 30.0], [0.0, 300.0], 200.0) {
+		Ok(s) => (s - 20.0).abs() < 0.001
+		Err(_) => False
+	}
+# each kind's threshold from synthetic streams: steady 250 W for 25 minutes
+# makes ftp20 237.5 W and ramp 187.5 W, and has no 3-to-12-minute drop to fit
+expect {
+	w = Iter.fold((0.I64..<1500).iter(), [], |acc, t| List.append(acc, { t, v: 250.0 }))
+	ftp = Metrics.test_threshold("ftp20", w, [], [], [])
+	ramp = Metrics.test_threshold("ramp", w, [], [], [])
+	cp = Metrics.test_threshold("cp3-12", w, [], [], [])
+	match (ftp, ramp) {
+		(Ok(f), Ok(r)) => (f - 237.5).abs() < 0.001 and (r - 187.5).abs() < 0.001 and cp == Err(Implausible)
+		_ => False
+	}
+}
+# 360 W for the first 3 minutes, 280 W after: the 12-minute best is the first
+# 12 minutes at 300 W, and the line through (3 min, 360 W) and (12 min, 300 W)
+# has its intercept at 280 W
+expect {
+	w = Iter.fold((0.I64..<900).iter(), [], |acc, t| List.append(acc, { t, v: if (t < 180) 360.0 else 280.0 }))
+	match Metrics.test_threshold("cp3-12", w, [], [], []) {
+		Ok(cp) => (cp - 280.0).abs() < 0.001
+		Err(_) => False
+	}
+}
+# tt30 is the best 20-minute heart rate; a session too short for one names it
+expect {
+	hr = Iter.fold((0.I64..<1800).iter(), [], |acc, t| List.append(acc, { t, v: if (t < 600) 150.0 else 170.0 }))
+	match Metrics.test_threshold("tt30", [], hr, [], []) {
+		Ok(lthr) => (lthr - 170.0).abs() < 0.001
+		Err(_) => False
+	}
+}
+expect Metrics.test_threshold("tt30", [], [{ t: 0, v: 150.0 }], [], []) == Err(NeedsHr)
+expect Metrics.test_threshold("ftp20", [], [], [], []) == Err(NeedsPower)
+# a steady 4 m/s run: the 5k threshold is 94% of it
+expect {
+	ts = Iter.fold((0.I64..<1400).iter(), [], |acc, t| List.append(acc, t.to_f64()))
+	ds = List.map(ts, |t| t * 4.0)
+	match Metrics.test_threshold("5k", [], [], ts, ds) {
+		Ok(s) => (s - 3.76).abs() < 0.001
+		Err(_) => False
+	}
+}
+expect Metrics.test_threshold("5k", [], [], [0.0, 10.0], [0.0, 40.0]) == Err(NeedsDistance)
+# a steady 1 m/s swim: CSS is that same speed
+expect {
+	ts = Iter.fold((0.I64..<500).iter(), [], |acc, t| List.append(acc, t.to_f64()))
+	match Metrics.test_threshold("css", [], [], ts, ts) {
+		Ok(s) => (s - 1.0).abs() < 0.001
+		Err(_) => False
+	}
+}
+expect Metrics.test_threshold("css", [], [], [0.0, 100.0], [0.0, 150.0]) == Err(NeedsDistance)
+expect Metrics.test_threshold("nope", [], [], [], []) == Err(UnknownKind)
+expect Metrics.test_family("css") == "Swim" and Metrics.test_family("5k") == "Run" and Metrics.test_family("3k") == "Run"
+expect Metrics.test_family("ftp20") == "" and Metrics.test_family("tt30") == ""
+# LTHR 172 -> zone ceilings 146 / 153 / 162 / 170
+expect {
+	z = Metrics.lthr_zone_bounds(172.0)
+	(z.z1_max - 146.0).abs() < 0.001 and (z.z2_max - 153.0).abs() < 0.001 and (z.z3_max - 162.0).abs() < 0.001 and (z.z4_max - 170.0).abs() < 0.001
+}
+
 # Critical Power: two points on P(t) = W'/t + CP (CP 250, W' 20000) recover CP and W'.
 # P(300) = 20000/300 + 250 = 316.667; P(1200) = 20000/1200 + 250 = 266.667
 expect {
@@ -4135,7 +4385,7 @@ expect {
 }
 
 # ── form trend (#111) ────────────────────────────────────────────────
-# Mariano's real shape: a month inside one band, so the label never moved while form
+# A real athlete shape: a month inside one band, so the label never moved while form
 # actually swung 7 points. The delta is the thing that carries the information.
 expect {
 	series = [
@@ -4802,10 +5052,9 @@ expect {
 # synthetic shape reproduces, so it stays as the anchor. The other two failure modes reduce to
 # clean synthetic shapes (plus the near-flat and floor expects above).
 
-# Mariano's 2026-08-16 "45 min Metallica Ride with Kendall Toole" (activity
-# 19773062126): a textbook 3x12 min @ ~250-268 W with 3 min recoveries — the
-# prescribed threshold session, ~80% work samples. v1's distribution gates
-# reported ZERO segments on it. Mean watts per 15 s bucket, from the stored
+# A real recorded ride (activity 19773062126): a textbook 3x12 min @ ~250-268 W
+# with 3 min recoveries, the prescribed threshold session, ~80% work samples, which
+# distribution gates alone detect no segments in. Mean watts per 15 s bucket, from the stored
 # stream; regenerate only from the activity, never by hand.
 expect {
 	profile : List(I64)
