@@ -839,12 +839,16 @@ ReportHealth :: [].{
 		path = Db.open_db!({})?
 		# power zones derive from the cycling FTP (recent best 20-min ride power); no config
 		ftp = Db.sport_ftp!(path, "Ride")?
+		# which number the FTP is: a marked test in force at least as high as the
+		# derivation (ADR 0020), or the derivation
+		test = Db.test_in_force_today!(path, "power", Sports.canonical("Ride"))?
+		source = if (test.value > 0.0 and ((test.value).round_to_i64_try().ok_or(0)).to_f64() >= ftp) "test" else "derived"
 		if (ftp <= 0.0)
 			Output.err_out!("no_power_data", "no cycling FTP yet — power zones derive from your best 20-min ride power in the last 60 days, once two rides carry one. Either those rides have no power, only one of them has a 20-min best, or they haven't been analyzed: run `stride analyze` (and sync rides with a power meter).")
 		else {
 			zones = Metrics.power_zones(ftp)
 			if (Output.json_mode!({}))
-				Output.emit_ok!({ ftp, zones })
+				Output.emit_ok!({ ftp, source, test_kind: test.kind, test_date: test.date, zones })
 			else {
 				range = |z|
 					if (z.lo_w <= 0.0)
@@ -1023,9 +1027,14 @@ ReportHealth :: [].{
 				Ok(c) => (if (c.cp > 0.0 and c.w_prime > 0.0) { cp: c.cp, w_prime: c.w_prime, r2: c.r2, points: (List.len(fit_points)).to_i64_wrap() } else { cp: 0.0, w_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() })
 				Err(_) => { cp: 0.0, w_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() }
 			}
+		# a marked power test in force for the family (ADR 0020): the threshold a
+		# curve can anchor on when its fit is unusable
+		test = if (Str.is_empty(sport)) ({ value: 0.0, date: "none", kind: "none", activity_id: 0 }) else Db.test_in_force_today!(path, "power", Sports.canonical(sport))?
+		test_known : Bool
+		test_known = test.value > 0.0
 		Output.out!(
-			{ window_days: days, sport, points, cp: cpfit.cp, w_prime: cpfit.w_prime, fit_r2: cpfit.r2, fit_points: cpfit.points },
-			Render.power_curve_screen,
+			{ window_days: days, sport, points, cp: cpfit.cp, w_prime: cpfit.w_prime, fit_r2: cpfit.r2, fit_points: cpfit.points, test_known, test_value: test.value, test_kind: if (test_known) test.kind else "", test_date: if (test_known) test.date else "" },
+			|p| Render.power_curve_screen({ window_days: p.window_days, sport: p.sport, points: p.points, cp: p.cp, w_prime: p.w_prime, fit_r2: p.fit_r2, fit_points: p.fit_points }),
 		)
 	}
 
@@ -1096,9 +1105,13 @@ ReportHealth :: [].{
 				Ok(c) => (if (c.cs > 0.0 and c.d_prime > 0.0) { cs: c.cs, d_prime: c.d_prime, r2: c.r2, points: (List.len(fit_points)).to_i64_wrap() } else { cs: 0.0, d_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() })
 				Err(_) => { cs: 0.0, d_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() }
 			}
+		# a marked pace test in force for the sport's family (ADR 0020)
+		test = if (Str.is_empty(sport)) ({ value: 0.0, date: "none", kind: "none", activity_id: 0 }) else Db.test_in_force_today!(path, "pace", Sports.canonical(sport))?
+		test_known : Bool
+		test_known = test.value > 0.0
 		Output.out!(
-			{ window_days: days, sport, points, cs: csfit.cs, d_prime: csfit.d_prime, fit_r2: csfit.r2, fit_points: csfit.points, available_sports: avail },
-			|p| Render.pace_curve_screen(units, p),
+			{ window_days: days, sport, points, cs: csfit.cs, d_prime: csfit.d_prime, fit_r2: csfit.r2, fit_points: csfit.points, available_sports: avail, test_known, test_value: test.value, test_kind: if (test_known) test.kind else "", test_date: if (test_known) test.date else "" },
+			|p| Render.pace_curve_screen(units, { window_days: p.window_days, sport: p.sport, points: p.points, cs: p.cs, d_prime: p.d_prime, fit_r2: p.fit_r2, fit_points: p.fit_points, available_sports: p.available_sports }),
 		)
 	}
 }

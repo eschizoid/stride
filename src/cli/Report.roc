@@ -565,6 +565,12 @@ Report :: [].{
 			bindings: [{ name: ":fam", value: String(Sports.canonical("Ride")) }, { name: ":cutoff", value: String(cutoff_ftp) }],
 			row: Sql.f64("b"),
 		})?
+		# a marked ride test in force raises the estimate (ADR 0020), the rule
+		# scoring applies through period_ftp_sql
+		ride_test = Db.test_in_force_today!(path, "power", Sports.canonical("Ride"))?
+		derived_ftp = Metrics.ftp_from_best_20min(ftp_best_row)
+		ride_test_known : Bool
+		ride_test_known = ride_test.value > 0.0
 
 		sports = Sql.query_many!({
 			path: Path.utf8(path),
@@ -882,7 +888,15 @@ Report :: [].{
 			form_coverage_90d: cov90,
 			ftp: {
 				best_20min_w_60d: best20_row,
-				estimated_ftp_w: Metrics.ftp_from_best_20min(ftp_best_row),
+				estimated_ftp_w: Metrics.threshold_with_test(derived_ftp, ride_test.value),
+				derived_ftp_w: derived_ftp,
+				# which number the estimate is: a marked test in force that beats the
+				# derivation, or the derivation; test_known says whether one is in force
+				source: if (ride_test.value > derived_ftp) "test" else "derived",
+				test_known: ride_test_known,
+				test_ftp_w: ride_test.value,
+				test_kind: ride_test.kind,
+				test_date: ride_test.date,
 				# trajectory (#159): the PRIOR 60d window's best beside the current —
 				# which way the demonstrated ceiling moved; known=false = no power
 				# in that window (a delta against nothing is not 0)

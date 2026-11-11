@@ -58,6 +58,7 @@ import ReportStrength
 import ReportSeason
 import ReportSessions
 import Plan
+import ThresholdTest
 import Import
 
 version : Str
@@ -138,6 +139,10 @@ help_text =
 	\\                                status and metrics stay untouched
 	\\    rate <activity_id|latest> <1-10>
 	\\                                session-RPE — scores strength honestly
+	\\    test <activity_id> <ftp20|ramp|cp3-12|tt30|css|5k|3k> [--apply-zones]
+	\\                                mark a session as a threshold test; it sets
+	\\                                that sport's threshold for 90 days
+	\\    test remove <activity_id>  unmark a threshold test
 	\\    event add <date> <name>    record an event target (judgment tier)
 	\\    event remove <event_id>    delete an event target
 	\\    events                      projected CTL/ATL/TSB on each event date,
@@ -420,6 +425,8 @@ dispatch! = |cmd|
 		Command.Import(src) => Import.import_archive!(src)
 		Command.StrengthImport(src) => Import.import_strength_log!(src)
 		Command.Rate(target, rpe_str) => Plan.rate!(target, rpe_str)
+		Command.Test(id, kind, apply_zones) => ThresholdTest.mark!(id, kind, apply_zones)
+		Command.TestRemove(id) => ThresholdTest.remove!(id)
 		Command.Progress(name, sort) => ReportSessions.progress!(name, sort)
 		Command.Tte(watts) => ReportHealth.tte!(watts)
 		Command.Reps(date) => ReportSessions.reps!(date)

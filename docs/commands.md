@@ -47,6 +47,14 @@ Pulls new activities + the next batch of HR/power streams. Re-pulls a rolling 30
 
 _How hard did it feel?_ Session-RPE (Borg): you are the sensor for strength, HIIT, and yoga. `load = hours × RPE × 10`, so an hour at RPE 10 = 100, TSS-comparable. For strength-class sports your rating outranks HR; for endurance, measured power/HR always win.
 
+### `stride test <activity_id> <kind> [--apply-zones]`
+
+_That was a test._ Marks a session the athlete did all-out on purpose, and stores the threshold it yields (ADR 0020). `ftp20` (20 minutes all-out, × 0.95), `ramp` (75% of the best minute) and `cp3-12` (two-point critical power from all-out 3- and 12-minute efforts) set a power threshold for the session's sport family, any family with a measured power stream. `css` (all-out 400 m and 200 m, swim only) and `5k` / `3k` (run only; 94% and 90% of the trial speed) set a threshold speed for the session's sport type. `tt30` (the best 20-minute heart rate of a 30-minute time trial, any sport) measures a lactate-threshold heart rate. A test sets its population's threshold from its own date for 90 days, whenever it is higher than the 60-day derivation; the newest test wins, and past 90 days the derivation alone returns. `--apply-zones` (tt30 only) writes `hr_z1_max..hr_z4_max` for every sport type in the session's family from Friel's percentages of LTHR (85, 89, 94, 99). One test per session: marking it again with another kind replaces it. Run `stride analyze` afterwards; it rescores exactly the sessions the test moves. `summary`, `zones`, `power-curve` and `pace-curve` say when a test, not the derivation, sets the threshold.
+
+### `stride test remove <activity_id>`
+
+Unmarks a threshold test. The next `stride analyze` scores the sessions it covered against the derivation again.
+
 ### `stride import <zip|dir>`
 
 Loads a **Strava account export** (the ZIP from Settings → My Account → Download or Delete Your Account) — **no API credentials or subscription needed**. Summary-level data (no streams yet, so zone breakdowns stay honestly absent); re-import is idempotent. English-language exports only.

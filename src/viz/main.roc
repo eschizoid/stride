@@ -206,7 +206,7 @@ load_logo! = |acc, boot|
 # face, so a window that cannot reach the athlete's data says why.
 skeleton : Str -> _
 skeleton = |err|
-	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], ph: "", b20: -1, tg: [], rw: [], csp: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric, cf: "", keys: { power: [], pace: [] }, ptg: [] }
+	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], ph: "", b20: -1, tg: [], rw: [], csp: [], ctm: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric, cf: "", keys: { power: [], pace: [] }, ptg: [] }
 
 # boot=True builds the instant skeleton the splash renders over: no database
 # and no engine call - the window opens on frame one and the real load runs
@@ -263,13 +263,14 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 			ph = Db.load_plan_horizon!(db)
 			sfs = Db.load_spine_fams!(db)
 			csp = Db.load_career_spines!(db, sfs, tm)
+			ctm = Db.load_test_months!(db)
 			cs = Db.load_career_sports!(db)
 			cfm = Db.load_fam_months!(db)
 			rw = Db.load_ramp_weeks!(db)
 			prs = Db.load_prs!(db, cf)
 			nts = Db.load_day_notes!(db)
 			cpv = Db.load_curve_prev!(db, curve_days, tm, cf)
-			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, ph, b20, tg, rw, csp, cs, cfm, prs, tcache, un, cf, keys, ptg }
+			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, ph, b20, tg, rw, csp, ctm, cs, cfm, prs, tcache, un, cf, keys, ptg }
 		}
 		Err(NoStrideDir) => skeleton("no stride directory — the launcher passes it as the first argument")
 		Err(Unreachable) => skeleton("cannot open ${acc.dir}/db.sqlite")
@@ -279,8 +280,9 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 	# the curve on screen: what the load chose, the ride power curve when
 	# the database could not answer, and still unchosen while booting
 	cf = if (boot) curve_family else if (loaded.cf == "") "Ride" else loaded.cf
-	fit = if (boot) ({ cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }) else Db.load_fit!(acc.io.commands(), curve_days, cf)
-	fit_text = Curve.fit_caption_for(cf, loaded.un, fit, loaded.b20)
+	ft = if (boot) ({ fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: { value: 0.0, kind: "none", date: "none" } }) else Db.load_fit!(acc.io.commands(), curve_days, cf)
+	fit = ft.fit
+	fit_text = Curve.anchor_caption_for(cf, loaded.un, fit, ft.test, loaded.b20)
 	# the board projects as far as the written plan reaches, never past the
 	# next event (load_plan_horizon! caps it there), and reads the numbers
 	# from the engine's own walk
@@ -434,9 +436,9 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		trace_cache: loaded.tcache,
 		segs: loaded.sg,
 		trace_dur: loaded.du,
-		fit_cp: Curve.fit_line(cf, fit),
+		fit_cp: Curve.anchor_line(cf, fit, ft.test),
 		plan_targets: loaded.tg,
-		cp_lbl: mkm!(Curve.fit_tag(cf, loaded.un, fit), 12)?,
+		cp_lbl: mkm!(Curve.anchor_tag(cf, loaded.un, fit, ft.test), 12)?,
 		data: loaded.s.data,
 		days: loaded.s.days,
 		stride_dir: acc.dir,
@@ -454,6 +456,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		heat_events: loaded.hev,
 		zone_weeks: loaded.zw,
 		career_spines: loaded.csp,
+		career_tests: loaded.ctm,
 		career_sports: loaded.cs,
 		career_fam_months: loaded.cfm,
 		spine_idx: 0,
@@ -1584,8 +1587,9 @@ load_curve_window! = |acc, font, curve_days, curve_family| {
 		}
 		Err(_) => { c: [], cpv: [], b20: -1, prs: [], un: Metric }
 	}
-	fit = Db.load_fit!(acc.io.commands(), curve_days, curve_family)
-	fit_text = Curve.fit_caption_for(curve_family, read.un, fit, read.b20)
+	ft = Db.load_fit!(acc.io.commands(), curve_days, curve_family)
+	fit = ft.fit
+	fit_text = Curve.anchor_caption_for(curve_family, read.un, fit, ft.test, read.b20)
 	# the same two faces the full loader prepares these labels with, so a
 	# window switch cannot re-set the curve in a different type
 	head = brand_font!(acc, "Quicksand-Medium.ttf", 24, font)
@@ -1608,8 +1612,8 @@ load_curve_window! = |acc, font, curve_days, curve_family| {
 		lbls,
 		title: mk!(Curve.title_text(curve_family, curve_days), 15)?,
 		fit_lbl: mk!(Db.ascii_safe(fit_text), 14)?,
-		cp_lbl: mkm!(Curve.fit_tag(curve_family, read.un, fit), 12)?,
-		fit_cp: Curve.fit_line(curve_family, fit),
+		cp_lbl: mkm!(Curve.anchor_tag(curve_family, read.un, fit, ft.test), 12)?,
+		fit_cp: Curve.anchor_line(curve_family, fit, ft.test),
 	})
 }
 

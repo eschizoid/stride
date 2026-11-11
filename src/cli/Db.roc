@@ -220,12 +220,11 @@ Db :: [].{
 		(now_secs!({}) + time_mode_offset(mode) * 60) // 86400
 	}
 
-	# the power threshold (FTP) a sport's power is judged against. DERIVED, never
-	# configured: the sport FAMILY's best 20-min power × 0.95 — the standard FTP
-	# estimate, over one fitness pool per family (#151: a gravel 20-min effort IS
-	# bike fitness). The engine is sport-agnostic and derives it from the data, so
-	# there's nothing to set. 0 when the family has no power history, in which case
-	# intensity/TSS fall back to HR.
+	# the power threshold (FTP) a sport's power is judged against. Never configured:
+	# the sport FAMILY's best 20-min power × 0.95 — the standard FTP estimate, over
+	# one fitness pool per family (#151: a gravel 20-min effort IS bike fitness) —
+	# raised to a marked test's threshold while that test is in force (ADR 0020).
+	# 0 when the family has neither, in which case intensity/TSS fall back to HR.
 	sport_ftp! : Str, Str => Try(F64, _)
 	sport_ftp! = |path, sport| {
 		raw = derive_sport_ftp!(path, sport)?
@@ -251,27 +250,59 @@ Db :: [].{
 			bindings: [{ name: ":fam", value: String(Sports.canonical(sport)) }, { name: ":cutoff", value: String(cutoff) }],
 			row: Sql.f64("b"),
 		})?
-		Ok(Metrics.ftp_from_best_20min(best))
+		test = test_in_force_today!(path, "power", Sports.canonical(sport))?
+		Ok(Metrics.threshold_with_test(Metrics.ftp_from_best_20min(best), test.value))
+	}
+	# The newest threshold test on `signal` in force today for a sport family: one
+	# whose session is no older than Metrics.test_in_force_days. `value` is 0 and the
+	# text fields empty when none is, so callers take the higher of it and their
+	# derivation without a branch. Family-wide for pace too: today's figures are
+	# family figures, while analyze scores each pace session against its own sport
+	# type's tests.
+	test_in_force_today! : Str, Str, Str => Try({ value : F64, date : Str, kind : Str, activity_id : I64 }, _)
+	test_in_force_today! = |path, signal, family| {
+		cutoff = Metrics.days_to_date_str(local_today_days!(path) - Metrics.test_in_force_days)
+		rows = Sql.query_many!({
+			path: Path.utf8(path),
+			query: \\SELECT CAST(tt.value AS REAL) AS v, COALESCE(substr(CAST(ta.start_local AS TEXT), 1, 10), '') AS d,
+				\\       COALESCE(CAST(tt.kind AS TEXT), '') AS k, tt.activity_id AS id
+				\\FROM threshold_tests tt JOIN activities ta ON ta.id = tt.activity_id
+				\\WHERE tt.signal = :sig AND ta.sport_family = :fam AND ta.start_local >= :cutoff
+				\\ORDER BY ta.start_local DESC, tt.activity_id DESC LIMIT 1
+			,
+			bindings: [{ name: ":sig", value: String(signal) }, { name: ":fam", value: String(family) }, { name: ":cutoff", value: String(cutoff) }],
+			rows: |cols| |stmt| {
+				value = Sql.f64("v")(cols)(stmt)?
+				date = Sql.str("d")(cols)(stmt)?
+				kind = Sql.str("k")(cols)(stmt)?
+				activity_id = Sql.i64("id")(cols)(stmt)?
+				Ok({ value, date, kind, activity_id })
+			},
+		})?
+		Ok(List.first(rows).ok_or({ value: 0.0, date: "", kind: "", activity_id: 0 }))
 	}
 	# a family's threshold SPEED (m/s) today, by the rule derive_sport_ftp! uses for
 	# power: the best 20-minute speed over the last 60 days × 0.95, once two sessions of
-	# the family carry one, else 0. The projection prices a planned pace target with it.
+	# the family carry one, else 0, raised to a pace test in force. The projection
+	# prices a planned pace target with it.
 	derive_family_threshold_speed! : Str, Str => Try(F64, _)
 	derive_family_threshold_speed! = |path, family| {
 		cutoff = Metrics.days_to_date_str(local_today_days!(path) - 60)
-		Sql.query!({
+		derived = Sql.query!({
 			path: Path.utf8(path),
 			query: "SELECT CAST(COALESCE(CASE WHEN COUNT(NULLIF(m.best_20min_speed, 0)) >= 2 THEN MAX(m.best_20min_speed) * 0.95 END, 0) AS REAL) AS s FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_family = :fam AND a.start_local >= :cutoff",
 			bindings: [{ name: ":fam", value: String(Sports.canonical(family)) }, { name: ":cutoff", value: String(cutoff) }],
 			row: Sql.f64("s"),
-		})
+		})?
+		test = test_in_force_today!(path, "pace", Sports.canonical(family))?
+		Ok(Metrics.threshold_with_test(derived, test.value))
 	}
 	# ── migrations ───────────────────────────────────────────────────────
 
 	# bump when the schema changes; ensure_schema! re-runs migrations when the db's
 	# PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 	# that post-date the original CREATE statements in Schema.roc.)
-	schema_version = 43
+	schema_version = 44
 
 	run_migrations! : Str => Try({}, _)
 	run_migrations! = |path| {
@@ -302,6 +333,8 @@ Db :: [].{
 		# v38: structured strength logs imported from Strava's connector (mirror)
 		Sql.execute!({ path: Path.utf8(path), query: Schema.strength_logs, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.ratings, bindings: [] })?
+		# v44 (#639): sessions marked as threshold tests
+		Sql.execute!({ path: Path.utf8(path), query: Schema.threshold_tests, bindings: [] })?
 		# v27 (#138): event targets
 		Sql.execute!({ path: Path.utf8(path), query: Schema.events, bindings: [] })?
 		alter_add_column!(path, "ALTER TABLE activities ADD COLUMN weighted_avg_watts REAL")?

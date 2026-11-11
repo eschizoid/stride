@@ -1411,15 +1411,21 @@ Render :: [].{
 		)
 	}
 
-	# the estimate follows the two-session rule (#574) while the best is a raw
-	# measurement, so a lone session has a best and no FTP: say so rather than
+	# a marked test in force names itself and the derivation it beat (ADR 0020).
+	# Otherwise the estimate follows the two-session rule (#574) while the best is
+	# a raw measurement, so a lone session has a best and no FTP: say so rather than
 	# print a 0 W figure derived from a real number. The derived line names the
 	# best the estimate stands on, which is the estimate over 0.95 exactly (the
 	# derivation is best × 0.95); the raw best beside it reads the inclusive
 	# 59-day display window, one day narrower than the estimate's, so the two
 	# can differ at the window's edge
 	ftp_calibration_lines = |ftp|
-		if ftp.estimated_ftp_w > 0 {
+		if ftp.source == "test" {
+			[
+				"",
+				"  FTP: ~${fmt0(ftp.estimated_ftp_w)}W — from your ${ftp.test_kind} test on ${ftp.test_date}, above the 60-day estimate of ${fmt0(ftp.derived_ftp_w)}W",
+			]
+		} else if ftp.estimated_ftp_w > 0 {
 			[
 				"",
 				"  FTP (60d): ~${fmt0(ftp.estimated_ftp_w)}W — derived from your best 20-min power ${fmt0(ftp.estimated_ftp_w / 0.95)}W",
@@ -2150,7 +2156,7 @@ expect {
 		ctl_warming_up: False,
 		last_28d: { polarization_known: Bool.True, tss: 100.0, z1_s: 600.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 100.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 4.I64, intensity_streams: 4.I64, load_coverage: { high_pct: 100.I64, medium_pct: 0.I64, low_pct: 0.I64, known: True } },
 		last_7d: { polarization_known: Bool.True, tss: 50.0, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 2.I64, intensity_streams: 2.I64 },
-		ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
+		ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0, derived_ftp_w: 0.0, source: "derived", test_kind: "none", test_date: "none" },
 		last_hard_session_date: "",
 		hard_days: { d14: 1.I64, d28: 2.I64, spacing_median_days_28d: 3.I64, spacing_known: True, days_since_last: 0.I64, days_since_known: True },
 		pending_sessions: 2.I64,
@@ -2188,7 +2194,7 @@ expect {
 		ctl_warming_up: False,
 		last_28d: { polarization_known: Bool.True, tss: 100.0, z1_s: 600.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 100.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 4.I64, intensity_streams: 4.I64, load_coverage: { high_pct: 100.I64, medium_pct: 0.I64, low_pct: 0.I64, known: True } },
 		last_7d: { polarization_known: Bool.True, tss: 50.0, easy_pct: 100.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 2.I64, intensity_streams: 2.I64 },
-		ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
+		ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0, derived_ftp_w: 0.0, source: "derived", test_kind: "none", test_date: "none" },
 		last_hard_session_date: "",
 		hard_days: { d14: 1.I64, d28: 2.I64, spacing_median_days_28d: 3.I64, spacing_known: True, days_since_last: 0.I64, days_since_known: True },
 		pending_sessions: 2.I64,
@@ -2215,7 +2221,7 @@ expect {
 		ctl_warming_up: False,
 		last_28d: { polarization_known: Bool.False, tss: 100.0, z1_s: 0.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 0.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 0.I64, intensity_streams: 0.I64, load_coverage: { high_pct: 0.I64, medium_pct: 0.I64, low_pct: 0.I64, known: False } },
 		last_7d: { polarization_known: Bool.False, tss: 50.0, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 0.I64, intensity_streams: 0.I64 },
-		ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
+		ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0, derived_ftp_w: 0.0, source: "derived", test_kind: "none", test_date: "none" },
 		last_hard_session_date: "",
 		hard_days: { d14: 0.I64, d28: 0.I64, spacing_median_days_28d: 0.I64, spacing_known: False, days_since_last: 0.I64, days_since_known: False },
 		pending_sessions: 0.I64,
@@ -2243,7 +2249,7 @@ expect {
 		ctl_warming_up: False,
 		last_28d: { polarization_known: Bool.False, tss: 100.0, z1_s: 0.I64, z2_s: 0.I64, z3_s: 0.I64, z4_s: 0.I64, z5_s: 0.I64, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, measured_pct: 0.I64, sessions: 4.I64, moving_time: 7200.I64, distance_m: 30000.0, hr_streams: 0.I64, intensity_streams: 2.I64, load_coverage: { high_pct: 0.I64, medium_pct: 0.I64, low_pct: 0.I64, known: False } },
 		last_7d: { polarization_known: Bool.False, tss: 50.0, easy_pct: 0.I64, moderate_pct: 0.I64, hard_pct: 0.I64, sessions: 2.I64, moving_time: 3600.I64, distance_m: 15000.0, hr_streams: 0.I64, intensity_streams: 2.I64 },
-		ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0 },
+		ftp: { best_20min_w_60d: 0.0, estimated_ftp_w: 0.0, derived_ftp_w: 0.0, source: "derived", test_kind: "none", test_date: "none" },
 		last_hard_session_date: "",
 		hard_days: { d14: 0.I64, d28: 0.I64, spacing_median_days_28d: 0.I64, spacing_known: False, days_since_last: 0.I64, days_since_known: False },
 		pending_sessions: 0.I64,

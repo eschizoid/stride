@@ -83,6 +83,20 @@ Sports :: [].{
 			Err(_) => sport
 		}
 
+	# every sport_type in the family a sport_type belongs to, the sport itself
+	# first-class when it belongs to none: the population a per-sport setting has
+	# to cover so it reaches the family's indoor and trail variants too
+	members : Str -> List(Str)
+	members = |sport|
+		match List.first(List.keep_if(families, |f| List.contains(f.sports, sport))) {
+			Ok(f) => f.sports
+			Err(_) => [sport]
+		}
+
+	expect Sports.members("VirtualRide") == ["Ride", "VirtualRide", "GravelRide", "MountainBikeRide"]
+	expect Sports.members("OpenWaterSwim") == ["Swim", "OpenWaterSwim"]
+	expect Sports.members("Kayaking") == ["Kayaking"]
+
 	# SQL CASE expression collapsing a sport_type expression to canonical() —
 	# used ONLY in DDL: the migration backfill and the activities triggers that
 	# keep the stored sport_family column current. Queries compare the COLUMN

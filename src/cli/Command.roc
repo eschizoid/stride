@@ -39,6 +39,11 @@ Command := [
 	Top(Str, U64, Str),
 	Import(Str),
 	Rate(Str, Str),
+
+	## a session the athlete declares a threshold test, and the kind of test it was;
+	## the flag applies a tt30 test's heart rate to the family's zones
+	Test(Str, Str, Bool),
+	TestRemove(Str),
 	Progress(Str, [Asc, Desc]),
 
 	## time to exhaustion at a power the CALLER names (#187). ADR 0010: the
@@ -145,6 +150,13 @@ Command := [
 			["top", metric, n, sport] => count(n, |c| Top(metric, c, sport))
 			["import", src] => Ok(Import(src))
 			["rate", target, rpe_str] => Ok(Rate(target, rpe_str))
+			["test", "remove", id] => Ok(TestRemove(id))
+			["test", "remove", ..] => Err(Usage("test remove <activity_id> — unmark a threshold test"))
+			["test", id, kind] => Ok(Test(id, kind, Bool.False))
+			# the flag reads the same before the id as after the kind
+			["test", "--apply-zones", id, kind] => Ok(Test(id, kind, Bool.True))
+			["test", id, kind, "--apply-zones"] => Ok(Test(id, kind, Bool.True))
+			["test", ..] => Err(Usage("test <activity_id> <ftp20|ramp|cp3-12|tt30|css|5k|3k> [--apply-zones] — mark a session as a threshold test"))
 			["doctor"] => Ok(Doctor)
 			["tte", watts] => Ok(Tte(watts))
 			["tte", ..] => Err(Usage("tte <watts> — time to exhaustion at a power you name"))
@@ -468,6 +480,8 @@ Command := [
 		errs(writes("analyze", [], "analyze.json"), ["missing_config", "unreadable_activity_date", "unreadable_config"]),
 		errs(writes("import", [req_ex("<export.zip|dir>", "")], "import.json"), ["empty_csv", "no_activities_csv", "unzip_failed"]),
 		errs(writes("rate", [req("<activity_id|latest>"), req("<1-10>")], "rate.json"), ["activity_not_found", "bad_id", "bad_rpe", "no_activities", "unreadable_activity_date"]),
+		errs(writes("test", [req_ex("<activity_id>", ""), req("<ftp20|ramp|cp3-12|tt30|css|5k|3k>"), opt("--apply-zones")], "test.json"), ["activity_not_found", "bad_id", "bad_test_kind", "test_implausible", "test_needs_distance", "test_needs_hr", "test_needs_power", "test_wrong_sport", "zones_need_lthr"]),
+		errs(writes("test remove", [req_ex("<activity_id>", "")], "test_remove.json"), ["bad_id", "test_not_found"]),
 		errs(writes("week add", [req_ex("<YYYY-MM-DD>", "2099-01-01"), req_ex("<type>", "endurance"), req_ex("<detail>", "example"), req_ex("<rationale>", "example"), opt_ex("<target>", "3x12:00@230W")], "week_add.json"), ["bad_date", "bad_target", "missing_config"]),
 		errs(writes("complete", [req("<session_id>"), opt("<activity_id>")], "complete.json"), ["activity_already_linked", "activity_not_found", "activity_required", "bad_id", "session_not_found"]),
 
@@ -952,6 +966,31 @@ expect match Command.parse(["import", "x.zip"]) {
 }
 expect match Command.parse(["rate", "1", "5"]) {
 	Ok(Rate("1", "5")) => True
+	_ => False
+}
+expect match Command.parse(["test", "12", "ftp20"]) {
+	Ok(Test("12", "ftp20", flag)) => !(flag)
+	_ => False
+}
+expect match Command.parse(["test", "12", "tt30", "--apply-zones"]) {
+	Ok(Test("12", "tt30", flag)) => flag
+	_ => False
+}
+# `remove` is a verb in the id position, never an activity named "remove"
+expect match Command.parse(["test", "--apply-zones", "12", "tt30"]) {
+	Ok(Test("12", "tt30", flag)) => flag
+	_ => False
+}
+expect match Command.parse(["test", "remove", "12"]) {
+	Ok(TestRemove("12")) => True
+	_ => False
+}
+expect match Command.parse(["test", "12"]) {
+	Err(Usage(_)) => True
+	_ => False
+}
+expect match Command.parse(["test", "12", "ftp20", "--bogus"]) {
+	Err(Usage(_)) => True
 	_ => False
 }
 expect match Command.parse(["activity", "7"]) {

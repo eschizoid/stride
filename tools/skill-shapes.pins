@@ -33,7 +33,7 @@ events.json	baseline_known,events,ftp_known,projected_from	baseline_known,events
 import.json	imported,skipped	imported,skipped	doc	$
 init.json	initialized	initialized	-	$
 load.json	atl,ctl,day,tsb,tss	atl,ctl,day,tsb,tss	-	items
-pace_curve.json	available_sports,cs,d_prime,fit_points,fit_r2,points,sport,window_days	available_sports,cs,d_prime,fit_points,fit_r2,points,sport,window_days	doc	$
+pace_curve.json	available_sports,cs,d_prime,fit_points,fit_r2,points,sport,test_date,test_kind,test_known,test_value,window_days	available_sports,cs,d_prime,fit_points,fit_r2,points,sport,test_date,test_kind,test_known,test_value,window_days	doc	$
 pace_curve.json	dur_s,speed	dur_s,speed	doc	properties.points.items
 plan.json	activities_awaiting_metrics,activities_awaiting_metrics_known,activities_awaiting_streams,last_sync,newest_activity,strength_without_sets_ids	activities_awaiting_metrics,activities_awaiting_metrics_known,activities_awaiting_streams,last_sync,newest_activity,strength_without_sets_ids	doc	properties.data_freshness
 plan.json	adherence_28d,data_freshness,open_sessions,plan_history_28d,recent_activities_14d,summary	adherence_28d,data_freshness,open_sessions,plan_history_28d,recent_activities_14d,summary	doc	$
@@ -41,7 +41,7 @@ plan.json	avg_hr,date,distance_m,hard_s,hr_known,id,intensity,intensity_known,lo
 plan.json	completed,completion_pct,planned,rested,skipped,still_open,substituted,unplanned_activities	completed,completion_pct,planned,rested,skipped,still_open,substituted,unplanned_activities	doc	properties.adherence_28d
 plan.json	completed_activity_id,completed_on,detail,id,session_type,skipped_reason,status,substitute_activity_id,superseded_activity_id,target_date	completed_activity_id,completed_on,detail,id,session_type,skipped_reason,status,substitute_activity_id,superseded_activity_id,target_date	-	properties.plan_history_28d.items
 plan.json	detail,id,rationale,session_type,target_date,target_dist_m,target_dur_s,target_hr_hi,target_hr_lo,target_kind,target_known,target_literal,target_pace_s,target_pace_unit,target_reps,target_rpe,target_watts,target_zone	detail,id,rationale,session_type,target_date,target_dist_m,target_dur_s,target_hr_hi,target_hr_lo,target_kind,target_known,target_literal,target_pace_s,target_pace_unit,target_reps,target_rpe,target_watts,target_zone	-	properties.open_sessions.items
-power_curve.json	cp,fit_points,fit_r2,points,sport,w_prime,window_days	cp,fit_points,fit_r2,points,sport,w_prime,window_days	doc	$
+power_curve.json	cp,fit_points,fit_r2,points,sport,test_date,test_kind,test_known,test_value,w_prime,window_days	cp,fit_points,fit_r2,points,sport,test_date,test_kind,test_known,test_value,w_prime,window_days	doc	$
 power_curve.json	dur_s,watts	dur_s,watts	doc	properties.points.items
 progress.json	anchor_date,anchor_scored,groups	anchor_date,anchor_scored,groups	doc	$
 progress.json	avg_hr,avg_hr_scored,date,decoupling_known,decoupling_pct,distance_m,moving_time,np_w,output_kj,rpe,score,sport,tss	avg_hr,date,decoupling_known,decoupling_pct,distance_m,moving_time,np_w,output_kj,rpe,score,sport,tss	-	properties.groups.items.properties.sessions.items
@@ -74,7 +74,7 @@ strength.json	exercise,measure,points	exercise,measure,points	doc	properties.exe
 strength.json	exercises,monthly,sessions	exercises,monthly,sessions	doc	$
 strength.json	pasted_unparsed,total,with_sets	pasted_unparsed,total,with_sets	doc	properties.sessions
 summary.json	as_of,ctl_warming_up,fatigue_atl,fitness_ctl,form_band_days,form_band_days_capped,form_coverage_90d,form_delta_7d,form_delta_known,form_state,form_tsb,ftp,hard_days,hr_zones,last_28d,last_7d,last_hard_session_date,load_days,load_windows,pending_sessions,ramp_28d_avg,ramp_7d,sports_28d	as_of,ctl_warming_up,fatigue_atl,fitness_ctl,form_band_days,form_band_days_capped,form_coverage_90d,form_delta_7d,form_delta_known,form_state,form_tsb,ftp,hard_days,hr_zones,last_28d,last_7d,last_hard_session_date,load_days,load_windows,pending_sessions,ramp_28d_avg,ramp_7d,sports_28d	doc	$
-summary.json	best_20min_w_60d,estimated_ftp_w,prior_60d_best_20min_w,prior_60d_known	best_20min_w_60d,estimated_ftp_w,prior_60d_best_20min_w,prior_60d_known	doc	properties.ftp
+summary.json	best_20min_w_60d,derived_ftp_w,estimated_ftp_w,prior_60d_best_20min_w,prior_60d_known,source,test_date,test_ftp_w,test_kind,test_known	best_20min_w_60d,derived_ftp_w,estimated_ftp_w,prior_60d_best_20min_w,prior_60d_known,source,test_date,test_ftp_w,test_kind,test_known	doc	properties.ftp
 summary.json	d14,d28,days_since_known,days_since_last,spacing_known,spacing_median_days_28d	d14,d28,days_since_known,days_since_last,spacing_known,spacing_median_days_28d	doc	properties.hard_days
 summary.json	d28,d7,d90,delta_28d,delta_7d,prior_d28,prior_d7	d28,d7,d90,delta_28d,delta_7d,prior_d28,prior_d7	doc	properties.load_windows
 summary.json	distance_m,easy_pct,hard_pct,hr_streams,intensity_streams,load_coverage,measured_pct,moderate_pct,moving_time,polarization_known,sessions,tss,z1_s,z2_s,z3_s,z4_s,z5_s	distance_m,easy_pct,hard_pct,hr_streams,intensity_streams,load_coverage,measured_pct,moderate_pct,moving_time,polarization_known,sessions,tss	-	properties.last_28d
@@ -85,6 +85,9 @@ summary.json	high_pct,known,low_pct,medium_pct	high_pct,known,low_pct,medium_pct
 summary.json	high_pct,known,low_pct,medium_pct	high_pct,known,low_pct,medium_pct	doc	properties.last_7d.properties.load_coverage
 summary.json	z1_max,z2_max,z3_max,z4_max	z1_max,z2_max,z3_max,z4_max	-	properties.hr_zones
 sync.json	new_activities,notes_fetched,notes_skipped,pending_notes,pending_streams,pruned,resumable,stopped,streams_fetched,streams_skipped,synced,updated_activities	new_activities,notes_fetched,notes_skipped,pending_notes,pending_streams,pruned,resumable,stopped,streams_fetched,streams_skipped,synced,updated_activities	doc	$
+test.json	activity_id,date,in_force_until,kind,signal,sport,unit,value,zone_sports,zones,zones_applied	activity_id,date,in_force_until,kind,signal,sport,unit,value,zone_sports,zones,zones_applied	doc	$
+test.json	z1_max,z2_max,z3_max,z4_max	z1_max,z2_max,z3_max,z4_max	-	properties.zones
+test_remove.json	activity_id,removed	activity_id,removed	doc	$
 top.json	avg_hr,date,date_known,distance_m,hr_known,id,intensity,intensity_known,moving_time,name,np_w,output_kj,power_known,rankable,sport,tss	avg_hr,date,date_known,distance_m,hr_known,id,intensity,intensity_known,moving_time,name,np_w,output_kj,power_known,rankable,sport,tss	-	items
 tte.json	contradicts_model,cp,demonstrated_known,demonstrated_s,demonstrated_w,fit_points,fit_r2,known,seconds,sport_family,status,w_prime,watts,window_days	contradicts_model,cp,demonstrated_known,demonstrated_s,demonstrated_w,fit_points,fit_r2,known,seconds,sport_family,status,w_prime,watts,window_days	doc	$
 version.json	version	version	-	$
@@ -97,5 +100,5 @@ viz.json	captures,fields,focus,focus_staleness_seconds,history,protocol,publishe
 viz.json	id,name	id,name	doc	properties.views.items
 week.json	activity_id,completed_activity_id,created_at,day,detail,done_date,id,rationale,session_type,skipped_reason,status,status_shown,substitute_activity_id,superseded_activity_id,target_date,target_kind,target_literal	activity_id,completed_activity_id,created_at,day,detail,done_date,id,rationale,session_type,skipped_reason,status,status_shown,substitute_activity_id,superseded_activity_id,target_date,target_kind,target_literal	-	items
 week_add.json	id,session_type,target_date,target_dist_m,target_dur_s,target_hr_hi,target_hr_lo,target_kind,target_known,target_literal,target_pace_s,target_pace_unit,target_reps,target_rpe,target_watts,target_zone	id,session_type,target_date,target_dist_m,target_dur_s,target_hr_hi,target_hr_lo,target_kind,target_known,target_literal,target_pace_s,target_pace_unit,target_reps,target_rpe,target_watts,target_zone	-	$
-zones.json	ftp,zones	ftp,zones	doc	$
+zones.json	ftp,source,test_date,test_kind,zones	ftp,source,test_date,test_kind,zones	doc	$
 zones.json	hi_w,lo_w,name,z	hi_w,lo_w,name,z	doc	properties.zones.items
