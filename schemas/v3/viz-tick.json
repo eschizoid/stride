@@ -16,7 +16,8 @@
     "view",
     "capture",
     "error",
-    "family"
+    "family",
+    "short"
   ],
   "additionalKeys": false,
   "properties": {
@@ -65,6 +66,10 @@
     "family": {
       "type": "string",
       "description": "the curve the directive asked the power view to show: a sport family's head for its power curve, or pace:<sport_type> for that sport's pace curve; empty when it asked for none; a value outside that vocabulary is refused by name"
+    },
+    "short": {
+      "type": "integer",
+      "description": "what the directive asked of the power view's folded short rungs: 1 shows them, 0 folds them, -1 when it asked nothing; any other value is refused by name"
     }
   }
 }

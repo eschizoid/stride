@@ -613,12 +613,24 @@ ReportHealth :: [].{
 				Ok(rows) => List.first(rows) ?? ""
 				Err(_) => ""
 			}
-			absent = { present: Bool.False, live: Bool.False, age_seconds: -1, updated_at: "", view: -1, range: -1, cursor_day: "", trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1, detail_day: "", sport: "", family: "", curve_family: "" }
+			# whether the power view shows its folded short rungs, -1 when the
+			# window never reported it (its own read for the same reason)
+			cs_rows = Sql.query_many!({
+				path: Path.utf8(path),
+				query: "SELECT COALESCE(curve_short, -1) AS fcs FROM viz_focus WHERE id = 1",
+				bindings: [],
+				rows: Sql.i64("fcs"),
+			})
+			curve_short = match cs_rows {
+				Ok(rows) => List.first(rows) ?? -1
+				Err(_) => -1
+			}
+			absent = { present: Bool.False, live: Bool.False, age_seconds: -1, updated_at: "", view: -1, range: -1, cursor_day: "", trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1, detail_day: "", sport: "", family: "", curve_family: "", curve_short: -1 }
 			focus = match focus_rows {
 				Err(_) => absent
 				Ok(rows) => match List.first(rows) {
 					Err(_) => absent
-					Ok(r) => { present: Bool.True, live: r.age >= 0 and r.age <= s.fstale, age_seconds: r.age, updated_at: r.ua, view: r.view, range: r.range, cursor_day: r.cd, trace_day: r.td, trace_id: ids.ti, ghost_day: r.gd, ghost_id: ids.gi, detail_day: ext.fdd, sport: ext.fsp, family: ext.ffm, curve_family }
+					Ok(r) => { present: Bool.True, live: r.age >= 0 and r.age <= s.fstale, age_seconds: r.age, updated_at: r.ua, view: r.view, range: r.range, cursor_day: r.cd, trace_day: r.td, trace_id: ids.ti, ghost_day: r.gd, ghost_id: ids.gi, detail_day: ext.fdd, sport: ext.fsp, family: ext.ffm, curve_family, curve_short }
 				}
 			}
 			# the last ten directives, newest first, each with its status and
@@ -759,7 +771,7 @@ ReportHealth :: [].{
 			Ok(e) => e == 1
 			Err(_) => Bool.False
 		}
-		none = { found: Bool.False, acked: Bool.False, id: -1, status: "none", view: -1, range: -1, cursor_day: "", trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1, capture: "", family: "", error: "" }
+		none = { found: Bool.False, acked: Bool.False, id: -1, status: "none", view: -1, range: -1, cursor_day: "", trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1, capture: "", family: "", short: -1, error: "" }
 		or_int = |r, fallback| match r {
 			Ok(x) => x
 			Err(_) => fallback
@@ -787,7 +799,8 @@ ReportHealth :: [].{
 						gi = or_int(Sql.i64("gi")(cols)(stmt), -1)
 						cap = or_str(Sql.str("cp")(cols)(stmt))
 						fam = or_str(Sql.str("fm")(cols)(stmt))
-						Ok({ id, v, rg, cd, td, gd, ti, gi, cp: cap, fm: fam })
+						sh = or_int(Sql.i64("sh")(cols)(stmt), -1)
+						Ok({ id, v, rg, cd, td, gd, ti, gi, cp: cap, fm: fam, sh })
 					},
 				})?
 				match List.first(winners) {
@@ -808,7 +821,8 @@ ReportHealth :: [].{
 						# window's rule; a valid one is model state the tick has
 						# none of, and passes like a trace_day does
 						fam_ref = Bus.family_refusal(w.fm)
-						cap_ref = Str.join_with(List.keep_if([cap_only, fam_ref], |e| e != ""), "; ")
+						short_ref = Bus.short_refusal(w.sh)
+						cap_ref = Str.join_with(List.keep_if([cap_only, fam_ref, short_ref], |e| e != ""), "; ")
 						# the mark returns the id it closed; no row back means
 						# another executor closed the winner between this
 						# cycle's select and its mark, and the cycle reports
@@ -823,7 +837,7 @@ ReportHealth :: [].{
 							if (!t.ack) "pending"
 							else if (List.is_empty(marked)) "raced"
 							else Bus.mark_status(cap_ref)
-						{ found: Bool.True, acked: status == Bus.mark_status(cap_ref), id: w.id, status, view: w.v, range: w.rg, cursor_day: w.cd, trace_day: w.td, trace_id: w.ti, ghost_day: w.gd, ghost_id: w.gi, capture: w.cp, family: w.fm, error: cap_ref }
+						{ found: Bool.True, acked: status == Bus.mark_status(cap_ref), id: w.id, status, view: w.v, range: w.rg, cursor_day: w.cd, trace_day: w.td, trace_id: w.ti, ghost_day: w.gd, ghost_id: w.gi, capture: w.cp, family: w.fm, short: w.sh, error: cap_ref }
 					}
 				}
 			}

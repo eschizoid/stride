@@ -283,6 +283,10 @@ INSERT INTO viz_directives (view, capture) VALUES (1, 'png');
 -- vocabulary is refused by name, and so is a valid one the athlete has no
 -- data for.
 INSERT INTO viz_directives (view, family) VALUES (1, 'pace:Run');
+-- the power view's short rungs (under 5 minutes), which it folds into a
+-- gutter when none was pushed all-out: 1 shows them, 0 folds them again; any
+-- other value is refused by name
+INSERT INTO viz_directives (view, short) VALUES (1, 1);
 -- view 0..8 (form/power/trace/table/plan/heat/zones/ramp/career) - but read
 -- the list from `stride viz --json`, which the running binary publishes,
 -- rather than from this comment. A directive naming a view outside the
@@ -486,6 +490,18 @@ unpushed durations. The longest rung has nothing longer to beat and is never
 marked. A window best set more than half the window ago fades. Hovering a
 rung names the session that set the window's best and its day, and TAB on a
 hovered rung opens that session in the trace view.
+
+A short rung (under 5 minutes) counts as pushed only when it is not flat
+against the next longer rung and reaches 90% of the athlete's record at that
+duration (`short_record_share`): a 1-minute best stands well above a 5-minute
+one even inside an ordinary class, so flatness alone would call it all-out.
+When the window holds short rungs and none was pushed, they fold into a narrow
+`short / not pushed` gutter at the left and the remaining rungs take the
+width; one pushed short rung shows them all. The `short` chip, right of the
+range chips, shows them on demand, and appears only while there is something
+to fold. A directive's `short` field (1 shows, 0 folds) steers the same
+switch, and the focus row reports it as `curve_short` (1 shown, 0 folded).
+
 The ladder itself - which columns, which family, that zero and NULL both mean unrecorded - is
 the `activity_power_ladder` view's, shared with the record book and the
 CLI's health report; the speed ladder is the `activity_pace_ladder` view's,

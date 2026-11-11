@@ -45,7 +45,8 @@
         "detail_day",
         "sport",
         "family",
-        "curve_family"
+        "curve_family",
+        "curve_short"
       ],
       "additionalKeys": false,
       "properties": {
@@ -97,6 +98,10 @@
         "curve_family": {
           "type": "string",
           "description": "the curve the power view shows: a sport family's head for its power curve, or pace:<sport_type> for that sport's pace curve; empty when the window has not reported one"
+        },
+        "curve_short": {
+          "type": "integer",
+          "description": "whether the power view shows the short rungs (under 5 minutes) it folds when none was pushed all-out: 1 shown, 0 folded, -1 when the window has not reported it"
         }
       }
     },

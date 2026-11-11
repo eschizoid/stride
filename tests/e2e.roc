@@ -364,7 +364,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1425)?
+	checks_ran_exactly!(1427)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -8072,7 +8072,7 @@ b_viz_tick! = |ctx| {
 	_ = strjq!(ctx, ["viz", "tick"], ".data.found")
 	cols2 = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_directives');")
 	fcols = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")
-	check!("a bus from before the id columns gains them on the next tick, both tables", Str.contains(cols2, "capture") and Str.contains(cols2, "result") and Str.contains(cols2, "trace_id") and Str.contains(cols2, "ghost_id") and Str.contains(fcols, "trace_id") and Str.contains(fcols, "ghost_id") and Str.contains(fcols, "detail_day") and Str.contains(fcols, "sport") and Str.contains(fcols, "family") and Str.contains(fcols, "curve_family") and Str.contains(cols2, " family"))?
+	check!("a bus from before the id columns gains them on the next tick, both tables", Str.contains(cols2, "capture") and Str.contains(cols2, "result") and Str.contains(cols2, "trace_id") and Str.contains(cols2, "ghost_id") and Str.contains(fcols, "trace_id") and Str.contains(fcols, "ghost_id") and Str.contains(fcols, "detail_day") and Str.contains(fcols, "sport") and Str.contains(fcols, "family") and Str.contains(fcols, "curve_family") and Str.contains(fcols, "curve_short") and Str.contains(cols2, " family") and Str.contains(cols2, " short"))?
 	# a focus table the previous builds created - every column through the
 	# ids, none of the identity columns - gains all four on the next tick
 	_ = sql!(ctx.db, "ALTER TABLE viz_focus DROP COLUMN curve_family; ALTER TABLE viz_focus DROP COLUMN family; ALTER TABLE viz_focus DROP COLUMN sport; ALTER TABLE viz_focus DROP COLUMN detail_day;")
@@ -8105,6 +8105,12 @@ b_viz_tick! = |ctx| {
 	check!("...and a family outside the vocabulary is refused by name", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/family Bike not a sport family or pace:<sport>")?
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, family) VALUES (1, 'pace:Ride');")
 	check!("...as is a pace key over a sport whose speed is not its effort", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/family pace:Ride not a pace sport")?
+	# the power view's short rungs: 1 shows them, 0 folds them, the tick echoes
+	# what was asked, and any other value is refused by name
+	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, short) VALUES (1, 1);")
+	check!("a directive asking for the short rungs is applied with it", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + (.short | tostring)") == "applied/1")?
+	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, short) VALUES (1, 2);")
+	check!("...and a short value other than 0 or 1 is refused by name", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/short 2 not 0/1")?
 	# pending until reported: a cycle that does not ack leaves the winner
 	# pending, and the next cycle returns the SAME row - a crash between
 	# apply and report retries rather than loses the directive
