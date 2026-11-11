@@ -190,6 +190,9 @@ Ui :: [].{
 		heat_title : Text.Prepared,
 		heat_hint : Text.Prepared,
 		zone_weeks : List(Db.ZoneWeek),
+		# the sports with their own HR zone bounds in config; the rest use the
+		# global ones
+		zone_overrides : List(Str),
 		career_spines : List(Db.CareerSpine),
 		# months a marked test sets a family's spine from (Db.load_test_months!)
 		career_tests : List({ fam : Str, month : Str, kind : Str }),

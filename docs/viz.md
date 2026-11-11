@@ -465,7 +465,8 @@ it aloud as pace in the sport's own unit: per 500m for rowing, per 100m for
 swimming, per kilometre or mile (as `units` says) for the foot sports. Its
 gridlines, tooltips, deltas (seconds per unit, negative when the window got
 faster) and the CS line speak pace. The CS line follows the CP line's rule:
-drawn only from a fit with r2 at the floor and D' inside 10-600 m, and
+drawn only from a fit with r2 at the floor and D' inside the sport's own
+band (5-100 m for swimming, 10-300 m for rowing, 10-600 m on foot), and
 otherwise the caption names what is wrong and the effort that would fix it.
 
 Planned targets show where they belong, drawn as dashed gold rings labelled `planned`: a power target on the curve of

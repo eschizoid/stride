@@ -36,6 +36,11 @@ Zones :: [].{
 		"${Db.grouped(h10 // 10)}.${I64.to_str(h10 % 10)} h"
 	}
 
+	zones_note : List(Str) -> Str
+	zones_note = |overrides|
+		if (List.is_empty(overrides)) "one set of HR zones for every sport"
+		else "own HR zones: ${Str.join_with(overrides, ", ")}; every other sport uses the global zones"
+
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
 		win_w = model.win.w
@@ -88,6 +93,10 @@ Zones :: [].{
 			if (hover_any) {} else {
 				Text.from("caps: the week's easy share     teal holds 80/20     red breaks it     muted: week still running", model.font).size(11).draw!(frame, { pos: { x: pad, y: 96.0 }, color: ink_faint, align: (Top, Left) })
 			}
+			# which zones the bars were split by, beside the zone key: a sport
+			# without its own bounds is classified by the global ones, so a
+			# swimmer's lower heart rate can read as easier than it is
+			Text.from(zones_note(model.zone_overrides), model.font).size(10).draw!(frame, { pos: { x: pad + 5.0 * 42.0 + 16.0, y: 118.0 }, color: ink_faint, align: (Top, Left) })
 			# the zone key rides its own row, clear of every cap
 			_ = List.fold_try!(
 				[0.U64, 1, 2, 3, 4],
@@ -170,3 +179,7 @@ expect Zones.verdict(95, 100, 6) == Theme.ink_muted
 expect Zones.verdict(0, 0, 7) == Theme.ink_muted
 expect Zones.partial(6)
 expect !Zones.partial(7)
+
+# every sport on the global zones says so; per-sport bounds are named
+expect Zones.zones_note([]) == "one set of HR zones for every sport"
+expect Zones.zones_note(["ride", "swim"]) == "own HR zones: ride, swim; every other sport uses the global zones"

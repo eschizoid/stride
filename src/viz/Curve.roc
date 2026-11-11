@@ -916,18 +916,30 @@ Curve :: [].{
 		}
 
 	# A critical-speed fit is usable on the same terms as a CP fit: r2 at the
-	# floor and D' inside a band that spans the foot, water and erg sports.
-	# Three 5-to-20-minute bests that are steady efforts rather than maximal
-	# ones still fit a line, with a D' far outside it.
-	d_prime_lo : F32
-	d_prime_lo = 10.0
-	d_prime_hi : F32
-	d_prime_hi = 600.0
+	# floor and D' inside a plausible band. D' is the distance an athlete can
+	# cover above critical speed, and its scale is the sport's: tens of metres
+	# in the water, low hundreds on the erg, up to several hundred on foot. One
+	# band for every sport would either pass a swim fit far too large or
+	# refuse a real one, so each family gets its own. Three 5-to-20-minute
+	# bests that are steady efforts rather than maximal ones still fit a line,
+	# with a D' outside the band.
+	d_prime_band : Str -> { lo : F32, hi : F32 }
+	d_prime_band = |sport| {
+		fam = Sports.canonical(sport)
+		if (fam == "Swim") ({ lo: 5.0, hi: 100.0 })
+		else if (fam == "Rowing") ({ lo: 10.0, hi: 300.0 })
+		else { lo: 10.0, hi: 600.0 }
+	}
 
 	fit_usable_for : Str, Db.Fit -> Bool
 	fit_usable_for = |curve, fit|
-		if (is_pace(curve)) (fit.ok and fit.r2 >= fit_r2_min and fit.w_prime >= d_prime_lo and fit.w_prime <= d_prime_hi)
-		else fit_usable(fit)
+		match Bus.curve_key(curve) {
+			Pace(sp) => {
+				band = d_prime_band(sp)
+				fit.ok and fit.r2 >= fit_r2_min and fit.w_prime >= band.lo and fit.w_prime <= band.hi
+			}
+			Power(_) => fit_usable(fit)
+		}
 
 	# the threshold line's height in the curve's own units, 0 when unusable
 	fit_line : Str, Db.Fit -> F32
@@ -1280,6 +1292,10 @@ expect Curve.chip_label("Ride") == "bike" and Curve.chip_label("Run") == "run" a
 # a CS fit is usable at the r2 floor with D' inside its band, and its line
 # sits at the critical speed in millimetres per second
 expect Curve.fit_usable_for("pace:Run", { cp: 4.0, w_prime: 200.0, r2: 0.95, points: 3.0, ok: Bool.True }) and !Curve.fit_usable_for("pace:Run", { cp: 4.0, w_prime: 2000.0, r2: 0.95, points: 3.0, ok: Bool.True }) and !Curve.fit_usable_for("pace:Run", { cp: 4.0, w_prime: 200.0, r2: 0.85, points: 3.0, ok: Bool.True })
+# the D' band is the sport's own: a 150 m D' is a plausible run fit and an
+# implausible swim one, and an open-water swim takes the pool's band
+expect Curve.fit_usable_for("pace:Run", { cp: 4.0, w_prime: 150.0, r2: 0.95, points: 3.0, ok: Bool.True }) and !Curve.fit_usable_for("pace:Swim", { cp: 1.2, w_prime: 150.0, r2: 0.95, points: 3.0, ok: Bool.True }) and Curve.fit_usable_for("pace:OpenWaterSwim", { cp: 1.2, w_prime: 30.0, r2: 0.95, points: 3.0, ok: Bool.True })
+expect Curve.d_prime_band("Rowing") == { lo: 10.0, hi: 300.0 } and Curve.d_prime_band("VirtualRow") == { lo: 10.0, hi: 300.0 } and Curve.d_prime_band("TrailRun") == { lo: 10.0, hi: 600.0 }
 expect (Curve.fit_line("pace:Run", { cp: 4.0, w_prime: 200.0, r2: 0.95, points: 3.0, ok: Bool.True }) - 4000.0).abs() < 0.01 and Curve.fit_line("pace:Run", { cp: 4.0, w_prime: 2000.0, r2: 0.95, points: 3.0, ok: Bool.True }) == 0.0
 expect Curve.fit_caption_for("pace:Run", Metric, { cp: 4.0, w_prime: 200.0, r2: 0.95, points: 3.0, ok: Bool.True }, 3) == "CS 4:10/km - D' 200 m - fit r2 0.95 from 3 bests"
 expect Curve.fit_caption_for("pace:Swim", Metric, { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 1.0, ok: Bool.True }, -1) == "no CS fit (fewer than two bests in this window) - no 20-min best in this window; an all-out 20 minutes would anchor it"
