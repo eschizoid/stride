@@ -429,11 +429,13 @@ few kJ, so otherwise the line is not drawn and the footer says why, how many
 days ago the window's 20-minute best was set, and that an all-out 20 minutes
 would anchor the fit.
 
-Every open session ahead with a structured target is a gold ring at its rep
-duration and target watts (between rungs, placed linearly in seconds),
-labelled with its day and the target's share of this window's best at that
-duration, read off the line between the rungs around it. Hovering a ring
-names the session: type, reps, duration and watts.
+Every open session ahead with a structured target is a dashed gold ring at
+its rep duration and target watts (between rungs, placed linearly in
+seconds), labelled `planned`, its day and the target's share of this
+window's best at that duration, read off the line between the rungs around
+it. The dashes and the `planned` prefix keep a prescription from reading as a
+measured best. Hovering a ring names the session: `planned`, its date, type,
+reps, duration and watts.
 
 The tab draws one curve at a time, named by a curve key: a sport family's
 head for that family's POWER curve, or `pace:<sport_type>` for that sport's
@@ -443,10 +445,13 @@ and only the sports whose effort is their pace (the run, walk, swim and
 rowing families) take a pace curve: a ride's speed follows the terrain.
 
 The chips come from the data. Left of the range chips, right-aligned, sit the
-curves of the mode on screen that the athlete has on record, most-used first,
-as many as fit beside the title, the one on screen always among them. Right
-of the range chips, a power and a pace chip switch modes, shown only when the
-athlete has curves of both kinds. Each switch reloads the curve, the previous
+curves the athlete has on record, most-used first, as many as fit beside the
+title, the one on screen always among them: in power mode every power family,
+then each pace sport whose family has no power curve; in pace mode the
+reverse, so every curve is one click away. Right of the range chips, a power
+and a pace chip switch between the two curves of the sport on screen, shown
+only when that sport has both: a ride has no pace curve, so a bike curve shows
+no pace chip. Each switch reloads the curve, the previous
 window, the record book and the fit: CP and W' from `stride power-curve
 <days> <family>`, or critical speed and D' from `stride pace-curve <days>
 <sport>`. At launch the tab opens on the athlete's most-trained family of the

@@ -156,13 +156,14 @@ Bus :: [].{
 	pace_key : Str -> Str
 	pace_key = |sport_type| Str.concat(pace_prefix, sport_type)
 
-	# the family heads Sports names, and the sport types whose family reads
-	# its effort as pace
+	# the family heads Sports names, and the sport types of the families
+	# Sports reads effort as pace for (Sports.pace_target_families). A
+	# cycling type is never among them: a ride's speed follows the terrain.
 	family_heads : List(Str)
 	family_heads = List.keep_oks(Sports.families, |f| List.first(f.sports))
 
 	pace_sport_types : List(Str)
-	pace_sport_types = List.keep_if(List.join(List.map(Sports.families, |f| f.sports)), |s| List.contains(["Run", "Walk", "Swim", "Rowing"], Sports.canonical(s)))
+	pace_sport_types = List.keep_if(List.join(List.map(Sports.families, |f| f.sports)), |s| List.contains(Sports.pace_target_families, Sports.canonical(s)))
 
 	# the refusal a directive's family earns before any window judges it:
 	# '' asks for no change, a family head or a pace key over a pace sport
@@ -243,5 +244,7 @@ expect Bus.family_refusal("") == "" and Bus.family_refusal("Ride") == "" and Bus
 expect Bus.family_refusal("pace:Run") == "" and Bus.family_refusal("pace:OpenWaterSwim") == "" and Bus.family_refusal("pace:VirtualRow") == "" and Bus.family_refusal("pace:Hike") == ""
 expect Bus.family_refusal("Bike") == "family Bike not a sport family or pace:<sport>" and Bus.family_refusal("GravelRide") == "family GravelRide not a sport family or pace:<sport>"
 expect Bus.family_refusal("pace:Ride") == "family pace:Ride not a pace sport" and Bus.family_refusal("pace:") == "family pace: not a pace sport"
+# no cycling type takes a pace curve, whatever its name
+expect List.all(Sports.family("bike"), |s| Bus.family_refusal(Bus.pace_key(s)) == "family pace:${s} not a pace sport")
 expect Bus.curve_key("pace:Swim") == Pace("Swim") and Bus.curve_key("Ride") == Power("Ride") and Bus.pace_key("Run") == "pace:Run"
 expect Str.contains(Bus.winner_sql, "AS fm, ")
