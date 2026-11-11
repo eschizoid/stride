@@ -25,6 +25,9 @@ Db :: [].{
 	expect ascii_safe("wait… — done") == "wait... - done"
 	Seg : { kind : Str, start_s : I64, dur_s : I64 }
 	Fit : { cp : F32, w_prime : F32, r2 : F32, points : F32, ok : Bool }
+	# a marked test in force for the curve's family (ADR 0020): its threshold
+	# in the fit's own units (watts, or a speed in m/s), 0 when none is
+	TestAnchor : { value : F32, kind : Str, date : Str }
 
 	Point : { ctl : F32, atl : F32, tsb : F32, tss : F32 }
 	# integer tenths -> "41.9" / "-8.9"; the rule lives in core.Fmt so the CLI
@@ -781,6 +784,9 @@ Db :: [].{
 		tgt_watts : F64,
 		# the target as the engine stores it, any signal; '' when none
 		tgt_lit : Str,
+		# that target's result on its own signal as `complete` stored it; '' when
+		# the session was completed without one
+		tgt_res : Str,
 		det_reps : I64,
 		det_dur_s : I64,
 		det_watts : F64,
@@ -795,14 +801,14 @@ Db :: [].{
 	# The Monday is the one load_plan_week_at! and the engine's `week` use.
 	load_plan_at! : Sqlite.Db, Str => List(PlanRow)
 	load_plan_at! = |db, today_mod|
-		match db.query!("WITH anchor AS (SELECT date('now', '${today_mod}') AS today, date(date('now', '${today_mod}'), '-6 days', 'weekday 1') AS mon), seg AS (SELECT activity_id, COUNT(*) AS n, AVG(dur_s) AS du, AVG(avg_signal) AS w FROM activity_segments WHERE kind = 'work' AND signal = 'power' AND activity_id IN (SELECT pc.completed_activity_id FROM plan_current pc, anchor an WHERE pc.target_date >= an.mon AND pc.target_date <= date(an.today, '+6 days')) GROUP BY activity_id) SELECT CAST(p.target_date AS TEXT) AS d, CAST(julianday(p.target_date) - julianday(a.mon) AS INTEGER) AS wi, CAST(COALESCE(p.session_type, '') AS TEXT) AS t, CAST(COALESCE(p.detail, '') AS TEXT) AS dt, CAST(COALESCE(p.rationale, '') AS TEXT) AS ra, CAST(COALESCE(p.status, 'open') AS TEXT) AS pst, CAST(COALESCE(p.skipped_reason, '') AS TEXT) AS prs, (p.target_date = a.today) AS td, (p.target_date < a.today) AS pps, CAST(COALESCE(substr(ca.start_local, 1, 10), '') AS TEXT) AS cdd, CAST(COALESCE(ca.name, '') AS TEXT) AS can, CAST(COALESCE(ca.moving_time, 0) AS INTEGER) AS cam, CAST(ROUND(COALESCE(cm.tss, 0)) AS INTEGER) AS cal, CAST(COALESCE(sa.id, 0) AS INTEGER) AS sid, CAST(COALESCE(sa.name, '') AS TEXT) AS snm, CAST(COALESCE(p.target_reps, 0) AS INTEGER) AS ptr, CAST(COALESCE(p.target_dur_s, 0) AS INTEGER) AS ptd, CAST(COALESCE(p.target_watts, 0) AS REAL) AS ptw, CAST(COALESCE(p.target_literal, '') AS TEXT) AS ptl, CAST(COALESCE(sg.n, 0) AS INTEGER) AS sgn, CAST(COALESCE(sg.du, 0) AS INTEGER) AS sgd, CAST(COALESCE(sg.w, 0) AS REAL) AS sgw, (dl.day IS NOT NULL) AS dlk, CAST(COALESCE(dl.tss, 0) AS REAL) AS dlt FROM plan_current p CROSS JOIN anchor a LEFT JOIN activities ca ON ca.id = p.completed_activity_id AND COALESCE(p.status, '') = 'done' LEFT JOIN activity_metrics cm ON cm.activity_id = ca.id LEFT JOIN seg sg ON sg.activity_id = ca.id LEFT JOIN activities sa ON sa.id = p.substitute_activity_id AND COALESCE(p.status, '') = 'skipped' LEFT JOIN daily_load dl ON dl.day = p.target_date WHERE p.target_date >= a.mon AND p.target_date <= date(a.today, '+6 days') ORDER BY p.target_date, p.id", []) {
+		match db.query!("WITH anchor AS (SELECT date('now', '${today_mod}') AS today, date(date('now', '${today_mod}'), '-6 days', 'weekday 1') AS mon), seg AS (SELECT activity_id, COUNT(*) AS n, AVG(dur_s) AS du, AVG(avg_signal) AS w FROM activity_segments WHERE kind = 'work' AND signal = 'power' AND activity_id IN (SELECT pc.completed_activity_id FROM plan_current pc, anchor an WHERE pc.target_date >= an.mon AND pc.target_date <= date(an.today, '+6 days')) GROUP BY activity_id) SELECT CAST(p.target_date AS TEXT) AS d, CAST(julianday(p.target_date) - julianday(a.mon) AS INTEGER) AS wi, CAST(COALESCE(p.session_type, '') AS TEXT) AS t, CAST(COALESCE(p.detail, '') AS TEXT) AS dt, CAST(COALESCE(p.rationale, '') AS TEXT) AS ra, CAST(COALESCE(p.status, 'open') AS TEXT) AS pst, CAST(COALESCE(p.skipped_reason, '') AS TEXT) AS prs, (p.target_date = a.today) AS td, (p.target_date < a.today) AS pps, CAST(COALESCE(substr(ca.start_local, 1, 10), '') AS TEXT) AS cdd, CAST(COALESCE(ca.name, '') AS TEXT) AS can, CAST(COALESCE(ca.moving_time, 0) AS INTEGER) AS cam, CAST(ROUND(COALESCE(cm.tss, 0)) AS INTEGER) AS cal, CAST(COALESCE(sa.id, 0) AS INTEGER) AS sid, CAST(COALESCE(sa.name, '') AS TEXT) AS snm, CAST(COALESCE(p.target_reps, 0) AS INTEGER) AS ptr, CAST(COALESCE(p.target_dur_s, 0) AS INTEGER) AS ptd, CAST(COALESCE(p.target_watts, 0) AS REAL) AS ptw, CAST(COALESCE(p.target_literal, '') AS TEXT) AS ptl, CAST(COALESCE(p.target_result, '') AS TEXT) AS ptx, CAST(COALESCE(sg.n, 0) AS INTEGER) AS sgn, CAST(COALESCE(sg.du, 0) AS INTEGER) AS sgd, CAST(COALESCE(sg.w, 0) AS REAL) AS sgw, (dl.day IS NOT NULL) AS dlk, CAST(COALESCE(dl.tss, 0) AS REAL) AS dlt FROM plan_current p CROSS JOIN anchor a LEFT JOIN activities ca ON ca.id = p.completed_activity_id AND COALESCE(p.status, '') = 'done' LEFT JOIN activity_metrics cm ON cm.activity_id = ca.id LEFT JOIN seg sg ON sg.activity_id = ca.id LEFT JOIN activities sa ON sa.id = p.substitute_activity_id AND COALESCE(p.status, '') = 'skipped' LEFT JOIN daily_load dl ON dl.day = p.target_date WHERE p.target_date >= a.mon AND p.target_date <= date(a.today, '+6 days') ORDER BY p.target_date, p.id", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.map(
 					rows,
 					|r| match decode_plan_row(r) {
 						Ok(row) => row
-						Err(_) => { day: "?", wi: -1, typ: "?", detail: "plan record unreadable", rationale: "", status: "open", reason: "", today: Bool.False, past: Bool.False, done_day: "", act_name: "", act_secs: 0, act_load: 0, sub_id: 0, sub_name: "", tgt_reps: 0, tgt_dur_s: 0, tgt_watts: 0.0, tgt_lit: "", det_reps: 0, det_dur_s: 0, det_watts: 0.0, day_load_known: Bool.False, day_load: 0.0 }
+						Err(_) => { day: "?", wi: -1, typ: "?", detail: "plan record unreadable", rationale: "", status: "open", reason: "", today: Bool.False, past: Bool.False, done_day: "", act_name: "", act_secs: 0, act_load: 0, sub_id: 0, sub_name: "", tgt_reps: 0, tgt_dur_s: 0, tgt_watts: 0.0, tgt_lit: "", tgt_res: "", det_reps: 0, det_dur_s: 0, det_watts: 0.0, day_load_known: Bool.False, day_load: 0.0 }
 					},
 				)
 		}
@@ -828,12 +834,13 @@ Db :: [].{
 		tgt_dur_s = r.i64("ptd") ? |_| BadRow
 		tgt_watts = r.f64("ptw") ? |_| BadRow
 		tgt_lit = r.str("ptl") ? |_| BadRow
+		tgt_res = r.str("ptx") ? |_| BadRow
 		det_reps = r.i64("sgn") ? |_| BadRow
 		det_dur_s = r.i64("sgd") ? |_| BadRow
 		det_watts = r.f64("sgw") ? |_| BadRow
 		dlk = r.i64("dlk") ? |_| BadRow
 		day_load = r.f64("dlt") ? |_| BadRow
-		Ok({ day, wi, typ, detail: ascii_safe(detail), rationale: ascii_safe(rationale), status, reason: ascii_safe(reason), today: td == 1, past: ps == 1, done_day, act_name: ascii_safe(act_name), act_secs, act_load, sub_id, sub_name: ascii_safe(sub_name), tgt_reps, tgt_dur_s, tgt_watts, tgt_lit, det_reps, det_dur_s, det_watts, day_load_known: dlk == 1, day_load })
+		Ok({ day, wi, typ, detail: ascii_safe(detail), rationale: ascii_safe(rationale), status, reason: ascii_safe(reason), today: td == 1, past: ps == 1, done_day, act_name: ascii_safe(act_name), act_secs, act_load, sub_id, sub_name: ascii_safe(sub_name), tgt_reps, tgt_dur_s, tgt_watts, tgt_lit, tgt_res: ascii_safe(tgt_res), det_reps, det_dur_s, det_watts, day_load_known: dlk == 1, day_load })
 	}
 
 	# this week's load beside last week's, MONDAY-ALIGNED to agree with the
@@ -1043,6 +1050,25 @@ Db :: [].{
 						ld = r.i64("ld") ? |_| "bad"
 						pt = r.i64("pt") ? |_| "bad"
 						Ok({ month: m, load: ld, partial: pt == 1 })
+					},
+				)
+		}
+
+	# the months a marked threshold test (ADR 0020) sets a family's spine from:
+	# power and pace tests only, since a heart-rate test moves no spine. An
+	# engine older than the tests table answers with an error, read as none.
+	load_test_months! : Sqlite.Db => List({ fam : Str, month : Str, kind : Str })
+	load_test_months! = |db|
+		match db.query!("SELECT CAST(a.sport_family AS TEXT) AS f, substr(CAST(a.start_local AS TEXT), 1, 7) AS m, CAST(t.kind AS TEXT) AS k FROM threshold_tests t JOIN activities a ON a.id = t.activity_id WHERE t.signal <> 'hr' ORDER BY a.start_local", []) {
+			Err(_) => []
+			Ok(rows) =>
+				List.keep_oks(
+					rows,
+					|r| {
+						f = r.str("f") ? |_| "bad"
+						m = r.str("m") ? |_| "bad"
+						k = r.str("k") ? |_| "bad"
+						Ok({ fam: f, month: m, kind: k })
 					},
 				)
 		}
@@ -1563,6 +1589,21 @@ Db :: [].{
 	# one key rather than a parse of the whole document, and one key at a time,
 	# so key ORDER cannot silently break it. "" when the key is absent, which
 	# the caller reads as "the engine did not answer" rather than as a zero.
+	# the string value that follows a key, up to its closing quote, and "" for a
+	# key the document does not carry or whose value is not a string. The
+	# engine's values here are test kinds and dates, which hold no escapes.
+	json_string : Str, Str -> Str
+	json_string = |doc, key|
+		match Str.split_on(doc, "\"${key}\":\"") {
+			[_, rest, ..] =>
+				match Str.split_on(rest, "\"") {
+					[v, ..] => v
+					_ => ""
+				}
+
+			_ => ""
+		}
+
 	json_number : Str, Str -> Str
 	json_number = |doc, key|
 		match Str.split_on(doc, "\"${key}\":") {
@@ -1638,7 +1679,7 @@ Db :: [].{
 	# the engine's fit for a curve key: CP and W' from `stride power-curve`
 	# for a family, critical speed (m/s) and D' (m) from `stride pace-curve`
 	# for a pace sport, carried in the same four fields
-	load_fit! : Cmd.Runner, I64, Str => Fit
+	load_fit! : Cmd.Runner, I64, Str => { fit : Fit, test : TestAnchor }
 	load_fit! = |runner, days, curve| {
 		args = match Bus.curve_key(curve) {
 			Pace(sp) => ["pace-curve", I64.to_str(days), sp, "--json"]
@@ -1658,7 +1699,11 @@ Db :: [].{
 		wp = num(reserve_key)
 		r2 = num("fit_r2")
 		fp = num("fit_points")
-		{ cp, w_prime: wp, r2, points: fp, ok: cp >= 0.0 and wp >= 0.0 and r2 >= 0.0 and fp >= 0.0 }
+		tv = num("test_value")
+		{
+			fit: { cp, w_prime: wp, r2, points: fp, ok: cp >= 0.0 and wp >= 0.0 and r2 >= 0.0 and fp >= 0.0 },
+			test: { value: if (tv > 0.0) tv else 0.0, kind: json_string(out, "test_kind"), date: json_string(out, "test_date") },
+		}
 	}
 
 	find_idx = |days, target|
@@ -1705,6 +1750,11 @@ expect Db.json_number("{\"fit_r2\":-1.25e-3}", "fit_r2") == "-1.25e-3"
 expect Db.json_number("{\"cp\":243.5}", "fit_points") == ""
 # a key whose value is not a number yields "", never the text beside it
 expect Db.json_number("{\"model\":\"power_stream\",\"cp\":9}", "model") == ""
+# ...and its string twin: the text between the quotes, "" for an absent key
+# or a value that is not a string
+expect Db.json_string("{\"test_kind\":\"cp3-12\",\"test_date\":\"2026-11-11\"}", "test_date") == "2026-11-11"
+expect Db.json_string("{\"test_kind\":\"\",\"x\":1}", "test_kind") == ""
+expect Db.json_string("{\"cp\":243.5}", "cp") == "" and Db.json_string("{\"cp\":243.5}", "test_kind") == ""
 
 # the engine's payload, as `stride project` prints it; a baseline it could
 # not measure, or output that is not the payload, projects nothing

@@ -381,10 +381,10 @@ Analyze :: [].{
 	zones_sig : Metrics.ZoneBounds -> Str
 	zones_sig = |zb|
 		"${Render.fmt0(zb.z1_max)},${Render.fmt0(zb.z2_max)},${Render.fmt0(zb.z3_max)},${Render.fmt0(zb.z4_max)}"
-	# The FTP in force WHEN an activity happened (ADR 0005), as a SQL expression correlated
-	# to the outer `a`. Same derivation as Db.sport_ftp! — the sport FAMILY's best 20-min
-	# power × 0.95 (#151, ADR 0002 as amended) — but the 60-day window is anchored to the
-	# ACTIVITY's date, not to today.
+	# The DERIVED FTP for when an activity happened (ADR 0005), as a SQL expression correlated
+	# to the outer `a`; period_ftp_sql raises it to a test in force. Same derivation as
+	# Db.derive_sport_ftp! — the sport FAMILY's best 20-min power × 0.95 (#151, ADR 0002 as
+	# amended) — but the 60-day window is anchored to the ACTIVITY's date, not to today.
 	#
 	# `a2.start_local <= a.start_local` is the load-bearing half: an activity is never scored
 	# by fitness the athlete had not yet demonstrated.
@@ -414,8 +414,8 @@ Analyze :: [].{
 	# A stored best of 0 (a meter that reported nothing for the whole ride) is not a
 	# session with a best, so NULLIF keeps it out of the count as it is out of the
 	# MAX's meaning; the pace twin reads its speeds the same way.
-	period_ftp_sql : Str
-	period_ftp_sql =
+	derived_ftp_sql : Str
+	derived_ftp_sql =
 		\\COALESCE(
 		\\  NULLIF((SELECT CASE WHEN COUNT(NULLIF(m2.best_20min_w, 0)) >= 2 THEN MAX(m2.best_20min_w) * 0.95 END
 		\\          FROM activity_metrics m2 JOIN activities a2 ON a2.id = m2.activity_id
@@ -431,7 +431,7 @@ Analyze :: [].{
 		\\                                              WHERE a5.sport_family = a.sport_family), '+60 days')), 0),
 		\\  0)
 
-	# The pace twin of period_ftp_sql (ADR 0005, as amended): the sport's best 20-minute
+	# The pace twin of derived_ftp_sql (ADR 0005, as amended): the sport's best 20-minute
 	# grade-adjusted SPEED over the 60 days ending on THIS activity's date, × 0.95, with a
 	# cold-start forward-fill gated to the sport's first 60 days, as power's is.
 	# ONE global number anchored to today would score a
@@ -445,8 +445,29 @@ Analyze :: [].{
 	# days, so a lone session later in the sport's history is not scored
 	# against that first period: both arms NULL, the COALESCE lands on 0, and
 	# the pace rung declines.
+	# The threshold in force when an activity happened (ADR 0005, ADR 0020): the
+	# derivation, raised to a marked test's threshold while that test is in force.
+	# A test is in force for the activities of its population dated on or after it
+	# and inside Metrics.test_in_force_days of it; the newest such test wins, so a
+	# later, lower test replaces an earlier one, and the derivation still wins
+	# whenever it is higher. Power pools by sport family and pace by sport type,
+	# the same populations the derivations use. Used verbatim in the SELECT and the
+	# recompute WHERE, so marking or removing a test rescores exactly the rows it
+	# moves.
+	period_ftp_sql : Str
+	period_ftp_sql = "MAX(COALESCE(${test_in_force_sql("power", "sport_family")}, 0), ${derived_ftp_sql})"
+
 	period_threshold_sql : Str
-	period_threshold_sql =
+	period_threshold_sql = "MAX(COALESCE(${test_in_force_sql("pace", "sport_type")}, 0), ${derived_threshold_sql})"
+
+	# the newest test on `signal` in force for the outer `a`, NULL when none is;
+	# `key` is the activities column that names the population
+	test_in_force_sql : Str, Str -> Str
+	test_in_force_sql = |signal, key|
+		"(SELECT tt.value FROM threshold_tests tt JOIN activities ta ON ta.id = tt.activity_id WHERE tt.signal = '${signal}' AND ta.${key} = a.${key} AND ta.start_local <= a.start_local AND ta.start_local >= date(a.start_local, '-${Metrics.test_in_force_days.to_str()} days') ORDER BY ta.start_local DESC, tt.activity_id DESC LIMIT 1)"
+
+	derived_threshold_sql : Str
+	derived_threshold_sql =
 		\\COALESCE(
 		\\  NULLIF((SELECT CASE WHEN COUNT(NULLIF(t2.best_20min_speed, 0)) >= 2 THEN MAX(t2.best_20min_speed) * 0.95 END
 		\\          FROM activity_metrics t2 JOIN activities b2 ON b2.id = t2.activity_id

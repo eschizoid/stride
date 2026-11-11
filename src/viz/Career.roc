@@ -641,6 +641,27 @@ Career :: [].{
 				mark!(last_known.i, last_known.f, Theme.ctl_c, "today")
 			}
 
+			# ── tests: a marked threshold test sets the spine from its own month
+			# (ADR 0020), so that month wears a gold dot and the test's kind, once
+			# the head has passed it. The kind sits under the dot, except on the
+			# valley month, whose own label already holds that gutter.
+			List.for_each!(
+				model.career_tests,
+				|t|
+					if t.fam == sp.fam {
+						match List.first(List.keep_if(idx, |x| x.m.month == t.month)) {
+							Ok(x) if x.m.ftp10 > 0 and xf(x.i) <= head_x => {
+								frame.circle!({ center: { x: xf(x.i), y: yf(x.m.ftp10) }, radius: 4.5, style: Draw.filled(Theme.gold_c) })
+								if x.i != valley.i {
+									Text.from("${t.kind} test", model.font).size(11).draw!(frame, { pos: { x: xf(x.i), y: yf(x.m.ftp10) + 10.0 }, color: Theme.gold_c, align: (Top, Center) })
+								} else {}
+							}
+
+							_ => {}
+						}
+					} else {},
+			)
+
 			# ── the comet: a bright head riding the spine, halo fading behind
 			# it. Gone when settled - the finished view is a chart, not a show.
 			if p < 1.0 {

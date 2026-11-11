@@ -35,10 +35,18 @@ Command := [
 	# leaves behind.
 	VizTick({ ack : Bool }),
 	Compare(Str),
+
+	## one Mon-Sun week in one payload (#640); "" is the week holding today
+	Review(Str),
 	Activities(U64, Str),
 	Top(Str, U64, Str),
 	Import(Str),
 	Rate(Str, Str),
+
+	## a session the athlete declares a threshold test, and the kind of test it was;
+	## the flag applies a tt30 test's heart rate to the family's zones
+	Test(Str, Str, Bool),
+	TestRemove(Str),
 	Progress(Str, [Asc, Desc]),
 
 	## time to exhaustion at a power the CALLER names (#187). ADR 0010: the
@@ -127,9 +135,8 @@ Command := [
 			["sync"] => Ok(Sync(False))
 			["sync", "--all"] => Ok(Sync(True))
 
-			## Retired in #232, with a pointer rather than a bare unknown_command. Every
-			## README, skill and shell history said `stride backfill` until that commit,
-			## and the plan->week rename beside it sets the precedent for redirecting.
+			## `backfill` is a retired verb whose work `sync` does: it answers with a pointer
+			## to its replacement rather than a bare unknown_command.
 			["backfill", ..] => Err(Usage("sync — `backfill` is retired; `stride sync` drains all missing streams, and `stride sync --all` re-lists from scratch"))
 			["analyze"] => Ok(Analyze)
 			["summary"] => Ok(Summary)
@@ -137,6 +144,15 @@ Command := [
 			["plan"] => Ok(Plan)
 			["compare"] => Ok(Compare("week"))
 			["compare", period] => Ok(Compare(period))
+			["review"] => Ok(Review(""))
+			["review", "week"] => Ok(Review(""))
+			["review", date] =>
+				if Metrics.is_canonical_date(date) {
+					Ok(Review(date))
+				} else {
+					Err(Usage("review [week|YYYY-MM-DD] — '${date}' is not a date"))
+				}
+			["review", ..] => Err(Usage("review [week|YYYY-MM-DD]"))
 			["activities"] => Ok(Activities(30, ""))
 			["activities", n] => count(n, |c| Activities(c, ""))
 			["activities", n, sport] => count(n, |c| Activities(c, sport))
@@ -145,6 +161,13 @@ Command := [
 			["top", metric, n, sport] => count(n, |c| Top(metric, c, sport))
 			["import", src] => Ok(Import(src))
 			["rate", target, rpe_str] => Ok(Rate(target, rpe_str))
+			["test", "remove", id] => Ok(TestRemove(id))
+			["test", "remove", ..] => Err(Usage("test remove <activity_id> — unmark a threshold test"))
+			["test", id, kind] => Ok(Test(id, kind, Bool.False))
+			# the flag reads the same before the id as after the kind
+			["test", "--apply-zones", id, kind] => Ok(Test(id, kind, Bool.True))
+			["test", id, kind, "--apply-zones"] => Ok(Test(id, kind, Bool.True))
+			["test", ..] => Err(Usage("test <activity_id> <ftp20|ramp|cp3-12|tt30|css|5k|3k> [--apply-zones] — mark a session as a threshold test"))
 			["doctor"] => Ok(Doctor)
 			["tte", watts] => Ok(Tte(watts))
 			["tte", ..] => Err(Usage("tte <watts> — time to exhaustion at a power you name"))
@@ -153,9 +176,8 @@ Command := [
 				if Metrics.is_canonical_date(date) {
 					Ok(Reps(date))
 				} else {
-					# without this, `reps asc` answered "no detected interval
-					# structure on asc" -- a data fact about a date that does
-					# not exist
+					# a word that is not a date is a usage error, not a data
+					# answer about a date that does not exist
 					Err(Usage("reps [YYYY-MM-DD] — '${date}' is not a date"))
 				}
 			["zones"] => Ok(Zones)
@@ -170,14 +192,12 @@ Command := [
 			["progress"] => Ok(Progress("", Asc))
 			["progress", "asc"] => Ok(Progress("", Asc))
 			["progress", "desc"] => Ok(Progress("", Desc))
-			# a sort word in the DATE position stays a sort word. Without these, `progress
-			# desc asc` fell through to the name+sort arms below and anchored on a workout
-			# named "desc" — the opposite of what the comment above promises.
+			# a sort word in the DATE position stays a sort word, so `progress desc asc` is a
+			# usage error rather than an anchor on a workout dated "desc"
 			["progress", "asc", ..] => Err(Usage("progress [date] [asc|desc]"))
 			["progress", "desc", ..] => Err(Usage("progress [date] [asc|desc]"))
-			# bound as `date`, not `name`: the handler queries it as a date and answers
-			# `no_workout_on_date`. Called `name` once, and the command table copied that
-			# into its public argument shape, where an agent read it.
+			# bound as `date`: the handler queries it as a date and answers
+			# `no_workout_on_date`, and the command table publishes the same name
 			["progress", date] => Ok(Progress(date, Asc))
 			["progress", date, "asc"] => Ok(Progress(date, Asc))
 			["progress", date, "desc"] => Ok(Progress(date, Desc))
@@ -216,9 +236,8 @@ Command := [
 			["complete", session_id] => Ok(CompleteRest(session_id))
 			["skip", session_id, reason, activity_id] => Ok(SkipWith(session_id, reason, activity_id))
 			["skip", session_id, reason] => Ok(Skip(session_id, reason))
-			# label-only edit of an existing session, ANY status (#330): `week add` revises
-			# open sessions in place, but a DONE session's label was frozen — the only fix
-			# was a duplicate row plus a skip tombstone, or hand-run SQL.
+			# label-only edit of an existing session, ANY status: `week add` revises open
+			# sessions in place, and this is how a DONE session's label changes
 			["relabel", session_id, session_type, detail, rationale] => Ok(RelabelWith(session_id, session_type, detail, rationale))
 			["relabel", session_id, session_type, detail] => Ok(Relabel(session_id, session_type, detail))
 			# event targets (#138, ADR 0010's projection side): a date to project toward
@@ -230,28 +249,21 @@ Command := [
 			["project", date, plan] => Ok(ProjectWith(date, plan))
 			["project", date] => Ok(Project(date))
 			["config", "get", key] => Ok(ConfigGet(key))
-			# bare `config` LISTS the keys that hold a value (secrets redacted). It was a
-			# Usage error, which made "which config do I actually have set?" a question the
-			# CLI could not answer — `doctor` reports counts, not names. #254 needs it for a
-			# second reason: `just schema-check` filled `config get <key>` with a hardcoded
-			# `timezone` and skipped on `not_set`, so on any database where that one key was
-			# unset the form dropped out silently at exit 0. The filler comes from here now,
-			# so it cannot be stale, and the skip is decided by an EMPTY LIST — a fact the
-			# recipe checks — instead of by an error code that could mean two things.
+			# bare `config` LISTS the keys that hold a value (secrets redacted): "which config
+			# do I actually have set?" is a question `doctor`, which reports counts, cannot
+			# answer. `just schema-check` fills `config get <key>` from this list, so its filler
+			# cannot be stale, and it skips on an EMPTY LIST, a fact it checks, rather than on an
+			# error code that could mean two things.
 			["config"] => Ok(ConfigList)
-			# Its own literal, and a distinct verb rather than `set` with a magic value. NOT
-			# order-dependent — review moved this arm below `set` and everything stayed green,
-			# because the two are disjoint by arity (4 argv entries vs 5) as well as by
-			# literal. A rule no test can falsify is not a guard, which is the argument
-			# `Config.roc` already makes about `known_key`. `config set <key> ""` used to mean
-			# removal for unrecognised keys, refusal for numeric ones and an empty WRITE for
-			# managed free-text ones — three behaviours on one gesture, and only one of them
-			# was removal (#276).
+			# Its own literal, and a distinct verb rather than `set` with a magic value: an
+			# empty `config set <key> ""` would mean removal for one key class, refusal for
+			# another and an empty write for a third. The arm is not order-dependent: `unset`
+			# and `set` are disjoint by arity (4 argv entries vs 5) as well as by literal.
 			["config", "unset", key] => Ok(ConfigUnset(key))
 			["config", "set", key, val] => Ok(ConfigSet(key, val))
 			["--version"] => Ok(Version)
 			["week", ..] => Err(Usage("week add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — or bare `week` for this week's sessions, `week all` for the whole log"))
-			# `plan` and `week` traded names, so muscle memory sends the old forms here.
+			# `plan all` and `plan add` are spellings of `week` commands, so they get here.
 			# Point each one at its actual replacement rather than a generic arity moan —
 			# `plan all` meant the session log, which is now `week all`, not `week add`.
 			["plan", "all", ..] => Err(Usage("week all — `plan` is now the planning bundle; the session log moved to `week`"))
@@ -264,9 +276,8 @@ Command := [
 			["project", ..] => Err(Usage("project <YYYY-MM-DD> [\"<YYYY-MM-DD>=<RxMM:SS@WWWW>,...\"]"))
 			["activity", ..] => Err(Usage("activity <activity_id>"))
 			["config", ..] => Err(Usage("config get <key>  |  config set <key> <value>  |  config unset <key>"))
-			# asking for help — bare, or by any of the conventional spellings —
-			# is not a failure and must not become one (#163 broke `--help` by
-			# deleting the old catch-all that had silently served it)
+			# asking for help, bare or by any of the conventional spellings, is not a
+			# failure; each spelling has its own arm, since no catch-all serves them
 			[] => Err(ShowHelp)
 			["--help"] => Err(ShowHelp)
 			["-h"] => Err(ShowHelp)
@@ -306,15 +317,14 @@ Command := [
 	## in usage text; a value without angle brackets must be passed verbatim.
 	##
 	## `example` is a value that SATISFIES this argument, and it exists so the value
-	## comes from the same place the argument's existence does (#257): three checkers
-	## kept their own answer to "what fills this placeholder" and had drifted. With
-	## the value coming from the table, a derived argument the command rejects (#253)
-	## and a stale hardcoded filler (#254) are structurally impossible.
+	## comes from the same place the argument's existence does: every checker that
+	## fills a placeholder reads it here, so a filler the command rejects and a stale
+	## hardcoded one are structurally impossible.
 	##
 	## BOUNDARY, written into the type: this covers arguments with a STATIC valid
 	## value. `<activity_id>` and `<export.zip|dir>` are empty — a consumer must read
-	## empty as "not statically knowable", not as "". (The export path was measured:
-	## no path satisfies it without a real Strava export on disk.)
+	## empty as "not statically knowable", not as "". No export path satisfies its
+	## argument without a real Strava export on disk.
 	Arg : { name : Str, required : Bool, example : Str }
 
 	## What a caller needs to INVOKE a command, not merely to name it (#219).
@@ -351,8 +361,8 @@ Command := [
 	##                  count always is, and required arguments must form a prefix. Literal
 	##                  arguments and enum members are matched against the parser's arms.
 	##                  What is NOT enforced is the free placeholder TEXT — `<days>` versus
-	##                  `<limit>` versus `<n>` — which is exactly where this table's first
-	##                  defects were, and the only part a reader should treat as declared.
+	##                  `<limit>` versus `<n>` — the only part a reader should treat as
+	##                  declared rather than checked.
 	Spec : {
 		name : Str,
 		args : List(Arg),
@@ -468,6 +478,8 @@ Command := [
 		errs(writes("analyze", [], "analyze.json"), ["missing_config", "unreadable_activity_date", "unreadable_config"]),
 		errs(writes("import", [req_ex("<export.zip|dir>", "")], "import.json"), ["empty_csv", "no_activities_csv", "unzip_failed"]),
 		errs(writes("rate", [req("<activity_id|latest>"), req("<1-10>")], "rate.json"), ["activity_not_found", "bad_id", "bad_rpe", "no_activities", "unreadable_activity_date"]),
+		errs(writes("test", [req_ex("<activity_id>", ""), req("<ftp20|ramp|cp3-12|tt30|css|5k|3k>"), opt("--apply-zones")], "test.json"), ["activity_not_found", "bad_id", "bad_test_kind", "test_implausible", "test_needs_distance", "test_needs_hr", "test_needs_power", "test_wrong_sport", "zones_need_lthr"]),
+		errs(writes("test remove", [req_ex("<activity_id>", "")], "test_remove.json"), ["bad_id", "test_not_found"]),
 		errs(writes("week add", [req_ex("<YYYY-MM-DD>", "2099-01-01"), req_ex("<type>", "endurance"), req_ex("<detail>", "example"), req_ex("<rationale>", "example"), opt_ex("<target>", "3x12:00@230W")], "week_add.json"), ["bad_date", "bad_target", "missing_config"]),
 		errs(writes("complete", [req("<session_id>"), opt("<activity_id>")], "complete.json"), ["activity_already_linked", "activity_not_found", "activity_required", "bad_id", "session_not_found"]),
 
@@ -489,9 +501,8 @@ Command := [
 		errs(reads("summary", [], "summary.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
 		errs(reads("plan", [], "plan.json"), ["missing_config", "no_data", "unreadable_activity_date", "unreadable_config", "unreadable_daily_load_day"]),
 
-		## `stats` had no declared codes: its totals are a pure listing, until #249 found
-		## that `WHERE start_local >= :cutoff` is NULL-false, so an unreadable date leaves
-		## an ALL TIME total silently short. It refuses now.
+		## `stats` refuses an unreadable activity date: `WHERE start_local >= :cutoff` is
+		## NULL-false, so such a row would leave an ALL TIME total silently short.
 		errs(reads("stats", [], "stats.json"), ["unreadable_activity_date"]),
 		reads("doctor", [], "doctor.json"),
 
@@ -518,6 +529,7 @@ Command := [
 		errs(writes("strength import", [req_ex("<file|->", "")], "strength-import.json"), ["bad_json", "unreadable_file"]),
 		errs(reads("pz", [], "zones.json"), ["no_power_data"]),
 		errs(reads("compare", [opt("<week|month>")], "compare.json"), ["bad_period", "no_data", "unreadable_activity_date", "unreadable_daily_load_day"]),
+		errs(reads("review", [opt_ex("<week|YYYY-MM-DD>", "week")], "review.json"), ["unreadable_activity_date", "unreadable_config"]),
 		errs(reads("activities", [opt_ex("<limit>", "5"), opt_ex("<sport>", "Ride")], "activities.json"), ["bad_count"]),
 
 		## `unreadable_activity_date` on the three forms #249 made REFUSE rather than report
@@ -546,11 +558,9 @@ Command := [
 		errs(reads("pace-curve", [opt_ex("<days>", "30"), opt_ex("<sport>", "Run")], "pace_curve.json"), ["bad_count"]),
 		errs(reads("cs", [opt_ex("<days>", "30"), opt_ex("<sport>", "Run")], "pace_curve.json"), ["bad_count"]),
 
-		## A DATE, not a workout name. The parse arm bound this to a variable called
-		## `name`, which is where a `<name>` placeholder once came from — the
-		## handler queries `substr(start_local, 1, 10) = :date` and answers
-		## `no_workout_on_date`. Every other document in the repo says `[date]`; only
-		## this table said otherwise, and this table is the one an agent reads.
+		## A DATE, not a workout name: the handler queries
+		## `substr(start_local, 1, 10) = :date` and answers `no_workout_on_date`, and
+		## this table is the one an agent reads.
 		errs(reads("progress", [opt("<YYYY-MM-DD>"), opt("<asc|desc>")], "progress.json"), ["no_scorable_workouts", "no_workout_on_date", "unreadable_activity_date", "unscorable"]),
 		errs(reads("tte", [req_ex("<watts>", "300")], "tte.json"), ["bad_watts", "no_cp_fit"]),
 		errs(reads("reps", [opt("<YYYY-MM-DD>")], "reps.json"), ["irregular_anchor", "no_detected_intervals", "no_intervals_on_date", "unreadable_activity_date"]),
@@ -798,8 +808,8 @@ expect
 		Err(Usage("week add <YYYY-MM-DD> <type> \"<detail>\" \"<rationale>\" — or bare `week` for this week's sessions, `week all` for the whole log")) => True
 		_ => False
 	}
-# the old spellings must land on their REPLACEMENT, not on generic help — `plan all`
-# meant the session log, so it points at `week all`, not at `week add`
+# `plan all` and `plan add` land on their `week` equivalents, not on generic help:
+# `plan all` is the session log, so it points at `week all`, not at `week add`
 expect
 	match Command.parse(["plan", "all"]) {
 		Err(Usage(u)) => Str.contains(u, "week all")
@@ -816,9 +826,8 @@ expect
 		Ok(Plan) => True
 		_ => False
 	}
-# bare `config` LISTS what is set — it was a Usage error until #254, on the same reasoning
-# as bare `plan` and bare `week` above: the shortest spelling of a command should answer
-# the question the reader has, not scold them for not asking it precisely enough.
+# bare `config` LISTS what is set, like bare `plan` and bare `week` above: the shortest
+# spelling of a command answers the reader's question rather than refusing it.
 expect
 	match Command.parse(["config"]) {
 		Ok(ConfigList) => True
@@ -952,6 +961,31 @@ expect match Command.parse(["import", "x.zip"]) {
 }
 expect match Command.parse(["rate", "1", "5"]) {
 	Ok(Rate("1", "5")) => True
+	_ => False
+}
+expect match Command.parse(["test", "12", "ftp20"]) {
+	Ok(Test("12", "ftp20", flag)) => !(flag)
+	_ => False
+}
+expect match Command.parse(["test", "12", "tt30", "--apply-zones"]) {
+	Ok(Test("12", "tt30", flag)) => flag
+	_ => False
+}
+# `remove` is a verb in the id position, never an activity named "remove"
+expect match Command.parse(["test", "--apply-zones", "12", "tt30"]) {
+	Ok(Test("12", "tt30", flag)) => flag
+	_ => False
+}
+expect match Command.parse(["test", "remove", "12"]) {
+	Ok(TestRemove("12")) => True
+	_ => False
+}
+expect match Command.parse(["test", "12"]) {
+	Err(Usage(_)) => True
+	_ => False
+}
+expect match Command.parse(["test", "12", "ftp20", "--bogus"]) {
+	Err(Usage(_)) => True
 	_ => False
 }
 expect match Command.parse(["activity", "7"]) {
