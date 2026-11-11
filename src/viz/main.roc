@@ -2736,8 +2736,25 @@ splash! = |model, frame| {
 	Text.from("Stride", model.font).size(30).draw!(frame, { pos: { x: cx, y: cy + 124.0 }, color: Color.white, align: (Top, Center) })
 	dots = if (model.tick % 90 < 30) "." else if (model.tick % 90 < 60) ".." else "..."
 	Text.from("loading your training story${dots}", model.font).size(13).draw!(frame, { pos: { x: cx, y: cy + 164.0 }, color: Theme.ink_muted, align: (Top, Center) })
+	slow = splash_slow_note(model.tick)
+	_ = if (slow != "") Text.from(slow, model.font).size(12).draw!(frame, { pos: { x: cx, y: cy + 188.0 }, color: Theme.ink_muted, align: (Top, Center) })
 	Ok({})
 }
+
+# A boot load that outlives splash_slow_secs says so on the splash and names
+# the way out, so a stuck load never reads as a window still working. The
+# boot task cannot be cancelled from the frame loop; R spawns a fresh load and
+# ESC quits.
+splash_slow_secs : U64
+splash_slow_secs = 20
+
+splash_slow_note : U64 -> Str
+splash_slow_note = |tick|
+	if (tick < splash_slow_secs * ticks_per_second) "" else "still loading after ${U64.to_str(tick // ticks_per_second)} s - R retries, ESC quits"
+
+expect splash_slow_note(0) == ""
+expect splash_slow_note(splash_slow_secs * ticks_per_second - 1) == ""
+expect splash_slow_note(splash_slow_secs * ticks_per_second) == "still loading after 20 s - R retries, ESC quits"
 
 # the geometric fallback when the authored PNG cannot be found: the route
 # drawing itself with a comet, the mountain popping in on completion

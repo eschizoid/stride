@@ -1359,16 +1359,29 @@ Db :: [].{
 	# decoder. `chan` is one of watts_chan / hr_chan, picked per picker row by
 	# trace_menu_q's CASE, and BOUND rather than spliced — json_extract takes
 	# its path as an ordinary expression.
+	#
+	# The sample count is read first, by its own query, and the keep-every-kth
+	# step is bound into the second. A single statement that derives the count
+	# from the same json_each it filters (a CTE read twice, or a correlated
+	# MAX) lets the bundled SQLite re-run json_extract over the whole stream
+	# document once per sample, which is quadratic in the session's length:
+	# a 4-hour ride then holds the boot task for minutes. Two statements keep
+	# both reads linear.
 	load_trace! : Sqlite.Db, I64, Str => List(F32)
 	load_trace! = |db, aid, chan| {
 		if chan == pace_chan {
 			load_trace_pace!(db, aid)
 		} else {
-			# json_each's key column IS the array index for a JSON array, and for an
-			# array it is an INTEGER value (objects yield text keys), so MAX(i) and
-			# ORDER BY i are numeric — no window function, nothing left unspecified.
-			q = "WITH w AS (SELECT json_each.key AS i, CAST(json_each.value AS INTEGER) AS v FROM streams, json_each(json_extract(streams.raw_json, :chan)) WHERE streams.activity_id = :aid), n AS (SELECT MAX(i)+1 AS c FROM w) SELECT v FROM w, n WHERE i % (MAX(n.c/800,1)) = 0 ORDER BY i"
-			match db.query!(q, [{ name: ":aid", value: Integer(aid) }, { name: ":chan", value: String(chan) }]) {
+			count = match db.query!("SELECT COALESCE(json_array_length(raw_json, :chan), 0) AS c FROM streams WHERE activity_id = :aid", [{ name: ":aid", value: Integer(aid) }, { name: ":chan", value: String(chan) }]) {
+				Ok(rows) =>
+					match List.first(rows) {
+						Ok(r) => r.i64("c") ?? 0
+						Err(_) => 0
+					}
+				Err(_) => 0
+			}
+			q = "SELECT CAST(j.value AS INTEGER) AS v FROM streams, json_each(json_extract(streams.raw_json, :chan)) AS j WHERE streams.activity_id = :aid AND j.key % :k = 0 ORDER BY j.key"
+			match db.query!(q, [{ name: ":aid", value: Integer(aid) }, { name: ":chan", value: String(chan) }, { name: ":k", value: Integer(trace_step(count)) }]) {
 				Err(_) => []
 				Ok(rows) => List.keep_oks(
 					rows,
@@ -1380,6 +1393,14 @@ Db :: [].{
 			}
 		}
 	}
+
+	# keep every kth sample so a trace draws about trace_points of them; a
+	# stream at or under that length keeps every sample
+	trace_points : I64
+	trace_points = 800
+
+	trace_step : I64 -> I64
+	trace_step = |count| if (count <= trace_points) 1 else count // trace_points
 
 	# The pace channel's samples: (time, distance) pairs read together,
 	# differenced to per-second SPEED by the same core.Series discipline the
@@ -1699,3 +1720,4 @@ expect !(Db.parse_projection("").ok)
 expect Db.grouped(0) == "0" and Db.grouped(999) == "999" and Db.grouped(1000) == "1,000" and Db.grouped(13201) == "13,201" and Db.grouped(1000000) == "1,000,000"
 expect Db.grouped(-1234) == "-1,234" and Db.grouped(-999) == "-999" and Db.grouped(-9_223_372_036_854_775_807 - 1) == "-9,223,372,036,854,775,808"
 expect Db.num_unit(447, "h") == "447 h" and Db.num_unit(13201, "mi") == "13,201 mi"
+expect Db.trace_step(0) == 1 and Db.trace_step(800) == 1 and Db.trace_step(1599) == 1 and Db.trace_step(1600) == 2 and Db.trace_step(14349) == 17
