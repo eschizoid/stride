@@ -38,7 +38,7 @@ Render :: [].{
 	# greedy word-wrap: pack space-separated words into lines of at most `cap`
 	# display-columns. A lone word wider than cap is CHARACTER-BROKEN by hard_break —
 	# free text and generated spans (`2021-12-13..2022-02-10`) both produce giant
-	# tokens (#194).
+	# tokens.
 	wrap_cell : Str, U64 -> List(Str)
 	wrap_cell = |s, cap|
 		if (display_width(s) <= cap)
@@ -60,7 +60,7 @@ Render :: [].{
 			final = if (Str.is_empty(packed.cur)) packed.out else List.append(packed.out, packed.cur)
 			# The packer above can only break BETWEEN words, so a space-free token comes out
 			# whole and ignores the cap — which made fit_caps' squeeze a no-op for precisely
-			# the columns that needed it (#194: a season block is `2021-12-13..2022-02-10`,
+			# the columns that needed it (a season block is `2021-12-13..2022-02-10`,
 			# one token). Breaking every produced line covers the arm that carries an
 			# over-long word forward as `cur` too.
 			capped = List.join(List.map(final, |line| hard_break(line, cap)))
@@ -230,7 +230,7 @@ Render :: [].{
 	# -0.04 m/s is the difference between 4:00/km and 4:03/km; through fmt0 it
 	# renders as "0" and the column reports no change at all.
 	# The session's change from first rep to last, signed so NEGATIVE always means WORSE —
-	# weaker watts, or slower pace. Sport-consistent by decision (#351): a cyclist and a
+	# weaker watts, or slower pace. Sport-consistent by decision: a cyclist and a
 	# runner read the same sign for the same event. The cost is that for pace this is the
 	# inverse of raw last-minus-first, since pace counts UP as you slow down, so the legend
 	# states what the number is rather than how it was subtracted.
@@ -264,7 +264,7 @@ Render :: [].{
 	trend_label = |improved, declined|
 		if (improved) "improving" else if (declined) "declining" else "holding steady"
 
-	# How long the band has held, appended to the state (#123). Takes the TAG, not a
+	# How long the band has held, appended to the state. Takes the TAG, not a
 	# flattened number: the caller must not decide what Unknown means on the renderer's
 	# behalf, and AtLeast must not arrive collapsed into an exact-looking integer.
 	#
@@ -284,7 +284,7 @@ Render :: [].{
 			AtLeast(n) => if (n <= 1) "" else ", ${(n).to_str()}+ days in this band"
 		}
 
-	# The clause that gives the form verdict a memory (#111). Words, not a signed number,
+	# The clause that gives the form verdict a memory. Words, not a signed number,
 	# because this sits mid-sentence between the value and the band label.
 	#
 	# Unknown renders as "" and the caller drops the clause entirely: too little history to
@@ -471,7 +471,7 @@ Render :: [].{
 	SegRow : { ordinal : I64, kind : Str, start_s : I64, dur_s : I64, avg_signal : F64, signal : Str, peak_hr : F64, avg_hr : F64, rec_drop : F64, rec_drop_known : Bool }
 
 	# A speed in m/s rendered as time-per-distance, which is what a runner reads
-	# (#351; the rule and its rationale live with the body in core.Units).
+	# (the rule and its rationale live with the body in core.Units).
 	pace_from_speed : [Metric, Imperial], F64 -> Str
 	pace_from_speed = Units.pace_from_speed
 
@@ -580,7 +580,7 @@ Render :: [].{
 	structure_group_label = |reps, mean_dur, sig, example|
 		"${(reps).to_str()}×[~${mmss(mean_dur)}] ${sig} intervals (${example})"
 
-	## the week-add echo's target clause (#198, ADR 0014) — the canonical literal,
+	## the week-add echo's target clause (ADR 0014) — the canonical literal,
 	## numbers only. Lives in Render, not Plan, so the 0012 sweep expect below this
 	## module can actually run over it (Plan.roc is not in the pure-test list).
 	target_note : [NoT, T(Metrics.Target)] -> Str
@@ -594,7 +594,13 @@ Render :: [].{
 	## "did they hit it" is the coach's sentence (ADR 0012, ADR 0014 §4). Each kind
 	## states its own signal; an execution with no comparable signal names why.
 	target_match_note : { target_kind : Str, target_literal : Str, target_pace_unit : Str, target_rpe : I64, detected_known : Bool, detected_reps : I64, detected_mean_dur_s : I64, detected_mean_watts : F64, exec_known : Bool, exec_reason : Str, hr_under_s : I64, hr_in_s : I64, hr_over_s : I64, hr_mean : F64, zone_below_s : I64, zone_in_s : I64, zone_above_s : I64, pace_basis : Str, pace_actual_s : F64, pace_reps : I64, rpe_actual : F64 } -> Str
-	target_match_note = |tm| {
+	target_match_note = |tm| if (tm.target_kind == "") "" else " (target ${tm.target_literal}; ${target_result_text(tm)})"
+
+	## The execution half of that clause alone, "" for a session with no target. It
+	## is the text `complete` and `rate` store on the planned session, so the
+	## window's plan view states the same result the CLI printed.
+	target_result_text : { target_kind : Str, target_literal : Str, target_pace_unit : Str, target_rpe : I64, detected_known : Bool, detected_reps : I64, detected_mean_dur_s : I64, detected_mean_watts : F64, exec_known : Bool, exec_reason : Str, hr_under_s : I64, hr_in_s : I64, hr_over_s : I64, hr_mean : F64, zone_below_s : I64, zone_in_s : I64, zone_above_s : I64, pace_basis : Str, pace_actual_s : F64, pace_reps : I64, rpe_actual : F64 } -> Str
+	target_result_text = |tm| {
 		d = Metrics.rep_dur_str
 		pace = |s| "${Metrics.rep_dur_str(s.round_to_i64_try().ok_or(0))}${tm.target_pace_unit}"
 		what =
@@ -620,7 +626,7 @@ Render :: [].{
 			} else {
 				"whole session at ${pace(tm.pace_actual_s)}"
 			}
-		if (tm.target_kind == "") "" else " (target ${tm.target_literal}; ${what})"
+		if (tm.target_kind == "") "" else what
 	}
 
 	# display label for a progress group, from anchor_filter's structured kind
@@ -645,14 +651,14 @@ Render :: [].{
 
 	# one workout's table + trend verdict, rendered through its sport-aware lens
 	# (power->EF, distance->speed/HR, rated->RPE; RPE is lower-is-better). The last two
-	# parameters are `scope_dropped`/`scope_why`: the caller passes only the SCOPE half
-	# of the old `hidden` pair (#286).
+	# parameters are `scope_dropped`/`scope_why`: the caller passes only the rows the
+	# anchor's scope dropped; the lens drops are counted here.
 	progress_section : [Metric, Imperial], Str, List(Metrics.ProgressRow), Str, [Ef, SpeedHr, Rpe], [Asc, Desc], List(I64), U64, Str -> Str
 	progress_section = |units, name, rows, asked, lens, sort, all_days, scope_dropped, scope_why| {
 		higher = Metrics.lens_higher_better(lens)
 		sc = |row| Metrics.lens_score(lens, row).ok_or(0.0)
 		# `rows` arrives BEFORE the lens gate, so the table can show a session the lens
-		# cannot score rather than deleting it (#286). Everything that reasons about VALUE
+		# cannot score rather than deleting it. Everything that reasons about VALUE
 		# — scale, trend, verdict count, last-vs-best — reads `scored_rows`, because
 		# `ok_or(0.0)` would fold a 0 into the mean and squash the bars against a floor no
 		# session reached.
@@ -667,16 +673,16 @@ Render :: [].{
 			Rpe => fmt0(v)
 			_ => fmt2(v)
 		}
-		# the SCORED heart rate, not the stored one (#311). This column sits beside
+		# the SCORED heart rate, not the stored one. This column sits beside
 		# `ef`/`spd_hr`, whose legend reads "per heartbeat" — showing 86 next to a score
 		# computed from 147.7 makes the legend false with the divisor nowhere on screen.
 		# The stored value is still published raw by `activities --json` and `activity`.
 		hr_of = |row| if (row.avg_hr_scored > 0.0) fmt0(row.avg_hr_scored) else "-"
 		prim_of = |row|
 			# "-", never `0.00` with an empty bar. A fabricated zero in the lens column is
-			# the same class of lie as the fabricated gap this issue opened with: it reads
-			# as a measured worst-ever session rather than as an absent measurement, and it
-			# would sit in the same column the bars are scaled against.
+			# the same class of lie as a fabricated gap: it reads as a measured worst-ever
+			# session rather than as an absent measurement, and it would sit in the same
+			# column the bars are scaled against.
 			if Metrics.lens_score(lens, row).is_err() {
 				"-"
 			} else {
@@ -694,13 +700,13 @@ Render :: [].{
 			match lens {
 				Ef => [
 					# "-" at zero, not `0`: a zero here is UNREACHABLE on a scored row (the EF lens
-					# requires `np_w > 0`), so it can only mean absent, and it only appears on the rows
-					# #286 made render. `kJ` and `load` keep their bare 0 — the file's convention, and
-					# a real value there.
+					# requires `np_w > 0`), so it can only mean absent, and it only appears on rows
+					# the lens cannot score. `kJ` and `load` keep their bare 0 — the file's convention,
+					# and a real value there.
 					("np (W)", |row| if (row.np_w > 0.0) fmt0(row.np_w) else "-"),
 					("hr", hr_of),
 					("ef", prim_of),
-					# aerobic decoupling per session (#135) — "-" when not computable,
+					# aerobic decoupling per session — "-" when not computable,
 					# never a fabricated 0 (0.0 is a real, perfect result)
 					("drift", |row| if (row.decoupling_known) "${signed(row.decoupling_pct)}%" else "-"),
 					("kJ", |row| fmt0(row.output_kj)),
@@ -741,9 +747,9 @@ Render :: [].{
 					# and announces a break that did not happen — and the legend prints "a break over N
 					# days", a claim about TRAINING, so the artifact is a false statement rather than
 					# an ambiguous glyph. In production `rows` and `all_days` describe the same set
-					# (#286 made unscorable rows render; a scope drop removes the row from both), so
-					# the fold is an identity there — it stays because it already handles the moment
-					# the two lists diverge. N is `gap_days`, shared with the comparison below (#302),
+					# (unscorable rows render; a scope drop removes the row from both), so the fold
+					# is an identity there — it stays because it handles the case where the two
+					# lists diverge. N is `gap_days`, shared with the comparison below,
 					# so the printed threshold cannot drift from the tested one.
 					with_gap =
 						if acc.prev > -1000000 and Metrics.max_real_gap(all_days, acc.prev, days) > gap_days {
@@ -779,10 +785,10 @@ Render :: [].{
 		# Sessions absent from the table are absent from every figure on this line too, and
 		# saying so is the difference between a filtered view and a wrong one.
 		#
-		# TWO clauses, because after #286 the two causes have different OUTCOMES: a scope
-		# drop is still HIDDEN (a different distance, not in this table), while a lens drop
-		# is SHOWN with its lens cells blank — calling it hidden while the reader looks at
-		# the row would be the contradiction this issue opened with. The SCOPE reason
+		# TWO clauses, because the two causes have different OUTCOMES: a scope drop is
+		# HIDDEN (a different distance, not in this table), while a lens drop is SHOWN
+		# with its lens cells blank — calling it hidden while the reader looks at the row
+		# would contradict the table. The SCOPE reason
 		# arrives from the caller (only the anchor filter can tell its two truncation kinds
 		# apart); the LENS reason derives here, where the count it must agree with is
 		# counted. The counts match the payload's `hidden_scope`/`hidden_lens` exactly;
@@ -837,13 +843,13 @@ Render :: [].{
 			if List.len(scored_rows) == 1 and scope_dropped == 0 and unscored_n == 0 {
 				# "one comparable session" read as though it were pointing at some OTHER
 				# session to compare with. The single row IS this session — there is simply
-				# no history behind it yet (#96).
+				# no history behind it yet.
 				"→ ${short} ${pfmt(avg)} — first session of this workout, nothing to compare against yet"
 			} else if List.len(scored_rows) == 1 {
 				# ...but only when there IS no history. `hidden_note` once reached the multi-row
 				# arm alone, so a workout whose lens could score exactly one session claimed
 				# "first session, nothing to compare against yet" over ELEVEN sessions, ten
-				# unrated (#291) — asserting the absence is worse than the silence it replaced.
+				# unrated — asserting the absence is worse than the silence it replaced.
 				"→ ${short} ${pfmt(avg)} — the only session shown${hidden_note}; the rest are in your log"
 			} else {
 				"→ ${short} early avg ${pfmt(t.early)} → recent avg ${pfmt(t.late)} (overall avg ${pfmt(avg)}) over ${U64.to_str(List.len(scored_rows))} sessions${hidden_note} — ${label}${pct_str}"
@@ -921,7 +927,7 @@ Render :: [].{
 			BudgetReached => if (pending == 0) "" else "filled Strava's 15-minute read window — ${I64.to_str(pending)} to go, run `stride sync` again in ~15 minutes"
 			RateLimited => if (pending == 0) "" else "Strava rate-limited this run — ${I64.to_str(pending)} to go, try again in ~15 minutes"
 			# the ONE stop whose remedy is not fifteen minutes: Strava's daily read cap resets
-			# at UTC midnight, so re-running sooner spends nothing and gets nothing (#246).
+			# at UTC midnight, so re-running sooner spends nothing and gets nothing.
 			#
 			# And the ONE stop that speaks on an EMPTY queue: the pre-flight refusal arrives
 			# having made no request, so "all streams present" would be a claim about state
@@ -935,7 +941,7 @@ Render :: [].{
 				}
 		}
 
-	# `plan`'s data-freshness line (#221). "" when there is nothing to say, on the same
+	# `plan`'s data-freshness line. "" when there is nothing to say, on the same
 	# reasoning as sync_screen's tail below: for a human the absence of the line IS the
 	# clean signal, and printing two zeros before every planning session trains the eye to
 	# skip the row that matters on the day it is not zero.
@@ -974,7 +980,7 @@ Render :: [].{
 	}
 
 	# sync's human line. Extracted from an inline closure in Strava.roc so pure expects
-	# can reach it (#232). Takes the payload AND the tag it was built from: `p.stopped`
+	# can reach it. Takes the payload AND the tag it was built from: `p.stopped`
 	# is the WIRE string (sync.json is a flat enum) and nothing here reads it —
 	# recovering the tag from it would be a lookup a maintainer can leave stale,
 	# shipping the raw token. Passed alongside, a new reason is a non-exhaustive
@@ -1056,11 +1062,10 @@ Render :: [].{
 				FromDrain(r) =>
 				# UNCONDITIONAL. Whether a reason has anything to say on an empty queue is a
 				# property of the REASON, so `drain_note` answers it per arm, exhaustively, and
-				# this site only formats. Answering it here went wrong twice: a
-				# `pending_streams > 0` guard made a capped day print a quiet successful-looking
-				# sync (no request made, none possible), and the fix's `match` needed a `_` — under
-				# which a fifth StopReason produced compile errors at two OTHER sites and none
-				# here, so a new reason printed no remedy at all, compiler silent, suite green.
+				# this site only formats. A `pending_streams > 0` guard here would make a capped
+				# day print a quiet successful-looking sync (no request made, none possible), and
+				# a `match` with a `_` arm here would let a new StopReason compile with no remedy
+				# printed; the exhaustive match in drain_note is what makes the compiler name it.
 					{
 						note = drain_note(r, p.pending_streams)
 						if (Str.is_empty(note)) "" else " — ${note}"
@@ -1084,10 +1089,9 @@ Render :: [].{
 			} else {
 				""
 			}
-		# New and updated FIRST, re-checked in parentheses behind them: the old line led
-		# with the re-listed count, which is a function of how often you train rather than
-		# of this sync, and reading "synced 22 activities" as 22 NEW ones is the question
-		# it kept provoking (#112).
+		# New and updated FIRST, re-checked in parentheses behind them: the re-listed
+		# count is a function of how often you train rather than of this sync, and a line
+		# leading with it ("synced 22 activities") reads as 22 NEW ones.
 		"synced ${U64.to_str(p.new_activities)} new, ${U64.to_str(p.updated_activities)} updated (${U64.to_str(p.synced)} re-checked${window_note})${prune_note}, fetched streams for ${I64.to_str(p.streams_fetched)}${notes_note}${skip_note}${tail}"
 	}
 
@@ -1219,14 +1223,13 @@ Render :: [].{
 		}
 	}
 
-	# Critical speed's screen (#188). Takes units as a PARAMETER rather than reading a
+	# Critical speed's screen. Takes units as a PARAMETER rather than reading a
 	# field off the payload: the payload is SI end-to-end (cs in m/s, d_prime in metres)
 	# and must not move with the setting, so pace_curve! passes units through a closure
 	# and only this function converts.
 	#
 	# CS prints as a PACE, not as a converted speed. It is a running number and runners
-	# read 4:00/km, not 4.17 m/s or 9.3 mph — rendering it as a speed would repeat the
-	# defect #351 fixed on the segment screens.
+	# read 4:00/km, not 4.17 m/s or 9.3 mph, the same rule the segment screens follow.
 	pace_curve_screen : [Metric, Imperial], { window_days : U64, sport : Str, points : List({ dur_s : U64, speed : F64 }), cs : F64, d_prime : F64, fit_r2 : F64, fit_points : I64, available_sports : List(Str) } -> Str
 	pace_curve_screen = |units, pc| {
 		dur_label = |s|
@@ -1365,7 +1368,7 @@ Render :: [].{
 					"  fitness (CTL): ${fmt0(s.fitness_ctl)}   fatigue (ATL): ${fmt0(s.fatigue_atl)}   form (TSB): ${fmt0(s.form_tsb)}",
 					# the tag is reconstructed from the pair the payload carries, the same way the
 					# trend clause is: JSON needs a number, the renderer needs to know whether
-					# that number is exact or a floor (#123)
+					# that number is exact or a floor
 					"  → form ${fmt0(s.form_tsb)}${form_trend_phrase(if (s.form_delta_known) Known(s.form_delta_7d) else Unknown)} — ${Metrics.form_label(s.form_tsb)}${band_days_phrase(if (s.form_band_days <= 0) Unknown else if (s.form_band_days_capped) AtLeast(s.form_band_days) else Known(s.form_band_days))}",
 					# Numbers, no verdict: the usual sustainable band is the coach's
 					# knowledge, not the engine's. Signed, because a taper reads negative
@@ -1381,7 +1384,7 @@ Render :: [].{
 					"    ${I64.to_str(z.sessions)} sessions · ${fmt1(z.moving_time.to_f64() / 3600.0)}h · ${fmt1(dist_value(units, z.distance_m))} ${dist_unit(units)}",
 					"    training load: ${fmt0(z.tss)} (${I64.to_str(z.measured_pct)}% measured by power or pace — rest estimated from HR/RPE; see doctor)",
 				],
-				# tier line (#157): descriptive provenance for the load number above
+				# tier line: descriptive provenance for the load number above
 				# it — high = measured power OR distance-measured pace, medium = HR/RPE,
 				# low = Strava relative-effort. States the mix, prescribes nothing; absent when
 				# the window is empty rather than claiming 0/0/0.
@@ -1399,7 +1402,7 @@ Render :: [].{
 					"",
 					last7_line,
 					"  last hard session (5+ min hard, by power or HR): ${last_hard_str}",
-					# stimulus spacing (#159): counts and a median gap — measurements,
+					# stimulus spacing: counts and a median gap — measurements,
 					# not verdicts; the gap renders only when there is one to state
 					"  hard days: ${I64.to_str(s.hard_days.d14)} in 14d · ${I64.to_str(s.hard_days.d28)} in 28d${if (s.hard_days.spacing_known) " · median gap ${I64.to_str(s.hard_days.spacing_median_days_28d)}d" else ""}",
 					"  open planned sessions: ${I64.to_str(s.pending_sessions)}",
@@ -1409,9 +1412,8 @@ Render :: [].{
 		)
 	}
 
-	# a marked test in force names itself and the derivation it beat (ADR 0020).
-	# Otherwise the estimate follows the two-session rule (#574) while the best is
-	# a raw measurement, so a lone session has a best and no FTP: say so rather than
+	# the estimate follows the two-session rule while the best is a raw
+	# measurement, so a lone session has a best and no FTP: say so rather than
 	# print a 0 W figure derived from a real number. The derived line names the
 	# best the estimate stands on, which is the estimate over 0.95 exactly (the
 	# derivation is best × 0.95); the raw best beside it reads the inclusive
@@ -1434,7 +1436,7 @@ Render :: [].{
 				"  FTP (60d): none yet — one session carries a 20-min best (${fmt0(ftp.best_20min_w_60d)}W); an FTP needs two in the window",
 			]
 		}
-	# ── season screen (#139, ADR 0011) ──────────────────────────────────
+	# ── season screen (ADR 0011) ──────────────────────────────────
 	# Blocks bounded by absence, described by measurement. No phase names; the trend is
 	# a fitted line reported by its ENDPOINTS, because a slope plus a low r2 gets read
 	# as "no trend" and r2 is scatter, not evidence the slope is zero.
@@ -1526,7 +1528,7 @@ Render :: [].{
 		}
 	}
 
-	## taper projection (#189): one horizon, its numbers, and which plan produced
+	## taper projection: one horizon, its numbers, and which plan produced
 	## them — no verdict, same rule as events_screen (ADR 0010/0012)
 	project_screen : { target_date : Str, days_away : I64, projected_from : Str, baseline_known : Bool, ftp_known : Bool, plan_source : Str, ctl : F64, atl : F64, tsb : F64, sessions_considered : U64, sessions_projected : U64, unprojected : List({ date : Str, target_literal : Str, reason : Str }), hypothetical : List({ date : Str, target_kind : Str, target_literal : Str, reps : I64, dur_s : I64, watts : F64 }) } -> Str
 	project_screen = |p| {
@@ -1576,7 +1578,7 @@ Render :: [].{
 		if (List.is_empty(parts)) "" else "\n      no load: ${Str.join_with(parts, ", ")}"
 	}
 
-	## event targets (#138): the projection as numbers in plain indented rows, its inputs
+	## event targets: the projection as numbers in plain indented rows, its inputs
 	## in the lead line and the degraded-baseline note, and NO verdict line — "are you on
 	## track" is the coach's sentence, and ADR 0010 notes the denylist would not even
 	## catch it, so nothing here says it.
@@ -1634,10 +1636,10 @@ Render :: [].{
 		"${head}\n${body}"
 	}
 
-	# ── rep-level comparison screen (#149) ──────────────────────────────
+	# ── rep-level comparison screen ──────────────────────────────
 	# One row per session, newest first, with the per-rep watts spelled out so
 	# the shape of a session is visible at a glance rather than summarized away.
-	# Numbers only — a fade is reported, never judged (#154).
+	# Numbers only — a fade is reported, never judged.
 	reps_screen = |units, p| {
 		shown = (List.len(p.sessions)).to_i64_wrap()
 		# seg_unit carries a leading space for " m/s" so it can suffix a
@@ -1714,7 +1716,7 @@ Render :: [].{
 	# ── compare command screen ──────────────────────────────────────────
 	# this rolling window vs the prior one, metric by metric, with a signed delta
 	# The compare verdict as a PURE producer, extracted so the boundary guard can
-	# sweep it (#154) — state words only, never advice.
+	# sweep it — state words only, never advice.
 	compare_verdict : F64, F64, F64, Str -> Str
 	compare_verdict = |prior_tss, cur_tss, ctl_d, lab| {
 		load_word =
@@ -1909,7 +1911,7 @@ expect {
 # ...and the budget still holds when the widest cell has NO break opportunity. The expect
 # above wraps a spaced sentence, so it only ever exercised the word packer; a space-free
 # token took the other arm of wrap_cell, which emitted it whole and overran the budget in
-# silence (#194 — a season block is `2021-12-13..2022-02-10`, one token). Checks EVERY
+# silence (a season block is `2021-12-13..2022-02-10`, one token). Checks EVERY
 # line, not just the top border: the border is built from the caps, so it can be legal
 # while a data row it is supposed to bound is not.
 expect {
@@ -1928,7 +1930,7 @@ expect Render.hard_break("abcdefghij", 4) == ["abcd", "efgh", "ij"]
 expect Render.hard_break("🚴ab🚴", 3) == ["🚴a", "b🚴"]
 # a token that already fits is returned untouched, so wrap_cell's fast path is unaffected
 expect Render.hard_break("short", 12) == ["short"]
-# #123: the phrase distinguishes an exact streak from a truncated one, and stays silent
+# the phrase distinguishes an exact streak from a truncated one, and stays silent
 # where the number carries no information. The n=1/n=2 pair pins the suppression threshold
 # — with only n=0 and n=16 tested, `n <= 1` could drift to `n <= 0` and ship ", 1 days".
 expect Render.band_days_phrase(Unknown) == ""
@@ -2111,7 +2113,7 @@ expect {
 	Str.contains(s, "no power data") and Str.contains(s, "all power sports")
 }
 
-# the pace twin (#188). CS renders as a PACE and D' as a DISTANCE, and both follow the
+# the pace twin. CS renders as a PACE and D' as a DISTANCE, and both follow the
 # reader's units while the underlying payload stays SI — the same session, two readings.
 expect {
 	pts = [{ dur_s: 300, speed: 4.6667 }, { dur_s: 600, speed: 4.3 }, { dur_s: 1200, speed: 4.1667 }]
@@ -2180,15 +2182,15 @@ expect {
 		# a build and an unload each keep their sign in the same line
 		and Str.contains(out, "+4/wk")
 		and Str.contains(out, "-1/wk")
-		# the verdict carries the trend, not just the band (#111)
+		# the verdict carries the trend, not just the band
 		and Str.contains(out, "form 10, up 5 from a week ago")
-		# the label NAMES the state and no longer prescribes (#123), and the streak says
+		# the label NAMES the state and no longer prescribes, and the streak says
 		# how long it has held — the thing a band label cannot express
 		and Str.contains(out, "fresh, 16 days in this band")
 		and !(Str.contains(out, "good day for a big effort"))
 }
 
-# #111: too little history says nothing about the trend rather than claiming form is level.
+# too little history says nothing about the trend rather than claiming form is level.
 # Asserts the ABSENCE of the clause AND the presence of the rest of the line, so it cannot
 # pass by the whole verdict having gone missing.
 expect {
@@ -2357,9 +2359,8 @@ expect {
 	full == "2×[3:01 @ 251W / 2:00 easy]" and lone == "1×[20:00 @ 258W]" and none == "" and pre == "1×[20:00 @ 258W]"
 }
 
-# The same shape for a PACE-routed session, which #355 introduced and nothing pinned —
-# the power arm above has been exact since it was written, the pace arm had no expect at
-# all. This is the documented format in SKILL.md, so it is asserted rather than described.
+# The same shape for a PACE-routed session. This is the documented format in SKILL.md,
+# so it is asserted rather than described.
 expect {
 	pseg = |o, k, d, v| { ordinal: o, kind: k, start_s: 0.I64, dur_s: d, avg_signal: v, signal: "pace", peak_hr: 0.0, avg_hr: 0.0, rec_drop: 0.0, rec_drop_known: False }
 	reps = [pseg(0.I64, "work", 240.I64, 4.1667), pseg(1.I64, "recovery", 120.I64, 2.0), pseg(2.I64, "work", 240.I64, 4.1667)]
@@ -2454,7 +2455,7 @@ expect {
 			sessions: [sess("2023-02-11", 1.02, -8.0, 248.0, -11.0, [248.0, 236.0])],
 		},
 	)
-	# pace renders as time-per-distance, not the stored m/s (#351): 4.1667 m/s is 4:00/km
+	# pace renders as time-per-distance, not the stored m/s: 4.1667 m/s is 4:00/km
 	# both rendered every rep as "4", making the whole screen useless for runs
 	Str.contains(pace, "4:00") and Str.contains(pace, "in min/km")
 		# and the fade is signed so NEGATIVE means slower, matching how watts read
@@ -2466,12 +2467,11 @@ expect {
 		and Str.contains(power, "most uniform of 21")
 		# and the count of like-for-like evidence leads, rather than hiding in a
 		# per-row caveat that fired on 11 of 12 rows
-		# `Str.contains(power, "1 of 21 …")` matched whether or not the ≥ was
-		# there, so deleting the branch left the suite green. Pin the ≥ itself,
-		# and pin a case where it must be ABSENT.
+		# a contains-check on "1 of 21" passes with or without the ≥, so the ≥
+		# itself is pinned, along with a case where it must be ABSENT.
 		# capped AND every shown row conforms: the count is a LOWER bound, so the
-		# remainder must be hedged rather than named exactly -- asserting "≥1 of 21"
-		# and "the other 20" together is a contradiction the old test enshrined
+		# remainder is hedged rather than named exactly -- "≥1 of 21" and "the
+		# other 20" together would contradict each other
 		and Str.contains(power, "≥1 of 21 matched sessions is itself")
 		and Str.contains(power, "up to 20 others")
 		# ...and the HEDGED branch needs the singular too, or it reads "up to 1
@@ -2508,7 +2508,7 @@ expect {
 # fade_value inherits the rounds-away-but-still-a-direction contract pinned above, which
 # is why a pace fade keeps its sign instead of collapsing to a bare zero. It takes
 # ENDPOINTS, not a delta, because a pace change cannot be derived from a speed change.
-# Sign is flipped for pace so NEGATIVE means worse in both sports (#351):
+# Sign is flipped for pace so NEGATIVE means worse in both sports:
 # 4.1667 m/s -> 4.13 m/s is a slowdown of 2.13 s/km, so it reads -0:02, not +0:02.
 expect Render.fade_value(Metric, 4.1667, 4.13, "pace") == "-0:02"
 expect Render.fade_value(Imperial, 4.1667, 4.13, "pace") == "-0:03"
@@ -2539,7 +2539,7 @@ expect {
 		and nolo == "200→220"
 }
 
-# ── the engine/coach boundary across ALL verdict producers (#154) ────
+# ── the engine/coach boundary across ALL verdict producers ────
 # Every human verdict line stride renders is state, never advice. Each producer
 # is exercised at representative inputs and swept with the shared predicate —
 # mutation-tested wording ("you should consider a rest day") fails here.
@@ -2614,7 +2614,7 @@ expect {
 		and Render.hms(8405.I64) == "2:20:05"
 }
 
-# the HARD boundary invariant for compare (#154): the verdict templates are a
+# the HARD boundary invariant for compare: the verdict templates are a
 # CLOSED SET, pinned by full-string equality like form_label — a reworded
 # template ("time to push harder") fails HERE even if the denylist misses it.
 # One pin per load template, cycling the three fitness words.
@@ -2643,7 +2643,7 @@ expect {
 
 expect !(Metrics.has_coaching_language(Render.warming_up_note(True, 12))) and !(Metrics.has_coaching_language(Render.warming_up_note(False, 90)))
 
-# ── the stream-drain note (#218, #232) ───────────────────────────────
+# ── the stream-drain note ───────────────────────────────
 # Every arm pinned by full-string equality, and the SCREEN pinned on both inputs it
 # forwards — substring or empty-case-only expects pass with every number deleted
 # from the format string.
@@ -2659,8 +2659,8 @@ expect Render.drain_note(Complete, 5) == "5 had unreadable stream data — they 
 expect Render.drain_note(BudgetReached, 40) == "filled Strava's 15-minute read window — 40 to go, run `stride sync` again in ~15 minutes"
 expect Render.drain_note(RateLimited, 40) == "Strava rate-limited this run — 40 to go, try again in ~15 minutes"
 # the ONE arm whose remedy is not fifteen minutes. Full-string, and separately asserted
-# NOT to carry the other arms' wording, because the whole of #246 is that these two stops
-# were indistinguishable to a reader.
+# NOT to carry the other arms' wording, because a reader must be able to tell these two
+# stops apart.
 expect Render.drain_note(DailyCapReached, 40) == "used up today's Strava read allowance — 40 to go, run `stride sync` again tomorrow"
 expect !(Str.contains(Render.drain_note(DailyCapReached, 40), "15 minutes"))
 
@@ -2716,8 +2716,8 @@ expect {
 		# through drain_note, so a sweep over drain_note's arms alone would miss it.
 		Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False),
 		Render.sync_screen({ synced: 100, new_activities: 100, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 100, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False),
-		# ...and the list-plus-spent-day sentence, which is a fourth prose surface this
-		# branch added and which joined neither sweep until review counted them.
+		# ...and the list-plus-spent-day sentence, a fourth prose surface, which the
+		# sweep must cover like the other three.
 		Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: Drain.sync_stopped_label(ListDailyCapReached), resumable: True }, ListDailyCapReached, False),
 		# freshness_note is a prose surface too, and ADR 0012's own consequences say the
 		# sweep is where a new one joins. Every arm, including the empty one: an arm that
@@ -2728,7 +2728,7 @@ expect {
 		Render.freshness_note({ activities_awaiting_metrics: 0, activities_awaiting_metrics_known: True, activities_awaiting_streams: 40 }),
 		Render.freshness_note({ activities_awaiting_metrics: 12, activities_awaiting_metrics_known: True, activities_awaiting_streams: 40 }),
 		Render.freshness_note({ activities_awaiting_metrics: 0, activities_awaiting_metrics_known: False, activities_awaiting_streams: 4 }),
-		# the target clauses (#198) join on arrival — targeted/untargeted on the echo,
+		# the target clauses join on arrival — targeted/untargeted on the echo,
 		# and all three match arms: both known, target-only, and the silent untargeted
 		Render.target_note(T(Metrics.power_target({ reps: 3, dur_s: 720, watts: 230.0 }))),
 		Render.target_note(T({ ..Metrics.no_target, kind: "hr", reps: 1, dur_s: 3600, hr_lo: 125, hr_hi: 147 })),
@@ -2746,7 +2746,7 @@ expect {
 		Render.target_match_note({ ..tm_base, target_kind: "rpe", target_literal: "1x45:00@RPE6", target_rpe: 6, exec_known: True, rpe_actual: 7.0 }),
 		Render.target_match_note({ ..tm_base, target_kind: "rpe", target_literal: "1x45:00@RPE6", target_rpe: 6, exec_reason: "no_rating" }),
 		Render.target_match_note(tm_base),
-		# events_screen (#138) joins on arrival: the empty state, a populated row, and
+		# events_screen joins on arrival: the empty state, a populated row, and
 		# both degraded-baseline notes — ADR 0010 warns "you are on track" would slip
 		# the denylist, which is why the screen carries no verdict line AT ALL, and the
 		# sweep is backstop rather than proof
@@ -2755,7 +2755,7 @@ expect {
 		Render.events_screen({ projected_from: "2026-08-30", baseline_known: False, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 0.0, atl: 0.0, tsb: 0.0, planned_in_window: 0, sessions_projected: 0, unprojected: [] }] }),
 		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 12.0, atl: 3.0, tsb: 9.0, planned_in_window: 2, sessions_projected: 0, unprojected: [{ date: "2026-09-02", target_literal: "3x12:00@230W", reason: "no_ftp" }, { date: "2026-09-04", target_literal: "3x12:00@230W", reason: "no_ftp" }] }] }),
 		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [{ id: 2, event_date: "2026-08-01", name: "Past Race", days_away: -29, ctl: 40.0, atl: 50.0, tsb: -10.0, planned_in_window: 0, sessions_projected: 0, unprojected: [] }] }),
-		# project_screen (#189) joins on arrival: recorded, hypothetical, and both notes
+		# project_screen joins on arrival: recorded, hypothetical, and both notes
 		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "recorded", ctl: 30.0, atl: 20.0, tsb: 10.0, sessions_considered: 3, sessions_projected: 2, unprojected: [], hypothetical: [] }),
 		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "hypothetical", ctl: 30.0, atl: 20.0, tsb: 10.0, sessions_considered: 1, sessions_projected: 1, unprojected: [{ date: "2026-09-20", target_literal: "1x1:00:00@HR125-147", reason: "no_hr_zones" }, { date: "2026-09-21", target_literal: "", reason: "no_target" }], hypothetical: [{ date: "2026-09-15", target_kind: "power", target_literal: "3x12:00@230W", reps: 3, dur_s: 720, watts: 230.0 }] }),
 		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: False, ftp_known: False, plan_source: "recorded", ctl: 0.0, atl: 0.0, tsb: 0.0, sessions_considered: 0, sessions_projected: 0, unprojected: [], hypothetical: [] }),
@@ -2765,7 +2765,7 @@ expect {
 	List.all(notes, |p| !(Metrics.has_coaching_language(p)))
 }
 
-# ── plan's data-freshness line (#221) ────────────────────────────────
+# ── plan's data-freshness line ────────────────────────────────
 # Full-string equality throughout, for the reason the sync_screen block below records:
 # an expect that only asserts a substring, or only asserts the "" case, passes with every
 # number deleted from the format string.
@@ -2805,10 +2805,10 @@ expect
 	Render.freshness_note({ activities_awaiting_metrics: 0, activities_awaiting_metrics_known: False, activities_awaiting_streams: 4 })
 		== "DATA: awaiting-metrics count unreadable (stride analyze says why) · 4 awaiting streams (stride sync)"
 
-# ── sync's human line (#232) ─────────────────────────────────────────
-# Full-string equality, because the e2e check on this line asserts two unconditional
-# literals: review deleted EVERY number from the format string and it still passed.
-# These pin each forwarded value, so a hardcoded or dropped field fails here.
+# ── sync's human line ─────────────────────────────────────────
+# Full-string equality, because the e2e check on this line asserts only two
+# unconditional literals and would pass with every number deleted from the format
+# string. These pin each forwarded value, so a hardcoded or dropped field fails here.
 expect
 	Render.sync_screen({ synced: 22, new_activities: 2, updated_activities: 1, pruned: 0, streams_fetched: 5, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, stopped: "complete", resumable: False }, FromDrain(Complete), False)
 		== "synced 2 new, 1 updated (22 re-checked in the 30-day window), fetched streams for 5"
