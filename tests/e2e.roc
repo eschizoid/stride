@@ -418,6 +418,7 @@ run_scenarios! = |ctx| {
 	b_targets!(ctx)?
 	b_events!(ctx)?
 	b_strength_import!(ctx)?
+	b_review!(ctx)?
 	b_concurrency!(ctx)?
 	b_migration!(ctx)?
 	Ok({})
@@ -1656,7 +1657,7 @@ b_init_config! = |ctx| {
 	# here is the deliberate-bump discipline: adding a properly described command still
 	# has to change a number a reader sees.
 	overlap = Str.trim(sh!("LC_ALL=C comm -12 '${verbs_dir}/parser' '${verbs_dir}/spec' | wc -l | tr -d ' '"))
-	check!("...and the two lists genuinely overlap on all 35 verbs (got ${overlap})", overlap == "35")?
+	check!("...and the two lists genuinely overlap on all 36 verbs (got ${overlap})", overlap == "36")?
 	_ = sh!("rm -rf '${verbs_dir}'")
 
 	# ...and the HUMAN help names every command the table declares. `help_text`
@@ -1674,7 +1675,7 @@ b_init_config! = |ctx| {
 	_ = sh!("rm -rf '${help_dir}' && mkdir -p '${help_dir}' && ${spec_names} > '${help_dir}/spec' && ${human_help} > '${help_dir}/human'")
 	# Fail-closed: an empty extraction on either side would make the loop below vacuous.
 	help_sizes = Str.trim(sh!("wc -l < '${help_dir}/spec' | tr -d ' '"))
-	check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "43")?
+	check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "44")?
 	missing_from_help = Str.trim(sh!("while IFS= read -r c; do grep -qw -- \"\$c\" '${help_dir}/human' || printf '%s ' \"\$c\"; done < '${help_dir}/spec'"))
 	check!("every command in the table is named in `stride --help` (missing: ${missing_from_help})", missing_from_help == "")?
 	_ = sh!("rm -rf '${help_dir}'")
@@ -4852,14 +4853,14 @@ b_command_schemas! = |ctx| {
 	# this build `complete x x x x`, still usage, still green, while `complete x x x` (the
 	# arity the table now advertises) answers usage and nothing asks.
 	shortfall = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | [.name] + [.args[] ${junk}] | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] && echo \"$line\"; done; true; } | tr '\\n' '|'"))
-	# FOUR named exceptions, because for these the parser validates the VALUE at parse
+	# FIVE named exceptions, because for these the parser validates the VALUE at parse
 	# time, so `usage` there is a value verdict rather than an arity one — which is the
 	# limit of the observation this whole block rests on. `viz tick` declares the literal
 	# `--no-ack` and refuses anything else; `week` declares the literal `all` the same
-	# way; `reps` refuses a non-date; `progress` has dedicated `asc`/`desc` arms and
-	# refuses a second token that is neither. Pinned by name so a fifth is a line in the
-	# diff rather than a silent member.
-	check!("...and exactly what the table declares is never one, bar the four that parse-check their value (got: ${shortfall})", shortfall == "viz tick x|progress x x|reps x|week x|")?
+	# way; `reps` and `review` refuse a non-date; `progress` has dedicated `asc`/`desc`
+	# arms and refuses a second token that is neither. Pinned by name so a sixth is a
+	# line in the diff rather than a silent member.
+	check!("...and exactly what the table declares is never one, bar the five that parse-check their value (got: ${shortfall})", shortfall == "viz tick x|review x|progress x x|reps x|week x|")?
 	# ...and one REQUIRED argument short is always a usage error, which the total-
 	# driven bounds cannot see: flipping an optional to required leaves both
 	# unmoved — and declaring `complete <activity_id>` required erases
@@ -8272,6 +8273,56 @@ b_human! = |ctx| {
 # analyze rebuilds daily_load in one transaction. Under the rollback journal that locked
 # the whole db, and with busy_timeout 0 a concurrent reader failed instantly — a single
 # `stride week` in another terminal killed a running analyze and discarded its work.
+# ── review (#640): one Mon-Sun week, every sport, beside the payloads it
+# summarizes. A week two weeks back carries its own seeds: a ride and a run that
+# complete planned sessions, a skipped day, an unplanned swim, and a rated lift
+# that completes an RPE-targeted session. Every id is explicit and deleted at
+# the end, so the planned_sessions rowid sequence later scenarios count on is
+# untouched. The totals are asserted against `activities` and `load` on the
+# same week, not against seeded numbers, so the fixture's own rows in that week
+# cannot make the check pass or fail by coincidence.
+b_review! : Ctx => Try({}, _)
+b_review! = |ctx| {
+	ref = Str.trim(sh!("TZ='${ctx.tz}' date -v-14d +%F 2>/dev/null || TZ='${ctx.tz}' date -d '14 days ago' +%F"))
+	mon = Str.trim(sql!(ctx.db, "SELECT date('${ref}', 'weekday 0', '-6 days');"))
+	day! = |n| Str.trim(sql!(ctx.db, "SELECT date('${mon}', '+${n} days');"))
+	tue = day!("1")
+	wed = day!("2")
+	thu = day!("3")
+	sat = day!("5")
+	sun = day!("6")
+	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation) VALUES (9701,'review ride','Ride','${mon}T07:00:00Z',3600,30000,0),(9702,'review run','Run','${tue}T07:00:00Z',2400,8000,0),(9704,'review swim','Swim','${thu}T07:00:00Z',1800,1500,0),(9705,'review lift','WeightTraining','${sat}T07:00:00Z',2700,0,0);")
+	_ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,load_model,z2_s,z4_s,hr_samples_total,metrics_rev) VALUES (9701,60.0,190.0,'power_stream',3000,600,3600,1),(9702,40.0,0.0,'hr_zones',2400,0,2400,1),(9704,30.0,0.0,'hr_zones',1800,0,1800,1),(9705,45.0,0.0,'session_rpe',0,0,0,1);")
+	_ = sql!(ctx.db, "INSERT INTO ratings (activity_id,rpe,rated_at) VALUES (9705,6,'2099-01-01T00:00:00Z');")
+	_ = sql!(ctx.db, "INSERT INTO planned_sessions (id,created_at,target_date,session_type,detail,rationale,status,skipped_reason,target_literal) VALUES (9801,'2099-01-01','${mon}','endurance','ride','r','open','',NULL),(9802,'2099-01-01','${tue}','endurance','run','r','open','','1x40:00@Z2'),(9803,'2099-01-01','${wed}','endurance','ride','r','skipped','sick',NULL),(9805,'2099-01-01','${sat}','strength','lift','r','open','','1x45:00@RPE6');")
+	_ = stride!(ctx.bin, ctx.home, ["complete", "9801", "9701"])
+	zone_in = strjq!(ctx, ["complete", "9802", "9702"], ".data.zone_in_s")
+	_ = stride!(ctx.bin, ctx.home, ["complete", "9805", "9705"])
+	rv! = |filter| strjq!(ctx, ["review", mon], filter)
+	check!("review conforms to its schema", validate_schema!(ctx, "review ${mon}", "review") == "")?
+	check!("review names the Monday of the week holding any of its days", strjq!(ctx, ["review", thu], ".data.week_start") == mon and rv!(".data.week_end") == sun)?
+	check!("review lists seven days, Monday first", rv!("[(.data.days | length), .data.days[0].day] | @tsv") == "7\t${mon}")?
+	check!("review carries each seeded session with its status", rv!("[.data.sessions[] | select(.id >= 9801 and .id <= 9805) | \"\\(.id):\\(.status)\"] | join(\",\")") == "9801:done,9802:done,9803:skipped,9805:done")?
+	check!("review's zone execution is what complete reported (got ${zone_in})", zone_in == "2400" and rv!(".data.sessions[] | select(.id == 9802) | [.execution.exec_known, .execution.zone_in_s] | @tsv") == "true\t2400")?
+	check!("review prices the RPE target and reads its rating", rv!(".data.sessions[] | select(.id == 9805) | [.planned_load, .planned_load_known, .execution.rpe_actual] | @tsv") == "45\ttrue\t6")?
+	check!("a skipped session has no execution to measure", rv!(".data.sessions[] | select(.id == 9803) | [.execution.exec_known, .execution.exec_reason] | @tsv") == "false\tnot_done")?
+	check!("an untargeted session is unpriced, with the reason", rv!(".data.sessions[] | select(.id == 9801) | [.planned_load_known, .unprojected_reason] | @tsv") == "false\tno_target")?
+	check!("the unclaimed swim is unplanned and the linked ride is not", rv!("[.data.unplanned[] | .activity_id] | (index(9704) != null) and (index(9701) == null)") == "true")?
+	in_week = strjq!(ctx, ["activities", "1000"], "[.data[] | select(.date >= \"${mon}\" and .date <= \"${sun}\")] | length")
+	check!("review's sport rows count every activity in the week (activities says ${in_week})", rv!("[.data.sports[].sessions] | add") == in_week)?
+	check!("review's sport rows include a swim family row", rv!("[.data.sports[] | select(.family == \"Swim\")] | length") == "1")?
+	lifts = strjq!(ctx, ["activities", "1000", "strength"], "[.data[] | select(.date >= \"${mon}\" and .date <= \"${sun}\")] | length")
+	check!("review's strength count is the strength family's activities in the week (${lifts})", rv!(".data.strength.sessions | tostring") == lifts)?
+	load_sum = strjq!(ctx, ["load", "60"], "[.data[] | select(.day >= \"${mon}\" and .day <= \"${sun}\") | .tss] | add // 0")
+	check!("review's actual load is daily_load's over the same days (load says ${load_sum})", (sfloat(rv!(".data.load.actual_total")) - sfloat(load_sum)).abs() < 0.01)?
+	check!("review's planned total is the sum of its priced sessions", rv!("(.data.load.planned_total - ([.data.sessions[].planned_load] | add)) | fabs < 0.01") == "true")?
+	check!("a day holding 5+ hard minutes is a hard day", rv!(".data.intensity.hard_days | index(\"${mon}\") != null") == "true")?
+	check!("review refuses a word that is not a date", Str.contains(stride!(ctx.bin, ctx.home, ["review", "lastweek"]), "\"code\":\"usage\""))?
+	check!("review speaks to humans too", Str.contains(sh!("HOME='${ctx.home}' STRIDE_FORMAT=human '${ctx.bin}' review ${mon}"), "week ${mon} .. ${sun}"))?
+	_ = sql!(ctx.db, "DELETE FROM planned_sessions WHERE id IN (9801,9802,9803,9805); DELETE FROM ratings WHERE activity_id = 9705; DELETE FROM activity_metrics WHERE activity_id IN (9701,9702,9704,9705); DELETE FROM activities WHERE id IN (9701,9702,9704,9705);")
+	Ok({})
+}
+
 b_concurrency! : Ctx => Try({}, _)
 b_concurrency! = |ctx| {
 	# A lock held DETERMINISTICALLY, not a race against a real analyze: the

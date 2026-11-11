@@ -35,6 +35,9 @@ Command := [
 	# leaves behind.
 	VizTick({ ack : Bool }),
 	Compare(Str),
+
+	## one Mon-Sun week in one payload (#640); "" is the week holding today
+	Review(Str),
 	Activities(U64, Str),
 	Top(Str, U64, Str),
 	Import(Str),
@@ -137,6 +140,15 @@ Command := [
 			["plan"] => Ok(Plan)
 			["compare"] => Ok(Compare("week"))
 			["compare", period] => Ok(Compare(period))
+			["review"] => Ok(Review(""))
+			["review", "week"] => Ok(Review(""))
+			["review", date] =>
+				if Metrics.is_canonical_date(date) {
+					Ok(Review(date))
+				} else {
+					Err(Usage("review [week|YYYY-MM-DD] — '${date}' is not a date"))
+				}
+			["review", ..] => Err(Usage("review [week|YYYY-MM-DD]"))
 			["activities"] => Ok(Activities(30, ""))
 			["activities", n] => count(n, |c| Activities(c, ""))
 			["activities", n, sport] => count(n, |c| Activities(c, sport))
@@ -518,6 +530,7 @@ Command := [
 		errs(writes("strength import", [req_ex("<file|->", "")], "strength-import.json"), ["bad_json", "unreadable_file"]),
 		errs(reads("pz", [], "zones.json"), ["no_power_data"]),
 		errs(reads("compare", [opt("<week|month>")], "compare.json"), ["bad_period", "no_data", "unreadable_activity_date", "unreadable_daily_load_day"]),
+		errs(reads("review", [opt_ex("<week|YYYY-MM-DD>", "week")], "review.json"), ["unreadable_activity_date", "unreadable_config"]),
 		errs(reads("activities", [opt_ex("<limit>", "5"), opt_ex("<sport>", "Ride")], "activities.json"), ["bad_count"]),
 
 		## `unreadable_activity_date` on the three forms #249 made REFUSE rather than report

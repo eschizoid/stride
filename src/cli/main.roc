@@ -55,6 +55,7 @@ import Analyze
 import Report
 import ReportHealth
 import ReportStrength
+import ReportReview
 import ReportSeason
 import ReportSessions
 import Plan
@@ -105,6 +106,7 @@ help_text =
 	\\                                (power→EF, distance→speed/HR, rated→RPE);
 	\\                                latest by default, oldest-first — desc reverses
 	\\    compare [week|month]        this period vs the one before it (default week)
+	\\    review [week|YYYY-MM-DD]    one Mon-Sun week: sessions and how they went, load, intensity, sports
 	\\    season                      training blocks, monthly load, polarization, FTP
 	\\    strength                    per-exercise top-set progression + monthly
 	\\                                tonnage, each with its coverage stated
@@ -415,6 +417,7 @@ dispatch! = |cmd|
 		# answers in the envelope like every other query (#182)
 		Command.Version => Output.out!({ version: version }, |p| p.version)
 		Command.Compare(period) => Report.compare!(period)
+		Command.Review(date) => ReportReview.review!(date)
 		Command.Activities(c, sport) => ReportSessions.activities!(c, sport)
 		Command.Top(metric, c, sport) => ReportSessions.top!(metric, c, sport)
 		Command.Import(src) => Import.import_archive!(src)

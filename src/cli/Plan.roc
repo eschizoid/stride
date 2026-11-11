@@ -66,6 +66,24 @@ Plan :: [].{
 			}
 		}
 	}
+	# An activity `a` no planned session claims, as completion or as a live
+	# substitute: a substitute on a skipped session stops claiming once a later
+	# row or a non-skipped row holds that date. The supersession predicate is
+	# mirrored in live_claimant! and (positively) in plan_view!'s sessions
+	# query; all three must agree, or `week` and `review` offer an activity the
+	# claim commands then refuse. Claims are not week-relative, so the predicate
+	# carries no date window: with one, a substitute linked from another week
+	# would read as unclaimed and still be refused.
+	unclaimed_sql : Str
+	unclaimed_sql =
+		\\NOT EXISTS (SELECT 1 FROM planned_sessions ps
+		\\       WHERE ps.completed_activity_id = a.id
+		\\          OR (ps.substitute_activity_id = a.id
+		\\              AND (COALESCE(ps.status,'open') <> 'skipped'
+		\\                   OR NOT EXISTS (SELECT 1 FROM planned_sessions p3
+		\\                                  WHERE p3.target_date = ps.target_date
+		\\                                    AND (COALESCE(p3.status,'open') <> 'skipped' OR p3.id > ps.id)))))
+
 	plan_view! : [ThisWeek, AllTime] => Try({}, _)
 	plan_view! = |scope| {
 		path = Db.open_db!({})?
@@ -222,12 +240,7 @@ Plan :: [].{
 		# `status_shown` read `unlinked`, while `status` keeps the v3 value `unplanned`
 		# that JSON consumers match on. ThisWeek only: `week all` is the SESSION log,
 		# and every unclaimed activity in the history would bury it.
-		# NOTE: the substitute arm's supersession predicate below is mirrored in
-		# live_claimant! and (positively) in the sessions query above. The three MUST
-		# agree, or week offers an activity that the claim commands then refuse.
-		# Claims are not week-relative, so this exclusion carries no week-window
-		# clause: with one, a substitute linked from another week would show here as
-		# unclaimed and still be refused.
+		# The exclusion is unclaimed_sql, shared with `review`.
 		unplanned = Sql.query_many!({
 			path: Path.utf8(path),
 			query: \\SELECT a.id AS aid, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS adate, COALESCE(CAST(a.sport_type AS TEXT),'') AS sport,
@@ -237,13 +250,7 @@ Plan :: [].{
 				\\WHERE :all = 0
 				\\  AND a.start_local >= '${Metrics.days_to_date_str(mon)}'
 				\\  AND a.start_local < '${Metrics.days_to_date_str(mon + 7)}'
-				\\  AND NOT EXISTS (SELECT 1 FROM planned_sessions ps
-				\\       WHERE ps.completed_activity_id = a.id
-				\\          OR (ps.substitute_activity_id = a.id
-				\\              AND (COALESCE(ps.status,'open') <> 'skipped'
-				\\                   OR NOT EXISTS (SELECT 1 FROM planned_sessions p3
-				\\                                  WHERE p3.target_date = ps.target_date
-				\\                                    AND (COALESCE(p3.status,'open') <> 'skipped' OR p3.id > ps.id)))))
+				\\  AND ${unclaimed_sql}
 				\\-- the flag is DEFENSIVE here: this order is discarded downstream by a
 				\\-- List.sort_with over (day, rank, activity_id), a strict total order, so no
 				\\-- database can make this clause observable. Kept in case that sort changes.

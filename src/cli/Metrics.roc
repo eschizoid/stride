@@ -2634,6 +2634,20 @@ Metrics :: [].{
 			_ => "Sun"
 		}
 
+	# the Monday of the Mon-Sun training week holding an epoch day; the same
+	# (days + 3) mod 7 offset day_of_week reads
+	week_monday : I64 -> I64
+	week_monday = |days| days - (days + 3) % 7
+
+	# one week's planned load per day, Monday first: each priced session adds its
+	# load to its own day, and a session dated outside [mon, mon + 6] adds nothing
+	week_day_loads : I64, List({ d : I64, load : F64 }) -> List(F64)
+	week_day_loads = |mon, priced|
+		List.map(
+			[0, 1, 2, 3, 4, 5, 6],
+			|i| List.fold(priced, 0.0.F64, |acc, p| if (p.d == mon + i) acc + p.load else acc),
+		)
+
 	# epoch seconds (UTC) -> "YYYY-MM-DDTHH:MM:SSZ" — so stored timestamps read like
 	# the ISO dates elsewhere instead of a raw epoch integer
 	epoch_to_iso : I64 -> Str
@@ -4372,6 +4386,23 @@ expect Metrics.day_of_week(Metrics.days_from_civil(2026, 7, 27)) == "Mon"
 expect Metrics.day_of_week(Metrics.days_from_civil(2026, 7, 28)) == "Tue"
 expect Metrics.day_of_week(Metrics.days_from_civil(2026, 8, 2)) == "Sun"
 expect Metrics.day_of_week(0) == "Thu" # epoch day 0 = 1970-01-01 = Thursday
+# every day of a week maps to that week's Monday, and the Monday to itself
+expect {
+	mon = Metrics.days_from_civil(2026, 7, 27)
+	List.all([0, 1, 2, 3, 4, 5, 6], |i| Metrics.week_monday(mon + i) == mon)
+		and Metrics.week_monday(mon + 7) == mon + 7
+		and Metrics.week_monday(mon - 1) == mon - 7
+}
+# loads land on their own day; two sessions on one day sum; a day outside the
+# week adds nothing anywhere
+expect {
+	mon = Metrics.days_from_civil(2026, 7, 27)
+	got = Metrics.week_day_loads(mon, [{ d: mon, load: 50.0 }, { d: mon + 2, load: 30.0 }, { d: mon + 2, load: 10.0 }, { d: mon + 7, load: 99.0 }, { d: mon - 1, load: 99.0 }])
+	List.len(got) == 7
+		and (List.get(got, 0).ok_or(-1.0) - 50.0).abs() < 0.001
+		and (List.get(got, 2).ok_or(-1.0) - 40.0).abs() < 0.001
+		and (List.sum(got) - 90.0).abs() < 0.001
+}
 
 # epoch -> ISO datetime (UTC)
 expect Metrics.epoch_to_iso(0) == "1970-01-01T00:00:00Z"
