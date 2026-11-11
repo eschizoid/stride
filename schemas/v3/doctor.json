@@ -35,7 +35,8 @@
     "with_power",
     "with_streams",
     "zero_load",
-    "zones_set"
+    "zones_set",
+    "timezone_known"
   ],
   "additionalKeys": false,
   "properties": {
@@ -166,6 +167,10 @@
       "items": {
         "type": "integer"
       }
+    },
+    "timezone_known": {
+      "type": "boolean",
+      "description": "false while no recognised IANA `timezone` is configured: today is then a fixed `utc_offset_minutes` day at best and the UTC day at worst, so west of UTC the evening reads as tomorrow. `stride setup` or `config set timezone` fixes it."
     }
   }
 }

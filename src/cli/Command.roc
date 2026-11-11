@@ -8,6 +8,10 @@ Command := [
 	Init,
 	Auth,
 
+	## the guided first run (#644); bare it walks the steps, `key=value` supplies one
+	Setup,
+	SetupWith(Str, Str),
+
 	## `--all` forces a full re-list: the watermark is ignored so every activity is
 	## re-listed and old deletions propagate. Mostly a dev-mode start-from-scratch;
 	## normal use never needs it, because a plain `sync` converges on its own (#232).
@@ -132,6 +136,13 @@ Command := [
 		match args {
 			["init"] => Ok(Init)
 			["auth"] => Ok(Auth)
+			["setup"] => Ok(Setup)
+			["setup", pair] =>
+				match Str.split_first(pair, "=") {
+					Ok({ before: key, after: val }) if key != "" => Ok(SetupWith(key, val))
+					_ => Err(Usage("setup [key=value] — one of client_id=, client_secret=, code=, timezone=, threshold_hr=, max_hr=; got '${pair}'"))
+				}
+			["setup", ..] => Err(Usage("setup [key=value] — one value per call"))
 			["sync"] => Ok(Sync(False))
 			["sync", "--all"] => Ok(Sync(True))
 
@@ -474,6 +485,11 @@ Command := [
 	specs = [
 		writes("init", [], "init.json"),
 		errs({ ..writes("auth", [], "auth.json"), network: True, interactive: True }, ["missing_client_creds", "network_unreachable", "not_authenticated", "rate_limited", "stdin_closed", "strava_error"]),
+
+		## bare, it prompts at the terminal, so it is interactive; with `key=value` it
+		## reads nothing from stdin. Both can reach Strava: a `code=` exchanges it for
+		## tokens, and the bare walk runs the first sync.
+		errs({ ..writes("setup", [opt_ex("<key=value>", "timezone=UTC")], "setup.json"), network: True, interactive: True }, ["bad_value", "missing_client_creds", "missing_config", "network_unreachable", "not_authenticated", "rate_limited", "stdin_closed", "strava_error", "unknown_key", "unreadable_config"]),
 		errs({ ..writes("sync", [opt("--all")], "sync.json"), network: True }, ["missing_client_creds", "network_unreachable", "not_authenticated", "rate_limited", "strava_error", "unreadable_config"]),
 		errs(writes("analyze", [], "analyze.json"), ["missing_config", "unreadable_activity_date", "unreadable_config"]),
 		errs(writes("import", [req_ex("<export.zip|dir>", "")], "import.json"), ["empty_csv", "no_activities_csv", "unzip_failed"]),

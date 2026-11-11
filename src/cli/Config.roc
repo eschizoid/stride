@@ -121,11 +121,9 @@ Config :: [].{
 	# `Metrics.hr_zone_key` build, and exactly what `ReportHealth` counts with
 	# `key GLOB 'hr_z[1-4]_max_?*'`.
 	#
-	# Written out rather than `starts_with("hr_z") and contains("_max")`, which was the
-	# first cut and claimed in its own comment to be the same shape as that GLOB. It was
-	# not: it admitted `hr_z9_max`, `hr_zz_max`, `hr_z1_maximum` and `hr_z1_maxx`, none of
-	# which any read site can produce, so four ways of mistyping a zone key kept answering
-	# "(not set)" — the defect this predicate exists to remove.
+	# Written out rather than `starts_with("hr_z") and contains("_max")`, which is not the
+	# GLOB's shape: it admits `hr_z9_max`, `hr_zz_max`, `hr_z1_maximum` and `hr_z1_maxx`,
+	# none of which any read site produces, so a mistyped zone key would answer "(not set)".
 	is_zone_key : Str -> Bool
 	is_zone_key = |k| zone_shape(Str.to_utf8(k))
 
@@ -273,12 +271,182 @@ Config :: [].{
 					False
 		}
 
+	# ── first-run setup (#644) ──────────────────────────────────────────
+	#
+	# The order `stride setup` walks, and what satisfies each step. A step is
+	# done when the database already holds what it would write, so a rerun
+	# resumes at the first unmet step and repeats nothing.
+	#   init        the database exists
+	#   strava_app  a client id and secret are stored (or set in the environment)
+	#   authorize   a refresh token is stored
+	#   timezone    `timezone` is set
+	#   zones       hr_z1_max..hr_z4_max are all set
+	#   sync        a sync has completed (last_sync_epoch is set)
+	setup_steps : List(Str)
+	setup_steps = ["init", "strava_app", "authorize", "timezone", "zones", "sync"]
+
+	SetupState : { db : Bool, client : Bool, token : Bool, timezone : Bool, zones : Bool, synced : Bool }
+
+	setup_done : SetupState, Str -> Bool
+	setup_done = |s, step|
+		match step {
+			"init" => s.db
+			"strava_app" => s.client
+			"authorize" => s.token
+			"timezone" => s.timezone
+			"zones" => s.zones
+			"sync" => s.synced
+			_ => True
+		}
+
+	# the first unmet step, or "done"
+	setup_next : SetupState -> Str
+	setup_next = |s| (List.first(List.drop_if(setup_steps, |step| setup_done(s, step)))).ok_or("done")
+
+	# The authorization code from what the athlete pastes: the bare code, or the
+	# whole URL the browser landed on (`http://localhost/?state=&code=abc&scope=...`),
+	# whose `code` query parameter is taken. Empty input, or a URL with no code
+	# (Strava's `error=access_denied` redirect), has none.
+	oauth_code : Str -> Try(Str, [NoCode])
+	oauth_code = |raw| {
+		t = Str.trim(raw)
+		if t == "" or !(redirect_host_ok(t)) {
+			Err(NoCode)
+		} else if Str.contains(t, "?") or Str.contains(t, "&") or Str.contains(t, "code=") {
+			(oauth_param(t, "code")).map_err(|_| NoCode)
+		} else {
+			Ok(t)
+		}
+	}
+
+	# one query parameter of a redirected address (or a bare `k=v&...` string);
+	# an empty value counts as absent
+	oauth_param : Str, Str -> Try(Str, [Missing])
+	oauth_param = |raw, key| {
+		t = Str.trim(raw)
+		query = (Str.split_first(t, "?")).map_ok(|p| p.after).ok_or(t)
+		found = List.keep_oks(
+			Str.split_on(query, "&"),
+			|kv|
+				match Str.split_first(kv, "=") {
+					Ok({ before, after: v }) if before == key => if (Str.trim(v) == "") Err(Empty) else Ok(Str.trim(v))
+					_ => Err(Other)
+				},
+		)
+		(List.first(found)).map_err(|_| Missing)
+	}
+
+	# a redirected address carrying a code must point back at this machine: the
+	# API app's callback domain is localhost, so any other host is not Strava's
+	# redirect. A string without a scheme is a bare code or query and passes.
+	redirect_host_ok : Str -> Bool
+	redirect_host_ok = |t|
+		match Str.split_first(t, "://") {
+			Err(_) => Bool.True
+			Ok({ before: _, after }) => {
+				host_port = (Str.split_first(after, "/")).map_ok(|p| p.before).ok_or((Str.split_first(after, "?")).map_ok(|p| p.before).ok_or(after))
+				host = (Str.split_first(host_port, ":")).map_ok(|p| p.before).ok_or(host_port)
+				host == "localhost" or host == "127.0.0.1"
+			}
+		}
+
+	# An IANA name from the target of the /etc/localtime link, which macOS and
+	# Linux point into a zoneinfo directory (/usr/share/zoneinfo/America/Chicago,
+	# /var/db/timezone/zoneinfo/Europe/Madrid). The name is what follows the last
+	# `zoneinfo/`; `posix/` and `right/` subtrees name the same zones.
+	tz_from_link : Str -> Try(Str, [NoZone])
+	tz_from_link = |target| {
+		parts = Str.split_on(Str.trim(target), "zoneinfo/")
+		tail = (List.last(parts)).ok_or("")
+		name =
+			if Str.starts_with(tail, "posix/") {
+				Str.drop_prefix(tail, "posix/")
+			} else if Str.starts_with(tail, "right/") {
+				Str.drop_prefix(tail, "right/")
+			} else {
+				tail
+			}
+		if (List.len(parts) < 2 or name == "" or Str.starts_with(name, "/")) Err(NoZone) else Ok(name)
+	}
+
+	# An IANA name from the TZ environment variable: `America/Chicago`, or the
+	# `:America/Chicago` form, or a zoneinfo path. POSIX rule strings such as
+	# `CST6CDT` or `EST5EDT,M3.2.0,M11.1.0` name no IANA zone and are left out.
+	tz_from_env : Str -> Try(Str, [NoZone])
+	tz_from_env = |raw| {
+		v = Str.drop_prefix(Str.trim(raw), ":")
+		if Str.contains(v, "zoneinfo/") {
+			tz_from_link(v)
+		} else if v == "UTC" or (Str.contains(v, "/") and !(Str.contains(v, ",")) and !(Str.starts_with(v, "/"))) {
+			Ok(v)
+		} else {
+			Err(NoZone)
+		}
+	}
+
+	# The IANA zone for a Windows time zone name (`tzutil /g`), for the zones
+	# Windows names most often; any other answers NoZone and setup asks.
+	windows_zones : List({ windows : Str, iana : Str })
+	windows_zones = [
+		{ windows: "UTC", iana: "UTC" },
+		{ windows: "GMT Standard Time", iana: "Europe/London" },
+		{ windows: "W. Europe Standard Time", iana: "Europe/Berlin" },
+		{ windows: "Romance Standard Time", iana: "Europe/Paris" },
+		{ windows: "Central Europe Standard Time", iana: "Europe/Budapest" },
+		{ windows: "E. Europe Standard Time", iana: "Europe/Chisinau" },
+		{ windows: "FLE Standard Time", iana: "Europe/Kiev" },
+		{ windows: "Eastern Standard Time", iana: "America/New_York" },
+		{ windows: "Central Standard Time", iana: "America/Chicago" },
+		{ windows: "Mountain Standard Time", iana: "America/Denver" },
+		{ windows: "US Mountain Standard Time", iana: "America/Phoenix" },
+		{ windows: "Pacific Standard Time", iana: "America/Los_Angeles" },
+		{ windows: "Alaskan Standard Time", iana: "America/Anchorage" },
+		{ windows: "Hawaiian Standard Time", iana: "Pacific/Honolulu" },
+		{ windows: "Central Standard Time (Mexico)", iana: "America/Mexico_City" },
+		{ windows: "E. South America Standard Time", iana: "America/Sao_Paulo" },
+		{ windows: "Argentina Standard Time", iana: "America/Buenos_Aires" },
+		{ windows: "SA Pacific Standard Time", iana: "America/Bogota" },
+		{ windows: "Tokyo Standard Time", iana: "Asia/Tokyo" },
+		{ windows: "China Standard Time", iana: "Asia/Shanghai" },
+		{ windows: "India Standard Time", iana: "Asia/Calcutta" },
+		{ windows: "AUS Eastern Standard Time", iana: "Australia/Sydney" },
+		{ windows: "New Zealand Standard Time", iana: "Pacific/Auckland" },
+		{ windows: "South Africa Standard Time", iana: "Africa/Johannesburg" },
+	]
+
+	tz_from_windows : Str -> Try(Str, [NoZone])
+	tz_from_windows = |name| {
+		n = Str.trim(name)
+		(List.first(List.keep_if(windows_zones, |z| z.windows == n))).map_ok(|z| z.iana).map_err(|_| NoZone)
+	}
+
+	# HR zone upper bounds (hr_z1_max..hr_z4_max, bpm) from one number. Zone 5 is
+	# everything above hr_z4_max. From the threshold heart rate (the average HR
+	# of an all-out 30 to 60 minute effort, in any sport): 85, 89, 94 and 99
+	# percent of it. From maximum heart rate: 60, 70, 80 and 90 percent of it.
+	# Each bound rounds to the nearest whole beat. Neither rule names a sport,
+	# and per-sport overrides (`hr_z2_max_run`) stay the way to tune one.
+	zone_bounds : [Threshold(I64), Max(I64)] -> List(I64)
+	zone_bounds = |basis| {
+		# a maximum heart rate is turned into an estimated threshold (90% of max)
+		# and run through the same percentages, so the two inputs describe one
+		# zone system rather than two incompatible ones
+		thr = match basis {
+			Threshold(t) => t
+			Max(m) => (m * 90 + 50) // 100
+		}
+		List.map([85, 89, 94, 99], |p| (thr * p + 50) // 100)
+	}
+
+	# a heart rate a person can hold, the plausible band analyze also filters to
+	plausible_hr : I64 -> Bool
+	plausible_hr = |bpm| bpm >= 35 and bpm <= 220
+
 }
 
-# numeric_key: every clause pinned, mutation-checked one at a time. A `_max`
-# suffix clause was deleted rather than pinned — every key ending `_max` also
-# starts `hr_z`, so it was unreachable, and an unreachable clause cannot be
-# killed by any mutant. A rule no test can falsify is decoration, not a guard.
+# numeric_key: every clause pinned, mutation-checked one at a time. It has no `_max`
+# suffix clause: every key ending `_max` also starts `hr_z`, so such a clause would be
+# unreachable, and a rule no test can falsify is decoration, not a guard.
 expect Config.numeric_key("utc_offset_minutes") == Int
 expect Config.numeric_key("last_sync_epoch") == Int
 expect Config.numeric_key("strava_expires_at") == Int
@@ -479,3 +647,61 @@ expect Config.api_base_allowed("http://localhost:8x") == False
 # a numeric port, optionally with a path, is still allowed
 expect Config.api_base_allowed("http://localhost:8799/mock/v3") == True
 expect Config.api_base_allowed("https://www.strava.com:443") == True
+
+# setup walks its steps in order and resumes at the first unmet one
+expect {
+	none = { db: Bool.False, client: Bool.False, token: Bool.False, timezone: Bool.False, zones: Bool.False, synced: Bool.False }
+	Config.setup_next(none) == "init"
+		and Config.setup_next({ ..none, db: Bool.True }) == "strava_app"
+		and Config.setup_next({ ..none, db: Bool.True, client: Bool.True }) == "authorize"
+		and Config.setup_next({ ..none, db: Bool.True, client: Bool.True, token: Bool.True }) == "timezone"
+		and Config.setup_next({ ..none, db: Bool.True, client: Bool.True, token: Bool.True, timezone: Bool.True }) == "zones"
+		and Config.setup_next({ db: Bool.True, client: Bool.True, token: Bool.True, timezone: Bool.True, zones: Bool.True, synced: Bool.False }) == "sync"
+		and Config.setup_next({ db: Bool.True, client: Bool.True, token: Bool.True, timezone: Bool.True, zones: Bool.True, synced: Bool.True }) == "done"
+}
+# a step already satisfied is skipped even when an earlier one is not
+expect Config.setup_next({ db: Bool.True, client: Bool.False, token: Bool.False, timezone: Bool.True, zones: Bool.True, synced: Bool.False }) == "strava_app"
+
+# the code from a bare paste, or from the whole redirected URL
+expect Config.oauth_code("  abc123 ") == Ok("abc123")
+expect Config.oauth_code("http://localhost/?state=&code=abc123&scope=read,activity:read_all") == Ok("abc123")
+expect Config.oauth_code("http://127.0.0.1:53111/?code=xyz&scope=read") == Ok("xyz")
+expect Config.oauth_code("code=abc123") == Ok("abc123")
+# a redirect to any host but this machine is not Strava's, whatever it carries
+expect Config.oauth_code("https://evil.example/?code=abc") == Err(NoCode)
+expect Config.oauth_code("http://localhost.evil.example/?code=abc") == Err(NoCode)
+expect Config.oauth_param("http://127.0.0.1:5311/?state=s1&code=xyz", "state") == Ok("s1")
+expect Config.oauth_param("http://127.0.0.1:5311/?code=xyz", "state") == Err(Missing)
+# Strava's refusal redirect, an empty code and an empty paste carry no code
+expect Config.oauth_code("http://localhost/?state=&error=access_denied") == Err(NoCode)
+expect Config.oauth_code("http://localhost/?code=&scope=read") == Err(NoCode)
+expect Config.oauth_code("   ") == Err(NoCode)
+
+# the timezone from each OS's source
+expect Config.tz_from_link("/var/db/timezone/zoneinfo/America/Chicago") == Ok("America/Chicago")
+expect Config.tz_from_link("/usr/share/zoneinfo/Europe/Madrid") == Ok("Europe/Madrid")
+expect Config.tz_from_link("../usr/share/zoneinfo/posix/Asia/Tokyo") == Ok("Asia/Tokyo")
+expect Config.tz_from_link("/usr/share/zoneinfo/UTC") == Ok("UTC")
+expect Config.tz_from_link("/etc/localtime") == Err(NoZone)
+expect Config.tz_from_env("America/Chicago") == Ok("America/Chicago")
+expect Config.tz_from_env(":Europe/Berlin") == Ok("Europe/Berlin")
+expect Config.tz_from_env("UTC") == Ok("UTC")
+expect Config.tz_from_env("/usr/share/zoneinfo/America/Denver") == Ok("America/Denver")
+expect Config.tz_from_env("CST6CDT") == Err(NoZone)
+expect Config.tz_from_env("EST5EDT,M3.2.0,M11.1.0") == Err(NoZone)
+expect Config.tz_from_env("") == Err(NoZone)
+expect Config.tz_from_windows("Central Standard Time") == Ok("America/Chicago")
+expect Config.tz_from_windows("W. Europe Standard Time") == Ok("Europe/Berlin")
+expect Config.tz_from_windows("Martian Standard Time") == Err(NoZone)
+
+# zone bounds from threshold HR, rounded to the nearest beat; a max HR goes
+# through an estimated threshold of 90% of max (185 -> 167), so both inputs
+# land in one zone system
+expect Config.zone_bounds(Threshold(165)) == [140, 147, 155, 163]
+expect Config.zone_bounds(Max(185)) == [142, 149, 157, 165] and Config.zone_bounds(Max(185)) == Config.zone_bounds(Threshold(167))
+# every bound ascends, so each zone is non-empty
+expect {
+	b = Config.zone_bounds(Threshold(150))
+	List.get(b, 0).ok_or(0) < List.get(b, 1).ok_or(0) and List.get(b, 1).ok_or(0) < List.get(b, 2).ok_or(0) and List.get(b, 2).ok_or(0) < List.get(b, 3).ok_or(0)
+}
+expect Config.plausible_hr(35) and Config.plausible_hr(220) and !(Config.plausible_hr(34)) and !(Config.plausible_hr(221))

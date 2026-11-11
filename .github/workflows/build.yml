@@ -233,3 +233,47 @@ jobs:
 
       - name: Layer check (ADR 0016 — imports point down)
         run: bash tools/layer-check.sh
+
+  # The one-line installer, run against the latest published release on both
+  # platforms it serves: it must pick the right asset, pass the checksum, and
+  # leave a binary that starts. It reads the release, not this branch's build, so
+  # it also catches a release whose asset names or SHA256SUMS.txt drifted from
+  # what install.sh expects.
+  install-script:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # STRIDE_INSTALL_APP unset with no terminal attached: the installer must
+      # skip the app question and still exit 0
+      - name: Install the latest release with install.sh
+        env:
+          STRIDE_INSTALL_DIR: ${{ runner.temp }}/stride-bin
+        run: sh install.sh < /dev/null
+
+      - name: A truncated download runs nothing
+        run: |
+          head -n 40 install.sh | STRIDE_INSTALL_DIR="${{ runner.temp }}/cut" sh || true
+          [ ! -e "${{ runner.temp }}/cut/stride" ] || { echo "a cut-off install.sh installed a binary"; exit 1; }
+
+      - name: The desktop app installs on macOS
+        if: runner.os == 'macOS'
+        env:
+          HOME: ${{ runner.temp }}/apphome
+          STRIDE_INSTALL_DIR: ${{ runner.temp }}/apphome/bin
+          STRIDE_INSTALL_APP: "1"
+        run: |
+          mkdir -p "$HOME"
+          sh install.sh < /dev/null
+          test -x "$HOME/Applications/Stride.app/Contents/MacOS/stride-viz"
+
+      - name: The installed binary starts and answers its version
+        run: |
+          out=$("${{ runner.temp }}/stride-bin/stride" --version)
+          echo "$out"
+          case "$out" in stride\ *) ;; *) echo "unexpected version line: $out"; exit 1 ;; esac

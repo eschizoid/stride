@@ -10,13 +10,17 @@ pins against the parser's own list. That is the authoritative set; this file exp
 
 ## Setup (once)
 
+### `stride setup [key=value]`
+
+The whole first run in one command, and it resumes wherever a previous run stopped: it creates the database, guides the Strava API app (callback domain `localhost`) and stores its client ID and secret, opens the authorize page and receives the code on a local port (or takes the pasted address), confirms the detected timezone, derives the four heart-rate zone bounds from one number (85, 89, 94 and 99 % of threshold HR; a max HR is first turned into an estimated threshold of 90 % of max, so both inputs give one zone system), then runs the first sync and analyze and shows `doctor`. With `--json` it never prompts: each call reports the next step, whether it needs the athlete at a browser, and the values it takes, and `stride setup <key>=<value>` supplies one (`client_id`, `client_secret`, `code`, `timezone`, `threshold_hr` or `max_hr`). In that mode the first sync is left to `stride sync` and `stride analyze`, since each call answers with exactly one envelope.
+
 ### `stride init`
 
 Creates `~/.stride/db.sqlite` and runs migrations. Idempotent — safe to re-run anytime.
 
 ### `stride auth`
 
-One-time Strava OAuth: prints an authorize URL, you paste back the `code=` param. Stores tokens _and_ client credentials in the db — no env vars needed afterward.
+One-time Strava OAuth: prints an authorize URL, you paste back the whole address the browser landed on (or just its `code=` value). Stores tokens _and_ client credentials in the db — no env vars needed afterward.
 
 ### `stride config`
 

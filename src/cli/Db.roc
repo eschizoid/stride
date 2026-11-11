@@ -151,6 +151,15 @@ Db :: [].{
 
 		}
 	}
+	# a recognised IANA `timezone` anchors "today"; without one the day is a fixed
+	# offset at best, and UTC at worst
+	timezone_known! : Str => Bool
+	timezone_known! = |path|
+		match resolve_time_mode!(path) {
+			Zone(_, _) => Bool.True
+			_ => Bool.False
+		}
+
 	resolve_time_mode! : Str => TimeMode
 	resolve_time_mode! = |path| {
 		# An unreadable value is NOT NoFixed and NOT zero: those both mean "carry

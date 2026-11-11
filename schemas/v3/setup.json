@@ -1,0 +1,101 @@
+{
+  "title": "setup",
+  "description": "Payload of `stride setup [key=value]`: where the first-run walk stands and what the next step needs. The steps run in order (init, strava_app, authorize, timezone, zones, sync); a step is done when the database already holds what it would write.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "authorize_url",
+    "complete",
+    "instruction",
+    "interactive",
+    "needs",
+    "next_step",
+    "ran",
+    "steps",
+    "timezone_detected"
+  ],
+  "properties": {
+    "complete": {
+      "type": "boolean",
+      "description": "true when every step is done."
+    },
+    "next_step": {
+      "type": "string",
+      "enum": [
+        "strava_app",
+        "authorize",
+        "timezone",
+        "zones",
+        "sync",
+        "done"
+      ],
+      "description": "The first step not yet done; done when complete. init never appears here: setup creates the database itself."
+    },
+    "interactive": {
+      "type": "boolean",
+      "description": "true when the next step needs the athlete at a browser: creating the Strava API app, or clicking Authorize."
+    },
+    "needs": {
+      "type": "array",
+      "description": "The `key=value` inputs the next step takes, one per `stride setup` call. For zones either one of threshold_hr and max_hr does. Empty for sync, which is `stride sync` then `stride analyze`, and when complete.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "client_id",
+          "client_secret",
+          "code",
+          "timezone",
+          "threshold_hr",
+          "max_hr"
+        ]
+      }
+    },
+    "instruction": {
+      "type": "string",
+      "description": "What to do for the next step, in a sentence the coach can relay."
+    },
+    "authorize_url": {
+      "type": "string",
+      "description": "For strava_app, the Strava API settings page; for authorize, the page where the athlete clicks Authorize. Empty otherwise."
+    },
+    "timezone_detected": {
+      "type": "string",
+      "description": "The system's own IANA zone when the next step is timezone and one was found (TZ, the /etc/localtime link, or the Windows zone); empty otherwise. A suggestion to confirm, never stored by itself."
+    },
+    "ran": {
+      "type": "array",
+      "description": "What this call did: init when it created the database, and the key it applied when one was passed.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "steps": {
+      "type": "array",
+      "description": "Every step in order, with whether it is done.",
+      "items": {
+        "type": "object",
+        "additionalKeys": false,
+        "required": [
+          "done",
+          "step"
+        ],
+        "properties": {
+          "step": {
+            "type": "string",
+            "enum": [
+              "init",
+              "strava_app",
+              "authorize",
+              "timezone",
+              "zones",
+              "sync"
+            ]
+          },
+          "done": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}
