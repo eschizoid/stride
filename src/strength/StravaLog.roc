@@ -70,10 +70,11 @@ StravaLog :: [].{
 	# any of them starts a new row, the shape strength_sets stores for every
 	# adapter.
 	#
-	# Every other weight is stored as Strava recorded it. Strava's log holds
-	# the weight the athlete entered for the set, and this adapter does not
-	# double it for dumbbells: the log does not say whether an entered weight
-	# means one dumbbell or both, so the stored number is the entered one.
+	# Every other weight is stored as Strava recorded it: the weight the
+	# athlete entered for the set, which is per hand (Adapter's convention).
+	# An athlete who enters the pair's total sets `strength_log_weight` to
+	# `total`, and the strength_sets rebuild halves a logged dumbbell weight
+	# (Strength.per_hand); this adapter stays pure and stores what it read.
 	#
 	# Anything that is not such a workout object yields no rows, which is
 	# what lets the description adapters below this one in the table speak.

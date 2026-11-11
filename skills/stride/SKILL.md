@@ -254,8 +254,8 @@ Strava's public API does not return a strength workout's sets, so Stride reads t
 two sources and parses both into the same per-set rows:
 
 1. **The activity description.** The athlete pastes a Peloton-style share summary
-   (an exercise line, then `3 × 8 • 30 lbs/side`; `/side` variants resolved to the mass
-   actually moved); no other paste format is read. A bodyweight line is kept only when
+   (an exercise line, then `3 × 8 • 30 lbs/side`; a `/side` weight is stored per hand and
+   `reps/side` doubles the rep count); no other paste format is read. A bodyweight line is kept only when
    it names a weight above zero in lb or kg, and then counts 0 kg like an imported
    one, with no `zeroed` report. A timed line (`3 × 30 sec • 20 lbs`) is a hold (below).
    Sync fetches strength-family descriptions after the stream queue empties and
@@ -291,9 +291,14 @@ two sources and parses both into the same per-set rows:
      its log.
 
 **A stored log wins over the description** for that activity (counting both would double
-its sets). The log is stored verbatim. Its weights are kept as entered (pounds converted
-to kg), never doubled for dumbbells: the log does not say whether a weight is one dumbbell
-or the pair, so ask the athlete before reading it as a total.
+its sets). The log is stored verbatim. **Every stored weight is per hand**: one dumbbell of
+a pair, or a barbell's or machine's total, whichever source wrote it, so one lift at one
+weight reads the same from a paste and from a log, and tonnage is volume on that per-hand
+weight. Log weights are kept as entered (pounds converted to kg). An athlete who enters a
+dumbbell pair's combined weight in Strava sets `stride config set strength_log_weight
+total --json`, and logged weights are then halved unless the exercise names a barbell,
+machine, cable, smith, EZ or trap bar, landmine, sled, plate or kettlebell; the default
+is `per_hand`. Ask the athlete which one they use before setting it.
 
 **Holds.** A set with a duration and no reps (an isometric hold: a weight held still, a
 plank, a dead hang) is kept as a hold, from either source: its sets and weight, 0 reps,

@@ -18,18 +18,17 @@ Peloton :: [].{
 	# counts for load and streak but not tonnage, an honest gap rather than
 	# a failure.
 	#
-	# Side semantics decide what a rep MOVES, so tonnage is mass actually
-	# lifted rather than a label sum. This is a reading of how the app
-	# producing these pastes writes them — no published contract backs it, so
-	# a share format that spells single-side work differently falsifies the
-	# rule, not the parser:
-	#   weight/side + reps/side  → single-side work (alternating): each rep
-	#                              moves ONE side's mass, and the rep count
-	#                              doubles (R per side).
-	#   weight/side alone        → both hands loaded simultaneously: each rep
-	#                              moves BOTH sides' mass (2 × W).
-	#   neither                  → the stated numbers are already totals.
-	# Units: lbs (Peloton's default) converted through Units.lb_kg; kg as-is.
+	# Weights are stored per hand (Adapter's convention): `W lbs/side` is one
+	# implement of W, whether both hands lift at once or alternate, so the
+	# same dumbbells read the same here as in a Strava log. Side semantics
+	# then decide only the rep count:
+	#   reps/side         → single-side work (alternating): R per side, so
+	#                       the rep count doubles.
+	#   total reps        → the stated count.
+	#   no /side weight   → the stated weight (a barbell or machine total).
+	# This is a reading of how the app writes its pastes; no published contract
+	# backs it. Units: lbs (Peloton's default) converted through Units.lb_kg;
+	# kg as-is.
 	#
 	# A bodyweight exercise (`Adapter.is_bodyweight`) keeps its sets and
 	# reps, or its hold, at 0 kg when its set line names a weight, which can
@@ -39,11 +38,10 @@ Peloton :: [].{
 	# A TIMED set line (`3 × 30 sec • 20 lbs`, R followed by one of
 	# `time_units`) is a HOLD: S holds of R seconds or minutes at the
 	# weight, stored as a row with 0 reps and the held seconds in `hold_s`,
-	# so it adds no tonnage and its duration is never read as reps. Side
-	# semantics follow the rep rule above with the hold standing in for the
-	# rep: time/side is each side held in turn, so the set count doubles
-	# and, with weight/side, each hold carries ONE side's mass; weight/side
-	# alone is both sides held at once (2 × W).
+	# so it adds no tonnage and its duration is never read as reps. A hold
+	# follows the rep rule with the hold standing in for the rep: time/side
+	# is each side held in turn, so the set count doubles; the weight is per
+	# hand either way.
 	#
 	# A line that is only a set count (`S × R`, optionally followed by one
 	# word from `count_units`, with or without a refused weight) is never an
@@ -131,15 +129,9 @@ Peloton :: [].{
 			[left, right] => {
 				lr = parse_sets_reps(left)?
 				w = parse_weight(right)?
-				# weight/side with per-side reps (or holds) is single-side work: one
-				# side's mass each, the count doubled. weight/side with total reps is
-				# both hands at once: double the mass. Plain numbers are totals.
-				weight_kg =
-					if w.per_side and !(lr.per_side) {
-						w.kg * 2.0
-					} else {
-						w.kg
-					}
+				# a /side weight is one implement, stored per hand; per-side reps or
+				# holds double the count, never the weight
+				weight_kg = w.kg
 				if lr.timed {
 					hold_s = Adapter.read_seconds("${lr.reps.to_str()} ${lr.unit}").map_err(|_| NotASetLine)?
 					sets = if (lr.per_side) lr.sets * 2 else lr.sets
@@ -220,8 +212,8 @@ expect {
 			a.exercise == "Dumbbell Crush Press"
 				and a.sets == 3
 				and a.reps == 8
-				# 30 lbs/side, total reps: both hands at once → 60 lbs per rep
-				and (a.weight_kg - 27.2155422).abs() < 0.001
+				# 30 lbs/side, total reps: stored per hand, one 30 lb dumbbell
+				and (a.weight_kg - 13.6077711).abs() < 0.001
 				and b.exercise == "Dumbbell Snatch Push Press"
 				and b.sets == 3
 				# 8 reps/side → 16 total, each moving one side's 25 lbs
@@ -347,16 +339,16 @@ expect {
 	}
 }
 
-# per-side holds: time/side doubles the hold count, with one side's mass
-# under weight/side and the stated mass under a plain weight; weight/side
-# alone is both sides held at once. A bare per-side count is skipped.
+# per-side holds: time/side doubles the hold count; the weight is per hand
+# under weight/side and as stated under a plain weight, whether the sides
+# are held in turn or at once. A bare per-side count is skipped.
 expect {
 	rows = Peloton.parse("Suitcase Hold\n3 × 30 sec/side • 20 lbs\n3 × 30 Sec/Side\n3 × 45 sec/side • 20 lbs/side\nFarmer Hold\n2 × 1 min • 20 lbs/side\n3 × 8 reps/side • 20 lbs/side")
 	match rows {
 		[a, b, c, d] =>
 			a.exercise == "Suitcase Hold" and a.sets == 6 and a.reps == 0 and a.hold_s == 30 and (a.weight_kg - 9.0718474).abs() < 0.001
 				and b.sets == 6 and b.hold_s == 45 and (b.weight_kg - 9.0718474).abs() < 0.001
-				and c.exercise == "Farmer Hold" and c.sets == 2 and c.hold_s == 60 and (c.weight_kg - 18.1436948).abs() < 0.001
+				and c.exercise == "Farmer Hold" and c.sets == 2 and c.hold_s == 60 and (c.weight_kg - 9.0718474).abs() < 0.001
 				and d.reps == 16 and d.hold_s == 0
 		_ => False
 	}
@@ -372,11 +364,11 @@ expect {
 }
 
 # `/side` and the weight unit read in any case: capitalised per-side work
-# doubles its reps and keeps one side's mass, as lowercase does
+# doubles its reps, and every /side weight stays per hand, as lowercase does
 expect {
 	rows = Peloton.parse("Curl\n3 × 8 Reps/Side • 20 LBS/Side\nRow\n3 × 8 • 20 LBS/Side")
 	match rows {
-		[a, b] => a.reps == 16 and (a.weight_kg - 9.0718474).abs() < 0.001 and b.reps == 8 and (b.weight_kg - 18.1436948).abs() < 0.001
+		[a, b] => a.reps == 16 and (a.weight_kg - 9.0718474).abs() < 0.001 and b.reps == 8 and (b.weight_kg - 9.0718474).abs() < 0.001
 		_ => False
 	}
 }

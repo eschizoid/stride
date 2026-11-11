@@ -1196,7 +1196,7 @@ Analyze :: [].{
 			walk_days!(run!, by_day, day + 1, last_day, step.ctl, step.atl)
 		}
 
-	# ── the tonnage spine's computed half (#478) ────────────────────────
+	# ── the tonnage spine's computed half ─────────────────────────────
 	# Parse every activity's stored strength text into set rows: its
 	# strength_logs payload when it has one, else its strength_notes
 	# description. A log wins outright, even over a description that would
@@ -1204,7 +1204,9 @@ Analyze :: [].{
 	# sets twice, and the log is structured data where the description is a
 	# human paste. The UNION's second arm carries logs for activities whose
 	# description the drain has not fetched (or never will), so an import is
-	# never waiting on a sync.
+	# never waiting on a sync. Logged weights then pass through
+	# Strength.per_hand under config `strength_log_weight`, so every stored
+	# row is per hand whichever source wrote it.
 	#
 	# Both arms read only rows whose activity exists and is in the strength
 	# family, through activity_family_month: strength_sets.activity_id
@@ -1213,10 +1215,10 @@ Analyze :: [].{
 	# family alone, so sets on any other activity would be tonnage no
 	# coverage figure accounts for.
 	#
-	# Full replace on every analyze — strength_sets is computed tier (the
-	# activity_segments discipline), the corpus is one short text per
-	# strength session, and a parser improvement then needs no invalidation
-	# story: the next analyze IS the recompute. Runs unconditionally, like
+	# Full replace on every analyze: strength_sets is computed tier, the
+	# corpus is one short text per strength session, and a parser or
+	# convention change then needs no invalidation story, since the next
+	# analyze IS the recompute. Runs unconditionally, like
 	# rebuild_daily_load! beside it, so a deleted or stale row cannot outlive
 	# one analyze; `stride strength import` runs it too, so an import is
 	# visible without an analyze. The delete and the inserts are one
@@ -1243,22 +1245,27 @@ Analyze :: [].{
 				Ok({ aid, d })
 			},
 		})?
+		convention =
+			match Db.config_opt!(path, "strength_log_weight")? {
+				Found(v) => v
+				NotFound => "per_hand"
+			}
 		Sql.transaction!(
 			Path.utf8(path),
 			|run!| {
 				_ = run!("DELETE FROM strength_sets", [])?
-				insert_note_sets!(run!, notes)
+				insert_note_sets!(run!, convention, notes)
 			},
 		)
 	}
 	# `run!` is the statement runner of the caller's transaction
-	insert_note_sets! = |run!, notes|
+	insert_note_sets! = |run!, convention, notes|
 		match notes {
 			[] => Ok({})
 			[n, .. as rest] => {
 				parsed = Strength.parse(n.d)
-				_ = insert_set_rows!(run!, n.aid, parsed.source, parsed.rows, 0)?
-				insert_note_sets!(run!, rest)
+				_ = insert_set_rows!(run!, n.aid, parsed.source, Strength.per_hand(convention, parsed.source, parsed.rows), 0)?
+				insert_note_sets!(run!, convention, rest)
 			}
 		}
 	insert_set_rows! = |run!, aid, source, rows, ord|
