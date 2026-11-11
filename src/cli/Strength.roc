@@ -45,15 +45,66 @@ Strength :: [].{
 			}
 		}
 
+	# ── one weight convention across sources ──────────────────────────
+	# Rows are stored per hand (Adapter's convention). A Strava log holds
+	# what the athlete typed, which is per hand unless they say otherwise
+	# with config `strength_log_weight` (Config.log_weight_values): `per_hand`
+	# (the default, and any unset or unrecognised value) stores logged
+	# weights as entered, `total` means they typed a dumbbell pair's combined
+	# weight, so a logged row is halved unless its exercise names an
+	# implement lifted as one piece (`whole_implements`: a barbell, machine or
+	# cable stack is its total either way). Only the `strava` source is
+	# touched: a description paste says /side itself.
+	whole_implements : List(Str)
+	whole_implements = ["barbell", "machine", "cable", "smith", "ez bar", "ez-bar", "trap bar", "landmine", "sled", "plate", "kettlebell"]
+
+	per_hand : Str, Str, List(SetRow) -> List(SetRow)
+	per_hand = |convention, source, rows|
+		if convention != "total" or source != "strava" {
+			rows
+		} else {
+			List.map(
+				rows,
+				|r| {
+					name = Str.with_ascii_lowercased(r.exercise)
+					if (List.any(whole_implements, |w| Str.contains(name, w))) r else { ..r, weight_kg: r.weight_kg / 2.0 }
+				},
+			)
+		}
+
 	tonnage_kg : List(SetRow) -> F64
 	tonnage_kg = |rows|
 		List.fold(rows, 0.0, |acc, r| acc + (r.sets).to_f64() * (r.reps).to_f64() * r.weight_kg)
 }
 
-# tonnage is the product sum: 3×8×27.2155… + 3×16×11.3398… = 1197.48…
+# tonnage is the product sum on per-hand weights: 3×8×13.6077… + 3×16×11.3398… = 870.90…
 expect {
 	p = Strength.parse("A\n3 × 8 • 30 lbs/side\nB\n3 × 8 reps/side • 25 lbs/side")
-	(Strength.tonnage_kg(p.rows) - 1197.4838568).abs() < 0.01
+	(Strength.tonnage_kg(p.rows) - 870.8973504).abs() < 0.01
+}
+
+# one convention across sources: 25 lb dumbbells read 11.34 kg from a /side
+# paste and from a per-hand log alike
+expect {
+	paste = Strength.parse("Dumbbell Hammer Curl\n3 × 10 • 25 lbs/side")
+	match paste.rows {
+		[r] => (r.weight_kg - 11.33980925).abs() < 0.001
+		_ => False
+	}
+}
+
+# `total` halves a logged dumbbell weight, leaves whole implements and
+# per_hand alone, and never touches a paste
+expect {
+	rows = [{ exercise: "Curl", sets: 3, reps: 10, hold_s: 0, weight_kg: 22.68 }, { exercise: "Incline Barbell Bench Press", sets: 3, reps: 8, hold_s: 0, weight_kg: 54.4 }]
+	halved = Strength.per_hand("total", "strava", rows)
+	match halved {
+		[a, b] => (a.weight_kg - 11.34).abs() < 0.001 and (b.weight_kg - 54.4).abs() < 0.001
+		_ => False
+	}
+		and Strength.per_hand("per_hand", "strava", rows) == rows
+		and Strength.per_hand("total", "peloton", rows) == rows
+		and Strength.per_hand("", "strava", rows) == rows
 }
 
 # a hold adds no tonnage: its seconds are never read as reps

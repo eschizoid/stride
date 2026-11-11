@@ -626,6 +626,8 @@ config_unset! = |key| {
 				# cannot break a command, it only changes how numbers are printed, and the
 				# message says exactly that.
 				"${p.key} removed — distances and pace render in metric again"
+			} else if p.key == "strength_log_weight" {
+				"${p.key} removed — Strava-log weights read as per hand again from the next analyze"
 			} else if Config.is_bookkeeping(p.key) {
 				"${p.key} removed — stride recomputes or re-fetches this one as needed"
 			} else if Config.known_key(p.key) {
@@ -682,16 +684,19 @@ config_store! = |key, val|
 	# `Db.config_set!` directly and never pass through here.
 	else if (!(Config.known_key(key)))
 		Output.err_out!("unknown_key", unknown_key_message(key))
-	# The enum half of the same rule numeric_refusal enforces for numbers. Not folded into
-	# numeric_key, which answers "how does this parse as a NUMBER" — units is the only key
-	# with a closed value set, and a general mechanism for one member would be machinery
-	# nothing else uses. Refused here so a typo cannot be stored: every read resolves an
-	# unrecognised value to metric, so without this `config set units imperail` would
-	# succeed, echo back, and render metric forever.
+	# The enum half of the rule numeric_refusal enforces for numbers: `units` and
+	# `strength_log_weight` take closed value sets. Refused here so a typo cannot be
+	# stored, because every read resolves an unrecognised value to its default (metric,
+	# per_hand), so a typo would echo back and then do nothing.
 	else if (key == "units" and !(Config.is_unit_value(val)))
 		Output.err_out!(
 			"bad_value",
 			"units takes metric or imperial — got '${val}'",
+		)
+	else if (key == "strength_log_weight" and !(Config.is_log_weight_value(val)))
+		Output.err_out!(
+			"bad_value",
+			"strength_log_weight takes per_hand or total — got '${val}'",
 		)
 	else if (numeric_refusal(key, val) != "")
 	# a stored value that parses nowhere is the same trap as one that is read

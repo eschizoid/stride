@@ -50,6 +50,7 @@ Config :: [].{
 	plain_keys = [
 		"timezone",
 		"units",
+		"strength_log_weight",
 		"utc_offset_minutes",
 		"last_sync_epoch",
 		"strava_client_id",
@@ -73,7 +74,7 @@ Config :: [].{
 	# scanning it could not tell which four were theirs — the `unknown_key` refusal drew the
 	# distinction and the listing beside it did not.
 	user_settable : Str -> Bool
-	user_settable = |k| k == "timezone" or k == "units" or k == "utc_offset_minutes" or is_zone_key(k)
+	user_settable = |k| k == "timezone" or k == "units" or k == "strength_log_weight" or k == "utc_offset_minutes" or is_zone_key(k)
 
 	# What the `unknown_key` refusal tells the reader, in one place beside the predicate it
 	# describes. Naming a subset (four keys, while `config set` accepted twelve) is the
@@ -85,7 +86,7 @@ Config :: [].{
 	# Pinned against `known_key` below: every literal that predicate accepts has an expect
 	# asserting it appears here, so the two cannot drift.
 	known_key_summary : Str
-	known_key_summary = "Settable: timezone, units (metric|imperial), utc_offset_minutes, hr_z1_max..hr_z4_max (optionally per sport, e.g. hr_z2_max_ride). Written by stride and rarely set by hand: last_sync_epoch, strava_client_id, strava_expires_at, strava_reads_today, strava_reads_day, strava_access_token, strava_refresh_token, strava_client_secret. FTP is derived, never set."
+	known_key_summary = "Settable: timezone, units (metric|imperial), strength_log_weight (per_hand|total), utc_offset_minutes, hr_z1_max..hr_z4_max (optionally per sport, e.g. hr_z2_max_ride). Written by stride and rarely set by hand: last_sync_epoch, strava_client_id, strava_expires_at, strava_reads_today, strava_reads_day, strava_access_token, strava_refresh_token, strava_client_secret. FTP is derived, never set."
 
 	# The one key whose value is an ENUM rather than a number or free text. Validated at
 	# the WRITE for the same reason numeric_key is: a value nothing recognises would fall
@@ -96,6 +97,15 @@ Config :: [].{
 
 	is_unit_value : Str -> Bool
 	is_unit_value = |v| List.contains(unit_values, v)
+
+	# `strength_log_weight` is the other closed set: how the athlete enters a
+	# dumbbell's weight in the Strava app's log, per hand or as the pair's
+	# total (Strength.per_hand reads it). Gated at the write like `units`.
+	log_weight_values : List(Str)
+	log_weight_values = ["per_hand", "total"]
+
+	is_log_weight_value : Str -> Bool
+	is_log_weight_value = |v| List.contains(log_weight_values, v)
 
 	# Absent, empty or unrecognised all read as Metric. The write gate above rejects a bad
 	# value, so an unrecognised one here means a row written before this key existed or by
@@ -465,6 +475,9 @@ expect Config.is_unit_value("imperial") == True
 expect Config.is_unit_value("Imperial") == False
 expect Config.is_unit_value("miles") == False
 expect Config.is_unit_value("") == False
+expect Config.known_key("strength_log_weight") and Config.user_settable("strength_log_weight") and Config.numeric_key("strength_log_weight") == Free
+expect Config.is_log_weight_value("per_hand") and Config.is_log_weight_value("total") and !(Config.is_log_weight_value("Total")) and !(Config.is_log_weight_value(""))
+expect Str.contains(Config.known_key_summary, "strength_log_weight")
 expect Config.units_of("imperial") == Imperial
 expect Config.units_of("metric") == Metric
 expect Config.units_of("") == Metric
