@@ -60,7 +60,7 @@ EXPECTED_QUOTING=2
 # the extractor stops reading a shape. Pinned EXACTLY, opposite of MIN_REFS: both
 # directions deserve a look (down can mean a rule started matching prose). Inherits
 # EXPECTED_QUOTING's weaknesses: a count, per-line binary.
-EXPECTED_UNPARSED=44
+EXPECTED_UNPARSED=42
 
 # ------------------------------------------- the trailing-token rule, and its self-test
 #
@@ -453,6 +453,7 @@ rate=1,2
 relabel=1,2,3,4
 reps=1
 review=1
+setup=1
 skip=1,2,3
 strength import=1
 test remove=1

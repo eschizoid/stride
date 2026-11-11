@@ -33,16 +33,15 @@ Report :: [].{
 	# 3.49.1 rejects it — so the e2e fixture is what holds SQL to the Roc rule
 	# across a platform upgrade.
 	date_known_sql = Metrics.date_known_sql_for("a.start_local")
-	# ...and the row's RANKABILITY, published beside it. After #255 the engine's
-	# notion of "usable timestamp" grew a time half and the published flag did not:
-	# `2026-08-23T37:00:00Z` was hoisted to the top of `activities` as needing repair
-	# while publishing `date_known: true` (#281).
+	# ...and the row's RANKABILITY, published beside it: a usable timestamp has a time
+	# half as well as a date half, so `2026-08-23T37:00:00Z` needs repair while its date
+	# alone reads as known.
 	#
 	# `rankable`, NOT a `time_known` sibling: every `_known` flag names a value
 	# published NEXT TO IT whose magnitude it licenses, and `top` publishes
 	# `moving_time` on the same row — a `time_known` there reads as licensing it, so
-	# a coach applying the documented rule would discard a good duration (measured:
-	# moving_time=999999 under time_known=False). A `time_known` conjunct also
+	# a coach applying the documented rule would discard a good duration. A `time_known`
+	# conjunct also
 	# conflates causes (false for a bad date with a fine clock, true for two shapes
 	# date_known rejects). This is the whole predicate, in the word the engine
 	# already uses.
@@ -181,8 +180,7 @@ Report :: [].{
 					# its anchor first too, and the two commands must meet the same fault first on
 					# the same database (e2e pins the agreement). Before the windows, because an
 					# unreadable date removes the row from BOTH windows and the DELTA is what
-					# `compare` publishes — measured, one NULLed date moved the verdict from "load
-					# steady (4%)" to "load backed off (-16%)" at exit 0.
+					# `compare` publishes: one NULLed date can move it across a verdict at exit 0.
 					_ = guard_activity_dates!(path)?
 					cur_from = Metrics.days_to_date_str(anchor - (days - 1))
 					cur_to = Metrics.days_to_date_str(anchor + 1)
@@ -299,9 +297,9 @@ Report :: [].{
 	latest_activity! : Str => Try({ id : I64, day : Str }, _)
 	latest_activity! = |path| {
 		# "latest" by PARSED day, not string max: `MAX(start_local)` is a byte
-		# comparison, so one malformed date outranks every real one — and `rate latest`
-		# then attached the rating to that row at exit 0. The worst instance of the
-		# class because it WRITES into `ratings`, one of the two tables prune refuses to
+		# comparison, so one malformed date outranks every real one, and `rate latest`
+		# would attach the rating to that row. That matters most here because it WRITES
+		# into `ratings`, one of the two tables prune refuses to
 		# touch (human judgment, unrecoverable), and the printed remedy — delete the
 		# malformed row — would destroy the rating meant for a different session.
 		# Not covered by summary's sweep: `rate!` dispatches straight from main.roc.
@@ -472,10 +470,9 @@ Report :: [].{
 		})?
 		# PROPAGATE, on the same rule and for the same reason as the daily_load reads
 		# above — every activity date this fold parses goes through it.
-		# `keep_oks` was doing both jobs badly: it dropped an unparseable date SILENTLY and
-		# it ACCEPTED a non-canonical one, so the fold both under-counted and mis-dated.
-		# Measured: a fabricated days_since_last shipped under days_since_known: true,
-		# which is the shape the ramp fix removed one screen up in this same file.
+		# `keep_oks` would do both jobs badly: it drops an unparseable date SILENTLY and
+		# ACCEPTS a non-canonical one, so the fold would under-count and mis-date, and a
+		# fabricated days_since_last would ship under days_since_known: true.
 		hard_day_nums = List.map_try(hard_days, |r| canonical_activity_day(r.d, r.example_id))?
 		# Str has no ordering — count on parsed day numbers, same anchor math
 		hard_d14 = List.len(List.keep_if(hard_day_nums, |d| d >= anchor - 13))
@@ -541,8 +538,7 @@ Report :: [].{
 		zsum = zone_sum!(path, cutoff28)?
 
 		# the RIDE family's population, same as pz — a global cross-sport MAX
-		# equals the ride max only while no other family out-rows it (#151, the
-		# exact bug one level up)
+		# equals the ride max only while no other family out-rows it
 		best20_row = Sql.query!({
 			path: Path.utf8(path),
 			query: \\SELECT CAST(COALESCE(MAX(m.best_20min_w),0) AS REAL) AS b FROM activity_metrics m
@@ -773,6 +769,7 @@ Report :: [].{
 			AtLeast(_) => True
 			_ => False
 		}
+		timezone_known = Db.timezone_known!(path)
 		delta_known : Bool
 		delta_known = match form_delta {
 			Known(_) => True
@@ -781,6 +778,8 @@ Report :: [].{
 
 		Ok({
 			as_of: latest.day,
+			# false while no recognised `timezone` is set, so "today" may be the UTC day
+			timezone_known,
 			fitness_ctl: latest.ctl,
 			ramp_7d: ramps.ramp_7d,
 			ramp_28d_avg: ramps.ramp_28d_avg,

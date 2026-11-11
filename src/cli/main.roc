@@ -53,6 +53,7 @@ import Report
 import ReportHealth
 import ReportStrength
 import ReportReview
+import Setup
 import ReportSeason
 import ReportSessions
 import Plan
@@ -76,6 +77,8 @@ help_text =
 	\\"--json": stride skip 5 --json -- --json
 	\\
 	\\SETUP (once)
+	\\    setup [key=value]           the guided first run: Strava app, authorize, timezone,
+	\\                                heart-rate zones, first sync; resumes where it stopped
 	\\    init                        create ~/.stride and migrate the SQLite db
 	\\    auth                        authorize with Strava (one-time paste flow; stores creds)
 	\\    config                      list the config that is set (secrets redacted)
@@ -402,6 +405,8 @@ dispatch! = |cmd|
 	match cmd {
 		Command.Init => init!({})
 		Command.Auth => Strava.auth!({})
+		Command.Setup => Setup.setup!(None)
+		Command.SetupWith(key, val) => Setup.setup!(Pair(key, val))
 		Command.Sync(all) => Strava.sync!(all)
 		Command.Analyze => Analyze.analyze!({})
 		Command.Summary => Report.summary!({})
