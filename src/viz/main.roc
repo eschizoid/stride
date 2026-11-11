@@ -36,6 +36,7 @@ import Curve
 import Career
 import Days
 import Db
+import Scroll
 import Strength
 import DisplayScale
 import Hud
@@ -437,6 +438,8 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		quit_mark_pending: -1.I64,
 		ghost_day: "",
 		trace_zoom: 1.0,
+		lifts_off: 0,
+		week_off: 0,
 		trace_pan: 0.0,
 		trace_cache: loaded.tcache,
 		segs: loaded.sg,
@@ -482,7 +485,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		heat_title: mk!("training heat - one cell per day", 15)?,
 		heat_hint: mk!("hover a cell to read the day      TAB  lifts      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 		plan_title: mk!("the week and the days ahead", 15)?,
-		plan_hint: mk!("week / log / year  modes      TAB  lifts      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+		plan_hint: mk!("week / log / year  modes      wheel or up/down  scroll      TAB  lifts      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 		nav: [
 			{ p: mk!("form", 13)?, v: 0.U8 },
 			{ p: mk!("power", 13)?, v: 1.U8 },
@@ -2003,6 +2006,15 @@ update! = |model0, program_input, io| {
 			else if (d.key_pressed(KeyLeft)) (if (model.cursor < 0) 0 else model.cursor + 1)
 			else if (d.key_pressed(KeyRight)) (if (model.cursor <= 0) (-1) else model.cursor - 1)
 			else model.cursor
+		# a wheel notch or an up/down arrow scrolls the lifts list or the plan's
+		# week ladder one row, clamped to the list's ends (Scroll); a resize or
+		# reload that shortens a list pulls its offset back in
+		notch = Mouse.wheel_delta(d.mouse)
+		scroll_by = if (notch.y < -0.1) 1 else if (notch.y > 0.1) (-1) else if (d.key_pressed(KeyDown)) 1 else if (d.key_pressed(KeyUp)) (-1) else 0
+		lifts_last = Strength.lifts_last(model)
+		week_last = Plan.week_last(model)
+		lifts_off2 = if (model.view == 9 and scroll_by != 0) Scroll.step(model.lifts_off, scroll_by, lifts_last) else model.lifts_off.min(lifts_last)
+		week_off2 = if (model.view == 4 and scroll_by != 0) Scroll.step(model.week_off, scroll_by, week_last) else model.week_off.min(week_last)
 		m = m0
 		# S writes a PNG of the CURRENT view into ./captures. Spawned rather
 		# than called inline: a screenshot waits for the end of a frame, and
@@ -2526,7 +2538,7 @@ update! = |model0, program_input, io| {
 		used = !List.is_empty(d.events) or List.any(d.keys, |k| k != 0) or pointer.x != 0.0 or pointer.y != 0.0 or wheel.x != 0.0 or wheel.y != 0.0 or Mouse.button_down(d.mouse, Left) or Mouse.button_down(d.mouse, Right) or win.w != model.win.w or win.h != model.win.h or directive.has_d
 		last_active = if (used) tick else model.last_active
 		Window.set_target_fps!(frame_rate({ busy, tick, last_active }))
-		Ok({ ..model, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, show_short: want_short, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, lifts_off: lifts_off2, week_off: week_off2, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, show_short: want_short, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 

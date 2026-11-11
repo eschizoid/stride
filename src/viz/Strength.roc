@@ -7,6 +7,7 @@ import Db
 import Theme
 import Trace
 import Ui
+import Scroll
 import Wrap
 
 Strength :: [].{
@@ -126,6 +127,18 @@ Strength :: [].{
 
 	# the left column holds the lifts; its width is a share of the window so
 	# the right column keeps room for a set line at the minimum width
+	# the lifts list starts here and scrolls (Scroll) when its rows outgrow
+	# the room above the footer, less a line for the `more below` hint
+	lift_top : F32
+	lift_top = 108.0
+
+	lift_room : F32 -> F32
+	lift_room = |win_h| (win_h - 76.0 - lift_top - 14.0).max(row_h)
+
+	# the last offset the lifts list may scroll to
+	lifts_last : Ui.Model -> U64
+	lifts_last = |model| Scroll.last_offset(List.repeat(row_h, List.len(model.strength.lifts)), lift_room(model.win.h))
+
 	left_w : F32 -> F32
 	left_w = |win_w| win_w * 0.55
 
@@ -154,16 +167,15 @@ Strength :: [].{
 		txt!("lifts - the heaviest weight each lift moved, newest on the right", 15, 36.0, 70.0, ink_muted)
 
 		# ── lifts, the headline
-		lift_top = 108.0
-		fit_n = match F32.round_to_u64_try(F32.div_floor_by(win_h - 76.0 - lift_top, row_h)) {
-			Ok(n) => n
-			Err(_) => 0
-		}
+		heights = List.repeat(row_h, List.len(sv.lifts))
+		room = lift_room(win_h)
+		off = model.lifts_off.min(Scroll.last_offset(heights, room))
+		n_shown = Scroll.shown(heights, off, room)
 		if List.is_empty(sv.lifts) {
 			txt!("no lift trained on two days with its weight logged yet", 13, 36.0, lift_top, ink_muted)
 		} else {
 			List.for_each!(
-				List.map_with_index(List.take_first(sv.lifts, fit_n), |l, i| { l, i }),
+				List.map_with_index(List.take_first(List.drop_first(sv.lifts, off), n_shown), |l, i| { l, i }),
 				|x| {
 					y = lift_top + U64.to_f32(x.i) * row_h
 					name = (List.first(Wrap.fit(x.l.exercise, 22, 1))).ok_or(x.l.exercise)
@@ -202,10 +214,7 @@ Strength :: [].{
 					txt!(lift_values(units, x.l.points), 12, 354.0, y, ink_muted)
 				},
 			)
-			hidden = List.len(sv.lifts) - U64.min(List.len(sv.lifts), fit_n)
-			if hidden > 0 {
-				txt!("... ${U64.to_str(hidden)} more - grow the window", 12, 36.0, lift_top + U64.to_f32(fit_n) * row_h, ink_faint)
-			}
+			Scroll.draw!(frame, model.font, { x: 36.0 + left_w(win_w) - 6.0, top: lift_top, bottom: lift_top + room, hint_x: 36.0 }, off, n_shown, List.len(sv.lifts))
 		}
 
 		# ── right column: the latest session, then the weeks, then tonnage
@@ -296,7 +305,7 @@ Strength :: [].{
 			)
 		}
 		List.for_each!(List.map_with_index(tonnage_caption(units, ms), |l, i| { l, i }), |x| txt!(x.l, 11, rx, ton_bottom - 10.0 + U64.to_f32(x.i) * 15.0, ink_faint))
-		txt!("TAB  zones      R  reload      S  screenshot      V  record      ESC quit", 13, 36.0, win_h - 30.0, ink_faint)
+		txt!("wheel or up/down  scroll      TAB  zones      R  reload      S  screenshot      V  record      ESC quit", 13, 36.0, win_h - 30.0, ink_faint)
 		Ok({})
 	}
 }
