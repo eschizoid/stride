@@ -6,6 +6,7 @@ import Days
 import Db
 import Theme
 import Ui
+import Scroll
 import Wrap
 
 Plan :: [].{
@@ -113,6 +114,51 @@ Plan :: [].{
 		}
 	}
 
+	# today's card: the prescription in full until the day has an outcome, then
+	# the outcome. It is bounded even though coach-written details are not:
+	# past these caps the last line ends in an ellipsis, so a long
+	# prescription cannot crowd the ladder off the screen.
+	today_card : List(Db.PlanRow), F32 -> { today : Db.PlanRow, head : Str, dlines : List(Str), rlines : List(Str), h : F32 }
+	today_card = |plan, win_w| {
+		blank = { day: "", wi: -1, typ: "", detail: "no plan for today - ask the coach", rationale: "", status: "open", reason: "", today: Bool.False, past: Bool.False, done_day: "", act_name: "", act_secs: 0, act_load: 0, sub_id: 0, sub_name: "", tgt_reps: 0, tgt_dur_s: 0, tgt_watts: 0.0, tgt_lit: "", tgt_res: "", det_reps: 0, det_dur_s: 0, det_watts: 0.0, day_load_known: Bool.False, day_load: 0.0 }
+		today = List.fold(plan, blank, |acc, p| if (p.today) p else acc)
+		outcome = result_text(today)
+		head = if (outcome == "") "today - ${today.typ}" else "today - ${today.typ} - ${status_text(today)}"
+		body = if (outcome == "") today.detail else outcome
+		note = if (outcome == "") today.rationale else today.detail
+		cols = Wrap.cols_for(win_w - 160.0, 7.8)
+		dlines = Wrap.fit(body, cols, 6)
+		rlines = Wrap.fit(note, cols + 8, 3)
+		h = 46.0 + U64.to_f32(List.len(dlines)) * 19.0 + U64.to_f32(List.len(rlines)) * 16.0 + 14.0
+		{ today, head, dlines, rlines, h }
+	}
+
+	# a ladder row's prescription lines: one for a past or current day, up to
+	# three for a day ahead
+	row_lines : Db.PlanRow, U64 -> List(Str)
+	row_lines = |p, cols| if (p.past or p.today) Wrap.fit(p.detail, cols, 1) else Wrap.fit(p.detail, cols, 3)
+
+	row_height : Db.PlanRow, U64 -> F32
+	row_height = |p, cols| (U64.to_f32(List.len(row_lines(p, cols))) * 18.0 + U64.to_f32(List.len(Wrap.fit(result_text(p), cols, 1))) * 16.0 + 12.0).max(30.0)
+
+	# the ladder's geometry, shared by the drawing and by the scroll clamp in
+	# update: every row's height, where it starts, and the room above the
+	# load strip, less a line for the `more below` hint
+	ladder : Ui.Model -> { heights : List(F32), top : F32, room : F32, cols : U64 }
+	ladder = |model| {
+		cols = Wrap.cols_for(model.win.w - 340.0, 7.2)
+		top = 100.0 + (today_card(model.plan, model.win.w)).h + 20.0
+		room = (model.win.h - 110.0 - top - 14.0).max(30.0)
+		{ heights: List.map(model.plan, |p| row_height(p, cols)), top, room, cols }
+	}
+
+	# the last offset the ladder may scroll to
+	week_last : Ui.Model -> U64
+	week_last = |model| {
+		l = ladder(model)
+		Scroll.last_offset(l.heights, l.room)
+	}
+
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
 		win_w = model.win.w
@@ -153,24 +199,14 @@ Plan :: [].{
 			)
 		}
 
-		# today's card: the prescription in full until the day has an outcome,
-		# then the outcome. The card grows with the wrapped text rather than
-		# truncating it.
-		blank = { day: "", wi: -1, typ: "", detail: "no plan for today - ask the coach", rationale: "", status: "open", reason: "", today: Bool.False, past: Bool.False, done_day: "", act_name: "", act_secs: 0, act_load: 0, sub_id: 0, sub_name: "", tgt_reps: 0, tgt_dur_s: 0, tgt_watts: 0.0, tgt_lit: "", tgt_res: "", det_reps: 0, det_dur_s: 0, det_watts: 0.0, day_load_known: Bool.False, day_load: 0.0 }
-		today = List.fold(model.plan, blank, |acc, p| if (p.today) p else acc)
-		outcome = result_text(today)
-		card_head = if (outcome == "") "today - ${today.typ}" else "today - ${today.typ} - ${status_text(today)}"
-		card_body = if (outcome == "") today.detail else outcome
-		card_note = if (outcome == "") today.rationale else today.detail
-		card_cols = Wrap.cols_for(win_w - 160.0, 7.8)
-		# the card is bounded even though coach-written details are not: past
-		# these caps the last line ends in an ellipsis, so a pathological
-		# prescription can never push the ladder past the overflow floor
-		dlines = Wrap.fit(card_body, card_cols, 6)
-		rlines = Wrap.fit(card_note, card_cols + 8, 3)
+		# today's card (today_card)
+		card = today_card(model.plan, win_w)
+		today = card.today
+		card_head = card.head
+		dlines = card.dlines
+		rlines = card.rlines
 		nd = U64.to_f32(List.len(dlines))
-		nr = U64.to_f32(List.len(rlines))
-		card_h = 46.0 + nd * 19.0 + nr * 16.0 + 14.0
+		card_h = card.h
 		frame.rounded_rectangle!({ x: 36.0, y: 100.0, width: win_w - 72.0, height: card_h, radius: 10.0, segments: 8, style: Draw.filled(Theme.card) })
 		frame.rounded_rectangle!({ x: 52.0, y: 116.0, width: 10.0, height: card_h - 32.0, radius: 4.0, segments: 4, style: Draw.filled(type_color(today.typ)) })
 		Text.from(card_head, model.font).size(14).draw!(frame, { pos: { x: 76.0, y: 112.0 }, color: type_color(today.typ), align: (Top, Left) })
@@ -182,44 +218,41 @@ Plan :: [].{
 		# the ladder: Monday through the days ahead. A past or current day takes
 		# one line of prescription (the card holds today's in full) and one of
 		# outcome, and a day ahead up to three, so the coming days fit under the
-		# week's history. An overflow guard stops above the load strip and says
-		# how many rows it hid - a clipped ladder must say so, not shed rows.
-		row_cols = Wrap.cols_for(win_w - 340.0, 7.2)
-		ladder_top = 100.0 + card_h + 20.0
-		floor_y = win_h - 110.0
-		end = List.fold_try!(
-			List.map_with_index(model.plan, |p, i| { p, i }),
-			{ y: ladder_top, hidden: 0.U64 },
+		# week's history. Rows that do not fit above the load strip scroll
+		# (Scroll), so no day is ever shed.
+		lad = ladder(model)
+		row_cols = lad.cols
+		ladder_top = lad.top
+		off = model.week_off.min(Scroll.last_offset(lad.heights, lad.room))
+		n_shown = Scroll.shown(lad.heights, off, lad.room)
+		_ = List.fold_try!(
+			List.take_first(List.drop_first(List.map_with_index(model.plan, |p, i| { p, i }), off), n_shown),
+			{ y: ladder_top },
 			|acc, x| {
-				lines = if (x.p.past or x.p.today) Wrap.fit(x.p.detail, row_cols, 1) else Wrap.fit(x.p.detail, row_cols, 3)
+				lines = row_lines(x.p, row_cols)
 				res = Wrap.fit(result_text(x.p), row_cols, 1)
 				nl = U64.to_f32(List.len(lines))
-				row_h = (nl * 18.0 + U64.to_f32(List.len(res)) * 16.0 + 12.0).max(30.0)
-				if (acc.hidden > 0 or acc.y + row_h > floor_y) Ok({ y: acc.y, hidden: acc.hidden + 1 })
-				else {
-					ly = acc.y
-					ink = if (x.p.today) Color.white else if (x.p.past) ink_faint else ink_muted
-					if x.p.today {
-						frame.rectangle!({ x: 34.0, y: ly - 4.0, width: win_w - 68.0, height: row_h - 3.0, style: Draw.filled(Color.with_alpha(Color.white, 14)) })
-					}
-					Text.from(x.p.day, model.font).size(12).draw!(frame, { pos: { x: 44.0, y: ly }, color: ink, align: (Top, Left) })
-					frame.rounded_rectangle!({ x: 150.0, y: ly + 2.0, width: 92.0, height: 16.0, radius: 5.0, segments: 4, style: Draw.filled(Color.with_alpha(type_color(x.p.typ), 45)) })
-					Text.from(x.p.typ, model.font).size(11).draw!(frame, { pos: { x: 196.0, y: ly + 3.0 }, color: type_color(x.p.typ), align: (Top, Center) })
-					List.for_each!(List.map_with_index(lines, |ln, i| { ln, i }), |d|
-						Text.from(d.ln, model.font).size(12).draw!(frame, { pos: { x: 260.0, y: ly + U64.to_f32(d.i) * 18.0 }, color: ink, align: (Top, Left) }))
-					k = kind_of(x.p)
-					rcol = if (k == Done) Theme.tsb_c else ink_faint
-					List.for_each!(List.map_with_index(res, |ln, i| { ln, i }), |d|
-						Text.from(d.ln, model.font).size(11).draw!(frame, { pos: { x: 260.0, y: ly + nl * 18.0 + U64.to_f32(d.i) * 16.0 }, color: rcol, align: (Top, Left) }))
-					scol = if (k == Done) Theme.tsb_c else if (k == Rested) Theme.tsb_c else if (k == Open and x.p.today) Theme.ctl_c else ink_faint
-					Text.from(status_text(x.p), model.font).size(12).draw!(frame, { pos: { x: win_w - 44.0, y: ly }, color: scol, align: (Top, Right) })
-					Ok({ y: ly + row_h, hidden: acc.hidden })
+				row_h = row_height(x.p, row_cols)
+				ly = acc.y
+				ink = if (x.p.today) Color.white else if (x.p.past) ink_faint else ink_muted
+				if x.p.today {
+					frame.rectangle!({ x: 34.0, y: ly - 4.0, width: win_w - 68.0, height: row_h - 3.0, style: Draw.filled(Color.with_alpha(Color.white, 14)) })
 				}
+				Text.from(x.p.day, model.font).size(12).draw!(frame, { pos: { x: 44.0, y: ly }, color: ink, align: (Top, Left) })
+				frame.rounded_rectangle!({ x: 150.0, y: ly + 2.0, width: 92.0, height: 16.0, radius: 5.0, segments: 4, style: Draw.filled(Color.with_alpha(type_color(x.p.typ), 45)) })
+				Text.from(x.p.typ, model.font).size(11).draw!(frame, { pos: { x: 196.0, y: ly + 3.0 }, color: type_color(x.p.typ), align: (Top, Center) })
+				List.for_each!(List.map_with_index(lines, |ln, i| { ln, i }), |d|
+					Text.from(d.ln, model.font).size(12).draw!(frame, { pos: { x: 260.0, y: ly + U64.to_f32(d.i) * 18.0 }, color: ink, align: (Top, Left) }))
+				k = kind_of(x.p)
+				rcol = if (k == Done) Theme.tsb_c else ink_faint
+				List.for_each!(List.map_with_index(res, |ln, i| { ln, i }), |d|
+					Text.from(d.ln, model.font).size(11).draw!(frame, { pos: { x: 260.0, y: ly + nl * 18.0 + U64.to_f32(d.i) * 16.0 }, color: rcol, align: (Top, Left) }))
+				scol = if (k == Done) Theme.tsb_c else if (k == Rested) Theme.tsb_c else if (k == Open and x.p.today) Theme.ctl_c else ink_faint
+				Text.from(status_text(x.p), model.font).size(12).draw!(frame, { pos: { x: win_w - 44.0, y: ly }, color: scol, align: (Top, Right) })
+				Ok({ y: ly + row_h })
 			},
 		)?
-		if end.hidden > 0 {
-			Text.from("... ${U64.to_str(end.hidden)} more - grow the window", model.font).size(11).draw!(frame, { pos: { x: 260.0, y: (end.y).min(floor_y) }, color: ink_faint, align: (Top, Left) })
-		}
+		Scroll.draw!(frame, model.font, { x: win_w - 30.0, top: ladder_top, bottom: ladder_top + lad.room, hint_x: 260.0 }, off, n_shown, List.len(model.plan))
 
 		# load strip + coach corner. The week's session count lives in the
 		# quest label only; the strip states load, Monday-aligned on both sides.
