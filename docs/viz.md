@@ -141,7 +141,7 @@ the `weekly_ramp` view - the one definition of weekly ramp. A directive with vie
 
 ## The strength view
 
-Strength's own tab, view 9. Its headline is per lift: one row per exercise
+Strength's own tab, the `lifts` pill (view 9). Its headline is per lift: one row per exercise
 trained on at least two days with a weight logged, most-trained first, each
 with a sparkline of the heaviest weight it moved per day, the first and
 latest weights in the athlete's units, and an up, flat or down mark (a move
@@ -170,7 +170,7 @@ read as one, and the career view leaves the tonnage spine to this tab.
 | `G` | toggle the glow pass - the scene renders offscreen and its bright parts come back blurred and added on top; if the GPU refuses any of it, the app draws exactly as before the pass existed |
 | `V` | toggle a WebM recording of the screen into `./captures`, named for the view it started on; FixedStep timing, so the same data replays to the same file |
 | nav pills (top right) | click any view directly; the active one is filled - each wears its vector mark, drawn from primitives (no sprite sheet, crisp at any DPI) |
-| `TAB` | cycle the nav left to right: form board / power view / session trace / the day tab / strength / zones / ramp / career; from any day mode it steps on to strength |
+| `TAB` | cycle the nav left to right: form board / power view / session trace / the day tab / lifts / zones / ramp / career; from any day mode it steps on to lifts |
 | `week` / `log` / `year` chips (day tab) | switch the day tab between the plan, the data table and the heatmap |
 | `1` / `2` / `3` or the chips (power view) | re-window the blue ladder and CP fit to 30/60/90 days |
 | `shift+[` / `shift+]` (trace view) | summon / walk the ghost overlay through sessions of the live one's KIND - same sport, same unit; the walk skips the live session itself, and stepping past the last compatible one dismisses it |

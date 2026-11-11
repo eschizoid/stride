@@ -48,14 +48,14 @@ Strength :: [].{
 	ton_label : [Metric, Imperial], F64 -> Str
 	ton_label = |units, kg| Career.spine_label(units, F64.round_to_i64_try(kg * 10.0) ?? 0, "tonnage", Db.strength_head)
 
-	# the one caption under the tonnage chart: the last complete month and the
-	# month in progress, each with its coverage. A fixed text row, so no value
-	# label can land on another.
-	tonnage_caption : [Metric, Imperial], List(Db.TonMonth) -> Str
+	# the captions under the tonnage chart: the last complete month and the
+	# month in progress, each with its coverage, one per fixed text row, so no
+	# value label can land on another and each fits the narrow column
+	tonnage_caption : [Metric, Imperial], List(Db.TonMonth) -> List(Str)
 	tonnage_caption = |units, ms| {
 		done = List.keep_if(ms, |m| !(m.partial))
 		cur = List.keep_if(ms, |m| m.partial)
-		part = |m, tail| "${month_name(m.month)} ${ton_label(units, m.kg)}${tail} (${I64.to_str(m.covered)}/${I64.to_str(m.total)} logged)"
+		part = |m, tail| "${month_name(m.month)} ${ton_label(units, m.kg)}${tail}, ${I64.to_str(m.covered)}/${I64.to_str(m.total)} logged"
 		a = match List.last(done) {
 			Ok(m) => [part(m, "")]
 			Err(_) => []
@@ -64,7 +64,7 @@ Strength :: [].{
 			Ok(m) => [part(m, " so far")]
 			Err(_) => []
 		}
-		Str.join_with(List.concat(a, b), "  -  ")
+		List.concat(a, b)
 	}
 
 	lift_values : [Metric, Imperial], List(Db.LiftPt) -> Str
@@ -176,7 +176,7 @@ Strength :: [].{
 		}
 
 		wk_top = lift_top + 40.0 + 7.0 * 17.0 + 16.0
-		txt!("strength sessions a week - with sets logged, and without", 12, rx, wk_top, ink_muted)
+		txt!("sessions a week: with sets, without", 12, rx, wk_top, ink_muted)
 		bars_top = wk_top + 22.0
 		bars_h = 56.0
 		n_w = List.len(sv.weeks)
@@ -206,7 +206,7 @@ Strength :: [].{
 		# tonnage: complete measured months joined by a line, a thin month as a
 		# hollow point, the month in progress joined dashed and muted
 		ton_top = bars_top + bars_h + 34.0
-		ton_bottom = win_h - 70.0
+		ton_bottom = win_h - 84.0
 		txt!("tonnage - volume, not strength", 12, rx, ton_top, ink_muted)
 		chart_top = ton_top + 22.0
 		chart_bottom = ton_bottom - 22.0
@@ -244,7 +244,7 @@ Strength :: [].{
 				},
 			)
 		}
-		txt!(tonnage_caption(units, ms), 11, rx, ton_bottom - 14.0, ink_faint)
+		List.for_each!(List.map_with_index(tonnage_caption(units, ms), |l, i| { l, i }), |x| txt!(x.l, 11, rx, ton_bottom - 10.0 + U64.to_f32(x.i) * 15.0, ink_faint))
 		txt!("TAB  zones      R  reload      S  screenshot      V  record      ESC quit", 13, 36.0, win_h - 30.0, ink_faint)
 		Ok({})
 	}
@@ -260,5 +260,5 @@ expect !(Strength.measured({ month: "2026-08", kg: 1.0, covered: 3, total: 7, pa
 expect Strength.month_name("2026-11") == "nov" and Strength.month_name("bad") == "bad"
 # the caption names the last complete month and the month in progress, each
 # with its coverage, on one fixed row
-expect Strength.tonnage_caption(Metric, [{ month: "2026-10", kg: 18400.0, covered: 6, total: 10, partial: Bool.False }, { month: "2026-11", kg: 3300.0, covered: 1, total: 3, partial: Bool.True }]) == "oct 18.4t (6/10 logged)  -  nov 3.3t so far (1/3 logged)"
+expect Strength.tonnage_caption(Metric, [{ month: "2026-10", kg: 18400.0, covered: 6, total: 10, partial: Bool.False }, { month: "2026-11", kg: 3300.0, covered: 1, total: 3, partial: Bool.True }]) == ["oct 18.4t, 6/10 logged", "nov 3.3t so far, 1/3 logged"]
 expect Strength.lift_values(Imperial, [{ day: "a", kg: 22.6796185 }, { day: "b", kg: 27.2155422 }]) == "50.0 lb > 60.0 lb"
