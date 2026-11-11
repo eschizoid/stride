@@ -35,15 +35,45 @@ Trace :: [].{
 		else if (hi <= 4.0) (0.5)
 		else 1.0
 
-	# a speed on a pace trace read as the pace its axis names: per 100 m on
-	# a swim's axis, the athlete's kilometre or mile otherwise
-	trace_pace : Str, [Metric, Imperial], F64 -> Str
-	trace_pace = |unit, units, mps|
-		if (unit != Db.swim_pace_unit) (Units.pace_from_speed(units, mps))
-		else if (mps <= 0.0) "-"
-		else Fmt.mmss(F64.round_to_i64_try(I64.to_f64(Sports.pace_unit("Swim").dist_m) / mps) ?? 0)
+	# the metres a fixed-distance pace axis counts per unit (100 for "min/100m",
+	# 500 for "min/500m"), 0 on the athlete's kilometre or mile axis
+	fixed_pace_m : Str -> I64
+	fixed_pace_m = |unit|
+		List.fold(["Swim", "Rowing"], 0, |acc, fam| if (unit == Str.concat("min", Sports.pace_unit(fam).label)) Sports.pace_unit(fam).dist_m else acc)
 
-	expect trace_pace(Db.swim_pace_unit, Metric, 1.0) == "1:40" and trace_pace(Units.pace_unit(Metric), Metric, 4.0) == "4:10"
+	expect fixed_pace_m(Db.swim_pace_unit) == 100 and fixed_pace_m("min/500m") == 500 and fixed_pace_m(Units.pace_unit(Metric)) == 0
+
+	# a speed on a pace trace read as the pace its axis names: per 100 m on
+	# a swim's axis, per 500 m on the erg's, the athlete's kilometre or mile
+	# otherwise
+	trace_pace : Str, [Metric, Imperial], F64 -> Str
+	trace_pace = |unit, units, mps| {
+		m = fixed_pace_m(unit)
+		if (m == 0) (Units.pace_from_speed(units, mps))
+		else if (mps <= 0.0) "-"
+		else Fmt.mmss(F64.round_to_i64_try(I64.to_f64(m) / mps) ?? 0)
+	}
+
+	expect trace_pace(Db.swim_pace_unit, Metric, 1.0) == "1:40" and trace_pace(Units.pace_unit(Metric), Metric, 4.0) == "4:10" and trace_pace("min/500m", Imperial, 4.0) == "2:05"
+
+	# one split's pace on the trace's own axis, and the distance its header
+	# names: a 100 m swim split reads per 100 m, a 500 m erg split per 500 m
+	split_pace : Str, [Metric, Imperial], F64, I64 -> Str
+	split_pace = |unit, units, distance_m, secs| {
+		m = fixed_pace_m(unit)
+		if (m == 0) (Units.pace_per_dist(units, distance_m, secs))
+		else if (distance_m <= 0.0 or secs <= 0) "-"
+		else Fmt.mmss(F64.round_to_i64_try(I64.to_f64(secs) * I64.to_f64(m) / distance_m) ?? 0)
+	}
+
+	split_head : Str, [Metric, Imperial] -> Str
+	split_head = |unit, units| {
+		m = fixed_pace_m(unit)
+		if (m == 0) "splits (${Units.dist_unit(units)})" else "splits (${I64.to_str(m)} m)"
+	}
+
+	expect split_pace(Db.swim_pace_unit, Metric, 100.0, 104) == "1:44" and split_pace("min/500m", Metric, 500.0, 118) == "1:58" and split_pace(Units.pace_unit(Metric), Metric, 1000.0, 300) == "5:00"
+	expect split_head(Db.swim_pace_unit, Imperial) == "splits (100 m)" and split_head(Units.pace_unit(Imperial), Imperial) == "splits (mi)"
 
 	# the pace channel is recognized by its unit label - the one channel
 	# whose unit begins "min/" in either unit culture
@@ -218,15 +248,16 @@ Trace :: [].{
 				Text.from("ghost (purple): ${gname}  ${model.ghost_day}   C clears", model.font).size(12).draw!(frame, { pos: { x: model.win.w - 34.0, y: 110.0 }, color: Theme.atl_c, align: (Top, Right) })
 			}
 		}
-		# ── the splits panel: the pace channel's companion - the same rows
-		# the CLI's activity screen prints, in the athlete's units. Capped to
+		# ── the splits panel: the pace channel's companion, one row per pace
+		# unit's distance (100 m swimming, 500 m rowing, the athlete's
+		# kilometre or mile on foot), read on the trace's own axis. Capped to
 		# what fits beside the plot; the overflow line says how many rows it
-		# holds back rather than letting the run appear to end early.
+		# holds back rather than letting the session appear to end early.
 		if pace_axis(model.trace_unit) and !(List.is_empty(model.trace_splits)) {
-			Text.from("splits (${Units.dist_unit(model.units)})", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 34.0, y: 136.0 }, color: ink_muted, align: (Top, Right) })
+			Text.from(split_head(model.trace_unit, model.units), model.font).size(11).draw!(frame, { pos: { x: model.win.w - 34.0, y: 136.0 }, color: ink_muted, align: (Top, Right) })
 			shown = List.take_first(model.trace_splits, 14)
 			List.for_each!(List.map_with_index(shown, |r, i| { r, i }), |x|
-				Text.from("${I64.to_str(x.r.n)}  ${Units.pace_per_dist(model.units, x.r.distance_m, x.r.elapsed_s)}", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 34.0, y: 154.0 + U64.to_f32(x.i) * 16.0 }, color: ink_faint, align: (Top, Right) }))
+				Text.from("${I64.to_str(x.r.n)}  ${split_pace(model.trace_unit, model.units, x.r.distance_m, x.r.elapsed_s)}", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 34.0, y: 154.0 + U64.to_f32(x.i) * 16.0 }, color: ink_faint, align: (Top, Right) }))
 			extra = List.len(model.trace_splits) - List.len(shown)
 			if extra > 0 {
 				Text.from("+${U64.to_str(extra)} more", model.font).size(10).draw!(frame, { pos: { x: model.win.w - 34.0, y: 154.0 + 14.0 * 16.0 }, color: ink_faint, align: (Top, Right) })

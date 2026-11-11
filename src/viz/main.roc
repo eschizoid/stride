@@ -206,7 +206,7 @@ load_logo! = |acc, boot|
 # face, so a window that cannot reach the athlete's data says why.
 skeleton : Str -> _
 skeleton = |err|
-	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], ph: "", b20: -1, tg: [], rw: [], csp: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric, cf: "", keys: { power: [], pace: [] }, ptg: [] }
+	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], zo: [], ph: "", b20: -1, tg: [], rw: [], csp: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric, cf: "", keys: { power: [], pace: [] }, ptg: [] }
 
 # boot=True builds the instant skeleton the splash renders over: no database
 # and no engine call - the window opens on frame one and the real load runs
@@ -257,6 +257,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 			ht = Db.load_heat!(db)
 			hev = Db.load_event_days!(db)
 			zw = Db.load_zone_weeks!(db)
+			zo = Db.load_zone_overrides!(db)
 			b20 = Db.load_best20_age!(db, curve_days, tm, cf)
 			tg = Db.load_targets_at!(db, tm)
 			ptg = Db.load_pace_targets_at!(db, tm)
@@ -269,7 +270,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 			prs = Db.load_prs!(db, cf)
 			nts = Db.load_day_notes!(db)
 			cpv = Db.load_curve_prev!(db, curve_days, tm, cf)
-			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, ph, b20, tg, rw, csp, cs, cfm, prs, tcache, un, cf, keys, ptg }
+			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, zo, ph, b20, tg, rw, csp, cs, cfm, prs, tcache, un, cf, keys, ptg }
 		}
 		Err(NoStrideDir) => skeleton("no stride directory — the launcher passes it as the first argument")
 		Err(Unreachable) => skeleton("cannot open ${acc.dir}/db.sqlite")
@@ -453,6 +454,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		heat: loaded.ht,
 		heat_events: loaded.hev,
 		zone_weeks: loaded.zw,
+		zone_overrides: loaded.zo,
 		career_spines: loaded.csp,
 		career_sports: loaded.cs,
 		career_fam_months: loaded.cfm,
@@ -597,7 +599,7 @@ trace_task! = |acc, units, ids, sel, gen|
 					tr = Db.load_trace!(db, entry.id, entry.chan)
 					sg = Db.load_segs!(db, entry.id)
 					du = Db.load_dur!(db, entry.id)
-					sp = if (entry.chan == Db.pace_chan) (Db.load_splits!(db, entry.id, Units.split_len(units))) else []
+					sp = if (entry.chan == Db.pace_chan) (Db.load_splits!(db, entry.id, Db.split_len_for(units, entry.sport))) else []
 					st = if (Trace.strength_session(entry.sport)) (Db.load_sets!(db, entry.id)) else { rows: [], pasted: Bool.False }
 					TraceSwitched({ tr, sg, du, gen, day: entry.day, un: Db.trace_unit(entry.chan, units, entry.sport), sp, st })
 				}
@@ -1136,7 +1138,7 @@ capture_refusal_for = |kind, rec_active, cap_pending|
 
 # Every refusable field of a directive, named. A pure function rather than an
 # inline block: on the pinned compiler, a large conditional binding captured
-# by a task closure compiles to its empty default (#371), and a call compiles
+# by a task closure compiles to its empty default, and a call compiles
 # correctly.
 refusals_for : { has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, capture : Str, family : Str }, I64, U64, U64, List(TraceId), Bool, Bool -> Str
 refusals_for = |dv, cdir, wsel, cur_sel, ids, rec_active, cap_pending| {
@@ -1673,7 +1675,7 @@ load_tcache! = |db, units, ids|
 			du9 = Db.load_dur!(db, te.id)
 			# splits only where a pace trace draws them - the panel is the
 			# pace channel's companion, and the arrays are only read once
-			sp9 = if (te.chan == Db.pace_chan) (Db.load_splits!(db, te.id, Units.split_len(units))) else []
+			sp9 = if (te.chan == Db.pace_chan) (Db.load_splits!(db, te.id, Db.split_len_for(units, te.sport))) else []
 			# the unit travels with the samples so a cache read needs no second
 			# lookup into the picker row; prepend so picker order survives
 			# without List.reverse, which this stdlib lacks
@@ -1695,7 +1697,7 @@ view_basename : U8 -> Str
 view_basename = |v|
 	if (v == 0) "form-board" else if (v == 1) "power" else if (v == 2) "session-trace" else if (v == 3) "data-table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else "career"
 
-# what the bus accepts, as data (#439). caps_views derives from view_basename
+# what the bus accepts, as data. caps_views derives from view_basename
 # so the published list can never drift from the dispatch; caps_fields must
 # move together with refusals_for - the accepts column states the same rules
 # that function enforces, and both live in this file so an edit sees both.
@@ -2331,7 +2333,7 @@ update! = |model0, program_input, io| {
 		chip0h = win.w - 420.0
 		# per-chip, not one wide band: the 8px gaps between chips are not
 		# clickable and must not claim the pointer
-		over_chip = (view2 == 0 or view2 == 1) and m.y >= 64.0 and m.y <= 86.0 and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0) or (view2 == 1 and Curve.chip_at(Curve.curve_chips(win.w, model.curve_keys, model.curve_family), m.x) != ""))
+		over_chip = m.y >= 64.0 and m.y <= 86.0 and (((view2 == 0 or view2 == 1) and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0) or (view2 == 1 and Curve.chip_at(Curve.curve_chips(win.w, model.curve_keys, model.curve_family), m.x) != ""))) or (view2 == 8 and Career.kind_chip_at(Career.kind_chips(model), m.x).is_ok()))
 		over_row = view2 == 3 and m.x >= 36.0 and m.x < Table.table_edge(win.w, detail_day2) and (
 			match Table.row_at(Table.page_for(model, cursor2), m.y) {
 				Row(_) => Bool.True
@@ -2350,7 +2352,13 @@ update! = |model0, program_input, io| {
 		)
 		Mouse.set_cursor!(if (over_chip or over_row or over_nav) PointingHand else Default)
 		# F cycles the career view's sport; harmless elsewhere
-		spine_idx = if (view == 8 and d.key_pressed(KeyF)) (model.spine_idx + 1) else model.spine_idx
+		# ...and a click on a kind chip shows that kind's arc of the same family
+		clicked_kind = if (view == 8 and Mouse.button_pressed(d.mouse, Left) and m.y >= Career.kind_chip_top and m.y <= Career.kind_chip_bottom) (Career.kind_chip_at(Career.kind_chips(model), m.x)) else Err(None)
+		spine_idx =
+			match clicked_kind {
+				Ok(i) => i
+				Err(_) => if (view == 8 and d.key_pressed(KeyF)) (model.spine_idx + 1) else model.spine_idx
+			}
 		# a view switch stamps this tick, and render fades the new view in
 		# from it; a click on the career view settles its sweep at once, since
 		# zero means "no animation" to every consumer of view_anim
@@ -2683,7 +2691,7 @@ splash! = |model, frame| {
 	# deterministically. The asset is RGB with no alpha channel
 	# and carries TWO grounds: the tile's, and a lighter corner padding
 	# outside the rounded corners, which a single clear cannot also match -
-	# those four faint wedges are the residual #508 carries until the mark
+	# those four faint wedges remain until the mark
 	# ships as a transparent export. Nothing at runtime can read a
 	# texture's pixels back, so a re-exported asset needs a re-measure.
 	# The app views still clear to Theme.bg.

@@ -189,6 +189,9 @@ Ui :: [].{
 		heat_title : Text.Prepared,
 		heat_hint : Text.Prepared,
 		zone_weeks : List(Db.ZoneWeek),
+		# the sports with their own HR zone bounds in config; the rest use the
+		# global ones
+		zone_overrides : List(Str),
 		career_spines : List(Db.CareerSpine),
 		career_sports : List(Db.CareerSport),
 		# per-family monthly load and session count, so the career view can show

@@ -447,17 +447,35 @@ Schema :: [].{
 		\\DROP VIEW IF EXISTS monthly_threshold
 	monthly_threshold =
 		\\CREATE VIEW monthly_threshold AS
+		\\-- one row per family, month and threshold KIND: a family can hold both a
+		\\-- power and a pace threshold (a run with a power meter), and each kind's
+		\\-- month-close value is the one its own last scored session carried
 		\\SELECT fm.month AS month,
 		\\       fm.fam AS fam,
-		\\       CASE WHEN COALESCE(m.ftp_used, 0) > 0 THEN 'power' ELSE 'pace' END AS kind,
-		\\       CAST(CASE WHEN COALESCE(m.ftp_used, 0) > 0 THEN m.ftp_used ELSE m.threshold_pace_used END AS REAL) AS value
+		\\       'power' AS kind,
+		\\       CAST(m.ftp_used AS REAL) AS value
 		\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
 		\\JOIN activity_family_month fm ON fm.activity_id = a.id
-		\\WHERE (COALESCE(m.ftp_used, 0) > 0 OR COALESCE(m.threshold_pace_used, 0) > 0)
+		\\WHERE COALESCE(m.ftp_used, 0) > 0
 		\\  AND a.id = (SELECT a2.id FROM activities a2
 		\\              JOIN activity_metrics m2 ON m2.activity_id = a2.id
 		\\              JOIN activity_family_month fm2 ON fm2.activity_id = a2.id
-		\\              WHERE (COALESCE(m2.ftp_used, 0) > 0 OR COALESCE(m2.threshold_pace_used, 0) > 0)
+		\\              WHERE COALESCE(m2.ftp_used, 0) > 0
+		\\                AND fm2.fam = fm.fam
+		\\                AND fm2.month = fm.month
+		\\              ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)
+		\\UNION ALL
+		\\SELECT fm.month AS month,
+		\\       fm.fam AS fam,
+		\\       'pace' AS kind,
+		\\       CAST(m.threshold_pace_used AS REAL) AS value
+		\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
+		\\JOIN activity_family_month fm ON fm.activity_id = a.id
+		\\WHERE COALESCE(m.threshold_pace_used, 0) > 0
+		\\  AND a.id = (SELECT a2.id FROM activities a2
+		\\              JOIN activity_metrics m2 ON m2.activity_id = a2.id
+		\\              JOIN activity_family_month fm2 ON fm2.activity_id = a2.id
+		\\              WHERE COALESCE(m2.threshold_pace_used, 0) > 0
 		\\                AND fm2.fam = fm.fam
 		\\                AND fm2.month = fm.month
 		\\              ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)

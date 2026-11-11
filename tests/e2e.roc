@@ -992,6 +992,12 @@ run_notes! = || {
 	check!("...while the fully covered month keeps its row", Str.trim(sql!(db, "SELECT COUNT(*) FROM monthly_threshold WHERE kind = 'tonnage' AND month <> '2026-07';")) == "1")?
 	_ = sql!(db, "DELETE FROM activities WHERE id IN (506, 507);")
 	check!("...and returns when the coverage does", Str.trim(sql!(db, "SELECT COUNT(*) FROM monthly_threshold WHERE kind = 'tonnage' AND month = '2026-07';")) == "1")?
+	# a family can hold two threshold kinds: a run scored with both a power and
+	# a pace threshold puts one spine row of each kind in its month, each the
+	# value its own kind's last session carried
+	_ = sql!(db, "INSERT INTO activities (id, name, sport_type, start_local, moving_time) VALUES (508, 'run with a power meter', 'Run', '2026-06-10T10:00:00Z', 3600), (509, 'run without one', 'Run', '2026-06-20T10:00:00Z', 3600); INSERT INTO activity_metrics (activity_id, ftp_used, threshold_pace_used, metrics_rev) VALUES (508, 280, 3.9, 1), (509, 0, 4.0, 1);")
+	check!("a run family with power and pace thresholds carries one spine row per kind", Str.trim(sql!(db, "SELECT group_concat(kind || '=' || value, ',') FROM (SELECT kind, value FROM monthly_threshold WHERE fam = 'Run' AND month = '2026-06' ORDER BY kind);")) == "pace=4.0,power=280.0")?
+	_ = sql!(db, "DELETE FROM activity_metrics WHERE activity_id IN (508, 509); DELETE FROM activities WHERE id IN (508, 509);")
 	# ── the strength report reads the same truths back (#522) ──────────
 	# per-exercise points, the monthly table INCLUDING withheld months, and
 	# the session counts that make the gaps visible — each against values

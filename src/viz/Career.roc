@@ -210,16 +210,73 @@ Career :: [].{
 		Text.from(caption, font).size(11).draw!(frame, { pos: { x: x + 16.0, y: y + 42.0 }, color: Theme.ink_faint, align: (Top, Left) })
 	}
 
+	# what the arc on screen measures, said after its family
+	unit_note : [Metric, Imperial], Str, Str -> Str
+	unit_note = |units, kind, fam|
+		if (kind == "power") "threshold watts"
+		# the withheld months are the honest gaps: a month where under a
+		# third of the sessions carry sets is a biased sample, and the view
+		# refuses to draw it (the rule lives in monthly_threshold's tonnage
+		# arm; a refused month bridges with dashes like any unmeasured one)
+		else if (kind == "tonnage") "monthly tonnage (kg lifted; thin months bridge as gaps)"
+		else "threshold pace${Sports.pace_label_for(units, fam)}"
+
+	subtitle : Ui.Model -> Str
+	subtitle = |model| {
+		cur = spine_at(model.career_spines, model.spine_idx)
+		switch_note = if (List.len(model.career_spines) > 1) "   F  next sport" else ""
+		if (cur.fam == "") "career - every month since the first session" else "career - ${Str.with_ascii_lowercased(cur.fam)} ${unit_note(model.units, cur.kind, cur.fam)}${switch_note}"
+	}
+
+	# ── the kind chips. A family can carry more than one threshold kind (a
+	# run with a power meter has a power arc and a pace arc), and F cycles
+	# every arc in the list, so the family on screen gets one chip per kind it
+	# holds, right of the subtitle on the chip row: a click shows that kind's
+	# arc. A family with a single kind gets none.
+	KindChip : { label : Str, idx : U64, x : F32, on : Bool }
+
+	kind_chip_w : F32
+	kind_chip_w = 52.0
+
+	kind_chip_top : F32
+	kind_chip_top = 64.0
+
+	kind_chip_bottom : F32
+	kind_chip_bottom = 86.0
+
+	kind_chips_at : List(Db.CareerSpine), U64, F32 -> List(KindChip)
+	kind_chips_at = |spines, spine_idx, x0| {
+		n = List.len(spines)
+		cur_i = if (n == 0) 0 else spine_idx % n
+		cur = spine_at(spines, spine_idx)
+		same = List.keep_if(List.map_with_index(spines, |s, i| { s, i }), |x| cur.fam != "" and x.s.fam == cur.fam)
+		if (List.len(same) < 2) []
+		else List.map_with_index(same, |x, j| { label: x.s.kind, idx: x.i, x: x0 + U64.to_f32(j) * (kind_chip_w + 6.0), on: x.i == cur_i })
+	}
+
+	kind_chips : Ui.Model -> List(KindChip)
+	kind_chips = |model| {
+		w = model.font.measure({ text: subtitle(model), size: 14.0, spacing: Text.default_spacing }).width
+		kind_chips_at(model.career_spines, model.spine_idx, 36.0 + w + 16.0)
+	}
+
+	# the spine index under x on the chip row, if a kind chip is there
+	kind_chip_at : List(KindChip), F32 -> Try(U64, [None])
+	kind_chip_at = |chips, x|
+		match List.find_first(chips, |c| x >= c.x and x <= c.x + kind_chip_w) {
+			Ok(c) => Ok(c.idx)
+			Err(_) => Err(None)
+		}
+
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
 		win_w = model.win.w
 		win_h = model.win.h
 		ink_muted = Theme.ink_muted
 		ink_faint = Theme.ink_faint
-		# the arc on screen is one of the loaded families; F cycles them, so an
-		# athlete who rides AND rows sees each story rather than only the one
-		# they have trained longest
-		nspines = List.len(model.career_spines)
+		# the arc on screen is one of the loaded family arcs; F cycles them, so
+		# an athlete who rides AND rows sees each story rather than only the
+		# one they have trained longest
 		cur = spine_at(model.career_spines, model.spine_idx)
 		# a spine needs a series before it is a trajectory: with fewer than
 		# three measured months the tonnage arc withholds its stroke — one
@@ -235,18 +292,16 @@ Career :: [].{
 		months = if (spine_ready) cur.rows else List.map(cur.rows, |m| { ..m, ftp10: 0 })
 		n = List.len(months)
 		sp = { fam: cur.fam, kind: cur.kind }
-		unit_note =
-			if (sp.kind == "power") "threshold watts"
-			# the withheld months are the honest gaps: a month where under a
-			# third of the sessions carry sets is a biased sample, and the view
-			# refuses to draw it (the rule lives in monthly_threshold's
-			# tonnage arm; a refused month bridges with dashes like any
-			# unmeasured one)
-			else if (sp.kind == "tonnage") "monthly tonnage (kg lifted; thin months bridge as gaps)"
-			else "threshold pace${Sports.pace_label_for(model.units, sp.fam)}"
-		switch_note = if (nspines > 1) "   F  next sport" else ""
-		subtitle = if (sp.fam == "") "career - every month since the first session" else "career - ${Str.with_ascii_lowercased(sp.fam)} ${unit_note}${switch_note}"
-		Text.from(subtitle, model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+		Text.from(subtitle(model), model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+		List.for_each!(
+			kind_chips(model),
+			|kc| {
+				hov = model.mouse_x >= kc.x and model.mouse_x <= kc.x + kind_chip_w and model.mouse_y >= kind_chip_top and model.mouse_y <= kind_chip_bottom
+				style = if (kc.on) (Draw.filled(Color.with_alpha(Theme.tsb_c, 60))) else if (hov) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
+				frame.rounded_rectangle!({ x: kc.x, y: kind_chip_top, width: kind_chip_w, height: kind_chip_bottom - kind_chip_top, radius: 6.0, segments: 6, style })
+				Text.from(kc.label, model.font).size(12).draw!(frame, { pos: { x: kc.x + kind_chip_w / 2.0, y: 68.0 }, color: if (kc.on) Color.white else ink_muted, align: (Top, Center) })
+			},
+		)
 		# ── the character sheet: level and streak, earned by the same
 		# career the chart below tells. The XP bar eases in with the sweep.
 		hours = Hud.total_hours(model.career_sports)
@@ -804,3 +859,19 @@ expect Career.family_name("Ride") == "Ride" and Career.family_name("other") == "
 
 # the legend takes the half of the plot the valley label is not on
 expect Career.legend_left(900.0, 64.0, 1000.0) and !Career.legend_left(100.0, 64.0, 1000.0)
+
+# a family holding two threshold kinds gets one chip per kind, the arc on
+# screen lit; a family with one kind, or no family, gets none
+expect {
+	run_pw = { fam: "Run", kind: "power", rows: [] }
+	run_pc = { fam: "Run", kind: "pace", rows: [] }
+	ride = { fam: "Ride", kind: "power", rows: [] }
+	chips = Career.kind_chips_at([ride, run_pw, run_pc], 2, 400.0)
+	List.map(chips, |c| c.label) == ["power", "pace"]
+		and List.map(chips, |c| c.idx) == [1, 2]
+		and List.map(List.keep_if(chips, |c| c.on), |c| c.label) == ["pace"]
+		and Career.kind_chip_at(chips, 400.0 + 58.0 + 10.0) == Ok(2)
+		and Career.kind_chip_at(chips, 380.0) == Err(None)
+		and Career.kind_chips_at([ride, run_pw, run_pc], 0, 400.0) == []
+		and Career.kind_chips_at([], 0, 400.0) == []
+}

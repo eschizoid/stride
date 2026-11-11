@@ -271,7 +271,7 @@ Db :: [].{
 	# bump when the schema changes; ensure_schema! re-runs migrations when the db's
 	# PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 	# that post-date the original CREATE statements in Schema.roc.)
-	schema_version = 43
+	schema_version = 44
 
 	run_migrations! : Str => Try({}, _)
 	run_migrations! = |path| {
