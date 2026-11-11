@@ -114,6 +114,13 @@ Strength :: [].{
 	f32 : F64 -> F32
 	f32 = |v| I64.to_f32(F64.round_to_i64_try(v * 10000.0) ?? 0) / 10000.0
 
+	# the vertical span a lift's sparkline scales to: its own range, but never
+	# less than 15% of its heaviest weight, so the rounding between sources
+	# (11.3 kg logged, 11.34 kg pasted, both 25 lb) stays a flat line instead
+	# of a cliff
+	spark_span : F64, F64 -> F64
+	spark_span = |lo, hi| F64.max(hi - lo, F64.max(hi * 0.15, 0.001))
+
 	row_h : F32
 	row_h = 26.0
 
@@ -169,7 +176,7 @@ Strength :: [].{
 					hi = List.fold(kgs, 0.0, |a, k| F64.max(a, k))
 					n = List.len(kgs)
 					px = |i| sx + (if (n <= 1) 0.0 else U64.to_f32(i) * sw / U64.to_f32(n - 1))
-					py = |k| if (hi - lo < 0.001) y + 8.0 else y + 15.0 - f32((k - lo) / (hi - lo)) * 14.0
+					py = |k| y + 15.0 - f32((k - lo) / spark_span(lo, hi)) * 14.0
 					List.for_each!(
 						List.map_with_index(List.drop_first(kgs, 1), |k, i| { k, i }),
 						|s| {
@@ -315,3 +322,5 @@ expect Strength.set_text(Imperial, { exercise: "Curl", sets: 3, reps: 0, kg: 9.0
 # the newer unlogged sessions are named on one muted line
 expect Strength.unlogged_note([]) == "" and Strength.unlogged_note([{ day: "2026-11-07", name: "a" }]) == "newer, no sets logged: 2026-11-07"
 expect Strength.unlogged_note([{ day: "2026-11-07", name: "a" }, { day: "2026-11-04", name: "b" }]) == "newer, no sets logged: 2026-11-07, 2026-11-04"
+# a rounding difference between sources draws flat; a real step keeps its size
+expect Strength.spark_span(11.3, 11.3398) > 1.6 and Strength.spark_span(9.0, 13.6) == 4.6
