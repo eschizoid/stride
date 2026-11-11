@@ -36,7 +36,7 @@ MIN_DOCS=9
 # a deleted globbed file simply leaves the expansion — the per-file readability guard
 # below never sees it, and every floor above has slack enough to absorb one file. A new
 # doc bumps this deliberately; a silent drop is the failure this exists to catch.
-EXPECTED_NFILES=27
+EXPECTED_NFILES=28
 
 # ...and the reference-heavy files carry their own floors, because the global MIN_REFS
 # has enough slack that a single file's coverage can collapse entirely inside it (a
@@ -392,6 +392,8 @@ rate=1,2
 relabel=1,2,3
 skip=1,2
 strength import=1
+test remove=1
+test=1,2
 top=1
 tte=1
 week add=1,2,3,4'
@@ -453,6 +455,8 @@ reps=1
 review=1
 skip=1,2,3
 strength import=1
+test remove=1
+test=1,2
 top=1,2,3
 tte=1
 week add=1,2,3,4,5'
@@ -473,6 +477,7 @@ fi
 # never for placeholder names — the asymmetry is the rule's own. Last of the four so
 # the wider failures speak first.
 EXPECTED_LITERALS='sync=--all
+test=--apply-zones
 viz tick=--no-ack
 week=all'
 littext=$(awk -F'\t' '{ n = split($2, a, " "); for (i = 1; i <= n; i++) { t = a[i]; sub(/^!/, "", t); if (t !~ /</) printf "%s=%s\n", $1, t } }' "$ARGS" | LC_ALL=C sort)

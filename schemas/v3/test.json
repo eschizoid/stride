@@ -1,0 +1,103 @@
+{
+  "title": "test",
+  "description": "Result of `stride test <activity_id> <kind> [--apply-zones]`: the session marked as a threshold test and the threshold it yields (ADR 0020).",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "activity_id",
+    "date",
+    "sport",
+    "kind",
+    "signal",
+    "value",
+    "unit",
+    "in_force_until",
+    "zones_applied",
+    "zones",
+    "zone_sports"
+  ],
+  "properties": {
+    "activity_id": {
+      "type": "integer"
+    },
+    "date": {
+      "type": "string",
+      "description": "The test session's local date."
+    },
+    "sport": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "ftp20",
+        "ramp",
+        "cp3-12",
+        "tt30",
+        "css",
+        "5k",
+        "3k"
+      ]
+    },
+    "signal": {
+      "type": "string",
+      "enum": [
+        "power",
+        "pace",
+        "hr"
+      ],
+      "description": "Which threshold the test sets: power (the family's FTP), pace (the sport type's threshold speed) or hr (a lactate-threshold heart rate, which changes scoring only through --apply-zones)."
+    },
+    "value": {
+      "type": "number",
+      "description": "The threshold, in `unit`."
+    },
+    "unit": {
+      "type": "string",
+      "enum": [
+        "W",
+        "m/s",
+        "bpm"
+      ]
+    },
+    "in_force_until": {
+      "type": "string",
+      "description": "The last date the test can set its population's threshold: the session's date plus the in-force span."
+    },
+    "zones_applied": {
+      "type": "boolean",
+      "description": "True when --apply-zones wrote zone ceilings from this test; `zones` is all zeros and `zone_sports` empty when false."
+    },
+    "zones": {
+      "type": "object",
+      "additionalKeys": false,
+      "required": [
+        "z1_max",
+        "z2_max",
+        "z3_max",
+        "z4_max"
+      ],
+      "properties": {
+        "z1_max": {
+          "type": "number"
+        },
+        "z2_max": {
+          "type": "number"
+        },
+        "z3_max": {
+          "type": "number"
+        },
+        "z4_max": {
+          "type": "number"
+        }
+      }
+    },
+    "zone_sports": {
+      "type": "array",
+      "description": "The sport types whose per-sport zone keys were written: every type in the test's family.",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}
