@@ -243,17 +243,34 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
+      # STRIDE_INSTALL_APP unset with no terminal attached: the installer must
+      # skip the app question and still exit 0
       - name: Install the latest release with install.sh
         env:
           STRIDE_INSTALL_DIR: ${{ runner.temp }}/stride-bin
-          STRIDE_INSTALL_APP: "0"
         run: sh install.sh < /dev/null
+
+      - name: A truncated download runs nothing
+        run: |
+          head -n 40 install.sh | STRIDE_INSTALL_DIR="${{ runner.temp }}/cut" sh || true
+          [ ! -e "${{ runner.temp }}/cut/stride" ] || { echo "a cut-off install.sh installed a binary"; exit 1; }
+
+      - name: The desktop app installs on macOS
+        if: runner.os == 'macOS'
+        env:
+          HOME: ${{ runner.temp }}/apphome
+          STRIDE_INSTALL_DIR: ${{ runner.temp }}/apphome/bin
+          STRIDE_INSTALL_APP: "1"
+        run: |
+          mkdir -p "$HOME"
+          sh install.sh < /dev/null
+          test -x "$HOME/Applications/Stride.app/Contents/MacOS/stride-viz"
 
       - name: The installed binary starts and answers its version
         run: |

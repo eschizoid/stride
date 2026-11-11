@@ -21,7 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/eschizoid/stride/main/install.sh | 
 stride setup
 ```
 
-The installer picks the build for your OS and CPU (macOS arm64 and x86_64, Linux x86_64 and arm64), checks it against the release's `SHA256SUMS.txt`, and puts `stride` in `~/.local/bin`. On macOS it also offers to install the desktop window into `~/Applications`. `STRIDE_VERSION` pins a release and `STRIDE_INSTALL_DIR` picks another directory. On Windows, download `stride-cli-windows-x86_64` and `stride-app-windows-x86_64.zip` from the [latest release](https://github.com/eschizoid/stride/releases/latest).
+The installer picks the build for your OS and CPU (macOS arm64 and x86_64, Linux x86_64 and arm64), checks it against the release's `SHA256SUMS.txt`, and puts `stride` in `~/.local/bin`. If that directory is not on your `PATH` (a fresh macOS install leaves it off), the installer says so and prints the full path to run instead, for example `~/.local/bin/stride setup`. On macOS it also offers to install the desktop window into `~/Applications`. `STRIDE_VERSION` pins a release and `STRIDE_INSTALL_DIR` picks another directory. On Windows, download `stride-cli-windows-x86_64` and `stride-app-windows-x86_64.zip` from the [latest release](https://github.com/eschizoid/stride/releases/latest).
 
 `stride setup` walks the first run and resumes wherever it stopped:
 
