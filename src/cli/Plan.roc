@@ -68,6 +68,24 @@ Plan :: [].{
 			}
 		}
 	}
+	# An activity `a` no planned session claims, as completion or as a live
+	# substitute: a substitute on a skipped session stops claiming once a later
+	# row or a non-skipped row holds that date. The supersession predicate is
+	# mirrored in live_claimant! and (positively) in plan_view!'s sessions
+	# query; all three must agree, or `week` and `review` offer an activity the
+	# claim commands then refuse. Claims are not week-relative, so the predicate
+	# carries no date window: with one, a substitute linked from another week
+	# would read as unclaimed and still be refused.
+	unclaimed_sql : Str
+	unclaimed_sql =
+		\\NOT EXISTS (SELECT 1 FROM planned_sessions ps
+		\\       WHERE ps.completed_activity_id = a.id
+		\\          OR (ps.substitute_activity_id = a.id
+		\\              AND (COALESCE(ps.status,'open') <> 'skipped'
+		\\                   OR NOT EXISTS (SELECT 1 FROM planned_sessions p3
+		\\                                  WHERE p3.target_date = ps.target_date
+		\\                                    AND (COALESCE(p3.status,'open') <> 'skipped' OR p3.id > ps.id)))))
+
 	plan_view! : [ThisWeek, AllTime] => Try({}, _)
 	plan_view! = |scope| {
 		path = Db.open_db!({})?
@@ -93,9 +111,8 @@ Plan :: [].{
 			}
 		# `week all` must mean ALL: the older-sessions count and the note pointing at the
 		# JSON are both lies if the query silently truncates. SQLite treats a negative
-		# LIMIT as unbounded, so this stays a BOUND value — no interpolated clause, which
-		# is the pattern that spliced an empty string into the query and crashed the
-		# backend (see the :all note above).
+		# LIMIT as unbounded, so this stays a BOUND value rather than an interpolated
+		# clause (see the :all note above).
 		row_limit =
 			match scope {
 				AllTime => -1
@@ -144,8 +161,7 @@ Plan :: [].{
 		})?
 		# newest-first from SQL, flipped to calendar order for display. `Render.reverse_list`
 		# (fold + prepend, linear) rather than fold + `List.concat([x], acc)`, which copies
-		# the whole accumulator every step and is quadratic — harmless behind the old
-		# LIMIT 100, unbounded now that `week all` returns the full log.
+		# the whole accumulator every step and is quadratic over `week all`'s full log.
 		ordered = Render.reverse_list(rows)
 		dow = |date_str|
 			match Metrics.date_str_to_days(date_str) {
@@ -165,11 +181,8 @@ Plan :: [].{
 				detail: p.detail,
 				rationale: p.rationale,
 				completed_activity_id: p.completed_activity_id,
-				# ...and what a re-completion erased, 0 when nothing was. Published rather than
-				# kept internal because the whole defect was that the erased id existed only in
-				# one line of stdout, once: `week` and `plan` showed the NEW completion and the
-				# old one was gone from the row, so noticing a week later left shell scrollback
-				# as the only record.
+				# ...and what a re-completion erased, 0 when nothing was. Published on the row,
+				# so an erased completion stays on record after `complete` has printed it once.
 				superseded_activity_id: p.superseded_activity_id,
 				# 0 on session rows — only unplanned rows carry a bare activity_id
 				activity_id: 0.I64,
@@ -224,12 +237,7 @@ Plan :: [].{
 		# `status_shown` read `unlinked`, while `status` keeps the v3 value `unplanned`
 		# that JSON consumers match on. ThisWeek only: `week all` is the SESSION log,
 		# and every unclaimed activity in the history would bury it.
-		# NOTE: the substitute arm's supersession predicate below is mirrored in
-		# live_claimant! and (positively) in the sessions query above. The three MUST
-		# agree, or week offers an activity that the claim commands then refuse.
-		# Claims are not week-relative, so this exclusion carries no week-window
-		# clause: with one, a substitute linked from another week would show here as
-		# unclaimed and still be refused.
+		# The exclusion is unclaimed_sql, shared with `review`.
 		unplanned = Sql.query_many!({
 			path: Path.utf8(path),
 			query: \\SELECT a.id AS aid, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS adate, COALESCE(CAST(a.sport_type AS TEXT),'') AS sport,
@@ -239,13 +247,7 @@ Plan :: [].{
 				\\WHERE :all = 0
 				\\  AND a.start_local >= '${Metrics.days_to_date_str(mon)}'
 				\\  AND a.start_local < '${Metrics.days_to_date_str(mon + 7)}'
-				\\  AND NOT EXISTS (SELECT 1 FROM planned_sessions ps
-				\\       WHERE ps.completed_activity_id = a.id
-				\\          OR (ps.substitute_activity_id = a.id
-				\\              AND (COALESCE(ps.status,'open') <> 'skipped'
-				\\                   OR NOT EXISTS (SELECT 1 FROM planned_sessions p3
-				\\                                  WHERE p3.target_date = ps.target_date
-				\\                                    AND (COALESCE(p3.status,'open') <> 'skipped' OR p3.id > ps.id)))))
+				\\  AND ${unclaimed_sql}
 				\\-- the flag is DEFENSIVE here: this order is discarded downstream by a
 				\\-- List.sort_with over (day, rank, activity_id), a strict total order, so no
 				\\-- database can make this clause observable. Kept in case that sort changes.
@@ -926,9 +928,8 @@ Plan :: [].{
 								# `NOT IN (0, :aid)`, the same clause `replaced_activity` uses: 0 because an
 								# unset completion reads as 0 through COALESCE, and recording it would claim a
 								# completion was erased when there was none; `:aid` because re-completing with
-								# the SAME activity erases nothing — an unconditional write set superseded ==
-								# completed ("this activity replaced itself") and DESTROYED the genuine erased
-								# id from the earlier overwrite.
+								# the SAME activity erases nothing, and recording it would overwrite a genuine
+								# erased id with "this activity replaced itself".
 								# `ELSE superseded_activity_id`, not NULL: a no-op re-run must leave the record
 								# standing, which is the whole point.
 								query: "UPDATE planned_sessions SET superseded_activity_id = CASE WHEN COALESCE(completed_activity_id, 0) NOT IN (0, :aid) THEN completed_activity_id ELSE superseded_activity_id END, completed_activity_id = :aid, status = 'done', substitute_activity_id = NULL WHERE id = :pid",
@@ -947,8 +948,7 @@ Plan :: [].{
 							# `dropped_substitute`, NOT `released_substitute`: `skip` OMITS that key when
 							# nothing was released (pinned by a `!contains`), so a consumer that correctly
 							# learned `has("released_substitute")` there would read "a substitute was
-							# released" on every completion. Same name + opposite absence contract is the
-							# field's own bug re-created across commands.
+							# released" on every completion: one name cannot carry two absence contracts.
 							replaced = if (prior.p != activity_id) prior.p else 0
 							# ...and `sub != activity_id` IS load-bearing: re-completing with
 							# the activity that was already the substitute is a promotion,
@@ -1069,8 +1069,8 @@ Plan :: [].{
 						# — but the same UPDATE NULLs `substitute_activity_id`, so `dropped_substitute`
 						# must be read before the write on this arm too.
 						# `0.I64`, not a bare `0`: Roc infers an unconstrained record literal as
-						# fractional, and the builtin JSON renders `0.0` — a float under an integer key,
-						# and both gates were blind (the validator's integer test is floor($v) == $v).
+						# fractional, and the builtin JSON renders `0.0`, a float under an integer key
+						# that the validator's integer test (floor($v) == $v) accepts.
 						released = Sql.query!({
 							path: Path.utf8(path),
 							query: "SELECT COALESCE(substitute_activity_id, 0) AS sub FROM planned_sessions WHERE id = :pid",
@@ -1616,11 +1616,7 @@ Plan :: [].{
 						anchor = (Metrics.date_str_to_days(s.as_of)).ok_or(0)
 						# anchor-13, not anchor-14: the range is INCLUSIVE of both ends, so
 						# `>= anchor - 14` spans fifteen days while the section header and the
-						# `recent_activities_14d` field both promise fourteen. Nobody could count
-						# the difference while only days with activities were rendered; showing
-						# every day made the extra one visible. Narrowing the window keeps the
-						# name honest — the alternative, relabelling to 15, would have meant
-						# renaming the JSON field and breaking its consumers over a fencepost.
+						# `recent_activities_14d` field both promise fourteen.
 						cutoff14 = Metrics.days_to_date_str(anchor - 13)
 						recent = Sql.query_many!({
 							path: Path.utf8(path),
@@ -1816,7 +1812,7 @@ Plan :: [].{
 						# newly arrived stream leaves scored rows due, and this counts them.
 						#
 						# Not `?`: pending_metrics_count! validates EVERY hr_z* key including per-sport
-						# overrides, and propagating made one unparseable override kill `plan` outright.
+						# overrides, and propagating would let one unparseable override kill `plan`.
 						# Reported as unknown instead — a THIRD `_known` mechanism (an Err from a
 						# computation that could not run, meaning BROKEN rather than absent), said
 						# plainly so a maintainer does not hunt for the column behind the flag. 0 with
@@ -1832,7 +1828,7 @@ Plan :: [].{
 						# Date only, lining up with summary.as_of — but mind what the gap measures:
 						# rebuild_daily_load! floors the series at local today, so as_of is pinned to the
 						# day analyze LAST RAN. The gap is last-activity-to-last-analyze and simply stops
-						# growing on a stale install (measured: a week-stale install froze at 3), so
+						# growing on a stale install, so
 						# last_sync against the real clock is the primary signal and this the secondary.
 						# "" when there are no activities.
 						newest_activity = Sql.query!({

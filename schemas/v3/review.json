@@ -1,0 +1,602 @@
+{
+  "title": "review",
+  "description": "Payload of `stride review [week|YYYY-MM-DD]`: one Mon-Sun week. Measurements only; whether the week went well is the coach's call.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "days",
+    "fitness",
+    "in_progress",
+    "intensity",
+    "load",
+    "sessions",
+    "sports",
+    "strength",
+    "unplanned",
+    "week_end",
+    "week_start"
+  ],
+  "properties": {
+    "week_start": {
+      "type": "string",
+      "description": "The week's Monday, YYYY-MM-DD."
+    },
+    "week_end": {
+      "type": "string",
+      "description": "The week's Sunday, YYYY-MM-DD."
+    },
+    "in_progress": {
+      "type": "boolean",
+      "description": "true while today falls inside the week before its Sunday; actual totals then cover the days lived so far."
+    },
+    "sessions": {
+      "type": "array",
+      "description": "Every live planned session in the week (the rows `week` lists), in date order.",
+      "items": {
+        "type": "object",
+        "additionalKeys": false,
+        "required": [
+          "completed_activity_id",
+          "detail",
+          "execution",
+          "id",
+          "planned_load",
+          "planned_load_known",
+          "session_type",
+          "skipped_reason",
+          "status",
+          "substitute_activity_id",
+          "target_date",
+          "unprojected_reason"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "target_date": {
+            "type": "string"
+          },
+          "session_type": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "done",
+              "skipped"
+            ]
+          },
+          "skipped_reason": {
+            "type": "string"
+          },
+          "completed_activity_id": {
+            "type": "integer",
+            "description": "0 when no activity completed the session."
+          },
+          "substitute_activity_id": {
+            "type": "integer",
+            "description": "The activity done instead of a skipped session; 0 when none."
+          },
+          "planned_load": {
+            "type": "number",
+            "description": "The load the session's target prices to, by the rules `project` prices with; 0 when planned_load_known is false."
+          },
+          "planned_load_known": {
+            "type": "boolean"
+          },
+          "unprojected_reason": {
+            "type": "string",
+            "enum": [
+              "",
+              "no_target",
+              "no_ftp",
+              "no_hr_zones",
+              "no_threshold_pace"
+            ],
+            "description": "Why planned_load_known is false; empty when it is true. The reasons `project` lists under unprojected."
+          },
+          "execution": {
+            "type": "object",
+            "additionalKeys": false,
+            "required": [
+              "detected_known",
+              "detected_mean_dur_s",
+              "detected_mean_watts",
+              "detected_reps",
+              "exec_known",
+              "exec_reason",
+              "hr_in_s",
+              "hr_mean",
+              "hr_over_s",
+              "hr_under_s",
+              "pace_actual_s",
+              "pace_basis",
+              "pace_pct",
+              "pace_reps",
+              "pace_reps_delta",
+              "reps_delta",
+              "rpe_actual",
+              "rpe_known",
+              "target_dist_m",
+              "target_dur_s",
+              "target_hr_hi",
+              "target_hr_lo",
+              "target_kind",
+              "target_known",
+              "target_literal",
+              "target_pace_s",
+              "target_pace_unit",
+              "target_reps",
+              "target_rpe",
+              "target_watts",
+              "target_zone",
+              "watts_pct",
+              "zone_above_s",
+              "zone_below_s",
+              "zone_in_s"
+            ],
+            "properties": {
+              "detected_known": {
+                "type": "boolean",
+                "description": "True when the linked activity has detected power work segments. reps_delta and watts_pct are meaningful only when target_kind is power and detected_known is true; otherwise they ride at 0 behind the flags (ADR 0009)."
+              },
+              "detected_reps": {
+                "type": "integer"
+              },
+              "detected_mean_dur_s": {
+                "type": "integer"
+              },
+              "detected_mean_watts": {
+                "type": "number"
+              },
+              "reps_delta": {
+                "type": "integer",
+                "description": "detected_reps minus target_reps. A measurement, not a verdict (ADR 0012)."
+              },
+              "watts_pct": {
+                "type": "number",
+                "description": "detected_mean_watts as a percentage of target_watts."
+              },
+              "target_known": {
+                "type": "boolean",
+                "description": "True when this session carries a structured target on any signal (ADR 0014, ADR 0019); target_kind names the signal. Every magnitude is an impossible-zero field behind this flag (ADR 0009), and a magnitude another kind carries stays 0 or the empty string."
+              },
+              "target_kind": {
+                "type": "string",
+                "enum": [
+                  "",
+                  "power",
+                  "hr",
+                  "zone",
+                  "pace",
+                  "rpe"
+                ],
+                "description": "The signal the target is written on: power watts, a heart-rate band, an HR zone, a pace, or a session rating (RPE). Empty when target_known is false."
+              },
+              "target_literal": {
+                "type": "string",
+                "description": "The target in its canonical spelling, e.g. 3x12:00@230W, 1x1:00:00@HR125-147, 1x1:30:00@Z2, 5x4:00@4:10/km, 10x100m@1:40/100m. Empty when target_known is false."
+              },
+              "target_reps": {
+                "type": "integer"
+              },
+              "target_dur_s": {
+                "type": "integer",
+                "description": "A timed rep's length in seconds; 0 for a distance rep."
+              },
+              "target_dist_m": {
+                "type": "number",
+                "description": "A distance rep's length in metres; 0 for a timed rep. Only a pace target carries one."
+              },
+              "target_watts": {
+                "type": "number",
+                "description": "Power targets only."
+              },
+              "target_hr_lo": {
+                "type": "integer",
+                "description": "The heart-rate band's floor in bpm; hr targets only."
+              },
+              "target_hr_hi": {
+                "type": "integer",
+                "description": "The heart-rate band's cap in bpm; hr targets only."
+              },
+              "target_zone": {
+                "type": "integer",
+                "description": "The HR zone, 1-5, under the athlete's configured zones; zone targets only."
+              },
+              "target_pace_s": {
+                "type": "number",
+                "description": "Seconds per target_pace_unit; pace targets only."
+              },
+              "target_pace_unit": {
+                "type": "string",
+                "enum": [
+                  "",
+                  "/km",
+                  "/mi",
+                  "/100m",
+                  "/500m"
+                ],
+                "description": "The distance a pace reads over; pace targets only."
+              },
+              "exec_known": {
+                "type": "boolean",
+                "description": "True when the linked activity carries the target's own signal to compare: detected power work for power, an HR stream for hr, a zone split for zone, pace reps or a distance for pace. The kind's execution fields are meaningful only when this is true; otherwise they ride at 0 or empty (ADR 0009)."
+              },
+              "exec_reason": {
+                "type": "string",
+                "enum": [
+                  "",
+                  "no_target",
+                  "no_power_intervals",
+                  "no_hr_stream",
+                  "no_hr_zones",
+                  "pace_unit_mismatch",
+                  "no_distance",
+                  "no_rating",
+                  "not_done"
+                ],
+                "description": "Why exec_known is false; empty when it is true. pace_unit_mismatch: the activity's sport family is not one the target's pace unit is read over (/km and /mi: run, walk and hike; /100m: swim; /500m: rowing). no_rating: an rpe target whose activity has no rating yet (stride rate). not_done: the session has no linked activity (open, skipped, or completed without one), so there is nothing to measure."
+              },
+              "hr_under_s": {
+                "type": "integer",
+                "description": "hr targets: seconds below the band's floor."
+              },
+              "hr_in_s": {
+                "type": "integer",
+                "description": "hr targets: seconds inside the band, floor and cap included."
+              },
+              "hr_over_s": {
+                "type": "integer",
+                "description": "hr targets: seconds above the band's cap."
+              },
+              "hr_mean": {
+                "type": "number",
+                "description": "hr targets: the mean of the stream's valid (35-220 bpm) HR samples, in bpm."
+              },
+              "zone_below_s": {
+                "type": "integer",
+                "description": "zone targets: seconds in the zones below the target zone, from the zone split analyze stored for the activity."
+              },
+              "zone_in_s": {
+                "type": "integer",
+                "description": "zone targets: seconds in the target zone."
+              },
+              "zone_above_s": {
+                "type": "integer",
+                "description": "zone targets: seconds in the zones above the target zone."
+              },
+              "pace_basis": {
+                "type": "string",
+                "enum": [
+                  "",
+                  "detected",
+                  "whole"
+                ],
+                "description": "pace targets: detected when the interval detector found pace work reps, whole when it did not. Both report the ACTUAL pace: on detected, the distance the stream covered inside the reps' windows over their time (the detector's own signal is grade-adjusted, so its average is not used); on whole, distance over moving time."
+              },
+              "pace_actual_s": {
+                "type": "number",
+                "description": "pace targets: the actual pace in seconds per target_pace_unit, on the basis pace_basis names."
+              },
+              "pace_pct": {
+                "type": "number",
+                "description": "pace targets: target_pace_s as a percentage of pace_actual_s, i.e. the execution's speed relative to the target's; above 100 is faster than the target."
+              },
+              "pace_reps": {
+                "type": "integer",
+                "description": "pace targets: the detected pace work reps; 0 on the whole basis."
+              },
+              "pace_reps_delta": {
+                "type": "integer",
+                "description": "pace targets: pace_reps minus target_reps on the detected basis; 0 otherwise. A measurement, not a verdict (ADR 0012)."
+              },
+              "target_rpe": {
+                "type": "integer",
+                "description": "The session rating the target names, 1-10; rpe targets only."
+              },
+              "rpe_actual": {
+                "type": "number",
+                "description": "The activity's stored session rating; behind rpe_known (ADR 0009 impossible-zero: a rating is 1-10)."
+              },
+              "rpe_known": {
+                "type": "boolean",
+                "description": "True when the target is an rpe one and the activity carries a rating; rpe_actual is a measurement only then."
+              }
+            },
+            "description": "How the session went on its target's own signal: the fields `complete` reports, measured against the linked activity."
+          }
+        }
+      }
+    },
+    "unplanned": {
+      "type": "array",
+      "description": "Activities in the week no planned session claims, as completion or as substitute: the rows `week` lists as unlinked.",
+      "items": {
+        "type": "object",
+        "additionalKeys": false,
+        "required": [
+          "activity_id",
+          "date",
+          "load",
+          "load_model",
+          "moving_time",
+          "name",
+          "sport"
+        ],
+        "properties": {
+          "activity_id": {
+            "type": "integer"
+          },
+          "date": {
+            "type": "string"
+          },
+          "sport": {
+            "type": "string",
+            "description": "Strava sport_type."
+          },
+          "name": {
+            "type": "string"
+          },
+          "moving_time": {
+            "type": "integer",
+            "description": "Seconds."
+          },
+          "load": {
+            "type": "number",
+            "description": "Read through load_model: 0 under an empty or none model is unscored, not a measured zero."
+          },
+          "load_model": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "days": {
+      "type": "array",
+      "description": "Seven rows, Monday first.",
+      "items": {
+        "type": "object",
+        "additionalKeys": false,
+        "required": [
+          "actual_known",
+          "actual_load",
+          "day",
+          "planned_load"
+        ],
+        "properties": {
+          "day": {
+            "type": "string"
+          },
+          "planned_load": {
+            "type": "number",
+            "description": "The summed planned_load of the day's priced sessions."
+          },
+          "actual_load": {
+            "type": "number",
+            "description": "The day's load from daily_load; 0 when actual_known is false."
+          },
+          "actual_known": {
+            "type": "boolean",
+            "description": "false for a day analyze has not reached: a day still ahead, or today before analyze runs."
+          }
+        }
+      }
+    },
+    "load": {
+      "type": "object",
+      "additionalKeys": false,
+      "required": [
+        "actual_total",
+        "planned_total",
+        "sessions_planned",
+        "sessions_priced"
+      ],
+      "properties": {
+        "planned_total": {
+          "type": "number"
+        },
+        "actual_total": {
+          "type": "number",
+          "description": "The sum over the days with actual_known."
+        },
+        "sessions_planned": {
+          "type": "integer"
+        },
+        "sessions_priced": {
+          "type": "integer",
+          "description": "Sessions whose planned_load is known; the gap to sessions_planned is how much of the plan planned_total cannot see."
+        }
+      }
+    },
+    "intensity": {
+      "type": "object",
+      "additionalKeys": false,
+      "required": [
+        "easy_pct",
+        "easy_s",
+        "hard_days",
+        "hard_pct",
+        "hard_s",
+        "hard_spacing_known",
+        "hard_spacing_median_days",
+        "moderate_pct",
+        "moderate_s",
+        "polarization_known"
+      ],
+      "properties": {
+        "easy_s": {
+          "type": "integer"
+        },
+        "moderate_s": {
+          "type": "integer"
+        },
+        "hard_s": {
+          "type": "integer"
+        },
+        "easy_pct": {
+          "type": "integer"
+        },
+        "moderate_pct": {
+          "type": "integer"
+        },
+        "hard_pct": {
+          "type": "integer"
+        },
+        "polarization_known": {
+          "type": "boolean",
+          "description": "true when the week's polarized activities hold any intensity seconds; the six fields above cover only those activities (the activity_intensity view `summary` and `compare` read) and are measurements only then."
+        },
+        "hard_days": {
+          "type": "array",
+          "description": "Distinct days holding a session with 5+ hard minutes: summary's hard-day rule.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "hard_spacing_median_days": {
+          "type": "integer",
+          "description": "Median gap between hard_days; 0 when hard_spacing_known is false."
+        },
+        "hard_spacing_known": {
+          "type": "boolean",
+          "description": "false with fewer than two hard days."
+        }
+      }
+    },
+    "sports": {
+      "type": "array",
+      "description": "One row per sport family with an activity in the week, most sessions first.",
+      "items": {
+        "type": "object",
+        "additionalKeys": false,
+        "required": [
+          "distance_m",
+          "family",
+          "load",
+          "moving_time",
+          "sessions"
+        ],
+        "properties": {
+          "family": {
+            "type": "string",
+            "description": "The stored sport_family: a family's first sport type, or the sport type itself outside every family."
+          },
+          "sessions": {
+            "type": "integer"
+          },
+          "moving_time": {
+            "type": "integer",
+            "description": "Seconds."
+          },
+          "distance_m": {
+            "type": "number"
+          },
+          "load": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "strength": {
+      "type": "object",
+      "additionalKeys": false,
+      "required": [
+        "awaiting_rating",
+        "sessions",
+        "with_sets",
+        "without_sets"
+      ],
+      "properties": {
+        "sessions": {
+          "type": "integer",
+          "description": "Strength-family activities in the week."
+        },
+        "with_sets": {
+          "type": "integer"
+        },
+        "without_sets": {
+          "type": "integer",
+          "description": "Strength-family activities with no stored sets; `strength import` or a description paste adds them."
+        },
+        "awaiting_rating": {
+          "type": "integer",
+          "description": "Strength-class activities (lifting, HIIT, yoga, pilates and the like) with no rating; `stride rate` scores them."
+        }
+      }
+    },
+    "fitness": {
+      "type": "object",
+      "additionalKeys": false,
+      "required": [
+        "end",
+        "start"
+      ],
+      "properties": {
+        "start": {
+          "type": "object",
+          "additionalKeys": false,
+          "required": [
+            "atl",
+            "ctl",
+            "day",
+            "known",
+            "tsb"
+          ],
+          "properties": {
+            "day": {
+              "type": "string"
+            },
+            "ctl": {
+              "type": "number"
+            },
+            "atl": {
+              "type": "number"
+            },
+            "tsb": {
+              "type": "number"
+            },
+            "known": {
+              "type": "boolean",
+              "description": "false when daily_load holds no row for the Sunday before the week; the magnitudes are then 0."
+            }
+          }
+        },
+        "end": {
+          "type": "object",
+          "additionalKeys": false,
+          "required": [
+            "atl",
+            "ctl",
+            "day",
+            "known",
+            "tsb"
+          ],
+          "properties": {
+            "day": {
+              "type": "string",
+              "description": "The row read: the week's latest analyzed day up to Sunday, or today in a week still running."
+            },
+            "ctl": {
+              "type": "number"
+            },
+            "atl": {
+              "type": "number"
+            },
+            "tsb": {
+              "type": "number"
+            },
+            "known": {
+              "type": "boolean",
+              "description": "false when daily_load holds no row inside the week yet; the magnitudes are then 0."
+            }
+          }
+        }
+      }
+    }
+  }
+}
