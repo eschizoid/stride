@@ -76,7 +76,8 @@ Setup :: [].{
 		client_id = cred!("STRAVA_CLIENT_ID", "strava_client_id")?
 		client_secret = cred!("STRAVA_CLIENT_SECRET", "strava_client_secret")?
 		token = has!("strava_refresh_token")?
-		timezone = has!("timezone")?
+		# done only when the engine resolves it, the same test doctor reports
+		timezone = Db.timezone_known!(path)
 		z1 = has!("hr_z1_max")?
 		z2 = has!("hr_z2_max")?
 		z3 = has!("hr_z3_max")?
@@ -92,9 +93,9 @@ Setup :: [].{
 		if val == "" {
 			Err(BadInput("bad_value", "${key}= needs a value"))
 		} else if key == "client_id" {
-			Db.config_set!(path, "strava_client_id", val)
+			set_cred!(path, "strava_client_id", val)
 		} else if key == "client_secret" {
-			Db.config_set!(path, "strava_client_secret", val)
+			set_cred!(path, "strava_client_secret", val)
 		} else if key == "code" {
 			match Config.oauth_code(val) {
 				Err(NoCode) => Err(BadInput("bad_value", "code= takes the code, or the whole address the browser landed on; that one carries no code (an error=access_denied address means Authorize was not clicked)"))
@@ -124,6 +125,28 @@ Setup :: [].{
 		}
 	}
 
+	# a changed client id or secret belongs to a different app, so the tokens
+	# the old one earned are cleared and authorize runs again
+	set_cred! : Str, Str, Str => Try({}, _)
+	set_cred! = |path, key, val| {
+		before = match Db.config_opt!(path, key)? {
+			Found(v) => Str.trim(v)
+			NotFound => ""
+		}
+		Db.config_set!(path, key, val)?
+		if before != "" and before != val {
+			Db.config_delete!(path, "strava_access_token")?
+			Db.config_delete!(path, "strava_refresh_token")?
+			Db.config_delete!(path, "strava_expires_at")
+		} else {
+			Ok({})
+		}
+	}
+
+	# an empty answer keeps the stored value
+	keep_or_set! : Str, Str, Str => Try({}, _)
+	keep_or_set! = |path, key, val| if (val == "") Ok({}) else set_cred!(path, key, val)
+
 	store_zones! : Str, List(I64) => Try({}, _)
 	store_zones! = |path, bounds|
 		List.map_try!(
@@ -142,8 +165,8 @@ Setup :: [].{
 			True
 		} else if !(Str.contains(name, "/")) or Str.contains(name, "..") {
 			False
-		} else if (Path.exists!(Path.utf8("/usr/share/zoneinfo/UTC"))) ?? False {
-			(Path.exists!(Path.utf8("/usr/share/zoneinfo/${name}"))) ?? False
+		} else if (Path.is_file!(Path.utf8("/usr/share/zoneinfo/UTC"))) ?? False {
+			(Path.is_file!(Path.utf8("/usr/share/zoneinfo/${name}"))) ?? False
 		} else {
 			True
 		}
@@ -211,12 +234,12 @@ Setup :: [].{
 		match next {
 			"strava_app" => {
 				needs: ["client_id", "client_secret"],
-				instruction: "Create a Strava API app at https://www.strava.com/settings/api: any Application Name, Category \"Training\", Website http://localhost, Authorization Callback Domain localhost. Then pass its Client ID and Client Secret: `stride setup client_id=<id>` and `stride setup client_secret=<secret>`.",
+				instruction: "Create a Strava API app at https://www.strava.com/settings/api: any Application Name, Category \"Training\", Website http://localhost, Authorization Callback Domain localhost. Then pass its Client ID with `stride setup client_id=<id>`, and its Client Secret through the environment so it stays out of shell history: `STRAVA_CLIENT_SECRET=<secret> stride setup`.",
 				url: "https://www.strava.com/settings/api",
 			}
 			"authorize" => {
 				needs: ["code"],
-				instruction: "Open authorize_url and click Authorize. The browser lands on a localhost address that fails to load; pass that whole address: `stride setup code=<address>`.",
+				instruction: "Open authorize_url and click Authorize. The browser lands on a localhost address that fails to load; pass that whole address, quoted: `stride setup 'code=<address>'`.",
 				url: Strava.authorize_url(client_id, "http://localhost"),
 			}
 			"timezone" => {
@@ -253,6 +276,17 @@ Setup :: [].{
 		Ok(Str.trim(line))
 	}
 
+	# a secret read with terminal echo off, restored afterwards; with no
+	# terminal to switch, it is read as typed
+	ask_secret! : Str => Try(Str, _)
+	ask_secret! = |prompt| {
+		_ = Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", "stty -echo < /dev/tty", "sh"], OsStr.from_str)).capture!()
+		got = ask!(prompt)
+		_ = Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", "stty echo < /dev/tty", "sh"], OsStr.from_str)).capture!()
+		Output.human_line!("")?
+		got
+	}
+
 	walk! : Str => Try({}, _)
 	walk! = |path| {
 		s = state!(path)?
@@ -274,23 +308,36 @@ Setup :: [].{
 			guide = step_guide("strava_app", "")
 			Output.human_line!(guide.instruction)?
 			id = ask!("Client ID: ")?
-			secret = ask!("Client Secret: ")?
+			secret = ask_secret!("Client Secret (not shown): ")?
 			if id == "" or secret == "" {
 				Output.human_line!("Both are needed; run `stride setup` again when you have them.")
 			} else {
-				Db.config_set!(path, "strava_client_id", id)?
-				Db.config_set!(path, "strava_client_secret", secret)
+				set_cred!(path, "strava_client_id", id)?
+				set_cred!(path, "strava_client_secret", secret)
 			}
 		} else if next == "authorize" {
 			id = Strava.client_cred!(path, "STRAVA_CLIENT_ID", "strava_client_id")?
 			secret = Strava.client_cred!(path, "STRAVA_CLIENT_SECRET", "strava_client_secret")?
-			code = (listen_code!(id)) ?? ""
+			code = if (headless!({})) "" else (listen_code!(id)) ?? ""
 			got = if (code != "") code else paste_code!(id)?
 			if got == "" {
 				Output.human_line!("No code arrived; run `stride setup` again to retry.")
 			} else {
-				Strava.exchange_code!(path, id, secret, got).map_ok(|_| {})?
-				Output.human_line!("Authorized.")
+				match Strava.exchange_code!(path, id, secret, got) {
+					Ok(_) => Output.human_line!("Authorized.")
+					Err(e) => {
+						Output.human_line!("Strava refused the code. If the Client ID or Secret was mistyped, enter them again; Enter keeps them.")?
+						new_id = ask!("Client ID: ")?
+						new_secret = ask_secret!("Client Secret (not shown): ")?
+						if new_id == "" and new_secret == "" {
+							Err(e)
+						} else {
+							keep_or_set!(path, "strava_client_id", new_id)?
+							keep_or_set!(path, "strava_client_secret", new_secret)?
+							Output.human_line!("Saved; run `stride setup` again to authorize with them.")
+						}
+					}
+				}
 			}
 		} else if next == "timezone" {
 			found = detect_zone!({})
@@ -340,19 +387,41 @@ Setup :: [].{
 	# hear one answers Err, and the caller falls back to the paste.
 	listen_code! : Str => Try(Str, _)
 	listen_code! = |client_id| {
+		state = random_state!({})?
 		listener = Tcp.listen!("127.0.0.1", 0, Duration.seconds(5))?
 		port = listener.local_port!()?
-		url = Strava.authorize_url(client_id, "http://127.0.0.1:${port.to_str()}/")
+		url = Strava.authorize_url_state(client_id, "http://127.0.0.1:${port.to_str()}/", state)
 		Output.human_line!("Click Authorize in the browser tab that just opened (address below if it did not):")?
 		Output.human_line!("   ${url}")?
 		Strava.open_browser!(url)
-		accept_code!(listener, 6)
+		accept_code!(listener, state, 6)
 	}
+
+	# no browser on this machine to receive a loopback redirect: an SSH
+	# session, or Linux with no display server
+	headless! : {} => Bool
+	headless! = |{}| {
+		set! = |name|
+			match Env.var_str!(OsStr.from_str(name)) {
+				Ok(v) => Str.trim(v) != ""
+				Err(_) => Bool.False
+			}
+		linux = ((Path.is_dir!(Path.utf8("/proc"))) ?? Bool.False)
+		set!("SSH_CONNECTION") or set!("SSH_TTY") or (linux and !(set!("DISPLAY")) and !(set!("WAYLAND_DISPLAY")))
+	}
+
+	# 16 random bytes as hex, the OAuth `state` one listen run expects back
+	random_state! : {} => Try(Str, _)
+	random_state! = |{}|
+		match Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", "od -An -N16 -tx1 /dev/urandom | tr -d ' \\n'", "sh"], OsStr.from_str)).capture!() {
+			Ok(out) if Str.count_utf8_bytes(Str.trim(out)) == 32 => Ok(Str.trim(out))
+			_ => Err(NoRandom)
+		}
 
 	# a browser can open a connection it never writes to, so a silent one is
 	# dropped and the next accepted, a few times over
-	accept_code! : Tcp.Listener, U64 => Try(Str, _)
-	accept_code! = |listener, tries|
+	accept_code! : Tcp.Listener, Str, U64 => Try(Str, _)
+	accept_code! = |listener, state, tries|
 		if tries == 0 {
 			Err(NoCallback)
 		} else {
@@ -360,18 +429,19 @@ Setup :: [].{
 			match conn.read_line!() {
 				Ok(line) => {
 					target = (List.get(Str.split_on(line, " "), 1)) ?? ""
-					match Config.oauth_code(target) {
+					state_ok = Config.oauth_param(target, "state") == Ok(state)
+					match (if (state_ok) Config.oauth_code(target) else Err(NoCode)) {
 						Ok(code) => {
 							_ = conn.write_utf8!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<html><body style=\"font-family:sans-serif\"><h2>Stride is authorized.</h2><p>You can close this tab and return to the terminal.</p></body></html>")
 							Ok(code)
 						}
 						Err(_) => {
 							_ = conn.write_utf8!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<html><body style=\"font-family:sans-serif\"><h2>No authorization code arrived.</h2><p>Return to the terminal.</p></body></html>")
-							if (Str.starts_with(target, "/favicon")) accept_code!(listener, tries - 1) else Err(NoCallback)
+							if (Str.starts_with(target, "/favicon") or !(state_ok)) accept_code!(listener, state, tries - 1) else Err(NoCallback)
 						}
 					}
 				}
-				Err(_) => accept_code!(listener, tries - 1)
+				Err(_) => accept_code!(listener, state, tries - 1)
 			}
 		}
 }

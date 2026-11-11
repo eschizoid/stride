@@ -120,11 +120,10 @@ Strava :: [].{
 		# as typed, and Strava's refusal names what was wrong with it
 		code = (Config.oauth_code(code_raw)).ok_or(Str.trim(code_raw))
 		tokens = exchange_code!(path, client_id, client_secret, code)?
-		# ...and the SUCCESS line was the same defect as the prompt, one path over: bare
-		# prose on stdout in JSON mode. Auth is a setup step whose command-table entry
-		# publishes six machine-readable error codes — a promise its stdout is parseable.
-		# `expires_at` rather than a bare success flag: the one fact a caller can act on,
-		# already in hand. Tokens themselves never appear (same rule as `config get`).
+		# The success line goes through Output so `--json` stays parseable: auth's
+		# command-table entry publishes machine-readable error codes. It reports
+		# `expires_at`, the one fact a caller can act on; tokens never appear (the
+		# same rule as `config get`).
 		Output.out!({ authorized: 1 == 1, expires_at: tokens.expires_at }, |_| "authorized — tokens stored. Run `stride sync` to pull your activities.")
 	}
 	# the browser page that asks the athlete to authorize this client; Strava
@@ -132,6 +131,11 @@ Strava :: [].{
 	# domain (localhost or 127.0.0.1 match one registered as localhost)
 	authorize_url : Str, Str -> Str
 	authorize_url = |client_id, redirect| "https://www.strava.com/oauth/authorize?client_id=${client_id}&response_type=code&redirect_uri=${redirect}&approval_prompt=auto&scope=read,activity:read_all"
+
+	# the same page with an OAuth `state` that Strava echoes back on the redirect,
+	# so a listener can refuse a callback this run did not start
+	authorize_url_state : Str, Str, Str -> Str
+	authorize_url_state = |client_id, redirect, state| "${authorize_url(client_id, redirect)}&state=${state}"
 
 	# Trade an authorization code for tokens and store them with the client
 	# credentials that earned them, so sync never needs the environment again.

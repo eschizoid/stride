@@ -300,23 +300,45 @@ Config :: [].{
 	oauth_code : Str -> Try(Str, [NoCode])
 	oauth_code = |raw| {
 		t = Str.trim(raw)
-		if t == "" {
+		if t == "" or !(redirect_host_ok(t)) {
 			Err(NoCode)
 		} else if Str.contains(t, "?") or Str.contains(t, "&") or Str.contains(t, "code=") {
-			query = (Str.split_first(t, "?")).map_ok(|p| p.after).ok_or(t)
-			found = List.keep_oks(
-				Str.split_on(query, "&"),
-				|kv|
-					match Str.split_first(kv, "=") {
-						Ok({ before: "code", after: v }) => if (Str.trim(v) == "") Err(Empty) else Ok(Str.trim(v))
-						_ => Err(NotCode)
-					},
-			)
-			(List.first(found)).map_err(|_| NoCode)
+			(oauth_param(t, "code")).map_err(|_| NoCode)
 		} else {
 			Ok(t)
 		}
 	}
+
+	# one query parameter of a redirected address (or a bare `k=v&...` string);
+	# an empty value counts as absent
+	oauth_param : Str, Str -> Try(Str, [Missing])
+	oauth_param = |raw, key| {
+		t = Str.trim(raw)
+		query = (Str.split_first(t, "?")).map_ok(|p| p.after).ok_or(t)
+		found = List.keep_oks(
+			Str.split_on(query, "&"),
+			|kv|
+				match Str.split_first(kv, "=") {
+					Ok({ before, after: v }) if before == key => if (Str.trim(v) == "") Err(Empty) else Ok(Str.trim(v))
+					_ => Err(Other)
+				},
+		)
+		(List.first(found)).map_err(|_| Missing)
+	}
+
+	# a redirected address carrying a code must point back at this machine: the
+	# API app's callback domain is localhost, so any other host is not Strava's
+	# redirect. A string without a scheme is a bare code or query and passes.
+	redirect_host_ok : Str -> Bool
+	redirect_host_ok = |t|
+		match Str.split_first(t, "://") {
+			Err(_) => Bool.True
+			Ok({ before: _, after }) => {
+				host_port = (Str.split_first(after, "/")).map_ok(|p| p.before).ok_or((Str.split_first(after, "?")).map_ok(|p| p.before).ok_or(after))
+				host = (Str.split_first(host_port, ":")).map_ok(|p| p.before).ok_or(host_port)
+				host == "localhost" or host == "127.0.0.1"
+			}
+		}
 
 	# An IANA name from the target of the /etc/localtime link, which macOS and
 	# Linux point into a zoneinfo directory (/usr/share/zoneinfo/America/Chicago,
@@ -396,11 +418,14 @@ Config :: [].{
 	# and per-sport overrides (`hr_z2_max_run`) stay the way to tune one.
 	zone_bounds : [Threshold(I64), Max(I64)] -> List(I64)
 	zone_bounds = |basis| {
-		b = match basis {
-			Threshold(t) => { hr: t, pcts: [85, 89, 94, 99] }
-			Max(m) => { hr: m, pcts: [60, 70, 80, 90] }
+		# a maximum heart rate is turned into an estimated threshold (90% of max)
+		# and run through the same percentages, so the two inputs describe one
+		# zone system rather than two incompatible ones
+		thr = match basis {
+			Threshold(t) => t
+			Max(m) => (m * 90 + 50) // 100
 		}
-		List.map(b.pcts, |p| (b.hr * p + 50) // 100)
+		List.map([85, 89, 94, 99], |p| (thr * p + 50) // 100)
 	}
 
 	# a heart rate a person can hold, the plausible band analyze also filters to
@@ -629,6 +654,11 @@ expect Config.oauth_code("  abc123 ") == Ok("abc123")
 expect Config.oauth_code("http://localhost/?state=&code=abc123&scope=read,activity:read_all") == Ok("abc123")
 expect Config.oauth_code("http://127.0.0.1:53111/?code=xyz&scope=read") == Ok("xyz")
 expect Config.oauth_code("code=abc123") == Ok("abc123")
+# a redirect to any host but this machine is not Strava's, whatever it carries
+expect Config.oauth_code("https://evil.example/?code=abc") == Err(NoCode)
+expect Config.oauth_code("http://localhost.evil.example/?code=abc") == Err(NoCode)
+expect Config.oauth_param("http://127.0.0.1:5311/?state=s1&code=xyz", "state") == Ok("s1")
+expect Config.oauth_param("http://127.0.0.1:5311/?code=xyz", "state") == Err(Missing)
 # Strava's refusal redirect, an empty code and an empty paste carry no code
 expect Config.oauth_code("http://localhost/?state=&error=access_denied") == Err(NoCode)
 expect Config.oauth_code("http://localhost/?code=&scope=read") == Err(NoCode)
@@ -651,9 +681,11 @@ expect Config.tz_from_windows("Central Standard Time") == Ok("America/Chicago")
 expect Config.tz_from_windows("W. Europe Standard Time") == Ok("Europe/Berlin")
 expect Config.tz_from_windows("Martian Standard Time") == Err(NoZone)
 
-# zone bounds from threshold HR and from max HR, rounded to the nearest beat
+# zone bounds from threshold HR, rounded to the nearest beat; a max HR goes
+# through an estimated threshold of 90% of max (185 -> 167), so both inputs
+# land in one zone system
 expect Config.zone_bounds(Threshold(165)) == [140, 147, 155, 163]
-expect Config.zone_bounds(Max(185)) == [111, 130, 148, 167]
+expect Config.zone_bounds(Max(185)) == [142, 149, 157, 165] and Config.zone_bounds(Max(185)) == Config.zone_bounds(Threshold(167))
 # every bound ascends, so each zone is non-empty
 expect {
 	b = Config.zone_bounds(Threshold(150))

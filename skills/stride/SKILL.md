@@ -495,7 +495,7 @@ The steps run in order and a rerun resumes at the first one not done (`steps` ro
 - `timezone`: confirm `timezone_detected` with the athlete, then pass `timezone=<Area/City>`.
 - `zones`: pass `threshold_hr=<bpm>` (the average of an all-out 30 to 60 minute effort), or
   `max_hr=<bpm>` when that is unknown. Setup derives `hr_z1_max`..`hr_z4_max` (85, 89, 94,
-  99 % of threshold, or 60, 70, 80, 90 % of max); tune them or add per-sport overrides like
+  99 % of threshold; a max HR becomes an estimated threshold of 90 % of max first); tune them or add per-sport overrides like
   `hr_z2_max_ride` with `stride config set`.
 - `sync`: run `stride sync --json`, then `stride analyze --json`. The next
   `stride setup --json` answers `complete: true`.
