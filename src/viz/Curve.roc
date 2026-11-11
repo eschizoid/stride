@@ -27,7 +27,10 @@ Curve :: [].{
 		# the planned targets this curve carries (marks_for says which)
 		plan_marks = marks_for(curve, (List.first(model.curve_keys.power)).ok_or(""), model.plan_targets, model.pace_targets)
 		win_h = model.win.h
-		pad_l = Theme.pad_l
+		# folded short rungs give up their columns to a narrow gutter at the
+		# left, and the remaining rungs spread over the rest of the plot
+		lay = layout(model)
+		pad_l = lay.left
 		pad_r = Theme.pad_r
 		pad_t = Theme.pad_t
 		pad_b = Theme.pad_b
@@ -71,7 +74,7 @@ Curve :: [].{
 		# the curve chips and the power/pace pair beside the range chips: the
 		# lit ones are the curve on screen and its mode
 		List.for_each!(
-			curve_chips(win_w, model.curve_keys, curve),
+			List.concat(curve_chips(win_w, model.curve_keys, curve), short_chips(win_w, model.curve_keys, curve, layout(model).foldable, model.show_short)),
 			|fc| {
 				hov = model.mouse_x >= fc.x and model.mouse_x <= fc.x + chip_w and model.mouse_y >= chip_top and model.mouse_y <= chip_bottom
 				style = if (fc.on) (Draw.filled(Color.with_alpha(Theme.tsb_c, 60))) else if (hov) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
@@ -90,26 +93,13 @@ Curve :: [].{
 			# the record ladder is the master axis; the window's value joins by
 			# duration. Index spacing, not time: a linear axis piles the short
 			# rungs onto the left edge.
-			joined = |pts, secs| List.fold(
-				pts,
-				0.I64,
-				|a, c| if (c.dur_s == secs) (
-					match F32.round_to_u64_try(c.watts) {
-						Ok(cw) => (
-							match U64.to_i64_try(cw) {
-								Ok(ci) => ci
-								Err(_) => a
-							}
-						)
-						Err(_) => a
-					}
-				) else a,
-			)
-			# each window judged on its own: a rung within flat_ratio of the next
-			# longer one was not pushed, and its dot and delta go quiet
+			joined = window_w
+			# each window judged on its own, over the whole ladder: a rung within
+			# flat_ratio of the next longer one was not pushed, and its dot and
+			# delta go quiet
 			now_flags = unpushed(List.map(model.prs, |pr| joined(model.curve, pr.secs)))
 			prev_flags = unpushed(List.map(model.prs, |pr| joined(model.curve_prev, pr.secs)))
-			rungs = List.map_with_index(
+			full = List.map_with_index(
 				model.prs,
 				|pr, i| {
 					now_w = joined(model.curve, pr.secs)
@@ -128,6 +118,8 @@ Curve :: [].{
 					{ pr, now_w, prev_w, i, now_unp, prev_unp, src_txt, stale }
 				},
 			)
+			# the rungs on screen, indexed by their column
+			rungs = List.map_with_index(List.keep_if(full, |r| !(lay.folded) or r.pr.secs >= short_secs), |r, i| { ..r, i })
 			span = axis_span(curve, List.join(List.map(rungs, |r| [r.pr.w, r.now_w, r.prev_w])), List.map(plan_marks, |t| t.val), model.fit_cp)
 			w_lo = span.lo
 			w_hi = span.hi
@@ -164,14 +156,14 @@ Curve :: [].{
 				# row, would run through their text
 				List.keep_if(grid_vals(curve, units, w_lo, w_hi), |gw| cy(gw) > pad_t + 8.0 and cy(gw) < pad_t + ph - 26.0),
 				|gw| {
-					frame.line!({ start: { x: rule_start(cy(gw), pad_l, intro_spans), y: cy(gw) }, end: { x: win_w - pad_r, y: cy(gw) }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 36), 1) })
+					frame.line!({ start: { x: rule_start(cy(gw), Theme.pad_l, intro_spans), y: cy(gw) }, end: { x: win_w - pad_r, y: cy(gw) }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 36), 1) })
 					Text.from(
 						match F32.round_to_i64_try(gw) {
 							Ok(gi) => axis_text(curve, units, gi)
 							Err(_) => ""
 						},
 						model.font,
-					).size(10).draw!(frame, { pos: { x: pad_l - 8.0, y: cy(gw) - 6.0 }, color: ink_faint, align: (Top, Right) })
+					).size(10).draw!(frame, { pos: { x: Theme.pad_l - 8.0, y: cy(gw) - 6.0 }, color: ink_faint, align: (Top, Right) })
 				},
 			)
 			# the threshold line, dashed: CP from the window's fit, which the blue
@@ -363,12 +355,17 @@ Curve :: [].{
 					}
 				},
 			)
+			if lay.folded {
+				gx = Theme.pad_l + short_gutter / 2.0 - 14.0
+				Text.from("short", model.font).size(11).draw!(frame, { pos: { x: gx, y: pad_t + ph - 18.0 }, color: ink_faint, align: (Top, Center) })
+				Text.from("not pushed", model.font).size(9).draw!(frame, { pos: { x: gx, y: pad_t + ph - 4.0 }, color: Color.with_alpha(ink_faint, 150), align: (Top, Center) })
+			}
 			# the window's unpushed durations, at the right of the tooltip line
 			# between the chips and the plot, so no gridline runs through it. A
 			# tooltip owns that line while one shows; the hovered rung's own
 			# tooltip already says whether it was pushed.
-			unp_txt = unpushed_caption(List.map(rungs, |r| r.pr.rung), List.map(rungs, |r| r.now_unp), model.curve_days)
-			rung_hovering = match rung_at(model.mouse_x, model.mouse_y, win_w, win_h, List.len(model.prs)) {
+			unp_txt = unpushed_caption(List.map(full, |r| r.pr.rung), List.map(full, |r| r.now_unp), model.curve_days)
+			rung_hovering = match rung_at(model.mouse_x, model.mouse_y, win_w, win_h, List.len(rungs), pad_l) {
 				Ok(_) => Bool.True
 				Err(_) => Bool.False
 			}
@@ -572,7 +569,7 @@ Curve :: [].{
 	# caption row
 	rung_hovered : Ui.Model, F32, F32 -> Bool
 	rung_hovered = |model, win_w, win_h|
-		match rung_at(model.mouse_x, model.mouse_y, win_w, win_h, List.len(model.prs)) {
+		match rung_at(model.mouse_x, model.mouse_y, win_w, win_h, List.len(layout(model).prs), layout(model).left) {
 			Ok(_) => Bool.True
 			Err(_) => Bool.False
 		}
@@ -585,6 +582,75 @@ Curve :: [].{
 			Pace(sp) => "no ${sport_name(sp)} pace on record yet"
 			Power(fam) => if (fam == "Ride") "no ride power on record yet" else "no ${chip_label(curve)} power on record yet"
 		}
+
+	# ── short efforts. A rung under short_secs is a short effort, and it
+	# counts as pushed only when it is not flat against the next longer rung
+	# AND reaches short_record_share of the athlete's own record at that
+	# duration: a 1-minute best stands well above a 5-minute one even inside
+	# an ordinary class, so flatness alone would call it all-out. When the
+	# window holds short rungs and none was pushed, their bests are spikes
+	# inside longer workouts, so they fold into a gutter of short_gutter
+	# pixels at the left and the remaining rungs take the width. One pushed
+	# short rung shows them all, and the short chip shows them on demand. An
+	# absent short rung (no effort) counts as not pushed.
+	short_secs : I64
+	short_secs = 300
+
+	short_gutter : F32
+	short_gutter = 76.0
+
+	short_record_share : F32
+	short_record_share = 0.9
+
+	fold_short : List(I64), List(I64), List(I64) -> Bool
+	fold_short = |secs, ws, records| {
+		flags = unpushed(ws)
+		pushed = |i| {
+			w = List.get(ws, i) ?? 0
+			rec = List.get(records, i) ?? 0
+			w > 0 and !(List.get(flags, i) ?? Bool.False) and I64.to_f32(w) >= I64.to_f32(rec) * short_record_share
+		}
+		shorts = List.keep_oks(List.map_with_index(secs, |sec, i| { sec, i }), |x| if (x.sec < short_secs) Ok(x.i) else Err(Long))
+		!(List.is_empty(shorts)) and !(List.any(shorts, pushed))
+	}
+
+	# the window's best at one rung, in whole units; 0 when it has none
+	window_w : List(Db.CurvePt), I64 -> I64
+	window_w = |pts, secs|
+		List.fold(
+			pts,
+			0.I64,
+			|a, c| if (c.dur_s == secs) (
+				match F32.round_to_u64_try(c.watts) {
+					Ok(cw) => (
+						match U64.to_i64_try(cw) {
+							Ok(ci) => ci
+							Err(_) => a
+						}
+					)
+					Err(_) => a
+				}
+			) else a,
+		)
+
+	# the rungs on screen and where the plot starts, shared by the drawing and
+	# every hover test so the two cannot disagree
+	layout : Ui.Model -> { prs : List(Db.PrRung), left : F32, folded : Bool, foldable : Bool }
+	layout = |model| {
+		foldable = fold_short(List.map(model.prs, |pr| pr.secs), List.map(model.prs, |pr| window_w(model.curve, pr.secs)), List.map(model.prs, |pr| pr.w))
+		folded = foldable and !(model.show_short)
+		{ prs: if (folded) (List.keep_if(model.prs, |pr| pr.secs >= short_secs)) else model.prs, left: if (folded) (Theme.pad_l + short_gutter) else Theme.pad_l, folded, foldable }
+	}
+
+	# the short chip sits right of the range chips, past the power and pace
+	# pair when that shows, and only while the window has short rungs to fold
+	short_chip_key : Str
+	short_chip_key = "short"
+
+	short_chips : F32, Db.CurveKeys, Str, Bool, Bool -> List(Chip)
+	short_chips = |win_w, keys, cur, foldable, show|
+		if (!foldable) []
+		else [{ key: short_chip_key, label: "short", x: win_w - 420.0 + (if (counterpart(keys, cur) == "") 176.0 else 292.0), on: show }]
 
 	# ── pushed and unpushed rungs. A maximal best at one duration stands
 	# clearly above the best at the next longer one; a best within
@@ -625,15 +691,15 @@ Curve :: [].{
 	# the rung column under (mx, my), laid out the way draw! lays it: index
 	# spacing over the plot between the theme's paddings, each column half a
 	# step to either side of its rung
-	rung_at : F32, F32, F32, F32, U64 -> Try(U64, [NoRung])
-	rung_at = |mx, my, win_w, win_h, n| {
-		pw = win_w - Theme.pad_l - Theme.pad_r
+	rung_at : F32, F32, F32, F32, U64, F32 -> Try(U64, [NoRung])
+	rung_at = |mx, my, win_w, win_h, n, left| {
+		pw = win_w - left - Theme.pad_r
 		ph = win_h - Theme.pad_t - Theme.pad_b
 		if (n == 0 or my < Theme.pad_t or my > Theme.pad_t + ph) Err(NoRung)
 		else {
 			nlast = n - 1
 			half = if (nlast == 0) (pw / 2.0) else pw / U64.to_f32(nlast) / 2.0
-			cx = |i| if (nlast == 0) (Theme.pad_l + pw / 2.0) else Theme.pad_l + pw * U64.to_f32(i) / U64.to_f32(nlast)
+			cx = |i| if (nlast == 0) (left + pw / 2.0) else left + pw * U64.to_f32(i) / U64.to_f32(nlast)
 			match List.find_first(List.map_with_index(List.repeat({}, n), |_u, k| k), |i| mx >= cx(i) - half and mx < cx(i) + half) {
 				Ok(i) => Ok(i)
 				Err(_) => Err(NoRung)
@@ -645,8 +711,8 @@ Curve :: [].{
 	# the trace view; -1 when no rung is hovered or the rung has no best
 	hovered_source : Ui.Model -> I64
 	hovered_source = |model|
-		match rung_at(model.mouse_x, model.mouse_y, model.win.w, model.win.h, List.len(model.prs)) {
-			Ok(i) => match List.get(model.prs, i) {
+		match rung_at(model.mouse_x, model.mouse_y, model.win.w, model.win.h, List.len(layout(model).prs), layout(model).left) {
+			Ok(i) => match List.get(layout(model).prs, i) {
 				Ok(pr) => match List.find_first(model.curve, |c| c.dur_s == pr.secs) {
 					Ok(c) => if (c.aid > 0) c.aid else -1
 					Err(_) => -1
@@ -1229,6 +1295,35 @@ expect Curve.unpushed_caption(["5s", "15s", "30s"], [Bool.False, Bool.True, Bool
 expect Curve.unpushed_caption(["5s", "15s"], [Bool.False, Bool.False], 30) == ""
 # a best set more than half the window ago is stale; exactly half is not
 expect !Curve.stale_best(15, 30) and Curve.stale_best(16, 30) and !Curve.stale_best(-1, 30)
+# the short rungs fold when none was pushed: a window of 333, 318, 312 and
+# 303 W at 5 s-1 min against records of 475, 419, 385 and 340 W folds (the
+# 1-minute best clears the 5-minute one, but sits under 90% of its record),
+# a real sprint (460 W at 5 s, within 90% of 475) shows them all, absent
+# short rungs fold, and a ladder with no short rung has nothing to fold
+expect {
+	secs = [5, 15, 30, 60, 300, 600, 1200, 3600]
+	recs = [475, 419, 385, 340, 293, 289, 285, 236]
+	Curve.fold_short(secs, [333, 318, 312, 303, 274, 271, 254, 233], recs)
+		and !(Curve.fold_short(secs, [460, 318, 312, 303, 274, 271, 254, 233], recs))
+		and Curve.fold_short(secs, [0, 0, 0, 0, 274, 271, 254, 233], recs)
+		and !(Curve.fold_short([300, 1200], [274, 254], [293, 285]))
+}
+# the short chip shows only while there is something to fold, and moves past
+# the power and pace pair when that shows
+expect {
+	keys = { power: ["Ride", "Rowing"], pace: ["pace:Rowing"] }
+	Curve.short_chips(1400.0, keys, "Ride", Bool.False, Bool.False) == []
+		and List.map(Curve.short_chips(1400.0, keys, "Ride", Bool.True, Bool.False), |c| c.x) == [1400.0 - 420.0 + 176.0]
+		and List.map(Curve.short_chips(1400.0, keys, "Rowing", Bool.True, Bool.True), |c| { x: c.x, on: c.on }) == [{ x: 1400.0 - 420.0 + 292.0, on: Bool.True }]
+}
+# a hover test lays the columns out from the same left edge the plot uses:
+# with the gutter, the first column's boundary moves right by its width
+expect {
+	left = Theme.pad_l + Curve.short_gutter
+	half = (1400.0 - left - Theme.pad_r) / 3.0 / 2.0
+	Curve.rung_at(left + half - 1.0, Theme.pad_t + 10.0, 1400.0, 900.0, 4, left) == Ok(0)
+		and Curve.rung_at(left + half + 1.0, Theme.pad_t + 10.0, 1400.0, 900.0, 4, left) == Ok(1)
+}
 # the curve chips: right-aligned against the range chips, most-used first,
 # as many as fit beside the title, the one on screen always among them and
 # lit. Power mode lists the power families, then the pace sports with no

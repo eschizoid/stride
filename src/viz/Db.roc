@@ -518,7 +518,7 @@ Db :: [].{
 	# -1 in an id field and "" in a day field mean "not set" (SQL NULL). An id
 	# names one session exactly; a day names whichever session on that day
 	# sorts first, and when both are given the id is the one that counts.
-	Directive : { id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, capture : Str, family : Str }
+	Directive : { id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, capture : Str, family : Str, short : I64 }
 
 	# the newest fresh unconsumed directive. Rows past the freshness window are
 	# consumed as read (marked stale), and rows older than the winner are
@@ -598,6 +598,10 @@ Db :: [].{
 							Ok(x) => x
 							Err(_) => ""
 						}
+						sh = match r.i64("sh") {
+							Ok(x) => x
+							Err(_) => -1
+						}
 						if (id < 0) None
 						else {
 							# older unconsumed rows are closed as superseded; the
@@ -605,7 +609,7 @@ Db :: [].{
 							# it reports back - a crash between read and apply
 							# leaves it retryable instead of silently lost
 							_ = db.execute!(Bus.supersede_sql, [{ name: ":id", value: Integer(id) }])
-							Some({ id, view: v, range: rg, cursor_day: cd, trace_day: td, ghost_day: gd, trace_id: ti, ghost_id: gi, capture: cp, family: fm })
+							Some({ id, view: v, range: rg, cursor_day: cd, trace_day: td, ghost_day: gd, trace_id: ti, ghost_id: gi, capture: cp, family: fm, short: sh })
 						}
 					}
 				}
@@ -623,11 +627,11 @@ Db :: [].{
 	}
 
 	# the window's answer: what the human is looking at, one row, upserted
-	Focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, detail_day : Str, sport : Str, family : Str, curve_family : Str }
+	Focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, detail_day : Str, sport : Str, family : Str, curve_family : Str, curve_short : I64 }
 
 	# every placeholder the upsert names, bound from the row
 	focus_bindings : Focus -> List({ name : Str, value : Sqlite.Value })
-	focus_bindings = |f| [{ name: ":v", value: Integer(f.view) }, { name: ":rg", value: Integer(f.range) }, { name: ":cd", value: String(f.cursor_day) }, { name: ":td", value: String(f.trace_day) }, { name: ":gd", value: String(f.ghost_day) }, { name: ":ti", value: Integer(f.trace_id) }, { name: ":gi", value: Integer(f.ghost_id) }, { name: ":dd", value: String(f.detail_day) }, { name: ":sp", value: String(f.sport) }, { name: ":fm", value: String(f.family) }, { name: ":cf", value: String(f.curve_family) }]
+	focus_bindings = |f| [{ name: ":v", value: Integer(f.view) }, { name: ":rg", value: Integer(f.range) }, { name: ":cd", value: String(f.cursor_day) }, { name: ":td", value: String(f.trace_day) }, { name: ":gd", value: String(f.ghost_day) }, { name: ":ti", value: Integer(f.trace_id) }, { name: ":gi", value: Integer(f.ghost_id) }, { name: ":dd", value: String(f.detail_day) }, { name: ":sp", value: String(f.sport) }, { name: ":fm", value: String(f.family) }, { name: ":cf", value: String(f.curve_family) }, { name: ":cs", value: Integer(f.curve_short) }]
 
 	write_focus! : Sqlite.Db, Focus => Try({}, [WriteFailed])
 	write_focus! = |db, f| {
@@ -1928,11 +1932,11 @@ expect Db.plain_int("") == Err(NotAnInt)
 # are no more bindings than placeholders, and every column the INSERT
 # names is carried into the row on conflict
 expect {
-	blank = { view: 0, range: 0, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "", curve_family: "" }
+	blank = { view: 0, range: 0, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "", curve_family: "", curve_short: -1 }
 	sql = Bus.focus_upsert_sql
 	names = List.map(Db.focus_bindings(blank), |b| b.name)
 	colons = List.count_if(Str.to_utf8(sql), |c| c == ':')
-	cols = ["view", "range", "cursor_day", "trace_day", "ghost_day", "trace_id", "ghost_id", "detail_day", "sport", "family", "curve_family"]
+	cols = ["view", "range", "cursor_day", "trace_day", "ghost_day", "trace_id", "ghost_id", "detail_day", "sport", "family", "curve_family", "curve_short"]
 	bound = List.all(names, |nm| Str.contains(sql, Str.concat(nm, ",")) or Str.contains(sql, Str.concat(nm, ")")))
 	inserted = List.all(cols, |c| Str.contains(sql, " ${c},") or Str.contains(sql, " ${c})"))
 	carried = List.all(cols, |c| Str.contains(sql, "${c} = excluded.${c}"))
