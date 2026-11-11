@@ -174,10 +174,10 @@ Curve :: [].{
 					).size(10).draw!(frame, { pos: { x: pad_l - 8.0, y: cy(gw) - 6.0 }, color: ink_faint, align: (Top, Right) })
 				},
 			)
-			# CP from the window's fit, dashed - the blue curve should flatten
-			# toward it, and a fit far from the long rungs is visibly wrong. The
-			# loader zeroes fit_cp unless the fit is usable (fit_usable), and the
-			# footer then says why instead
+			# the threshold line, dashed: CP from the window's fit, which the blue
+			# curve should flatten toward (a fit far from the long rungs is visibly
+			# wrong), or a marked test's threshold when the fit is unusable. The
+			# loader zeroes fit_cp when neither exists, and the footer says why
 			if model.fit_cp > w_lo and model.fit_cp < w_hi {
 				cpy = cy(model.fit_cp)
 				cp_a = 120
@@ -937,6 +937,38 @@ Curve :: [].{
 			Pace(_) => "CS ${val_text(curve, units, F32.round_to_i64_try(fit.cp * 1000.0) ?? 0)}"
 		}
 
+	# The threshold line the curve draws: the usable fit's, else the threshold of
+	# a marked test in force for the curve's family (ADR 0020), else none (0).
+	# A test is an all-out effort the athlete declared, so it stands in when the
+	# window's bests are too steady to fit.
+	anchor_line : Str, Db.Fit, Db.TestAnchor -> F32
+	anchor_line = |curve, fit, test| {
+		f = fit_line(curve, fit)
+		if (f > 0.0) f else if (test.value <= 0.0) 0.0 else if (is_pace(curve)) (test.value * 1000.0) else test.value
+	}
+
+	anchor_tag : Str, [Metric, Imperial], Db.Fit, Db.TestAnchor -> Str
+	anchor_tag = |curve, units, fit, test|
+		if (fit_usable_for(curve, fit) or test.value <= 0.0) fit_tag(curve, units, fit)
+		else Str.concat(test_shown(curve, units, test), " test")
+
+	# the footer when a test anchors the curve: the threshold, the test that set
+	# it, and that the window's own fit is the one not drawn
+	anchor_caption_for : Str, [Metric, Imperial], Db.Fit, Db.TestAnchor, I64 -> Str
+	anchor_caption_for = |curve, units, fit, test, best20_age|
+		if (fit_usable_for(curve, fit) or test.value <= 0.0) fit_caption_for(curve, units, fit, best20_age)
+		else {
+			fit_name = if (is_pace(curve)) "CS" else "CP"
+			"${test_shown(curve, units, test)} from a ${test.kind} test on ${test.date} - this window's ${fit_name} fit is not usable"
+		}
+
+	test_shown : Str, [Metric, Imperial], Db.TestAnchor -> Str
+	test_shown = |curve, units, test|
+		match Bus.curve_key(curve) {
+			Power(_) => "FTP ${Db.fmt_f(test.value)}W"
+			Pace(_) => "threshold ${val_text(curve, units, F32.round_to_i64_try(test.value * 1000.0) ?? 0)}"
+		}
+
 	fit_caption_for : Str, [Metric, Imperial], Db.Fit, I64 -> Str
 	fit_caption_for = |curve, units, fit, best20_age|
 		if (!is_pace(curve)) fit_caption(fit, best20_age)
@@ -948,19 +980,18 @@ Curve :: [].{
 			"${why} - ${when}; an all-out 20 minutes would anchor it"
 		}
 
-	# ── planned targets as marks on the curve. A power target belongs on the
-	# ride curve, where every power prescription stride writes is ridden; a
-	# pace target belongs on every pace curve its unit fits (Sports
-	# pace_unit_families), at the speed its pace names and the duration one
-	# rep takes at that speed.
+	# ── planned targets as marks on the curve. A planned session names no
+	# sport, so a power target belongs on every power curve, whichever family
+	# is on screen; a pace target belongs on every pace curve its unit fits
+	# (Sports pace_unit_families), at the speed its pace names and the
+	# duration one rep takes at that speed.
 	Mark : { day : Str, typ : Str, dur_s : I64, val : I64, val_txt : Str, rep_txt : Str }
 
 	marks_for : Str, List(Db.Target), List(Db.PaceTarget) -> List(Mark)
 	marks_for = |curve, power, pace|
 		match Bus.curve_key(curve) {
-			Power(fam) =>
-				if (fam != "Ride") []
-				else List.map(power, |t| { day: t.day, typ: t.typ, dur_s: t.dur_s, val: t.watts, val_txt: "${I64.to_str(t.watts)}W", rep_txt: "${I64.to_str(t.reps)}x${Fmt.mmss(t.dur_s)}" })
+			Power(_) =>
+				List.map(power, |t| { day: t.day, typ: t.typ, dur_s: t.dur_s, val: t.watts, val_txt: "${I64.to_str(t.watts)}W", rep_txt: "${I64.to_str(t.reps)}x${Fmt.mmss(t.dur_s)}" })
 			Pace(sp) =>
 				List.keep_oks(
 					pace,
@@ -1110,8 +1141,8 @@ expect Curve.rung_pos([5, 15, 30, 60, 300, 600, 1200, 3600], 7200) == 7.0
 expect (Curve.best_at([{ secs: 600, w: 260 }, { secs: 1200, w: 254 }], 900) - 257.0).abs() < 0.001
 expect Curve.best_at([{ secs: 600, w: 0 }, { secs: 1200, w: 254 }], 900) == 0.0
 expect Curve.best_at([{ secs: 600, w: 260 }, { secs: 1200, w: 254 }], 1200) == 254.0
-# a power target reads in watts on the ride curve and nowhere else; its
-# label carries its share of the window's best at the rep duration
+# a power target reads in watts on every power curve; its label carries
+# its share of the window's best at the rep duration
 expect {
 	ms = Curve.marks_for("Ride", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])
 	match ms {
@@ -1119,7 +1150,7 @@ expect {
 		_ => Bool.False
 	}
 }
-expect Curve.marks_for("Rowing", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], []) == []
+expect List.len(Curve.marks_for("Rowing", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])) == 1 and List.len(Curve.marks_for("Run", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])) == 1
 # a pace target lands on every pace curve its unit fits, at the speed its
 # pace names; a distance rep takes the time that distance needs at that
 # pace, and a unit for another sport keeps it off the curve
@@ -1261,3 +1292,22 @@ expect {
 	spans = [{ top: 100.0, bot: 111.0, right: 200.0 }, { top: 130.0, bot: 141.0, right: 250.0 }]
 	(Curve.rule_start(105.0, 64.0, spans) - 206.0).abs() < 0.001 and (Curve.rule_start(120.0, 64.0, spans) - 64.0).abs() < 0.001 and (Curve.rule_start(142.5, 64.0, spans) - 256.0).abs() < 0.001
 }
+
+# a usable fit draws its own line; an unusable one gives way to a marked test
+# in force, in the curve's own units; with neither there is no line
+expect {
+	weak = { cp: 252.9, w_prime: 2980.0, r2: 0.84, points: 3.0, ok: Bool.True }
+	good = { cp: 250.0, w_prime: 15000.0, r2: 0.95, points: 3.0, ok: Bool.True }
+	test = { value: 246.5, kind: "cp3-12", date: "2026-10-27" }
+	none = { value: 0.0, kind: "none", date: "none" }
+	(Curve.anchor_line("Ride", good, test) - 250.0).abs() < 0.01
+		and (Curve.anchor_line("Ride", weak, test) - 246.5).abs() < 0.01
+		and Curve.anchor_line("Ride", weak, none) == 0.0
+}
+expect (Curve.anchor_line("pace:Run", { cp: 4.0, w_prime: 2000.0, r2: 0.95, points: 3.0, ok: Bool.True }, { value: 3.76, kind: "5k", date: "2026-11-01" }) - 3760.0).abs() < 0.01
+expect Curve.anchor_tag("Ride", Metric, { cp: 252.9, w_prime: 2980.0, r2: 0.84, points: 3.0, ok: Bool.True }, { value: 246.5, kind: "cp3-12", date: "2026-10-27" }) == "FTP 246.5W test"
+expect Curve.anchor_tag("Ride", Metric, { cp: 250.0, w_prime: 15000.0, r2: 0.95, points: 3.0, ok: Bool.True }, { value: 246.5, kind: "cp3-12", date: "2026-10-27" }) == "CP 250.0W"
+expect Curve.anchor_caption_for("Ride", Metric, { cp: 252.9, w_prime: 2980.0, r2: 0.84, points: 3.0, ok: Bool.True }, { value: 246.5, kind: "cp3-12", date: "2026-10-27" }, 9) == "FTP 246.5W from a cp3-12 test on 2026-10-27 - this window's CP fit is not usable"
+expect Curve.anchor_caption_for("pace:Run", Metric, { cp: 4.0, w_prime: 2000.0, r2: 0.95, points: 3.0, ok: Bool.True }, { value: 4.0, kind: "5k", date: "2026-11-01" }, 3) == "threshold 4:10/km from a 5k test on 2026-11-01 - this window's CS fit is not usable"
+# with no test the caption is the fit's own, prompt included
+expect Curve.anchor_caption_for("Ride", Metric, { cp: 252.9, w_prime: 2980.0, r2: 0.84, points: 3.0, ok: Bool.True }, { value: 0.0, kind: "none", date: "none" }, 9) == Curve.fit_caption({ cp: 252.9, w_prime: 2980.0, r2: 0.84, points: 3.0, ok: Bool.True }, 9)

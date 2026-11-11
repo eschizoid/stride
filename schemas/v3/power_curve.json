@@ -1,6 +1,6 @@
 {
   "title": "power_curve",
-  "description": "Payload of `stride power-curve`. `fit_r2` is how well the CP line fits its own 5-20 minute bests, and is the query-independent way to weigh the fit. The regression is power against 1/duration, so a LOW value means those bests do not fall on a line at all: CP and W' are then drawn through scatter, and small changes in the inputs swing them a long way. A high value says the line is a good description, NOT that the model describes the athlete \u2014 bests taken from steady efforts rather than maximal ones sit on a near-flat line that fits well and yields an implausibly small W'. `fit_r2` is 1 by construction at exactly two points (a line through two points is exact), and 0 when no fit was made at all \u2014 `cp` of 0 is what says there is no fit. It is only a quality signal when `fit_points` is 3.",
+  "description": "Payload of `stride power-curve`. `fit_r2` is how well the CP line fits its own 5-20 minute bests, and is the query-independent way to weigh the fit. The regression is power against 1/duration, so a LOW value means those bests do not fall on a line at all: CP and W' are then drawn through scatter, and small changes in the inputs swing them a long way. A high value says the line is a good description, NOT that the model describes the athlete — bests taken from steady efforts rather than maximal ones sit on a near-flat line that fits well and yields an implausibly small W'. `fit_r2` is 1 by construction at exactly two points (a line through two points is exact), and 0 when no fit was made at all — `cp` of 0 is what says there is no fit. It is only a quality signal when `fit_points` is 3.",
   "type": "object",
   "required": [
     "cp",
@@ -9,7 +9,11 @@
     "w_prime",
     "window_days",
     "fit_r2",
-    "fit_points"
+    "fit_points",
+    "test_known",
+    "test_value",
+    "test_kind",
+    "test_date"
   ],
   "additionalKeys": false,
   "properties": {
@@ -49,6 +53,20 @@
     },
     "fit_points": {
       "type": "integer"
+    },
+    "test_known": {
+      "type": "boolean",
+      "description": "Whether a marked power test is in force today for the named sport's family (ADR 0020); always false when no sport is named. `test_value`, `test_kind` and `test_date` are 0 and empty when false."
+    },
+    "test_value": {
+      "type": "number",
+      "description": "The test's threshold: watts."
+    },
+    "test_kind": {
+      "type": "string"
+    },
+    "test_date": {
+      "type": "string"
     }
   }
 }

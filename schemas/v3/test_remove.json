@@ -1,0 +1,18 @@
+{
+  "title": "test_remove",
+  "description": "Result of `stride test remove <activity_id>`: the session is no longer a threshold test.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "activity_id",
+    "removed"
+  ],
+  "properties": {
+    "activity_id": {
+      "type": "integer"
+    },
+    "removed": {
+      "type": "boolean"
+    }
+  }
+}

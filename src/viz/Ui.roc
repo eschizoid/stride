@@ -123,7 +123,8 @@ Ui :: [].{
 		curve_keys : Db.CurveKeys,
 		# open sessions ahead with a pace target, for the pace curve
 		pace_targets : List(Db.PaceTarget),
-		# the window's CP, 0 when the fit is not usable (Curve.fit_usable)
+		# the threshold line: the window's CP when its fit is usable, else a marked
+		# test's threshold in force (Curve.anchor_line), else 0
 		fit_cp : F32,
 		# open sessions ahead with a structured target, for the power view
 		plan_targets : List(Db.Target),
@@ -193,6 +194,8 @@ Ui :: [].{
 		# global ones
 		zone_overrides : List(Str),
 		career_spines : List(Db.CareerSpine),
+		# months a marked test sets a family's spine from (Db.load_test_months!)
+		career_tests : List({ fam : Str, month : Str, kind : Str }),
 		career_sports : List(Db.CareerSport),
 		# per-family monthly load and session count, so the career view can show
 		# what the SELECTED family did in each month rather than only the pooled

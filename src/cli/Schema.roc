@@ -179,6 +179,20 @@ Schema :: [].{
 		\\  rated_at     TEXT
 		\\)
 
+	# the judgment tier: sessions the athlete declared threshold tests. `value` is
+	# the threshold the test yields, in its signal's unit (power W, pace m/s, hr
+	# bpm), computed once when the test is marked so a later stream re-pull cannot
+	# move a number the athlete accepted. Never a column on activities, for the
+	# reason ratings is not one.
+	threshold_tests =
+		\\CREATE TABLE IF NOT EXISTS threshold_tests (
+		\\  activity_id  INTEGER PRIMARY KEY,
+		\\  kind         TEXT NOT NULL,
+		\\  signal       TEXT NOT NULL,
+		\\  value        REAL NOT NULL,
+		\\  marked_at    TEXT
+		\\)
+
 	# ── shared semantics as SQL views: the CLI and the viz window must read the
 	# plan through the SAME rule, and the only channel they share is the
 	# database — so the rule lives here, as views. The engine re-creates them on

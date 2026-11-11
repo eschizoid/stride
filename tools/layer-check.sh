@@ -29,7 +29,7 @@ layer_of() {
   case "$1" in
     Sports|Metrics|Csv|Streams|Strength|Config|Drain|Schema|Render) echo core ;;
     Db|Strava|Output|Sql)                                  echo io ;;
-    Analyze|Plan|Report|ReportHealth|ReportSeason|ReportSessions|ReportStrength) echo analytics ;;
+    Analyze|Plan|Report|ReportHealth|ReportReview|ReportSeason|ReportSessions|ReportStrength|ThresholdTest) echo analytics ;;
     main|Command|Import)                                   echo app ;;
     *) echo UNKNOWN ;;
   esac

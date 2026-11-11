@@ -4,12 +4,31 @@
   "type": "object",
   "required": [
     "ftp",
+    "source",
+    "test_kind",
+    "test_date",
     "zones"
   ],
   "additionalKeys": false,
   "properties": {
     "ftp": {
       "type": "number"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "test",
+        "derived"
+      ],
+      "description": "`test` when a marked ride-family power test in force sets the FTP (ADR 0020), `derived` when the 60-day estimate does."
+    },
+    "test_kind": {
+      "type": "string",
+      "description": "The test in force, empty when none is."
+    },
+    "test_date": {
+      "type": "string",
+      "description": "That test's date, empty when none is in force."
     },
     "zones": {
       "type": "array",

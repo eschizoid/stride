@@ -86,7 +86,7 @@ Db :: [].{
 			Ok(NotFound) => Ok(Metric)
 			Err(other) => Err(other)
 		}
-	# Remove a config row outright. Used by `config unset <key>` (#254, #276),
+	# Remove a config row outright. Used by `config unset <key>`,
 	# the way out for a row the engine does not read.
 	#
 	# DELETE and not `value = ''`: `Analyze.load_config!` requires every key
@@ -133,7 +133,7 @@ Db :: [].{
 	# BadOffset carries the STORED TEXT, not a number, because there is no number to
 	# carry -- that is the whole point. Coalescing an unreadable `utc_offset_minutes`
 	# to 0 makes it indistinguishable from a real UTC offset, so a typo reads
-	# as "you are on UTC" and silently shifts every civil-day boundary (#206). It is
+	# as "you are on UTC" and silently shifts every civil-day boundary. It is
 	# the offset twin of BadZone: report it, do not guess it.
 	TimeMode : [Zone(Str, I64), FixedOffset(I64), BadZone(Str, I64), BadOffset(Str), Utc]
 
@@ -222,7 +222,7 @@ Db :: [].{
 
 	# the power threshold (FTP) a sport's power is judged against. DERIVED, never
 	# configured: the sport FAMILY's best 20-min power × 0.95 — the standard FTP
-	# estimate, over one fitness pool per family (#151: a gravel 20-min effort IS
+	# estimate, over one fitness pool per family (a gravel 20-min effort IS
 	# bike fitness). The engine is sport-agnostic and derives it from the data, so
 	# there's nothing to set. 0 when the family has no power history, in which case
 	# intensity/TSS fall back to HR.
@@ -238,33 +238,65 @@ Db :: [].{
 	derive_sport_ftp! = |path, sport| {
 		# RECENT form: best 20-min power over the last 60 days, not all-time. An old peak
 		# shouldn't keep judging today's rides as easy — FTP tracks current fitness.
-		# An FTP needs two sessions of the family with a best in the window (#574),
+		# An FTP needs two sessions of the family with a best in the window,
 		# the rule period_ftp_sql scores by; with one, the best is that session's
 		# own and the estimate reads 0, as its ftp_used does.
 		cutoff = Metrics.days_to_date_str(local_today_days!(path) - 60)
 		best = Sql.query!({
 			path: Path.utf8(path),
-			# family population (#151): compare the STORED sport_family column —
+			# family population: compare the STORED sport_family column —
 			# the canonical head is computed in Roc and bound, keeping the
 			# predicate sargable (same rule period_ftp_sql uses in Analyze)
 			query: "SELECT CAST(COALESCE(CASE WHEN COUNT(NULLIF(m.best_20min_w, 0)) >= 2 THEN MAX(m.best_20min_w) END, 0) AS REAL) AS b FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_family = :fam AND a.start_local >= :cutoff",
 			bindings: [{ name: ":fam", value: String(Sports.canonical(sport)) }, { name: ":cutoff", value: String(cutoff) }],
 			row: Sql.f64("b"),
 		})?
-		Ok(Metrics.ftp_from_best_20min(best))
+		test = test_in_force_today!(path, "power", Sports.canonical(sport))?
+		Ok(Metrics.threshold_with_test(Metrics.ftp_from_best_20min(best), test.value))
+	}
+	# The newest threshold test on `signal` in force today for a sport family: one
+	# whose session is no older than Metrics.test_in_force_days. `value` is 0 and the
+	# text fields empty when none is, so callers take the higher of it and their
+	# derivation without a branch. Family-wide for pace too: today's figures are
+	# family figures, while analyze scores each pace session against its own sport
+	# type's tests.
+	test_in_force_today! : Str, Str, Str => Try({ value : F64, date : Str, kind : Str, activity_id : I64 }, _)
+	test_in_force_today! = |path, signal, family| {
+		cutoff = Metrics.days_to_date_str(local_today_days!(path) - Metrics.test_in_force_days)
+		rows = Sql.query_many!({
+			path: Path.utf8(path),
+			query: \\SELECT CAST(tt.value AS REAL) AS v, COALESCE(substr(CAST(ta.start_local AS TEXT), 1, 10), '') AS d,
+				\\       COALESCE(CAST(tt.kind AS TEXT), '') AS k, tt.activity_id AS id
+				\\FROM threshold_tests tt JOIN activities ta ON ta.id = tt.activity_id
+				\\WHERE tt.signal = :sig AND ta.sport_family = :fam AND ta.start_local >= :cutoff
+				\\ORDER BY ta.start_local DESC, tt.activity_id DESC LIMIT 1
+			,
+			bindings: [{ name: ":sig", value: String(signal) }, { name: ":fam", value: String(family) }, { name: ":cutoff", value: String(cutoff) }],
+			rows: |cols| |stmt| {
+				value = Sql.f64("v")(cols)(stmt)?
+				date = Sql.str("d")(cols)(stmt)?
+				kind = Sql.str("k")(cols)(stmt)?
+				activity_id = Sql.i64("id")(cols)(stmt)?
+				Ok({ value, date, kind, activity_id })
+			},
+		})?
+		Ok(List.first(rows).ok_or({ value: 0.0, date: "", kind: "", activity_id: 0 }))
 	}
 	# a family's threshold SPEED (m/s) today, by the rule derive_sport_ftp! uses for
 	# power: the best 20-minute speed over the last 60 days × 0.95, once two sessions of
-	# the family carry one, else 0. The projection prices a planned pace target with it.
+	# the family carry one, else 0, raised to a pace test in force. The projection
+	# prices a planned pace target with it.
 	derive_family_threshold_speed! : Str, Str => Try(F64, _)
 	derive_family_threshold_speed! = |path, family| {
 		cutoff = Metrics.days_to_date_str(local_today_days!(path) - 60)
-		Sql.query!({
+		derived = Sql.query!({
 			path: Path.utf8(path),
 			query: "SELECT CAST(COALESCE(CASE WHEN COUNT(NULLIF(m.best_20min_speed, 0)) >= 2 THEN MAX(m.best_20min_speed) * 0.95 END, 0) AS REAL) AS s FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.sport_family = :fam AND a.start_local >= :cutoff",
 			bindings: [{ name: ":fam", value: String(Sports.canonical(family)) }, { name: ":cutoff", value: String(cutoff) }],
 			row: Sql.f64("s"),
-		})
+		})?
+		test = test_in_force_today!(path, "pace", Sports.canonical(family))?
+		Ok(Metrics.threshold_with_test(derived, test.value))
 	}
 	# ── migrations ───────────────────────────────────────────────────────
 
@@ -293,7 +325,7 @@ Db :: [].{
 		# without this the body would never be fetched again. OR IGNORE keeps the
 		# count of a row that exists, so re-running the migration re-arms nothing.
 		Sql.execute!({ path: Path.utf8(path), query: Schema.seed_stream_retries, bindings: [] })?
-		# v34 (#478): strength notes (mirror) + parsed set rows (computed) —
+		# v34: strength notes (mirror) + parsed set rows (computed) —
 		# created before the views below, which read strength_sets
 		Sql.execute!({ path: Path.utf8(path), query: Schema.strength_notes, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.strength_sets, bindings: [] })?
@@ -302,21 +334,23 @@ Db :: [].{
 		# v38: structured strength logs imported from Strava's connector (mirror)
 		Sql.execute!({ path: Path.utf8(path), query: Schema.strength_logs, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.ratings, bindings: [] })?
-		# v27 (#138): event targets
+		# v44: sessions marked as threshold tests
+		Sql.execute!({ path: Path.utf8(path), query: Schema.threshold_tests, bindings: [] })?
+		# v27: event targets
 		Sql.execute!({ path: Path.utf8(path), query: Schema.events, bindings: [] })?
 		alter_add_column!(path, "ALTER TABLE activities ADD COLUMN weighted_avg_watts REAL")?
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_20min_w REAL")?
 		# v21: which signal produced decoupling_pct — provenance stored at analyze
 		# time (like load_model), because re-deriving it at render time from the
-		# stream mislabels estimated-watts sessions and re-pull windows (#142)
+		# stream mislabels estimated-watts sessions and re-pull windows
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN decoupling_signal TEXT")?
-		# v22: a skip can name the activity that replaced the plan (#144) —
+		# v22: a skip can name the activity that replaced the plan —
 		# judgment-tier provenance; a substitution is NOT a completion
 		alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN substitute_activity_id INTEGER")?
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN ftp_used REAL")?
 		alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN status TEXT")?
 		alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN skipped_reason TEXT")?
-		# superseded_activity_id (#274): the completion a later `complete` replaced.
+		# superseded_activity_id: the completion a later `complete` replaced.
 		# `week` and `plan` show the new `completed_activity_id`, and the payload's
 		# `replaced_activity` names the old one only once, on stdout; this column
 		# keeps it on the row, so an athlete who notices a mistyped session id a
@@ -326,24 +360,28 @@ Db :: [].{
 		# audit table, which would also cover repeated overwrites and the
 		# cross-session `ReleasedFrom` case, would be a table nothing else reads.
 		alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN superseded_activity_id INTEGER")?
-		# v26 (#198, ADR 0014): optional structured target beside the prose — coach-written
+		# v26 (ADR 0014): optional structured target beside the prose — coach-written
 		# judgment-tier numbers, all three NULL for a prose-only session. `target_watts`
 		# names its unit so a future pace column sits beside it, never inside it.
 		alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN target_reps INTEGER")?
 		alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN target_dur_s INTEGER")?
 		alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN target_watts REAL")?
-		# v42 (#636): the canonical target literal, on every signal (power, HR band, HR
+		# v42: the canonical target literal, on every signal (power, HR band, HR
 		# zone, pace). The three columns above stay the power target's numbers, which
 		# the projection and the window read; a row with no literal is a power target
 		# written before it, rebuilt from those columns.
 		alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN target_literal TEXT")?
+		# v44: the target's result on its own signal as `complete` rendered it,
+		# for readers that cannot run the scoring (the window's plan view). Written by
+		# `complete` and refreshed by `rate`; NULL on a session completed without it.
+		alter_add_column!(path, "ALTER TABLE planned_sessions ADD COLUMN target_result TEXT")?
 		# v3: metrics record the HR zone bounds they were computed with, so a zone-
 		# config change invalidates + recomputes (like ftp_used does for FTP)
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN zones_used TEXT")?
 		# v4: metrics record the algorithm revision they were computed with, so a
 		# change to the math itself (metrics_rev bump) invalidates + recomputes
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN metrics_rev INTEGER")?
-		# v25 (#311): the in-band MEAN of this session's HR stream; NULL when no usable
+		# v25: the in-band MEAN of this session's HR stream; NULL when no usable
 		# stream exists. Computed tier — never a correction to `activities.avg_hr`, which a
 		# re-sync would silently wipe (the mirror-tier rule in AGENTS.md). The scoring lenses
 		# divide by this; display surfaces still publish the stored value.
@@ -382,7 +420,7 @@ Db :: [].{
 		# pace twin of ftp_used, compared in the recompute WHERE so a threshold change reanalyzes.
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_20min_speed REAL")?
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN threshold_pace_used REAL")?
-		# v28 (#188): the mean-max SPEED ladder — the pace twin of the v12 power curve.
+		# v28: the mean-max SPEED ladder — the pace twin of the v12 power curve.
 		# best_20min_speed above is the 1200 s point and already existed; critical speed
 		# needs at least two points at DISTINCT durations to fit S(t) = D'/t + CS, so the
 		# 300 s and 600 s rungs are added here rather than a fuller ladder: they are the
@@ -391,10 +429,10 @@ Db :: [].{
 		# comparable with a flat one. REAL; 0/NULL = no data (activity shorter than the rung).
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_300s_speed REAL")?
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_600s_speed REAL")?
-		# v16 (#92): HR / power samples dropped by the validity filters vs offered, recorded
+		# v16: HR / power samples dropped by the validity filters vs offered, recorded
 		# here because the filtered values are gone before anything downstream sees the
 		# metrics. Counts ONLY valid_hr / valid_watts rejections — the wholesale exclusion of
-		# an estimated watts stream (#73) is policy, not junk.
+		# an estimated watts stream is policy, not junk.
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN hr_samples_total INTEGER")?
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN hr_samples_dropped INTEGER")?
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN watts_samples_total INTEGER")?
@@ -414,7 +452,7 @@ Db :: [].{
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN sport_used TEXT")?
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN start_used TEXT")?
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN stream_len_used INTEGER")?
-		# v19: aerobic decoupling / Pw:HR drift (#94). NULLABLE: 0.0 is a legitimate
+		# v19: aerobic decoupling / Pw:HR drift. NULLABLE: 0.0 is a legitimate
 		# PERFECT result (no drift), so a 0 default would make an ideal ride and a
 		# session with no power meter indistinguishable. NULL means "not computable
 		# for this activity"; a stored 0.0 means "computed, and it was flat".
@@ -428,7 +466,7 @@ Db :: [].{
 		# activity of every OTHER sport on each lookup; the composite makes it a range seek.
 		Sql.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_activities_sport_start ON activities(sport_type, start_local)", bindings: [] })?
 		# v15: NULL = Strava never said (pre-flag rows, CSV imports); 1 = real meter; 0 =
-		# estimated. Estimated watts must not outrank honest fallbacks (#73).
+		# estimated. Estimated watts must not outrank honest fallbacks.
 		alter_add_column!(path, "ALTER TABLE activities ADD COLUMN device_watts INTEGER")?
 		# v18: backfill the v17 signature so upgrading does not rescore the entire
 		# history. Sound because before v17 every activity upsert deleted its
@@ -459,7 +497,7 @@ Db :: [].{
 			,
 			bindings: [],
 		})?
-		# v23 (#151): the FTP population is the sport FAMILY, stored as a column so
+		# v23: the FTP population is the sport FAMILY, stored as a column so
 		# the period-FTP subqueries stay sargable, which a CASE inline is not. The
 		# backfill rewrites ALL rows so a Sports.families edit ships as edit +
 		# version bump; triggers keep future writes current, because fixtures and
@@ -526,7 +564,7 @@ Db :: [].{
 		Sql.execute!({ path: Path.utf8(path), query: Schema.activity_family_month, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.monthly_ride_ftp_drop, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.monthly_ride_ftp, bindings: [] })?
-		# v35 (#521): coverage BEFORE the spine view, which joins it
+		# v35: coverage BEFORE the spine view, which joins it
 		Sql.execute!({ path: Path.utf8(path), query: Schema.strength_coverage_drop, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.strength_coverage, bindings: [] })?
 		# v37: a family's load and sessions per month, on the shared keys

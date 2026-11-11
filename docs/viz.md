@@ -72,8 +72,11 @@ linked activity when it differs), `skipped`, `rested` (a rest day past its
 date with under 1.0 load, the rule `stride week` applies), `open`, or `>>`
 for today. Under the prescription a second line says what happened: the
 linked activity's name, minutes and load, and for a session with a
-structured target, the detected power work reps beside it with their share
-of the target watts; or the skip reason and the substitute the athlete did
+structured target its result on the target's own signal: for a power
+target, the detected power work reps with their share of the target watts;
+for a heart-rate, zone, pace or RPE target, the result `stride complete`
+stated for it (stored on the session by `complete` and refreshed by
+`stride rate`); or the skip reason and the substitute the athlete did
 instead. The quest strip carries the week's done count and one pip per
 weekday colored by that day's status, with a substitute day distinct from a
 plain skip; the bottom strip states this week's load beside last week's,
@@ -461,8 +464,8 @@ drawn only from a fit with r2 at the floor and D' inside the sport's own
 band (5-100 m for swimming, 10-300 m for rowing, 10-600 m on foot), and
 otherwise the caption names what is wrong and the effort that would fix it.
 
-Planned targets show where they belong: a power target on the ride curve, a
-pace target on every pace curve its unit fits (`/km` and `/mi` on the run and
+Planned targets show where they belong: a power target on every power curve
+(a planned session names no sport), a pace target on every pace curve its unit fits (`/km` and `/mi` on the run and
 walk families, `/100m` on the swim family, `/500m` on the rowing family), at
 the speed its pace names and the time one rep takes at that speed. A
 directive's `family` field steers the same switch, and the focus row reports
@@ -525,7 +528,7 @@ comparison: a workout and a ride both plot bpm and still answer no question
 side by side. The pair is re-judged whenever the live session changes, so a
 ghost cannot outlive a switch to a session of another kind.
 
-This is the view #372 calls "auditable". A table of segments can tell you the
+This is the auditable view. A table of segments can tell you the
 detector found seven work blocks; only the overlay tells you whether a block
 started before the power did.
 
