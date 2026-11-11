@@ -98,10 +98,9 @@ Plan :: [].{
 		# arm matters when the whole day ends up skipped: with no live session, every
 		# earlier draft surfaced as near-duplicate rows. A genuinely missed day still
 		# shows its one final tombstone. `week all` shows the full log unfiltered.
-		# scope filter via a BOUND :all flag, never string interpolation: the earlier
-		# approach spliced a compile-time-constant "" into the query, crashing the
-		# backend in str_concat (roc#10595). The date literals below are always
-		# non-empty, so they interpolate safely.
+		# scope filter via a BOUND :all flag, never string interpolation: splicing a
+		# compile-time-constant "" into a query can crash the backend in str_concat.
+		# The date literals below are always non-empty, so they interpolate safely.
 		scope_all =
 			match scope {
 				AllTime => 1
@@ -109,9 +108,8 @@ Plan :: [].{
 			}
 		# `week all` must mean ALL: the older-sessions count and the note pointing at the
 		# JSON are both lies if the query silently truncates. SQLite treats a negative
-		# LIMIT as unbounded, so this stays a BOUND value — no interpolated clause, which
-		# is the pattern that spliced an empty string into the query and crashed the
-		# backend (see the :all note above).
+		# LIMIT as unbounded, so this stays a BOUND value rather than an interpolated
+		# clause (see the :all note above).
 		row_limit =
 			match scope {
 				AllTime => -1
@@ -160,8 +158,7 @@ Plan :: [].{
 		})?
 		# newest-first from SQL, flipped to calendar order for display. `Render.reverse_list`
 		# (fold + prepend, linear) rather than fold + `List.concat([x], acc)`, which copies
-		# the whole accumulator every step and is quadratic — harmless behind the old
-		# LIMIT 100, unbounded now that `week all` returns the full log.
+		# the whole accumulator every step and is quadratic over `week all`'s full log.
 		ordered = Render.reverse_list(rows)
 		dow = |date_str|
 			match Metrics.date_str_to_days(date_str) {
@@ -181,11 +178,8 @@ Plan :: [].{
 				detail: p.detail,
 				rationale: p.rationale,
 				completed_activity_id: p.completed_activity_id,
-				# ...and what a re-completion erased, 0 when nothing was. Published rather than
-				# kept internal because the whole defect was that the erased id existed only in
-				# one line of stdout, once: `week` and `plan` showed the NEW completion and the
-				# old one was gone from the row, so noticing a week later left shell scrollback
-				# as the only record (#274).
+				# ...and what a re-completion erased, 0 when nothing was. Published on the row,
+				# so an erased completion stays on record after `complete` has printed it once.
 				superseded_activity_id: p.superseded_activity_id,
 				# 0 on session rows — only unplanned rows carry a bare activity_id
 				activity_id: 0.I64,
@@ -280,7 +274,7 @@ Plan :: [].{
 		# activity never enters the list and the guard was provably dead for half the
 		# class — and whether a POISONED (non-NULL) value can even exist inside a week
 		# window depends on the calendar (a quarter of Mondays have none), so a test against
-		# the scoped guard goes red on a quarter of weeks for no regression. The sweep is
+		# the scoped guard would fail on a quarter of weeks for no fault. The sweep is
 		# the same one `rate`, `compare`, `summary`, `plan` and `stats` use; `season`
 		# guards inline over a differently-grouped query for its own stated reason.
 		_ = Report.guard_activity_dates!(path)?
@@ -857,24 +851,17 @@ Plan :: [].{
 				} else {
 					match live_claimant!(path, activity_id, session_id)? {
 						CompletedBy(cid) =>
-						# a completion is permanent evidence — there is no release
-						# path, and saying otherwise once sent a reader into a
-						# done→skipped corruption. Name the fact, suggest the fix.
+						# a completion is permanent evidence with no release path:
+						# name the fact and suggest the fix.
 							Output.err_out!("activity_already_linked", "activity ${I64.to_str(activity_id)} already completed session #${I64.to_str(cid)} — completions are permanent; pick a different activity")
 						SubstituteOf(cid) =>
 							Output.err_out!("activity_already_linked", "activity ${I64.to_str(activity_id)} substitutes session #${I64.to_str(cid)} — release it first: stride skip ${I64.to_str(cid)} \"<reason>\" none")
 						Free => {
-							# WHAT THIS REPLACES, read before the write (#258): `complete` on an
-							# already-done session overwrote `completed_activity_id` with a payload
-							# indistinguishable from a first-time completion — a typo'd session id reported
-							# success and overwrote real history.
-							# NOT refused: `skip`'s own message names re-completing as the documented repair
-							# for a mis-linked completion, so refusing would falsify the only repair path
-							# stride documents. The bug is SILENTLY, not overwrites.
-							# BOTH judgment-tier links, because the UPDATE destroys both: reading only
-							# `completed_activity_id` answered `replaced_activity: 0` — an affirmative
-							# "nothing was replaced" — on a call that had just erased the record that the
-							# athlete substituted this activity for the session.
+							# WHAT THIS REPLACES, read before the write: re-completing a done session
+							# overwrites its link, and the payload must say so, or a typo'd session id
+							# reads as a first-time completion. Not refused: re-completing is the
+							# documented repair for a mis-linked completion. BOTH judgment-tier links are
+							# read, because the UPDATE erases both the completion and a substitute link.
 							prior = Sql.query!({
 								path: Path.utf8(path),
 								query: "SELECT COALESCE(completed_activity_id, 0) AS prior, COALESCE(substitute_activity_id, 0) AS sub FROM planned_sessions WHERE id = :pid",
@@ -896,9 +883,8 @@ Plan :: [].{
 								# `NOT IN (0, :aid)`, the same clause `replaced_activity` uses: 0 because an
 								# unset completion reads as 0 through COALESCE, and recording it would claim a
 								# completion was erased when there was none; `:aid` because re-completing with
-								# the SAME activity erases nothing — an unconditional write set superseded ==
-								# completed ("this activity replaced itself") and DESTROYED the genuine erased
-								# id from the earlier overwrite.
+								# the SAME activity erases nothing, and recording it would overwrite a genuine
+								# erased id with "this activity replaced itself".
 								# `ELSE superseded_activity_id`, not NULL: a no-op re-run must leave the record
 								# standing, which is the whole point.
 								query: "UPDATE planned_sessions SET superseded_activity_id = CASE WHEN COALESCE(completed_activity_id, 0) NOT IN (0, :aid) THEN completed_activity_id ELSE superseded_activity_id END, completed_activity_id = :aid, status = 'done', substitute_activity_id = NULL WHERE id = :pid",
@@ -917,8 +903,7 @@ Plan :: [].{
 							# `dropped_substitute`, NOT `released_substitute`: `skip` OMITS that key when
 							# nothing was released (pinned by a `!contains`), so a consumer that correctly
 							# learned `has("released_substitute")` there would read "a substitute was
-							# released" on every completion. Same name + opposite absence contract is the
-							# field's own bug re-created across commands.
+							# released" on every completion: one name cannot carry two absence contracts.
 							replaced = if (prior.p != activity_id) prior.p else 0
 							# ...and `sub != activity_id` IS load-bearing: re-completing with
 							# the activity that was already the substitute is a promotion,
@@ -1012,10 +997,9 @@ Plan :: [].{
 						row: Sql.str("t"),
 					})?
 					if session_type != "rest" {
-						# Naming the rule is not enough: the id lives in the database and
-						# the old message left the reader with no way to find it short of
-						# opening SQLite. So list the activities actually near this
-						# session's date — the answer is almost always one of them.
+						# Naming the rule is not enough: the id lives in the database, so
+						# list the activities near this session's date, where the answer
+						# almost always is.
 						candidates = candidate_activities!(path, session_id)?
 						hint =
 							if List.is_empty(candidates) {
@@ -1038,8 +1022,8 @@ Plan :: [].{
 						# — but the same UPDATE NULLs `substitute_activity_id`, so `dropped_substitute`
 						# must be read before the write on this arm too.
 						# `0.I64`, not a bare `0`: Roc infers an unconstrained record literal as
-						# fractional, and the builtin JSON renders `0.0` — a float under an integer key,
-						# and both gates were blind (the validator's integer test is floor($v) == $v).
+						# fractional, and the builtin JSON renders `0.0`, a float under an integer key
+						# that the validator's integer test (floor($v) == $v) accepts.
 						released = Sql.query!({
 							path: Path.utf8(path),
 							query: "SELECT COALESCE(substitute_activity_id, 0) AS sub FROM planned_sessions WHERE id = :pid",
@@ -1133,11 +1117,9 @@ Plan :: [].{
 				if !(Report.row_exists!(path, "planned_sessions", session_id)?) {
 					session_not_found!(session_id)
 				} else {
-					# A DONE session cannot be skipped (#148): the old behavior
-					# flipped status to skipped while KEEPING completed_activity_id,
-					# leaving a skipped row that displays a completion — falsified
-					# adherence history, and live_claimant! then contradicts the
-					# visible status. Completions are permanent evidence; if a
+					# A DONE session cannot be skipped: a skipped row still holding
+					# completed_activity_id would display a completion, falsify
+					# adherence history, and contradict live_claimant!. Completions are permanent evidence; if a
 					# mis-link ever needs undoing, that will be an explicit retract
 					# verb clearing status AND link together, never a skip side effect.
 					done_by = Sql.query_many!({
@@ -1586,11 +1568,7 @@ Plan :: [].{
 						anchor = (Metrics.date_str_to_days(s.as_of)).ok_or(0)
 						# anchor-13, not anchor-14: the range is INCLUSIVE of both ends, so
 						# `>= anchor - 14` spans fifteen days while the section header and the
-						# `recent_activities_14d` field both promise fourteen. Nobody could count
-						# the difference while only days with activities were rendered; showing
-						# every day made the extra one visible. Narrowing the window keeps the
-						# name honest — the alternative, relabelling to 15, would have meant
-						# renaming the JSON field and breaking its consumers over a fencepost.
+						# `recent_activities_14d` field both promise fourteen.
 						cutoff14 = Metrics.days_to_date_str(anchor - 13)
 						recent = Sql.query_many!({
 							path: Path.utf8(path),
@@ -1776,8 +1754,7 @@ Plan :: [].{
 						actionable = adh.planned - adh.rested
 						completion_pct = if (actionable > 0) (((adh.completed).to_f64() / (actionable).to_f64()) * 100.0).round_to_i64_try().ok_or(0) else 0
 						# ── data freshness (#221) ────────────────────────────────────────────
-						# Without this a coach either spent a turn on `doctor` every time or planned from
-						# a week of unsynced rides. Four MEASUREMENTS, no verdict (ADR 0012): what counts
+						# So a coach can tell from the bundle alone whether the data is current. Four MEASUREMENTS, no verdict (ADR 0012): what counts
 						# as stale depends on the question being asked.
 						#
 						# awaiting_metrics reuses Analyze.pending_metrics_count! — the same pending_where
@@ -1786,7 +1763,7 @@ Plan :: [].{
 						# newly arrived stream leaves scored rows due, and this counts them.
 						#
 						# Not `?`: pending_metrics_count! validates EVERY hr_z* key including per-sport
-						# overrides, and propagating made one unparseable override kill `plan` outright.
+						# overrides, and propagating would let one unparseable override kill `plan`.
 						# Reported as unknown instead — a THIRD `_known` mechanism (an Err from a
 						# computation that could not run, meaning BROKEN rather than absent), said
 						# plainly so a maintainer does not hunt for the column behind the flag. 0 with
@@ -1802,7 +1779,7 @@ Plan :: [].{
 						# Date only, lining up with summary.as_of — but mind what the gap measures:
 						# rebuild_daily_load! floors the series at local today, so as_of is pinned to the
 						# day analyze LAST RAN. The gap is last-activity-to-last-analyze and simply stops
-						# growing on a stale install (measured: a week-stale install froze at 3), so
+						# growing on a stale install, so
 						# last_sync against the real clock is the primary signal and this the secondary.
 						# "" when there are no activities.
 						newest_activity = Sql.query!({
