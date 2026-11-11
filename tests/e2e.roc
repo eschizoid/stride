@@ -364,7 +364,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1375)?
+	checks_ran_exactly!(1392)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
