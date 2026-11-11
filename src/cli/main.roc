@@ -61,7 +61,7 @@ import Plan
 import Import
 
 version : Str
-version = "stride 0.19.0" # x-release-please-version
+version = "stride 0.20.0" # x-release-please-version
 
 help_text =
 	\\stride — a local-first, deterministic training analytics engine (built in Roc)
@@ -125,7 +125,8 @@ help_text =
 	\\    week add <date> <type> <detail> <rationale> [target]
 	\\                                add a planned session; the optional target is
 	\\                                3x12:00@230W, 1x60:00@HR125-147, 1x90:00@Z2,
-	\\                                5x4:00@4:10/km, 10x100m@1:40/100m or 6x500m@1:55/500m
+	\\                                1x45:00@RPE6, 5x4:00@4:10/km, 10x100m@1:40/100m
+	\\                                or 6x500m@1:55/500m
 	\\    complete <session_id> [activity_id]
 	\\                                mark done (bare = rest day)
 	\\    complete latest             close the open session on the latest activity's
