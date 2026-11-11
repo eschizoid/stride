@@ -233,3 +233,30 @@ jobs:
 
       - name: Layer check (ADR 0016 — imports point down)
         run: bash tools/layer-check.sh
+
+  # The one-line installer, run against the latest published release on both
+  # platforms it serves: it must pick the right asset, pass the checksum, and
+  # leave a binary that starts. It reads the release, not this branch's build, so
+  # it also catches a release whose asset names or SHA256SUMS.txt drifted from
+  # what install.sh expects.
+  install-script:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the latest release with install.sh
+        env:
+          STRIDE_INSTALL_DIR: ${{ runner.temp }}/stride-bin
+          STRIDE_INSTALL_APP: "0"
+        run: sh install.sh < /dev/null
+
+      - name: The installed binary starts and answers its version
+        run: |
+          out=$("${{ runner.temp }}/stride-bin/stride" --version)
+          echo "$out"
+          case "$out" in stride\ *) ;; *) echo "unexpected version line: $out"; exit 1 ;; esac
