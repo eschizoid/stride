@@ -25,7 +25,8 @@
     "form_coverage_90d",
     "last_hard_session_date",
     "pending_sessions",
-    "sports_28d"
+    "sports_28d",
+    "timezone_known"
   ],
   "properties": {
     "as_of": {
@@ -470,6 +471,10 @@
           }
         }
       }
+    },
+    "timezone_known": {
+      "type": "boolean",
+      "description": "false while no recognised IANA `timezone` is configured: today is then a fixed `utc_offset_minutes` day at best and the UTC day at worst, so west of UTC the evening reads as tomorrow. `stride setup` or `config set timezone` fixes it."
     }
   }
 }

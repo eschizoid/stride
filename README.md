@@ -225,15 +225,32 @@ just install        # builds the binary, symlinks it into ~/.local/bin
 ## Quick start
 
 ```bash
+stride setup
+```
+
+`setup` walks the whole first run and resumes wherever it stopped:
+
+1. It creates the database.
+2. It tells you exactly what to type when you create your Strava API app (callback domain `localhost`), then asks for the client ID and secret. No environment variables.
+3. It opens the Strava authorize page and receives the code on a local port when you click Authorize. If that fails, paste the whole address the browser landed on.
+4. It detects your timezone and asks you to confirm it, so "today" is your local day and not UTC's.
+5. It asks for one heart rate, your threshold HR (or your max HR if you do not know it), and derives the four zone bounds from it. Change any of them later with `stride config set hr_z<N>_max <bpm>`.
+6. It runs the first sync and analyze, then shows `stride doctor`.
+
+An agent drives the same steps with `stride setup --json`, which never prompts: each call answers with the next step and what it needs, and `stride setup <key>=<value>` supplies one value. The coaching skill does this for you.
+
+The steps by hand, if you prefer them:
+
+```bash
 stride init                                   # create + migrate the db
-STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth   # one-time browser paste flow
+STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth   # browser authorize, paste the address back
 stride config set hr_z1_max 120               # your HR zone upper bounds...
 stride config set hr_z2_max 150
 stride config set hr_z3_max 165
 stride config set hr_z4_max 180               # (z5 = everything above)
-stride config set timezone America/Chicago    # optional: anchor "today" to your
-                                              # local day (not UTC's). An IANA name
-                                              # stays DST-correct automatically.
+stride config set timezone America/Chicago    # anchor "today" to your local day
+                                              # (not UTC's). An IANA name stays
+                                              # DST-correct automatically.
                                               # Fixed alternative, no DST tracking:
                                               #   `stride config set utc_offset_minutes -300`
                                               # Precedence: timezone > offset > UTC.
@@ -270,7 +287,7 @@ row Strava still lists with Strava's copy. Its stream fetches are the ordinary q
 plus the activities that have hit the three-fetch cap; it never re-reads a stream that
 decoded.
 
-After `auth`, credentials live in the db — no env vars ever again. Day-to-day:
+After `setup` (or `auth`), credentials live in the db — no env vars ever again. Day-to-day:
 
 ```bash
 stride sync && stride analyze && stride summary   # the daily loop (repo: `just up`)
@@ -288,6 +305,7 @@ against the parser's own verb list; it is the authoritative list and this table 
 
 | Command                                         | What it does                                                    |
 | ----------------------------------------------- | --------------------------------------------------------------- |
+| `setup [key=value]`                             | the guided first run: Strava app, authorize, timezone, zones, sync |
 | `init`                                          | create `~/.stride` and migrate the SQLite db — idempotent       |
 | `auth`                                          | one-time Strava OAuth; stores tokens and client creds in the db |
 | `config`                                        | list the config that is set (secrets redacted)                  |

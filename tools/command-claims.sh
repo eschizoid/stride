@@ -453,6 +453,7 @@ rate=1,2
 relabel=1,2,3,4
 reps=1
 review=1
+setup=1
 skip=1,2,3
 strength import=1
 test remove=1

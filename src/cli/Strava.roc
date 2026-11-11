@@ -102,34 +102,48 @@ Strava :: [].{
 	}
 	auth_flow! : Str, Str, Str => Try({}, _)
 	auth_flow! = |path, client_id, client_secret| {
-		url = "https://www.strava.com/oauth/authorize?client_id=${client_id}&response_type=code&redirect_uri=http://localhost&approval_prompt=auto&scope=read,activity:read_all"
-		# Output.human_line!, not Stdout.line! — stdout carries the envelope in JSON mode
-		# and this prose is not it (#259). The prompt below is the one that made it more
-		# than untidy: no trailing newline meant the envelope landed on the same line.
+		url = authorize_url(client_id, "http://localhost")
+		# Output.human_line!, not Stdout.line!: stdout carries the envelope in JSON mode
+		# and this prose is not it. The prompt below matters most, since it has no trailing
+		# newline and would put the envelope on its line.
 		Output.human_line!("1) Click Authorize in the browser tab that just opened (URL below if it didn't):")?
 		Output.human_line!("")?
 		Output.human_line!("   ${url}")?
 		Output.human_line!("")?
 		open_browser!(url)
 		Output.human_line!("2) You'll land on a localhost page that fails to load — that's expected.")?
-		Output.human_line!("   Copy the code=XXXX value from the address bar and paste it here.")?
+		Output.human_line!("   Copy the whole address from the address bar (or just its code=XXXX value) and paste it here.")?
 		Output.human_line!("")?
 		Output.human_write!("code: ")?
 		code_raw = Stdin.line!()?
-		code = Str.trim(code_raw)
-		form = "client_id=${client_id}&client_secret=${client_secret}&code=${code}&grant_type=authorization_code"
-		body = post_form!(token_url!({}), form)?
-		tokens = decode_tokens(body)?
-		save_tokens!(path, tokens)?
-		# persist client creds so sync never needs env vars again
-		Db.config_set!(path, "strava_client_id", client_id)?
-		Db.config_set!(path, "strava_client_secret", client_secret)?
+		# the bare code or the whole redirected URL; a paste with no code is sent
+		# as typed, and Strava's refusal names what was wrong with it
+		code = (Config.oauth_code(code_raw)).ok_or(Str.trim(code_raw))
+		tokens = exchange_code!(path, client_id, client_secret, code)?
 		# ...and the SUCCESS line was the same defect as the prompt, one path over: bare
 		# prose on stdout in JSON mode. Auth is a setup step whose command-table entry
 		# publishes six machine-readable error codes — a promise its stdout is parseable.
 		# `expires_at` rather than a bare success flag: the one fact a caller can act on,
 		# already in hand. Tokens themselves never appear (same rule as `config get`).
 		Output.out!({ authorized: 1 == 1, expires_at: tokens.expires_at }, |_| "authorized — tokens stored. Run `stride sync` to pull your activities.")
+	}
+	# the browser page that asks the athlete to authorize this client; Strava
+	# sends the code to `redirect`, whose host must be the API app's callback
+	# domain (localhost or 127.0.0.1 match one registered as localhost)
+	authorize_url : Str, Str -> Str
+	authorize_url = |client_id, redirect| "https://www.strava.com/oauth/authorize?client_id=${client_id}&response_type=code&redirect_uri=${redirect}&approval_prompt=auto&scope=read,activity:read_all"
+
+	# Trade an authorization code for tokens and store them with the client
+	# credentials that earned them, so sync never needs the environment again.
+	exchange_code! : Str, Str, Str, Str => Try(TokenResp, _)
+	exchange_code! = |path, client_id, client_secret, code| {
+		form = "client_id=${client_id}&client_secret=${client_secret}&code=${code}&grant_type=authorization_code"
+		body = post_form!(token_url!({}), form)?
+		tokens = decode_tokens(body)?
+		save_tokens!(path, tokens)?
+		Db.config_set!(path, "strava_client_id", client_id)?
+		Db.config_set!(path, "strava_client_secret", client_secret)?
+		Ok(tokens)
 	}
 	decode_tokens : List(U8) -> Try(TokenResp, _)
 	decode_tokens = |body| {
@@ -143,11 +157,8 @@ Strava :: [].{
 		# ONE atomic multi-row upsert: Strava rotates the refresh token on every refresh,
 		# so three separate writes risked a crash leaving new-access + a DEAD refresh
 		# token — auth bricked until a manual re-`auth`.
-		# Wrapping these bindings in "${...}" to force a copy CRASHED real sync every
-		# run on 0.21: interpolation makes every binding a heap Str, which is exactly
-		# what bug C double-freed. #105 is FIXED (basic-cli 0.22.0), so the copy is now
-		# merely pointless; this note stays because it is a tempting fix for the next
-		# mystery crash.
+		# Bind the strings directly: wrapping them in "${...}" to force a copy only turns
+		# every binding into a heap Str and fixes nothing.
 		Sql.execute!({
 			path: Path.utf8(path),
 			query: \\INSERT OR REPLACE INTO config (key, value) VALUES
@@ -872,7 +883,7 @@ Strava :: [].{
 					_ = Output.say!("cannot read the day stamp on Strava's read counter ('${v}') — treating it as today so the count still applies; `stride config set strava_reads_today 0` clears both")
 					# ...and REPAIR it, which is what makes the conservative reading affordable: a
 					# corrupt COUNT self-heals when its stamp goes stale, but a corrupt STAMP is read
-					# as today FOREVER (measured: three consecutive runs refused, a fixed point).
+					# as today FOREVER, refusing every run.
 					# Writing a real day keeps this run refused — the count still applies — and makes
 					# the stamp genuinely stale tomorrow.
 					_ = Db.config_set!(path, "strava_reads_day", I64.to_str(day_now))?
@@ -1297,11 +1308,9 @@ Strava :: [].{
 	activity_bindings : ActivitySummary -> List(_)
 	activity_bindings = |a| [
 		{ name: ":id", value: Integer(a.id) },
-		# Binding the decoded Str straight through is correct on basic-cli 0.22+ — the
-		# 0.21 host double-freed heap Strs in bindings (bug C, #105, fixed upstream in
-		# basic-cli#472). Still do not wrap these in "${...}" to force a copy: the copy
-		# "fix" was built on the wrong theory and crashed real sync 12/12 while the
-		# short-name e2e mock stayed green. See #105 for the full history.
+		# Binding the decoded Str straight through is correct on this platform. Wrapping it
+		# in "${...}" to force a copy only adds heap Strs, and the short-name e2e mock
+		# cannot exercise heap-string paths, so check such a change against real data.
 		{ name: ":name", value: String(a.name) },
 		{ name: ":sport", value: String(a.sport_type) },
 		{ name: ":start", value: String(a.start_date_local) },

@@ -493,6 +493,33 @@ run_sync! = || {
 	check!("...and --json, the flag the bug report names, survives its re-exec with stdin", auth_flag == "true")?
 	_ = sh!("rm -rf '${ahome}'")
 
+	# ── setup (#644), end to end against the mock from an EMPTY home: no init, no
+	# environment credentials. Each call supplies one value and is answered with
+	# the next step, so the walk is driven the way a coach drives it. The code
+	# arrives as the whole redirected address, the shape a paste takes.
+	shome = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+	sdb = "${shome}/.stride/db.sqlite"
+	su! = |args, filter| Str.trim(sh!("HOME='${shome}' STRIDE_API_BASE='${base}' STRIDE_FORMAT=json '${bin}' setup ${args} 2>/dev/null | jq -r '${filter}'"))
+	first = su!("", "[.data.next_step, .data.interactive, (.data.ran | join(\",\")), (.data.steps[0] | \"\\(.step):\\(.done)\")] | @tsv")
+	check!("setup on an empty home creates the database and asks for the Strava app (${first})", first == "strava_app\ttrue\tinit\tinit:true")?
+	check!("setup's payload conforms to its schema", Str.trim(sh!("HOME='${shome}' STRIDE_FORMAT=json '${bin}' setup 2>/dev/null | jq '.data' | jq -r --slurpfile schema schemas/v3/setup.json -f tools/validate.jq 2>&1")) == "")?
+	check!("...and a rerun repeats nothing", su!("", ".data.ran | length") == "0")?
+	check!("one credential is not the app", su!("client_id=e2e-id", ".data.next_step") == "strava_app")?
+	check!("both move on to authorize, with the client's authorize address", su!("client_secret=e2e-secret", "[.data.next_step, (.data.authorize_url | contains(\"client_id=e2e-id\"))] | @tsv") == "authorize\ttrue")?
+	check!("doctor says no timezone is set yet", Str.trim(sh!("HOME='${shome}' STRIDE_FORMAT=json '${bin}' doctor 2>/dev/null | jq -r '.data.timezone_known'")) == "false")?
+	check!("the redirected address authorizes and stores the tokens", su!("'code=http://localhost/?state=&code=fakecode&scope=read,activity:read_all'", ".data.next_step") == "timezone" and Str.trim(sql!(sdb, "SELECT value FROM config WHERE key='strava_refresh_token';")) == "mock-refresh")?
+	check!("an address with no code is refused, not sent", Str.contains(Str.trim(sh!("HOME='${shome}' STRIDE_FORMAT=json '${bin}' setup 'code=http://localhost/?state=&error=access_denied' 2>/dev/null")), "\"code\":\"bad_value\""))?
+	check!("a zone the system does not know is refused", Str.contains(Str.trim(sh!("HOME='${shome}' STRIDE_FORMAT=json '${bin}' setup timezone=Not/AZone 2>/dev/null")), "\"code\":\"bad_value\""))?
+	check!("a known zone is stored and the walk moves to zones", su!("timezone=America/Chicago", ".data.next_step") == "zones" and Str.trim(sql!(sdb, "SELECT value FROM config WHERE key='timezone';")) == "America/Chicago")?
+	check!("...and doctor now reports the timezone known", Str.trim(sh!("HOME='${shome}' STRIDE_FORMAT=json '${bin}' doctor 2>/dev/null | jq -r '.data.timezone_known'")) == "true")?
+	check!("a key setup does not take is refused by name", Str.contains(Str.trim(sh!("HOME='${shome}' STRIDE_FORMAT=json '${bin}' setup bogus=1 2>/dev/null")), "\"code\":\"unknown_key\""))?
+	check!("an implausible heart rate is refused", Str.contains(Str.trim(sh!("HOME='${shome}' STRIDE_FORMAT=json '${bin}' setup threshold_hr=500 2>/dev/null")), "\"code\":\"bad_value\""))?
+	check!("one threshold HR sets all four zone bounds and the walk reaches sync", su!("threshold_hr=165", "[.data.next_step, (.data.needs | length)] | @tsv") == "sync\t0" and Str.trim(sql!(sdb, "SELECT group_concat(value, ',') FROM (SELECT value FROM config WHERE key IN ('hr_z1_max','hr_z2_max','hr_z3_max','hr_z4_max') ORDER BY key);")) == "140,147,155,163")?
+	_ = Str.trim(sh!("HOME='${shome}' STRIDE_API_BASE='${base}' STRIDE_FORMAT=json '${bin}' sync >/dev/null 2>&1; HOME='${shome}' STRIDE_FORMAT=json '${bin}' analyze >/dev/null 2>&1"))
+	check!("after the first sync setup is complete", su!("", "[.data.complete, .data.next_step, ([.data.steps[].done] | all)] | @tsv") == "true\tdone\ttrue")?
+	check!("...on a synced database", Str.trim(sql!(sdb, "SELECT COUNT(*) > 0 FROM activities;")) == "1")?
+	_ = sh!("rm -rf '${shome}'")
+
 	_ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','stale-access'),('strava_refresh_token','stale-refresh'),('strava_expires_at','1');")
 
 	first_sync = sync_stride!(bin, home, base, ["sync"])
@@ -1657,7 +1684,7 @@ b_init_config! = |ctx| {
 	# here is the deliberate-bump discipline: adding a properly described command still
 	# has to change a number a reader sees.
 	overlap = Str.trim(sh!("LC_ALL=C comm -12 '${verbs_dir}/parser' '${verbs_dir}/spec' | wc -l | tr -d ' '"))
-	check!("...and the two lists genuinely overlap on all 37 verbs (got ${overlap})", overlap == "37")?
+	check!("...and the two lists genuinely overlap on all 38 verbs (got ${overlap})", overlap == "38")?
 	_ = sh!("rm -rf '${verbs_dir}'")
 
 	# ...and the HUMAN help names every command the table declares. `help_text`
@@ -1675,7 +1702,7 @@ b_init_config! = |ctx| {
 	_ = sh!("rm -rf '${help_dir}' && mkdir -p '${help_dir}' && ${spec_names} > '${help_dir}/spec' && ${human_help} > '${help_dir}/human'")
 	# Fail-closed: an empty extraction on either side would make the loop below vacuous.
 	help_sizes = Str.trim(sh!("wc -l < '${help_dir}/spec' | tr -d ' '"))
-	check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "46")?
+	check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "47")?
 	missing_from_help = Str.trim(sh!("while IFS= read -r c; do grep -qw -- \"\$c\" '${help_dir}/human' || printf '%s ' \"\$c\"; done < '${help_dir}/spec'"))
 	check!("every command in the table is named in `stride --help` (missing: ${missing_from_help})", missing_from_help == "")?
 	_ = sh!("rm -rf '${help_dir}'")
@@ -1787,20 +1814,21 @@ b_init_config! = |ctx| {
 	# `Http.send!` would make a module read as one that reaches Strava.
 	# `network` against the SOURCE, not against itself: Http.send! is the only way
 	# out to Strava and lives in exactly two functions (token exchange, bearer GET),
-	# both in Strava.roc, reachable from auth and sync — so that is what the table
-	# must say.
-	check!("the network set is exactly auth and sync", cmdq!("[.data.commands[] | select(.network) | .name] | sort") == "[\n  \"auth\",\n  \"sync\"\n]")?
+	# both in Strava.roc, reachable from auth, setup (a code exchange, and the bare
+	# walk's first sync) and sync — so that is what the table must say.
+	check!("the network set is exactly auth, setup and sync", cmdq!("[.data.commands[] | select(.network) | .name] | sort") == "[\n  \"auth\",\n  \"setup\",\n  \"sync\"\n]")?
 	check!("...and Strava is still reachable from exactly two call sites", Str.trim(sh!("sed 's/#.*//' src/cli/Strava.roc | grep -c 'Http.send!'")) == "2")?
 	check!("...with no other module able to reach one", Str.trim(sh!("for f in src/cli/*.roc; do sed 's/#.*//' $f | grep -q 'Http.send!' && printf '%s' $f; done")) == "src/cli/Strava.roc")?
 	# `interactive` the same way: Stdin is what blocking on a human looks like. It is
-	# read in two places. The auth flow reads a pasted code from whoever is at the
-	# terminal. `strength import -` reads stdin only because its caller passed `-`, so
-	# what arrives there is what the caller piped, and the form is not interactive. Both
-	# reads are pinned, so a third is a deliberate edit here and a decision about the
-	# `interactive` column.
-	check!("the interactive set is exactly auth", cmdq!("[.data.commands[] | select(.interactive) | .name]") == "[\n  \"auth\"\n]")?
-	check!("...and stdin is read from exactly one place in each of two modules", Str.trim(sh!("for f in src/cli/Strava.roc src/cli/Import.roc; do sed 's/#.*//' $f | grep -c 'Stdin\\.'; done | tr '\\n' ' '")) == "1 1")?
-	check!("...which are the only modules that read it", Str.trim(sh!("for f in src/cli/*.roc; do sed 's/#.*//' $f | grep -q 'Stdin\\.' && printf '%s ' $f; done")) == "src/cli/Import.roc src/cli/Strava.roc")?
+	# read in three places. The auth flow reads a pasted code from whoever is at the
+	# terminal, and bare `setup` reads its prompts the same way. `strength import -`
+	# reads stdin only because its caller passed `-`, so what arrives there is what
+	# the caller piped, and the form is not interactive. All three reads are pinned,
+	# so a fourth is a deliberate edit here and a decision about the `interactive`
+	# column.
+	check!("the interactive set is exactly auth and setup", cmdq!("[.data.commands[] | select(.interactive) | .name] | sort") == "[\n  \"auth\",\n  \"setup\"\n]")?
+	check!("...and stdin is read from exactly one place in each of three modules", Str.trim(sh!("for f in src/cli/Strava.roc src/cli/Import.roc src/cli/Setup.roc; do sed 's/#.*//' $f | grep -c 'Stdin\\.'; done | tr '\\n' ' '")) == "1 1 1")?
+	check!("...which are the only modules that read it", Str.trim(sh!("for f in src/cli/*.roc; do sed 's/#.*//' $f | grep -q 'Stdin\\.' && printf '%s ' $f; done")) == "src/cli/Import.roc src/cli/Setup.roc src/cli/Strava.roc")?
 	# The mutation-proof for the sweep itself: a form that DOES write, run the same way,
 	# must be caught. `week add` is declared mutates:true so it is not in the sweep, and
 	# it is chosen over `rate` because it writes unconditionally — `rate` depends on the
@@ -1889,12 +1917,12 @@ b_auth! = |ctx| {
 	# what to paste. Asserting its presence on stderr is what separates "moved" from
 	# "suppressed", and a fix that just dropped the lines would pass every check above.
 	auth_stderr = sh!("${creds} STRIDE_FORMAT=json '${ctx.bin}' auth < /dev/null 2>&1 1>/dev/null")
-	check!("...while the paste instructions moved to stderr rather than vanishing", Str.contains(auth_stderr, "Copy the code=XXXX value") and Str.contains(auth_stderr, "code:"))?
+	check!("...while the paste instructions moved to stderr rather than vanishing", Str.contains(auth_stderr, "Copy the whole address") and Str.contains(auth_stderr, "code:"))?
 	# HUMAN mode is unchanged: the instructions are this command's primary output there,
 	# so they stay on stdout. Without this, "move the prose to stderr" unconditionally
 	# would pass everything above and leave `stride auth` printing nothing to a human.
 	auth_human = sh!("${creds} STRIDE_FORMAT=human '${ctx.bin}' auth < /dev/null 2>/dev/null")
-	check!("...and human mode still prints the instructions on stdout", Str.contains(auth_human, "Copy the code=XXXX value"))?
+	check!("...and human mode still prints the instructions on stdout", Str.contains(auth_human, "Copy the whole address"))?
 	# ...as LINES, which `Str.contains` cannot see. Writing human mode with
 	# `Stdout.write!` instead of `Stdout.line!` welds the whole screen into one
 	# string — the authorize URL fused to the `2)` that follows it, so the
@@ -4883,14 +4911,13 @@ b_command_schemas! = |ctx| {
 	under = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.network == false) | select([.args[] | select(.required)] | length > 0) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | [.name] + ([.args[] | select(.required) ${fill}] | .[0:-1]) | join(\" \")' | { while read -r line; do code=$(HOME='${arity_probe}' STRIDE_FORMAT=json '${ctx.bin}' $line 2>/dev/null | jq -r '.error.code // \"ok\"'); [ \"$code\" = \"usage\" ] || echo \"$line\"; done; true; } | tr '\\n' '|'"))
 	check!("...and one short of the required count always is (bad: ${under})", under == "")?
 	check!("...with forms on both sides of that, so neither swept nothing", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[] | select(.required)] | length > 0) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0)] | length'")) != "0")?
-	# The two NETWORK forms, which both probes skip — pinned as a value rather than
-	# probed, because reaching them means coupling this check to the mock and losing the
-	# purely-offline property, for a two-form and near-static exposure. `sync --all` is
-	# already verified as a parser path by the literal-argument check above, and `auth`
-	# takes nothing; the only uncovered case is a PLACEHOLDER argument appearing on one of
-	# them, which changes this string.
+	# The NETWORK forms, which both probes skip, are pinned as a value rather than probed:
+	# reaching them couples this check to the mock and loses the purely-offline property.
+	# `sync --all` is a parser path the literal-argument check above verifies, `auth` takes
+	# nothing, and `setup`'s one placeholder (`<key=value>`) is walked against the mock by
+	# the sync driver. A new placeholder on any of them changes this string.
 	netargs = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select(.network) | \"\\(.name)[\\([.args[].name] | join(\",\"))]\"] | sort | join(\"|\")'"))
-	check!("the two networked forms declare exactly what they always have (got: ${netargs})", netargs == "auth[]|sync[--all]")?
+	check!("the networked forms declare exactly their pinned arguments (got: ${netargs})", netargs == "auth[]|setup[<key=value>]|sync[--all]")?
 	# ORDERING: required arguments must form a PREFIX. Both probes verify the
 	# required COUNT, neither its position, so swapping a required and an optional
 	# preserves both counts and passes. Not only a contract lie:

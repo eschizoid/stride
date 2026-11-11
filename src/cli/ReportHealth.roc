@@ -373,6 +373,7 @@ ReportHealth :: [].{
 			sport_zone_overrides: cfg.sport_zone_overrides,
 			time: time_desc,
 			time_ok: time_ok,
+			timezone_known: Db.timezone_known!(path),
 			# WAL is what lets a query command run alongside a long analyze without either
 			# aborting. It can silently fail to engage on filesystems lacking the shared
 			# memory it needs, so report what is actually in force instead of assuming.
