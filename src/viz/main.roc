@@ -1139,7 +1139,7 @@ capture_refusal_for = |kind, rec_active, cap_pending|
 
 # Every refusable field of a directive, named. A pure function rather than an
 # inline block: on the pinned compiler, a large conditional binding captured
-# by a task closure compiles to its empty default (#371), and a call compiles
+# by a task closure compiles to its empty default, and a call compiles
 # correctly.
 refusals_for : { has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, capture : Str, family : Str }, I64, U64, U64, List(TraceId), Bool, Bool -> Str
 refusals_for = |dv, cdir, wsel, cur_sel, ids, rec_active, cap_pending| {
@@ -1699,7 +1699,7 @@ view_basename : U8 -> Str
 view_basename = |v|
 	if (v == 0) "form-board" else if (v == 1) "power" else if (v == 2) "session-trace" else if (v == 3) "data-table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else "career"
 
-# what the bus accepts, as data (#439). caps_views derives from view_basename
+# what the bus accepts, as data. caps_views derives from view_basename
 # so the published list can never drift from the dispatch; caps_fields must
 # move together with refusals_for - the accepts column states the same rules
 # that function enforces, and both live in this file so an edit sees both.
@@ -2677,20 +2677,17 @@ scene! = |model, frame| {
 # geometry over the tick - no asset, nothing to load before the loader.
 splash! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 splash! = |model, frame| {
-	# the splash clears to the TILE's own ground - RGB(1, 2, 9), a
-	# representative pick from the interior of img/stride-icon.png away
-	# from the mark - so the logo sits on a field of its own color rather
-	# than framing itself in a slightly different black. The interior is a
-	# DISTRIBUTION (the tile bakes a faint topo texture), so re-measuring
-	# it is a judgement call clustered near (0, 2, 8); the corner padding
-	# below is one exact value, and only that half re-measures
-	# deterministically. The asset is RGB with no alpha channel
-	# and carries TWO grounds: the tile's, and a lighter corner padding
-	# outside the rounded corners, which a single clear cannot also match -
-	# those four faint wedges are the residual #508 carries until the mark
-	# ships as a transparent export. Nothing at runtime can read a
-	# texture's pixels back, so a re-exported asset needs a re-measure.
-	# The app views still clear to Theme.bg.
+	# The splash clears to the tile's own ground, RGB(1, 2, 9), a value from
+	# the interior of img/stride-icon.png away from the mark, so the logo sits
+	# on a field of its own color rather than framing itself in a slightly
+	# different black. The interior bakes a faint topo texture, so its ground
+	# is a spread of values clustered near (0, 2, 8), and picking one is a
+	# judgement call. The asset is RGB with no alpha channel and also carries
+	# a lighter, exactly uniform padding outside the rounded corners, which a
+	# single clear cannot match: four faint corner wedges stay visible until
+	# the mark ships as a transparent export. Nothing at runtime can read a
+	# texture's pixels back, so a re-exported asset needs this value measured
+	# again by hand. The app views clear to Theme.bg.
 	frame.rectangle!({ x: 0.0, y: 0.0, width: model.win.w, height: model.win.h, style: Draw.filled(Color.rgb(1, 2, 9)) })
 	cx = model.win.w / 2.0
 	cy = model.win.h / 2.0 - 30.0
@@ -2740,8 +2737,25 @@ splash! = |model, frame| {
 	Text.from("Stride", model.font).size(30).draw!(frame, { pos: { x: cx, y: cy + 124.0 }, color: Color.white, align: (Top, Center) })
 	dots = if (model.tick % 90 < 30) "." else if (model.tick % 90 < 60) ".." else "..."
 	Text.from("loading your training story${dots}", model.font).size(13).draw!(frame, { pos: { x: cx, y: cy + 164.0 }, color: Theme.ink_muted, align: (Top, Center) })
+	slow = splash_slow_note(model.tick)
+	_ = if (slow != "") Text.from(slow, model.font).size(12).draw!(frame, { pos: { x: cx, y: cy + 188.0 }, color: Theme.ink_muted, align: (Top, Center) })
 	Ok({})
 }
+
+# A boot load that outlives splash_slow_secs says so on the splash and names
+# the way out, so a stuck load never reads as a window still working. The
+# boot task cannot be cancelled from the frame loop; R spawns a fresh load and
+# ESC quits.
+splash_slow_secs : U64
+splash_slow_secs = 20
+
+splash_slow_note : U64 -> Str
+splash_slow_note = |tick|
+	if (tick < splash_slow_secs * ticks_per_second) "" else "still loading after ${U64.to_str(tick // ticks_per_second)} s - R retries, ESC quits"
+
+expect splash_slow_note(0) == ""
+expect splash_slow_note(splash_slow_secs * ticks_per_second - 1) == ""
+expect splash_slow_note(splash_slow_secs * ticks_per_second) == "still loading after 20 s - R retries, ESC quits"
 
 # the geometric fallback when the authored PNG cannot be found: the route
 # drawing itself with a comet, the mountain popping in on completion
