@@ -110,6 +110,9 @@ Ui :: [].{
 		ghost_day : Str,
 		# the trace camera: zoom >= 1 windows [pan, pan + 1/zoom] of the session
 		trace_zoom : F32,
+		# the first row drawn in the lifts list and in the plan's week ladder (Scroll)
+		lifts_off : U64,
+		week_off : U64,
 		trace_pan : F32,
 		# every pickable session, loaded once - switching and ghosts read this
 		# instead of a task round-trip per keypress
