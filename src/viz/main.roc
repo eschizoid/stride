@@ -63,8 +63,8 @@ program = { init!, update!, render! }
 # change to the home directory before they exec, it is the athlete's home.
 # The engine is named exactly, and `sh` beside it for the one script that asks
 # `date` for the zone offset under the configured timezone. Captures
-# need no grant: the platform allows them beneath the configured output
-# directory, ./captures.
+# need no grant: the platform writes them beneath the configured output
+# directory, `output_dir_for` the launch directory.
 stride_dir_of : List(Str) -> Str
 stride_dir_of = |args| match List.get(args, 1) {
 	Ok(a) => a
@@ -95,7 +95,7 @@ config_for_args = |args| {
 			# only a frame the window drives can spawn that write before it exits
 			.with_exit_key(NoExitKey)
 			.with_min_size({ width: DisplayScale.min_width, height: DisplayScale.min_height })
-			.with_output_dir("captures")
+			.with_output_dir(output_dir_for(launch_dir_of(args)))
 			.with_permission(WorkingDirectory(ReadOnly))
 			.with_permission(Command("stride"))
 			.with_permission(Command("sh"))
@@ -115,6 +115,16 @@ expect {
 		and List.contains(p, Command("stride")) and List.contains(p, Command("sh"))
 		and List.contains(p, Directory("/h/.stride", ReadWrite)) and List.contains(p, WorkingDirectory(ReadOnly))
 		and List.len(p) == 4 and List.len(config_for_args(["stride-viz"]).permissions()) == 3
+}
+
+# the platform's output directory and the path a capture reports name the
+# same place, with and without a launch directory
+expect {
+	launched = ["stride-viz", "/h/.stride", "/h"]
+	bare = ["stride-viz"]
+	config_for_args(launched).output_dir() == "/h/captures"
+		and Str.concat(config_for_args(launched).output_dir(), "/form-board.png") == capture_path(launch_dir_of(launched), "form-board.png")
+		and Str.concat(config_for_args(bare).output_dir(), "/form-board.png") == capture_path(launch_dir_of(bare), "form-board.png")
 }
 
 # the athlete's directory and the authority to reach it, together: every
@@ -1271,10 +1281,17 @@ capture_is_pending = |p|
 		_ => Bool.True
 	}
 
-# the file a capture of this name will be: absolute when the launch
-# directory is known, under ./captures otherwise
+# where the platform writes captures, and the one place that names it: the
+# launch directory's captures/, absolute when the launcher passed one, and
+# ./captures relative to the working directory otherwise. The output dir in
+# config_for_args and the path a capture row reports both come from here, so
+# a reported path is always the file written, wherever the window runs from.
+output_dir_for : Str -> Str
+output_dir_for = |launch| if (launch == "") "captures" else Str.concat(launch, "/captures")
+
+# the file a capture of this name will be
 capture_path : Str, Str -> Str
-capture_path = |cwd, name| if (cwd == "") (Str.concat("captures/", name)) else Str.concat(cwd, Str.concat("/captures/", name))
+capture_path = |launch, name| Str.concat(output_dir_for(launch), Str.concat("/", name))
 
 # a host that has not answered a capture within ten seconds never will, and
 # the row closes rather than stays pending
