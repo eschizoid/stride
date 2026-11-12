@@ -227,7 +227,7 @@ hold back.
 ```
 just viz          # opens the window
 just viz-check    # type-check only, no window
-just viz-test     # the window's pure expects (picker filters, ghost rules, axes)
+just viz-test     # the window's pure expects, the label gate among them
 just viz-app      # installs ~/Applications/Stride.app
 ```
 
@@ -283,6 +283,62 @@ KPI digits, axis ticks, readouts and the table, mixed words included, so a
 data line never switches face mid-string. Both ship in `assets/fonts/` (OFL) and
 the app bundle copies them to `~/.stride/fonts`; when neither location
 answers, the platform default font appears instead of a crash.
+
+## Labels: one placer, and a gate
+
+Text on the power and career views goes through one label placer,
+`src/viz/Labels.roc`. A label is its measured size, the spots it may take
+in order of preference, a priority and the region it must stay inside (the
+plot, a chip, a card, the panel). Obstacles are what the view draws before
+any text: chips, tiles, cards, dots and rings as boxes, the plotted lines
+as segments. The placer takes labels in priority order and gives each the
+first spot inside its region that clears every obstacle box and every label
+placed before it, preferring a spot no plotted line crosses. A label with
+no clear spot is dropped, unless it is kept, in which case it takes its
+first spot and the gate below decides whether that was clear.
+
+`src/viz/Scene.roc` is the layer a view writes its strings through. Fixed
+text (titles, chips, tile and card text, axis labels, legends, footers)
+keeps one spot and never drops. Essential text with somewhere else to go
+(the power view's threshold value; the career view's milestone values,
+the all-time-high cheer, test kinds and withheld dot values) keeps, trying
+its spots in order. Text that another surface also shows may drop: the
+power view's deltas, `pr` and `new record` marks, unpushed caption and
+zone names (the rung's hover card carries its values, record and push),
+its planned-ring labels (the ring's card), and the career view's year names
+and strip names (the strip's tooltip). The view's own placement rules are
+the candidate lists: a delta tries between its dots on the right, then the
+left, then above and below; a strip name tries under its segment, then
+beside the strip's end.
+
+The chrome every view shares (the wordmark, the scale chip, the nav pills,
+the recording badge, the form board's legend and the XP rail's level) is
+defined once in `src/viz/Chrome.roc`. `main.roc` draws it from those
+definitions, and each converted view registers it as fixed text, so a view
+label can neither land on it nor drift from where it is drawn. On the
+career view the level and streak chips share the header row with the
+subtitle and the kind chips and yield to them; the rail's hover sheet
+carries the level and the streak either way.
+
+Text width comes from a measure passed in. The window measures with the
+fonts it draws with; the gate measures with headless fonts that carry the
+shipped faces' advances as the window's 24 px atlas truncates them, so the
+gate needs no font file and measures what the window measures.
+
+**The gate** (`src/viz/Gate.roc`, run by `just viz-test` and so by CI's
+viz job) lays each converted view out headless over fixture athletes at the
+minimum window, the default window at 100%, and a wide display (the
+default window at the default scale is the minimum layout). The athletes
+come from the families in `core.Sports`: one per family, each pace family
+again in imperial units, and a mixed athlete with a single session of a
+strength-like sport no family holds. The power view runs every curve each
+athlete has, at 30, 60 and 90 days, with the short rungs folded and shown;
+the career view runs every spine. For each scene the gate asserts that no
+two text boxes overlap, the chrome's included, and that every box stays
+inside its region. `roc test` reports only that the expect failed;
+`Gate.failures` names each failure by fixture, size and the texts involved,
+so `dbg` it inside the expect to read them. The other views move onto the
+placer in #694.
 
 ## The coach's seat (ADR 0015's bus)
 
@@ -643,28 +699,30 @@ This is the auditable view. A table of segments can tell you the
 detector found seven work blocks; only the overlay tells you whether a block
 started before the power did.
 
-The trace is **downsampled in SQL** to ~800 points. A 45-minute ride carries ~2700
-samples against ~830 pixels of plot, so drawing all of them costs three line
-segments per pixel and shows nothing more. `json_each` reads the stored stream
-directly — SQLite has JSON1, and this platform has no JSON decoder.
+The trace is **downsampled in SQL** to about `trace_points` (800) samples,
+every kth one, about one per pixel of plot: a long session carries several
+samples per pixel, and drawing them all shows nothing more. `json_each`
+reads the stored stream directly — SQLite has JSON1, and this platform has
+no JSON decoder.
 
 Both axes divide by the SAME duration, taken from the stream's last timestamp.
 Deriving it from the segments instead would stretch partial detector coverage
-across the full width; on the reference activity the two differ by one second in
-2700, which is sub-pixel and would have hidden the bug rather than shown it.
+across the full width, and the two can differ by less than a pixel, which
+hides the error instead of showing it.
 
 ## Screenshots (S)
 
 `S` writes a PNG of the current view into `captures/` under the window's working directory, named for the view.
-Reference captures of all three live in `docs/img/`.
+Reference captures live in `docs/img/`.
 
 These are how the agent reviews its own rendering. Every value drawn derives from
 JSON the coach already reads losslessly, so a frame is worthless for judging
 TRAINING — but it is the only way to see whether the drawing itself is right.
-Adding this key immediately surfaced five defects in code that had type-checked
-and had every data path diffed against the engine: a legend overprinting two
-other views' titles, an em dash rendering as `?`, colliding axis labels, a count
-shown as `3.0 bests`, and a CP asymptote described in a comment and never drawn.
+Code can type-check and have every data path diffed against the engine and
+still overprint one label on another, render a glyph the font lacks as `?`,
+format a count as `3.0`, or describe a line in a comment it never draws. The
+label gate catches the overlaps on the views it covers; a capture is how the
+rest are seen.
 
 ![app window](img/form-board.png)
 
