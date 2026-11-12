@@ -29,6 +29,12 @@ Db :: [].{
 	# in the fit's own units (watts, or a speed in m/s), 0 when none is
 	TestAnchor : { value : F32, kind : Str, date : Str }
 
+	# what the power tab's headline tiles read beside the curve: the window's
+	# fit, a marked test in force, the engine's newest threshold for the
+	# curve's key (0: none), and the window's 20-minute best's age in days
+	# (-1: none)
+	CurveInfo : { fit : Fit, test : TestAnchor, thr : F32, best20_age : I64 }
+
 	Point : { ctl : F32, atl : F32, tsb : F32, tss : F32 }
 	# integer tenths -> "41.9" / "-8.9"; the rule lives in core.Fmt so the CLI
 	# and the window cannot drift on the zero-crossing sign
@@ -195,13 +201,13 @@ Db :: [].{
 	# type, in millimetres per second, so both curves travel through the
 	# same integer rungs. The view and column names are this module's own
 	# literals, so splicing them is safe; the key itself is always bound.
-	Ladder : { view : Str, rungs : Str, val : Str, keycol : Str, key : Str, best20 : Str }
+	Ladder : { view : Str, rungs : Str, val : Str, keycol : Str, key : Str, best20 : Str, thr : Str }
 
 	ladder_of : Str -> Ladder
 	ladder_of = |curve|
 		match Bus.curve_key(curve) {
-			Pace(sp) => { view: "activity_pace_ladder", rungs: "pace_ladder_rungs", val: "speed * 1000.0", keycol: "sport_type", key: sp, best20: "best_20min_speed" }
-			Power(fam) => { view: "activity_power_ladder", rungs: "power_ladder_rungs", val: "watts", keycol: "sport_family", key: fam, best20: "best_20min_w" }
+			Pace(sp) => { view: "activity_pace_ladder", rungs: "pace_ladder_rungs", val: "speed * 1000.0", keycol: "sport_type", key: sp, best20: "best_20min_speed", thr: "threshold_pace_used" }
+			Power(fam) => { view: "activity_power_ladder", rungs: "power_ladder_rungs", val: "watts", keycol: "sport_family", key: fam, best20: "best_20min_w", thr: "ftp_used" }
 		}
 
 	expect ladder_of("pace:Run").view == "activity_pace_ladder" and ladder_of("pace:Run").key == "Run" and ladder_of("pace:Run").keycol == "sport_type"
@@ -238,13 +244,15 @@ Db :: [].{
 	}
 
 	# the window BEFORE the one on screen, same length: [2N days ago, N days
-	# ago). The curve view's deltas argue against this, not the record book -
-	# progress is a comparison with recent self, and the all-time envelope
-	# stays as a faint reference rather than the antagonist.
+	# ago). The curve view's deltas argue against this, not the record book:
+	# progress is a comparison with the recent self, and the all-time
+	# envelope stays a faint reference. Each rung carries the day of its best
+	# (SQLite takes a bare column in a MAX() aggregate from the maximal row),
+	# for the hover card.
 	load_curve_prev! : Sqlite.Db, I64, Str, Str => List(CurvePt)
 	load_curve_prev! = |db, days, today_mod, curve| {
 		lad = ladder_of(curve)
-		q = "SELECT secs AS d, CAST(ROUND(MAX(${lad.val})) AS INTEGER) AS p FROM ${lad.view} WHERE ${lad.keycol} = :fam AND start_local >= date('now', '${today_mod}', '-' || :d2 || ' days') AND start_local < date('now', '${today_mod}', '-' || :d || ' days') GROUP BY rung, secs ORDER BY secs"
+		q = "SELECT secs AS d, CAST(ROUND(MAX(${lad.val})) AS INTEGER) AS p, CAST(day AS TEXT) AS cdy FROM ${lad.view} WHERE ${lad.keycol} = :fam AND start_local >= date('now', '${today_mod}', '-' || :d2 || ' days') AND start_local < date('now', '${today_mod}', '-' || :d || ' days') GROUP BY rung, secs ORDER BY secs"
 
 		match db.query!(q, [{ name: ":d", value: Integer(days) }, { name: ":d2", value: Integer(days * 2) }, { name: ":fam", value: String(lad.key) }]) {
 			Err(_) => []
@@ -255,7 +263,8 @@ Db :: [].{
 						d = r.i64("d") ? |_| "bad d"
 						p = r.i64("p") ? |_| "bad p"
 
-						Ok({ dur_s: d, watts: I64.to_f32(p), aid: 0, name: "", day: "", ago: -1 })
+						cdy = r.str("cdy") ? |_| "bad cdy"
+						Ok({ dur_s: d, watts: I64.to_f32(p), aid: 0, name: "", day: cdy, ago: -1 })
 					},
 				)
 		}
@@ -272,6 +281,25 @@ Db :: [].{
 			Ok(rows) => match List.first(rows) {
 				Ok(r) => r.i64("ag") ?? -1
 				Err(_) => -1
+			}
+		}
+	}
+
+	# The threshold the engine scored the key's newest session with: the
+	# family's FTP in watts on a power curve (ftp_used, which a marked test
+	# anchors when one is in force), the sport's threshold pace as a speed in
+	# m/s on a pace curve (threshold_pace_used). 0 when no session carries one.
+	load_threshold! : Sqlite.Db, Str => F32
+	load_threshold! = |db, curve| {
+		lad = ladder_of(curve)
+		match db.query!("SELECT CAST(m.${lad.thr} AS REAL) AS t FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.${lad.keycol} = :fam AND COALESCE(m.${lad.thr}, 0) > 0 ORDER BY a.start_local DESC LIMIT 1", [{ name: ":fam", value: String(lad.key) }]) {
+			Err(_) => 0.0
+			Ok(rows) => match List.first(rows) {
+				Ok(r) => match r.f64("t") {
+					Ok(t) => F64.to_f32_wrap(t)
+					Err(_) => 0.0
+				}
+				Err(_) => 0.0
 			}
 		}
 	}
@@ -1773,9 +1801,9 @@ Db :: [].{
 	# trace view divide by this: the segments are in seconds and the trace is a
 	# uniform downsample of the same session, so sharing one denominator is what
 	# keeps the shading aligned with the line. Deriving it from the SEGMENTS instead
-	# would stretch partial coverage across the full width — on the reference
-	# activity the two agree to one second in 2700, which is sub-pixel and would have
-	# hidden the bug.
+	# would stretch partial coverage across the full width; on a fully covered
+	# session the two agree to within a second, so only partial coverage shows
+	# the difference.
 	load_dur! : Sqlite.Db, I64 => F32
 	load_dur! = |db, aid|
 		match db.query!("SELECT CAST(json_extract(raw_json,'$.time.data[#-1]') AS INTEGER) AS t FROM streams WHERE activity_id = :aid", [{ name: ":aid", value: Integer(aid) }]) {

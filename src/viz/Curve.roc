@@ -11,14 +11,14 @@ import Ui
 
 Curve :: [].{
 	# ── the power view (TAB) ────────────────────────────────────────────────
-	# The window's curve drawn against the SAME-LENGTH window before it, one
-	# chart: blue dots are the best inside the chosen window, grey dots the
-	# best of the previous window, and the signed number between them is the
-	# change - progress argues with the recent self, not the record book. The
-	# all-time envelope stays as a faint reference above; a rung whose window
-	# best IS the record still collapses to one teal dot and a fresh record
-	# still rings gold. The CP line dims when its own fit is too weak to
-	# deserve a confident stroke.
+	# The window's curve against the same-length window before it. Four tiles
+	# under the chips carry the headline numbers. The plot draws this window
+	# as the solid accent line, the previous window dashed grey and the
+	# all-time envelope thin and faint, over faint zone bands on a power
+	# curve, with a legend naming each line. The signed number at a rung is
+	# its change against the previous window. A rung whose window best IS the
+	# record collapses to one teal dot, and a record set this week rings gold.
+	# Hovering a rung or a planned ring opens a card beside it.
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
 		win_w = model.win.w
@@ -32,7 +32,7 @@ Curve :: [].{
 		lay = layout(model)
 		pad_l = lay.left
 		pad_r = Theme.pad_r
-		pad_t = Theme.pad_t
+		pad_t = plot_top
 		pad_b = Theme.pad_b
 		ink_muted = Theme.ink_muted
 		ink_faint = Theme.ink_faint
@@ -40,14 +40,11 @@ Curve :: [].{
 		tsb_c = Theme.tsb_c
 		model.curve_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		# a chip click re-fetches the curve in the background; while that is in
-		# flight a note says so, so a click that takes a beat reads as working
-		# rather than dead. The old curve stays on screen until the fresh one
-		# lands. The note takes the caption slot: the row under the chips,
-		# right-aligned, which no chip reaches (caption_top sits below
-		# chip_bottom). The caption describes the curve being replaced, so it
-		# yields to the note. Like the caption, the note gives way to a rung or
-		# target tooltip, which owns the left of the same row.
-		if model.reloading and !(rung_hovered(model, win_w, win_h)) {
+		# flight a note at the caption row's right says so, so a click that
+		# takes a beat reads as working. The old curve stays on screen until the
+		# fresh one lands, and the unpushed caption, which describes it, yields
+		# the slot.
+		if model.reloading {
 			Text.from(loading_note, model.font).size(11).draw!(frame, { pos: { x: win_w - 40.0, y: caption_top }, color: ink_muted, align: (Top, Right) })
 		}
 		# one line above the hint row: the chips own the top-right band, and
@@ -88,6 +85,16 @@ Curve :: [].{
 		if List.is_empty(model.prs) or have == 0 {
 			Text.from(empty_note(curve), model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 130.0 }, color: ink_muted, align: (Top, Left) })
 		} else {
+			# the headline tiles: what the chart says, before the chart is read
+			List.for_each!(
+				List.map_with_index(head_tiles(curve, units, model.prs, model.curve, model.curve_info), |t, i| { t, i }),
+				|x| {
+					tx0 = tile_x(win_w, x.i)
+					frame.rounded_rectangle!({ x: tx0, y: tile_top, width: tile_w(win_w), height: tile_h, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
+					Text.from(x.t.value, model.font).size(16).draw!(frame, { pos: { x: tx0 + 10.0, y: tile_top + 6.0 }, color: if (x.t.good) tsb_c else Color.white, align: (Top, Left) })
+					Text.from(x.t.caption, model.font).size(10).draw!(frame, { pos: { x: tx0 + 10.0, y: tile_top + 28.0 }, color: ink_faint, align: (Top, Left) })
+				},
+			)
 			pw = win_w - pad_l - pad_r
 			ph = win_h - pad_t - pad_b
 			# the record ladder is the master axis; the window's value joins by
@@ -107,15 +114,23 @@ Curve :: [].{
 					now_unp = List.get(now_flags, i) ?? Bool.False
 					prev_unp = List.get(prev_flags, i) ?? Bool.False
 					src = List.find_first(model.curve, |cp| cp.dur_s == pr.secs)
-					src_txt = match src {
-						Ok(sp) => source_text(sp)
+					src_name = match src {
+						Ok(sp) => sp.name
+						Err(_) => ""
+					}
+					src_day = match src {
+						Ok(sp) => sp.day
+						Err(_) => ""
+					}
+					prev_day = match List.find_first(model.curve_prev, |cp| cp.dur_s == pr.secs) {
+						Ok(pp) => pp.day
 						Err(_) => ""
 					}
 					stale = match src {
 						Ok(sp) => stale_best(sp.ago, model.curve_days)
 						Err(_) => Bool.False
 					}
-					{ pr, now_w, prev_w, i, now_unp, prev_unp, src_txt, stale }
+					{ pr, now_w, prev_w, i, now_unp, prev_unp, src_name, src_day, prev_day, stale }
 				},
 			)
 			# the rungs on screen, indexed by their column
@@ -126,37 +141,33 @@ Curve :: [].{
 			nlast = List.len(rungs) - 1
 			cx = |i| if (nlast == 0) (pad_l + pw / 2.0) else pad_l + pw * U64.to_f32(i) / U64.to_f32(nlast)
 			cy = |w| pad_t + ph * (1.0 - (w - w_lo) / (w_hi - w_lo))
-			# Each line introduces itself at its first rung, so the chart reads
-			# with no narrator. Each label clears its own line's first segment,
-			# which can fall or rise steeply across the label's width; the labels
-			# are then laid out in their dots' order, since two bests a few watts
-			# apart would otherwise overprint. The first rung's delta, the grid
-			# rules and the threshold line read the same placement to keep clear
-			# of them, so the drawing and the avoidance cannot drift apart.
-			slope0 = |sel| match (List.first(rungs), List.get(rungs, 1)) {
-				(Ok(a), Ok(b)) => if (sel(a) > 0 and sel(b) > 0 and nlast > 0) ((cy(I64.to_f32(sel(b))) - cy(I64.to_f32(sel(a)))) / (cx(1) - cx(0))) else 0.0
-				_ => 0.0
-			}
-			intro_w = |t| 14.0 + model.font.measure({ text: t, size: 11.0, spacing: Text.default_spacing }).width
-			intro_lines = match List.first(rungs) {
-				Ok(r0) => List.join([
-					(if (r0.pr.w > 0) [{ text: "best ever", y: intro_above(cy(I64.to_f32(r0.pr.w)), slope0(|r| r.pr.w), intro_w("best ever")), dot: cy(I64.to_f32(r0.pr.w)), color: Color.with_alpha(ink_muted, 130) }] else []),
-					(if (r0.prev_w > 0 and r0.prev_w < r0.pr.w) [{ text: "previous window", y: intro_above(cy(I64.to_f32(r0.prev_w)), slope0(|r| r.prev_w), intro_w("previous window")), dot: cy(I64.to_f32(r0.prev_w)), color: ink_muted }] else []),
-					(if (r0.now_w > 0 and r0.now_w < r0.pr.w) [{ text: "this window", y: intro_below(cy(I64.to_f32(r0.now_w)), slope0(|r| r.now_w), intro_w("this window")), dot: cy(I64.to_f32(r0.now_w)), color: Theme.ctl_c }] else []),
-				])
-				Err(_) => []
-			}
-			placed = layout_intros(intro_lines)
-			# where each introduction ends, so a rule crossing one starts past it
-			intro_spans = List.map(placed, |l| { top: l.y, bot: l.y + 11.0, right: cx(0.U64) + intro_w(l.text) })
+			# the zone bands behind everything: alternate zones shaded, each named
+			# right-aligned to the window's edge where its visible part is tall
+			# enough, clear of the threshold line's label and of the rung labels'
+			# row
+			cp_label_y = if (model.fit_cp > w_lo and model.fit_cp < w_hi) (cy(model.fit_cp)) else -100.0
+			List.for_each!(
+				zone_bands(curve, model.curve_info.thr, w_lo, w_hi),
+				|b| {
+					y_top = cy(b.hi)
+					y_bot = cy(b.lo)
+					if b.shade {
+						frame.rectangle!({ x: pad_l, y: y_top, width: pw, height: y_bot - y_top, style: Draw.filled(Color.with_alpha(Color.white, 7)) })
+					}
+					mid = (y_top + y_bot) / 2.0
+					if y_bot - y_top >= zone_label_min_h and F32.abs(mid - cp_label_y) > 12.0 and mid < pad_t + ph - 26.0 {
+						Text.from(b.name, model.font).size(9).draw!(frame, { pos: { x: win_w - 20.0, y: mid - 5.0 }, color: Color.with_alpha(ink_faint, 160), align: (Top, Right) })
+					}
+				},
+			)
 			# the grid: a faint rule and label at each grid_vals value, which
 			# come from the axis span itself, so any scale gets its rules
 			List.for_each!(
-				# a rule in the band the rung labels sit in, or hard under the tooltip
-				# row, would run through their text
+				# a rule in the band the rung labels sit in, or hard under the plot's
+				# top edge, would run through their text
 				List.keep_if(grid_vals(curve, units, w_lo, w_hi), |gw| cy(gw) > pad_t + 8.0 and cy(gw) < pad_t + ph - 26.0),
 				|gw| {
-					frame.line!({ start: { x: rule_start(cy(gw), Theme.pad_l, intro_spans), y: cy(gw) }, end: { x: win_w - pad_r, y: cy(gw) }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 36), 1) })
+					frame.line!({ start: { x: Theme.pad_l, y: cy(gw) }, end: { x: win_w - pad_r, y: cy(gw) }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 36), 1) })
 					Text.from(
 						match F32.round_to_i64_try(gw) {
 							Ok(gi) => axis_text(curve, units, gi)
@@ -172,55 +183,31 @@ Curve :: [].{
 			# loader zeroes fit_cp when neither exists, and the footer says why
 			if model.fit_cp > w_lo and model.fit_cp < w_hi {
 				cpy = cy(model.fit_cp)
-				cp_a = 120
-				cp_lbl_c = tsb_c
-				List.for_each!(
-					List.map_with_index(List.repeat({}, 60), |_u, k| k),
-					|k| {
-						x0 = pad_l + U64.to_f32(k) * (pw / 60.0)
-						if (x0 >= rule_start(cpy, pad_l, intro_spans)) (frame.line!({ start: { x: x0, y: cpy }, end: { x: x0 + pw / 120.0, y: cpy }, stroke: Draw.stroke(Color.with_alpha(tsb_c, cp_a), 1) })) else {}
-					},
-				)
-				model.cp_lbl.draw!(frame, { pos: { x: pad_l + pw + 8.0, y: cpy }, color: cp_lbl_c, align: (Middle, Left) })
+				dashed_line!(frame, { x: pad_l, y: cpy }, { x: pad_l + pw, y: cpy }, Color.with_alpha(tsb_c, 120))
+				model.cp_lbl.draw!(frame, { pos: { x: pad_l + pw + 8.0, y: cpy }, color: tsb_c, align: (Middle, Left) })
 			}
-			List.for_each!(placed, |l| Text.from(l.text, model.font).size(11).draw!(frame, { pos: { x: cx(0.U64) + 14.0, y: l.y }, color: l.color, align: (Top, Left) }))
-			intro_boxes = List.map(placed, |l| { top: l.y, bot: l.y + 11.0 })
-			# three envelopes back to front: the record book faintest, as a
-			# reference, the previous window in quiet grey, this window loudest.
+			# three envelopes back to front: the record book a thin faint line,
+			# the previous window dashed grey, this window the solid accent.
 			# Envelope segments run only between rungs that HAVE values - a 0
 			# rung must not drag a line to the floor.
-			List.for_each!(
-				rungs,
-				|r|
-					match List.get(rungs, r.i + 1) {
-						Ok(nxt) => if (r.pr.w > 0 and nxt.pr.w > 0) (frame.line!({ start: { x: cx(r.i), y: cy(I64.to_f32(r.pr.w)) }, end: { x: cx(nxt.i), y: cy(I64.to_f32(nxt.pr.w)) }, stroke: Draw.stroke(Color.with_alpha(ink_muted, 45), 1) })) else {}
-						Err(_) => {}
-					},
-			)
-			List.for_each!(
-				rungs,
-				|r|
-					match List.get(rungs, r.i + 1) {
-						Ok(nxt) => if (r.prev_w > 0 and nxt.prev_w > 0) (frame.line!({ start: { x: cx(r.i), y: cy(I64.to_f32(r.prev_w)) }, end: { x: cx(nxt.i), y: cy(I64.to_f32(nxt.prev_w)) }, stroke: Draw.stroke(Color.with_alpha(ink_muted, 110), 1) })) else {}
-						Err(_) => {}
-					},
-			)
-			List.for_each!(
-				rungs,
-				|r|
-					match List.get(rungs, r.i + 1) {
-						Ok(nxt) => if (r.now_w > 0 and nxt.now_w > 0) (frame.line!({ start: { x: cx(r.i), y: cy(I64.to_f32(r.now_w)) }, end: { x: cx(nxt.i), y: cy(I64.to_f32(nxt.now_w)) }, stroke: Draw.stroke(Color.with_alpha(ctl_c, 150), 2) })) else {}
-						Err(_) => {}
-					},
-			)
+			pair_each! = |sel, draw_seg!|
+				List.for_each!(
+					rungs,
+					|r|
+						match List.get(rungs, r.i + 1) {
+							Ok(nxt) => if (sel(r) > 0 and sel(nxt) > 0) (draw_seg!({ x: cx(r.i), y: cy(I64.to_f32(sel(r))) }, { x: cx(nxt.i), y: cy(I64.to_f32(sel(nxt))) })) else {}
+							Err(_) => {}
+						},
+				)
+			pair_each!(|r| r.pr.w, |a, b| frame.line!({ start: a, end: b, stroke: Draw.stroke(Color.with_alpha(ink_muted, best_line_alpha), 1) }))
+			pair_each!(|r| r.prev_w, |a, b| dashed_line!(frame, a, b, Color.with_alpha(ink_muted, 150)))
+			pair_each!(|r| r.now_w, |a, b| frame.line!({ start: a, end: b, stroke: Draw.stroke(Color.with_alpha(ctl_c, 200), 2) }))
 			# planned targets on the curve: a gold ring at the rep duration and the
 			# target watts, labelled with the day and the share of this window's
 			# best at that duration, so a prescription reads against what the
 			# athlete has done. Targets whose rings would overlap share one ring
 			# with their labels stacked under it, and a ring whose labels would
-			# run into the previous ring's starts below them. Hovering a ring
-			# names every session in it, one line each, and takes the tooltip
-			# line from the rungs.
+			# run into the previous ring's starts below them.
 			rung_secs = List.map(rungs, |r| r.pr.secs)
 			now_pts = List.map(rungs, |r| { secs: r.pr.secs, w: r.now_w })
 			tx = |t| {
@@ -242,10 +229,6 @@ Curve :: [].{
 			)
 			ring_rows = List.map2(rings, label_rows(List.map(rings, |g| { x: g.x, lines: List.len(g.ts) }), ring_label_w), |g, base| { g, base })
 			tgt_hover = List.find_first(rings, |g| F32.abs(model.mouse_x - g.x) <= 8.0 and F32.abs(model.mouse_y - g.y) <= 8.0)
-			tgt_hovering = match tgt_hover {
-				Ok(_) => Bool.True
-				Err(_) => Bool.False
-			}
 			List.for_each!(
 				ring_rows,
 				|x| {
@@ -260,14 +243,6 @@ Curve :: [].{
 					)
 				},
 			)
-			match tgt_hover {
-				Ok(g) =>
-					List.for_each!(
-						List.map_with_index(g.ts, |t, k| { t, k }),
-						|e| Text.from(target_tip(e.t, best_at(now_pts, e.t.dur_s)), model.font).size(12).draw!(frame, { pos: { x: 36.0, y: 92.0 + U64.to_f32(e.k) * 14.0 }, color: Color.white, align: (Top, Left) }),
-					)
-				Err(_) => {}
-			}
 			# the this-window and previous-window lines as segments, for the
 			# deltas to keep clear of
 			seg_list = |ys| List.keep_oks(
@@ -288,8 +263,6 @@ Curve :: [].{
 				rungs,
 				|r| {
 					rec_y = cy(I64.to_f32(r.pr.w))
-					# the first rung's delta keeps clear of the introductions beside it
-					delta_top = |top| if (r.i == 0.U64) (top_clear(top, 10.0, intro_boxes)) else top
 					fresh = r.pr.w > 0 and List.fold(recent7, Bool.False, |a9, hd| a9 or hd.day == r.pr.day)
 					if fresh {
 						halo_a = match F32.to_u8_try(50.0 + ntri * 50.0) {
@@ -314,45 +287,29 @@ Curve :: [].{
 						if dpr_txt != "" {
 							dpr_col = if (r.now_w > r.prev_w) tsb_c else Theme.alarm_c
 							dpr_w = model.font.measure({ text: dpr_txt, size: 10.0, spacing: Text.default_spacing }).width
-							# at the first rung "pr" is clamped to the plot's left edge, under the
-							# delta's x, so it counts as a box to clear too
-							dpr_boxes = if (r.i == 0.U64) (List.append(intro_boxes, { top: rec_y - 20.0, bot: rec_y - 10.0 })) else []
-							dpr_top = if (r.i == 0.U64) (top_clear((cy(I64.to_f32(r.prev_w)) + rec_y) / 2.0 - 6.0, 10.0, dpr_boxes)) else (cy(I64.to_f32(r.prev_w)) + rec_y) / 2.0 - 6.0
-							Text.from(dpr_txt, model.font).size(10).draw!(frame, { pos: { x: delta_left_x(cx(r.i), dpr_w, pad_l + pw - label_inset), y: dpr_top }, color: dpr_col, align: (Top, Left) })
+							Text.from(dpr_txt, model.font).size(10).draw!(frame, { pos: { x: delta_left_x(cx(r.i), dpr_w, pad_l + pw - label_inset), y: (cy(I64.to_f32(r.prev_w)) + rec_y) / 2.0 - 6.0 }, color: dpr_col, align: (Top, Left) })
 						}
 					} else {
-						frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 3.0, style: Draw.filled(Color.with_alpha(ink_muted, 80)) })
+						frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 2.5, style: Draw.filled(Color.with_alpha(ink_muted, 90)) })
 						if r.prev_w > 0 and r.prev_w < r.pr.w {
-							frame.circle!({ center: { x: cx(r.i), y: cy(I64.to_f32(r.prev_w)) }, radius: 4.0, style: Draw.filled(Color.with_alpha(ink_muted, if (r.prev_unp) (70) else 150)) })
+							frame.circle!({ center: { x: cx(r.i), y: cy(I64.to_f32(r.prev_w)) }, radius: 3.5, style: Draw.filled(Color.with_alpha(ink_muted, if (r.prev_unp) (70) else 150)) })
 						}
 						if r.now_w > 0 {
 							now_y = cy(I64.to_f32(r.now_w))
 							frame.circle!({ center: { x: cx(r.i), y: now_y }, radius: 4.0, style: Draw.filled(if (r.now_unp) (Color.with_alpha(ink_muted, 170)) else if (r.stale) (Color.with_alpha(ctl_c, 110)) else ctl_c) })
-							# the change against the PREVIOUS window, signed, right
-							# where it lives - green-teal going up, alarm going down
+							# the change against the PREVIOUS window, signed, at the first
+							# spot clear of both lines - green-teal going up, alarm going down
 							d_txt = if (r.now_unp or r.prev_unp) "" else delta_for(curve, units, r.now_w, r.prev_w)
 							if d_txt != "" {
 								d_col = if (r.now_w > r.prev_w) tsb_c else Theme.alarm_c
 								d_w = model.font.measure({ text: d_txt, size: 10.0, spacing: Text.default_spacing }).width
 								prev_y = cy(I64.to_f32(r.prev_w))
-								d_mid = (prev_y + now_y) / 2.0 - 6.0
-								# the first rung's delta keeps to its side of the introductions;
-								# every other one takes the first spot clear of both lines
-								spot = if (r.i == 0.U64) ({ left: delta_left_x(cx(r.i), d_w, pad_l + pw - label_inset), top: delta_top(d_mid) }) else delta_spot({ x: cx(r.i), w: d_w, h: 10.0, mid: d_mid, upper: F32.min(prev_y, now_y), lower: F32.max(prev_y, now_y), hi: pad_l + pw - label_inset }, segs)
+								spot = delta_spot({ x: cx(r.i), w: d_w, h: 10.0, mid: (prev_y + now_y) / 2.0 - 6.0, upper: F32.min(prev_y, now_y), lower: F32.max(prev_y, now_y), hi: pad_l + pw - label_inset }, segs)
 								Text.from(d_txt, model.font).size(10).draw!(frame, { pos: { x: spot.left, y: spot.top }, color: d_col, align: (Top, Left) })
 							}
 						}
 					}
 					Text.from(r.pr.rung, model.font).size(12).draw!(frame, { pos: { x: cx(r.i), y: pad_t + ph - 18.0 }, color: ink_faint, align: (Top, Center) })
-					# hover the rung's column: the full story under the title
-					half = if (nlast == 0) (pw / 2.0) else pw / U64.to_f32(nlast) / 2.0
-					if model.mouse_x >= cx(r.i) - half and model.mouse_x < cx(r.i) + half and model.mouse_y >= pad_t and model.mouse_y <= pad_t + ph and !tgt_hovering {
-						now_txt = if (r.now_w > 0) ("   now ${val_text(curve, units, r.now_w)}") else "   no effort this window"
-						prev_txt = if (r.prev_w > 0) ("   prev ${val_text(curve, units, r.prev_w)}") else ""
-						quality = if (r.now_unp) "   not all-out" else if (r.stale) "   stale" else ""
-						tip = if (r.pr.w > 0) ("${r.pr.rung}   best ${val_text(curve, units, r.pr.w)} set ${r.pr.day}${now_txt}${r.src_txt}${quality}${prev_txt}") else "${r.pr.rung}   no effort on record"
-						Text.from(tip, model.font).size(12).draw!(frame, { pos: { x: 36.0, y: 92.0 }, color: Color.white, align: (Top, Left) })
-					}
 				},
 			)
 			if lay.folded {
@@ -360,17 +317,76 @@ Curve :: [].{
 				Text.from("short", model.font).size(11).draw!(frame, { pos: { x: gx, y: pad_t + ph - 18.0 }, color: ink_faint, align: (Top, Center) })
 				Text.from("not pushed", model.font).size(9).draw!(frame, { pos: { x: gx, y: pad_t + ph - 4.0 }, color: Color.with_alpha(ink_faint, 150), align: (Top, Center) })
 			}
-			# the window's unpushed durations, at the right of the tooltip line
-			# between the chips and the plot, so no gridline runs through it. A
-			# tooltip owns that line while one shows; the hovered rung's own
-			# tooltip already says whether it was pushed.
+			# the legend on the caption row's left: one swatch per line drawn
+			legend = legend_items(List.any(rungs, |r| r.now_w > 0), List.any(rungs, |r| r.prev_w > 0), List.any(rungs, |r| r.pr.w > 0), !(List.is_empty(plan_marks)))
+			legend_ws = List.map(legend, |it| legend_swatch_w + model.font.measure({ text: it.label, size: 11.0, spacing: Text.default_spacing }).width)
+			legend_lefts = legend_xs(legend_ws, 36.0, legend_gap)
+			List.for_each!(
+				List.map2(legend, legend_lefts, |it, lx| { it, lx }),
+				|e| {
+					sy = caption_top + 6.0
+					a = { x: e.lx, y: sy }
+					b = { x: e.lx + 16.0, y: sy }
+					match e.it.kind {
+						Now => frame.line!({ start: a, end: b, stroke: Draw.stroke(Color.with_alpha(ctl_c, 200), 2) })
+						Prev => dashed_line!(frame, a, b, Color.with_alpha(ink_muted, 150))
+						Best => {
+							frame.line!({ start: a, end: b, stroke: Draw.stroke(Color.with_alpha(ink_muted, best_line_alpha), 1) })
+							frame.circle!({ center: { x: e.lx + 8.0, y: sy }, radius: 2.5, style: Draw.filled(Color.with_alpha(ink_muted, 90)) })
+						}
+						Planned => dashed_ring!(frame, e.lx + 8.0, sy, 4.5)
+					}
+					Text.from(e.it.label, model.font).size(11).draw!(frame, { pos: { x: e.lx + legend_swatch_w, y: caption_top }, color: ink_muted, align: (Top, Left) })
+				},
+			)
+			legend_end = legend_right(legend_lefts, legend_ws)
+			# the window's unpushed durations at the caption row's right, when it
+			# clears the legend; the hover card says it per rung either way
 			unp_txt = unpushed_caption(List.map(full, |r| r.pr.rung), List.map(full, |r| r.now_unp), model.curve_days)
-			rung_hovering = match rung_at(model.mouse_x, model.mouse_y, win_w, win_h, List.len(rungs), pad_l) {
-				Ok(_) => Bool.True
-				Err(_) => Bool.False
-			}
-			if unp_txt != "" and !rung_hovering and !tgt_hovering and !model.reloading {
+			unp_w = model.font.measure({ text: unp_txt, size: 11.0, spacing: Text.default_spacing }).width
+			if unp_txt != "" and !model.reloading and caption_fits(legend_end, win_w - 40.0 - unp_w) {
 				Text.from(unp_txt, model.font).size(11).draw!(frame, { pos: { x: win_w - 40.0, y: caption_top }, color: ink_faint, align: (Top, Right) })
+			}
+			# the hover card, drawn last so it sits over everything: a planned
+			# ring's sessions, or the hovered rung's three values and the session
+			# that set this window's best
+			bounds = { lo_x: pad_l, hi_x: pad_l + pw, top: pad_t, bot: pad_t + ph }
+			card = match tgt_hover {
+				Ok(g) => Ok({ lines: List.join(List.map(g.ts, |t| target_card(t, best_at(now_pts, t.dur_s)))), ax: g.x, ay: g.y })
+				Err(_) =>
+					match rung_at(model.mouse_x, model.mouse_y, win_w, win_h, List.len(rungs), pad_l) {
+						Ok(ci) => match List.get(rungs, ci) {
+							Ok(r) => Ok({ lines: rung_card(curve, units, { rung: r.pr.rung, rec_w: r.pr.w, rec_day: r.pr.day, now_w: r.now_w, now_day: r.src_day, name: r.src_name, prev_w: r.prev_w, prev_day: r.prev_day, unp: r.now_unp, stale: r.stale }), ax: cx(r.i), ay: if (r.now_w > 0) (cy(I64.to_f32(r.now_w))) else pad_t + ph / 2.0 })
+							Err(_) => Err(NoCard)
+						}
+						Err(_) => Err(NoCard)
+					}
+			}
+			match card {
+				Ok(c) => {
+					cw = 2.0 * card_pad + List.fold(c.lines, 0.0, |m, l| F32.max(m, model.font.measure({ text: l.text, size: 11.0, spacing: Text.default_spacing }).width))
+					ch = 2.0 * card_pad + U64.to_f32(List.len(c.lines)) * card_line_h
+					at = card_place(c.ax, c.ay, cw, ch, bounds)
+					frame.rounded_rectangle!({ x: at.left, y: at.top, width: cw, height: ch, radius: 6.0, segments: 6, style: Draw.filled(Color.with_alpha(Theme.card, 245)) })
+					List.for_each!(
+						List.map_with_index(c.lines, |l, k| { l, k }),
+						|e| Text.from(e.l.text, model.font).size(11).draw!(
+							frame,
+							{
+								pos: { x: at.left + card_pad, y: at.top + card_pad + U64.to_f32(e.k) * card_line_h },
+								color: (
+									match e.l.tone {
+										Title => Color.white
+										Body => ink_muted
+										Muted => ink_faint
+									}
+								),
+								align: (Top, Left),
+							},
+						),
+					)
+				}
+				Err(_) => {}
 			}
 		}
 		model.curve_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
@@ -523,12 +539,6 @@ Curve :: [].{
 		"planned ${mmdd} ${t.val_txt}${pct}"
 	}
 
-	target_tip : Mark, F32 -> Str
-	target_tip = |t, best| {
-		share = if (best <= 0.0) "no window best at that duration" else "${Db.fmt_i(I64.to_f32(t.val) / best * 100.0)}% of this window's best at that duration"
-		"planned ${t.day} ${t.typ}: ${t.rep_txt} @ ${t.val_txt} - ${share}"
-	}
-
 	# a target ring drawn as dashes, the way a planned point differs from the
 	# filled dots of measured bests: ring_dashes arcs around the centre, each
 	# spanning half its share of the circle
@@ -549,10 +559,11 @@ Curve :: [].{
 	}
 
 	# ── the band above the plot. The range and curve chips fill the top
-	# right from chip_top to chip_bottom; the row under them, caption_top,
-	# carries the unpushed caption or the loading note on the right and a
-	# rung tooltip on the left, and ends before the plot's first gridline at
-	# Theme.pad_t. Click and hover tests in main.roc use the same 64..86 band.
+	# right from chip_top to chip_bottom, the tiles sit under them from
+	# tile_top, and the caption row at caption_top carries the legend on the
+	# left and the unpushed caption or the loading note on the right, ending
+	# before the plot starts at plot_top. Click and hover tests in main.roc
+	# use the same 64..86 chip band.
 	chip_top : F32
 	chip_top = 64.0
 
@@ -560,18 +571,216 @@ Curve :: [].{
 	chip_bottom = 86.0
 
 	caption_top : F32
-	caption_top = Theme.pad_t - 18.0
+	caption_top = plot_top - 18.0
 
 	loading_note : Str
 	loading_note = "loading..."
 
-	# whether the pointer sits on a rung column, where a tooltip owns the
-	# caption row
-	rung_hovered : Ui.Model, F32, F32 -> Bool
-	rung_hovered = |model, win_w, win_h|
-		match rung_at(model.mouse_x, model.mouse_y, win_w, win_h, List.len(layout(model).prs), layout(model).left) {
-			Ok(_) => Bool.True
-			Err(_) => Bool.False
+	# ── the headline tiles: four numbers under the chips that say what the
+	# chart says before it is read. The two longest rungs' window bests (a
+	# best that is the record says so), the threshold the engine scores with,
+	# and the window's CP or CS fit, or what would anchor one. Each tile is a
+	# value line and a caption line; four share the row from the title's left
+	# inset to the chips' right edge.
+	tile_top : F32
+	tile_top = chip_bottom + 6.0
+
+	tile_h : F32
+	tile_h = 44.0
+
+	tile_gap : F32
+	tile_gap = 12.0
+
+	# the band the tiles take between the chip row and the plot
+	tile_band : F32
+	tile_band = 56.0
+
+	plot_top : F32
+	plot_top = Theme.pad_t + tile_band
+
+	tile_w : F32 -> F32
+	tile_w = |win_w| (win_w - 36.0 - 40.0 - 3.0 * tile_gap) / 4.0
+
+	tile_x : F32, U64 -> F32
+	tile_x = |win_w, i| 36.0 + U64.to_f32(i) * (tile_w(win_w) + tile_gap)
+
+	Tile : { value : Str, caption : Str, good : Bool }
+
+	# "2026-08-16" -> "08-16"
+	short_day : Str -> Str
+	short_day = |day| Str.from_utf8_lossy(List.drop_first(Str.to_utf8(day), 5))
+
+	# how long ago the window's 20-minute best was set, for a caption
+	age_text : I64 -> Str
+	age_text = |age| if (age < 0) "no 20min best" else if (age == 0) "20min best today" else "20min best ${I64.to_str(age)}d ago"
+
+	head_tiles : Str, [Metric, Imperial], List(Db.PrRung), List(Db.CurvePt), Db.CurveInfo -> List(Tile)
+	head_tiles = |curve, units, prs, pts, info| {
+		n = List.len(prs)
+		best_tile = |back|
+			match List.get(prs, n - back) {
+				Ok(pr) => {
+					w = window_w(pts, pr.secs)
+					day = match List.find_first(pts, |c| c.dur_s == pr.secs) {
+						Ok(c) => short_day(c.day)
+						Err(_) => ""
+					}
+					if (w <= 0) ({ value: "-", caption: "${pr.rung} best: none this window", good: Bool.False })
+					else if (w >= pr.w) ({ value: val_text(curve, units, w), caption: "${pr.rung} best ${day} - PR", good: Bool.True })
+					else { value: val_text(curve, units, w), caption: "${pr.rung} best ${day} - PR ${val_text(curve, units, pr.w)}", good: Bool.False }
+				}
+				Err(_) => { value: "-", caption: "no best on record", good: Bool.False }
+			}
+		thr_name = if (is_pace(curve)) "threshold" else "FTP"
+		thr_v = F32.round_to_i64_try(if (is_pace(curve)) (info.thr * 1000.0) else info.thr) ?? 0
+		thr_tile =
+			if (info.thr <= 0.0) ({ value: "-", caption: "no ${thr_name} on record", good: Bool.False })
+			else { value: val_text(curve, units, thr_v), caption: if (info.test.value > 0.0) "${thr_name} from test ${short_day(info.test.date)}" else "${thr_name} derived", good: Bool.False }
+		fit_name = if (is_pace(curve)) "CS" else "CP"
+		prime = if (is_pace(curve)) "D' ${Db.fmt_i(info.fit.w_prime)} m" else "W' ${Db.fmt_f(info.fit.w_prime / 1000.0)} kJ"
+		fit_tile =
+			if (fit_usable_for(curve, info.fit)) ({ value: fit_tag(curve, units, info.fit), caption: "${prime} - fit r2 ${r2_str(info.fit.r2)}", good: Bool.True })
+			else if (info.test.value > 0.0) ({ value: "${fit_name} from test", caption: "fit not reliable - test ${short_day(info.test.date)}", good: Bool.False })
+			else { value: "test due", caption: "${fit_name} not reliable - ${age_text(info.best20_age)}", good: Bool.False }
+		[best_tile(1), best_tile(2), thr_tile, fit_tile]
+	}
+
+	# ── the hover card: a rung's three values with their dates, the session
+	# that set this window's best and its quality tags, or a planned ring's
+	# sessions. It sits beside the point it describes, inside the plot.
+	CardLine : { text : Str, tone : [Title, Body, Muted] }
+
+	card_pad : F32
+	card_pad = 8.0
+
+	card_line_h : F32
+	card_line_h = 15.0
+
+	RungFacts : { rung : Str, rec_w : I64, rec_day : Str, now_w : I64, now_day : Str, name : Str, prev_w : I64, prev_day : Str, unp : Bool, stale : Bool }
+
+	rung_card : Str, [Metric, Imperial], RungFacts -> List(CardLine)
+	rung_card = |curve, units, r|
+		if (r.rec_w <= 0) [{ text: r.rung, tone: Title }, { text: "no effort on record", tone: Muted }]
+		else {
+			row = |label, w, day| if (w > 0) ({ text: "${label}  ${val_text(curve, units, w)}${if (day == "") "" else "  ${day}"}", tone: Body }) else { text: "${label}  no effort", tone: Muted }
+			src = if (r.name != "" and r.now_w > 0) [{ text: r.name, tone: Muted }] else []
+			tags = List.join([if (r.now_w > 0 and r.unp) ["not all-out"] else [], if (r.now_w > 0 and r.stale) ["stale"] else []])
+			tag = if (List.is_empty(tags)) [] else [{ text: Str.join_with(tags, " - "), tone: Muted }]
+			List.join([[{ text: r.rung, tone: Title }, row("this window", r.now_w, r.now_day), row("previous window", r.prev_w, r.prev_day), row("best ever", r.rec_w, r.rec_day)], src, tag])
+		}
+
+	target_card : Mark, F32 -> List(CardLine)
+	target_card = |t, best| {
+		share = if (best <= 0.0) "no window best at that duration" else "${Db.fmt_i(I64.to_f32(t.val) / best * 100.0)}% of this window's best there"
+		[{ text: "planned ${t.day} ${t.typ}", tone: Title }, { text: "${t.rep_txt} @ ${t.val_txt}", tone: Body }, { text: share, tone: Muted }]
+	}
+
+	# where a card of w x h sits beside its anchor: 14 px right of it, or 14 px
+	# left when the right side would leave the plot, and centred on it
+	# vertically within the plot's top and bottom
+	card_place : F32, F32, F32, F32, { lo_x : F32, hi_x : F32, top : F32, bot : F32 } -> { left : F32, top : F32 }
+	card_place = |ax, ay, w, h, b| {
+		right = ax + 14.0
+		left = if (right + w <= b.hi_x) right else F32.max(b.lo_x, ax - 14.0 - w)
+		{ left, top: F32.max(b.top, F32.min(ay - h / 2.0, b.bot - h)) }
+	}
+
+	# ── the legend: one swatch and name per line on the chart, left to right
+	# on the caption row
+	LegendItem : { kind : [Now, Prev, Best, Planned], label : Str }
+
+	legend_items : Bool, Bool, Bool, Bool -> List(LegendItem)
+	legend_items = |has_now, has_prev, has_best, has_plan|
+		List.join([
+			if (has_now) [{ kind: Now, label: "this window" }] else [],
+			if (has_prev) [{ kind: Prev, label: "previous window" }] else [],
+			if (has_best) [{ kind: Best, label: "best ever" }] else [],
+			if (has_plan) [{ kind: Planned, label: "planned" }] else [],
+		])
+
+	legend_swatch_w : F32
+	legend_swatch_w = 22.0
+
+	legend_gap : F32
+	legend_gap = 16.0
+
+	# each item's left edge from the items' widths, starting at x0
+	legend_xs : List(F32), F32, F32 -> List(F32)
+	legend_xs = |ws, x0, gap| (List.fold(ws, { at: x0, xs: [] }, |acc, w| { at: acc.at + w + gap, xs: List.append(acc.xs, acc.at) })).xs
+
+	legend_right : List(F32), List(F32) -> F32
+	legend_right = |xs, ws|
+		match (List.last(xs), List.last(ws)) {
+			(Ok(x), Ok(w)) => x + w
+			_ => 0.0
+		}
+
+	# the caption at the row's right shows only with a legend gap of air
+	# between it and the legend
+	caption_fits : F32, F32 -> Bool
+	caption_fits = |legend_end, cap_left| legend_end + legend_gap <= cap_left
+
+	# the record envelope's line alpha: a reference, quieter than either window
+	best_line_alpha : U8
+	best_line_alpha = 60
+
+	# a line drawn as dashes of dash_len with dash_gap between them, the
+	# previous window's style
+	dash_len : F32
+	dash_len = 6.0
+
+	dash_gap : F32
+	dash_gap = 4.0
+
+	dashed_line! : Draw.Frame, { x : F32, y : F32 }, { x : F32, y : F32 }, Color.Rgba => {}
+	dashed_line! = |frame, a, b, c| {
+		dx = b.x - a.x
+		dy = b.y - a.y
+		len = F32.sqrt(dx * dx + dy * dy)
+		if len > 0.0 {
+			n = F32.round_to_u64_try(F32.div_floor_by(len, dash_len + dash_gap)) ?? 0
+			List.for_each!(
+				List.map_with_index(List.repeat({}, n + 1), |_u, k| k),
+				|k| {
+					t0 = U64.to_f32(k) * (dash_len + dash_gap) / len
+					t1 = F32.min(1.0, t0 + dash_len / len)
+					if (t0 < 1.0) (frame.line!({ start: { x: a.x + dx * t0, y: a.y + dy * t0 }, end: { x: a.x + dx * t1, y: a.y + dy * t1 }, stroke: Draw.stroke(c, 1.0) })) else {}
+				},
+			)
+		}
+	}
+
+	# ── the zone bands behind a power curve: the athlete's power zones from
+	# the threshold the engine scores with (core.Units), clipped to the axis.
+	# Each band runs from the zone below's upper edge to its own, so the
+	# bands tile the axis with no gaps; alternate zones are shaded. A pace
+	# curve, or one with no threshold, draws none.
+	ZoneBand : { lo : F32, hi : F32, name : Str, shade : Bool }
+
+	# a band's name prints only where the visible band is at least this tall
+	zone_label_min_h : F32
+	zone_label_min_h = 14.0
+
+	zone_bands : Str, F32, F32, F32 -> List(ZoneBand)
+	zone_bands = |curve, thr, lo, hi|
+		if (is_pace(curve) or thr <= 0.0) []
+		else {
+			zones = Units.power_zones(F32.to_f64(thr))
+			List.keep_oks(
+				List.map_with_index(zones, |z, i| { z, i }),
+				|e| {
+					zlo = if (e.i == 0) 0.0 else (
+						match List.get(zones, e.i - 1) {
+							Ok(p) => F64.to_f32_wrap(p.hi_w)
+							Err(_) => 0.0
+						}
+					)
+					zhi = if (e.z.hi_w <= 0.0) hi else F64.to_f32_wrap(e.z.hi_w)
+					blo = F32.max(lo, zlo)
+					bhi = F32.min(hi, zhi)
+					if (bhi <= blo) Err(OffAxis) else Ok({ lo: blo, hi: bhi, name: e.z.name, shade: e.i % 2 == 1 })
+				},
+			)
 		}
 
 	# what the view says when the chosen curve has no data on record: the
@@ -658,6 +867,12 @@ Curve :: [].{
 		if (!foldable) []
 		else [{ key: short_chip_key, label: "short", x: win_w - 420.0 + (if (counterpart(keys, cur) == "") 176.0 else 292.0), on: show }]
 
+	# the short rungs open folded whenever the fold rule says none was
+	# pushed; the short chip or a directive's `short` changes that for the
+	# rest of the session
+	show_short_at_boot : Bool
+	show_short_at_boot = Bool.False
+
 	# ── pushed and unpushed rungs. A maximal best at one duration stands
 	# clearly above the best at the next longer one; a best within
 	# flat_ratio of it is that session's ordinary output, not an all-out
@@ -690,18 +905,14 @@ Curve :: [].{
 	stale_best : I64, I64 -> Bool
 	stale_best = |age_days, window_days| age_days >= 0 and age_days * 2 > window_days
 
-	# the rung tooltip's source: which session set the window's best, and when
-	source_text : Db.CurvePt -> Str
-	source_text = |p| if (p.name == "" and p.day == "") "" else "   ${p.name} ${p.day}"
-
 	# the rung column under (mx, my), laid out the way draw! lays it: index
-	# spacing over the plot between the theme's paddings, each column half a
-	# step to either side of its rung
+	# spacing over the plot between plot_top and the theme's bottom padding,
+	# each column half a step to either side of its rung
 	rung_at : F32, F32, F32, F32, U64, F32 -> Try(U64, [NoRung])
 	rung_at = |mx, my, win_w, win_h, n, left| {
 		pw = win_w - left - Theme.pad_r
-		ph = win_h - Theme.pad_t - Theme.pad_b
-		if (n == 0 or my < Theme.pad_t or my > Theme.pad_t + ph) Err(NoRung)
+		ph = win_h - plot_top - Theme.pad_b
+		if (n == 0 or my < plot_top or my > plot_top + ph) Err(NoRung)
 		else {
 			nlast = n - 1
 			half = if (nlast == 0) (pw / 2.0) else pw / U64.to_f32(nlast) / 2.0
@@ -789,60 +1000,6 @@ Curve :: [].{
 		}
 	}
 
-	# where a horizontal rule at y starts: at x0, or 6 px past the right end
-	# of every introduction whose box it would cross (2 px of air above and
-	# below the box count as crossing)
-	rule_start : F32, F32, List({ top : F32, bot : F32, right : F32 }) -> F32
-	rule_start = |y, x0, spans| List.fold(List.keep_if(spans, |s| y >= s.top - 2.0 and y <= s.bot + 2.0), x0, |a, s| F32.max(a, s.right + 6.0))
-
-	# Where an introduction sits beside its line's first dot. Below the line,
-	# 6 px under the dot, pushed further down when the line falls more than
-	# that across the label's width; above it, 8 px over the dot, pushed up
-	# when the line rises across the label's width. An 11 pt label is 11 px
-	# tall.
-	intro_below : F32, F32, F32 -> F32
-	intro_below = |dot, slope, w| F32.max(dot + 6.0, dot + slope * w + 2.0)
-
-	intro_above : F32, F32, F32 -> F32
-	intro_above = |dot, slope, w| F32.min(dot - 8.0, dot + slope * w - 13.0)
-
-	# the first rung's introductions laid out in the order of the dots they
-	# name: a label crossing one placed before it goes below that one.
-	# Whenever the draw includes another introduction it includes "best
-	# ever", whose dot is the topmost, so the placed labels are in y order
-	# when each next one is checked and the single pass settles. A
-	# previous-window label whose dot sits at most three pixels below the
-	# this-window dot does not cross that label and keeps its own offset,
-	# which puts it first
-	Intro : { text : Str, y : F32, dot : F32, color : Color.Rgba }
-	layout_intros : List(Intro) -> List(Intro)
-	layout_intros = |lines| {
-		by_dot = List.sort_with(lines, |a, b| if (a.dot < b.dot) Before else if (a.dot > b.dot) After else Same)
-		List.fold(
-			by_dot,
-			[],
-			|acc, l| {
-				y = List.fold(acc, l.y, |y0, p| if (y0 < p.y + 11.0 and y0 + 11.0 > p.y) (p.y + 11.0) else y0)
-				List.append(acc, { ..l, y })
-			},
-		)
-	}
-
-	# a label of height h against boxes already placed: one whose box crosses
-	# any of them moves up or down to the nearest edge that clears every box,
-	# keeping its x; one crossing none stays. The topmost box's upper edge
-	# always clears, so a crossing label always moves. The first rung's delta
-	# is placed with it against the introductions
-	top_clear : F32, F32, List({ top : F32, bot : F32 }) -> F32
-	top_clear = |top, h, boxes| {
-		crosses = |t| List.any(boxes, |b| t < b.bot and t + h > b.top)
-		if (!crosses(top)) top
-		else {
-			clear = List.keep_if(List.join(List.map(boxes, |b| [b.bot, b.top - h])), |c| !crosses(c))
-			List.fold(clear, top, |best, c| if (best == top or F32.abs(c - top) < F32.abs(best - top)) c else best)
-		}
-	}
-
 	# ── the signal a curve key draws. A family head draws power in watts; a
 	# pace key draws speed, carried through the rungs in millimetres per
 	# second and read aloud as pace in the sport's own unit, so the higher
@@ -926,33 +1083,46 @@ Curve :: [].{
 			Pace(sp) => Fmt.mmss(pace_secs(v, (pace_unit_for(units, sp)).m))
 		}
 
-	# The value axis. A power curve rises from 0 W to 8% over its highest
-	# value, as it always has. A speed curve's values sit in a narrow band
-	# far from zero (a runner's 5- and 20-minute bests differ by a few
-	# percent), so its axis spans its own values: from 10% under the lowest
-	# to 8% of the span over the highest. Zero values are absent rungs and
-	# never set the floor.
+	# The value axis spans the drawn values: every rung on screen of all three
+	# envelopes, the planned targets and the threshold line. Zero values are
+	# absent rungs and never set the floor. A power curve runs from 5% under
+	# the lowest to 5% over the highest, widened out to the nearest rules of
+	# power_step, so its edges fall on round watts. A speed curve's values sit
+	# in a narrow band far from zero (a runner's 5- and 20-minute bests differ
+	# by a few percent), so its margins are 3% under the lowest and 2% over
+	# the highest, and its rules are round paces instead.
 	axis_span : Str, List(I64), List(I64), F32 -> { lo : F32, hi : F32 }
 	axis_span = |curve, rung_vals, mark_vals, fit| {
 		vals = List.concat(List.map(List.keep_if(List.concat(rung_vals, mark_vals), |v| v > 0), I64.to_f32), if (fit > 0.0) [fit] else [])
 		top = List.fold(vals, 1.0, F32.max)
-		if (!is_pace(curve)) ({ lo: 0.0, hi: top * 1.08 })
-		else {
-			low = List.fold(vals, top, F32.min) * 0.9
-			{ lo: low, hi: top + (top - low) * 0.08 }
+		low = List.fold(vals, top, F32.min)
+		if !is_pace(curve) {
+			lo0 = low * 0.95
+			hi0 = top * 1.05
+			step = power_step(lo0, hi0)
+			{ lo: F32.div_floor_by(lo0, step) * step, hi: -(F32.div_floor_by(-hi0, step)) * step }
+		} else {
+			{ lo: low * 0.97, hi: top * 1.02 }
 		}
 	}
 
-	# The gridlines between lo and hi. A power curve rules every 100 W. A pace
-	# curve rules round paces in its own unit, every 5, 10, 15, 20 or 30
-	# seconds or every 1, 2 or 5 minutes - the smallest step that leaves at
-	# most six lines - placed at the speed each pace is.
+	# the power rule spacing: the smallest of the round steps that leaves at
+	# most six rules between lo and hi
+	power_step : F32, F32 -> F32
+	power_step = |lo, hi| List.fold([1000.0, 500.0, 250.0, 200.0, 100.0, 50.0, 25.0, 20.0, 10.0, 5.0], 1000.0, |best, s| if ((hi - lo) / s <= 6.0) s else best)
+
+	# The gridlines strictly between lo and hi. A power curve rules every
+	# power_step watts. A pace curve rules round paces in its own unit, every
+	# 5, 10, 15, 20 or 30 seconds or every 1, 2 or 5 minutes - the smallest
+	# step that leaves at most six lines - placed at the speed each pace is.
 	grid_vals : Str, [Metric, Imperial], F32, F32 -> List(F32)
 	grid_vals = |curve, units, lo, hi|
 		match Bus.curve_key(curve) {
 			Power(_) => {
-				n = F32.round_to_u64_try(F32.div_floor_by(hi, 100.0)) ?? 0
-				List.keep_if(List.map_with_index(List.repeat({}, n), |_u, k| (U64.to_f32(k) + 1.0) * 100.0), |v| v > lo and v < hi)
+				step = power_step(lo, hi)
+				first = F32.div_floor_by(lo, step) + 1.0
+				n = F32.round_to_u64_try((hi - lo) / step + 1.0) ?? 0
+				List.keep_if(List.map_with_index(List.repeat({}, n), |_u, k| (first + U64.to_f32(k)) * step), |v| v > lo and v < hi)
 			}
 			Pace(sp) => {
 				m = (pace_unit_for(units, sp)).m
@@ -1202,50 +1372,6 @@ expect Curve.label_center_within(100.0, 40.0, 0.0, 110.0) == 70.0 and Curve.labe
 # a delta that fits to the right of its rung stays there; one that would run
 # past the plot ends 10px left of the rung instead
 expect Curve.delta_left_x(100.0, 30.0, 200.0) == 110.0 and Curve.delta_left_x(170.0, 30.0, 200.0) == 130.0 and Curve.delta_left_x(160.0, 30.0, 200.0) == 170.0
-# a first-rung delta crossing an introduction moves to the nearer clear edge,
-# above or below; crossing two stacked ones it takes the nearest edge that
-# clears both; crossing none, or touching a box's edge exactly, it stays
-expect {
-	prev = { top: 100.0, bot: 111.0 }
-	now = { top: 130.0, bot: 141.0 }
-	near = { top: 104.0, bot: 115.0 }
-	Curve.top_clear(115.0, 10.0, [prev, now]) == 115.0
-		and Curve.top_clear(104.0, 10.0, [prev, now]) == 111.0
-		and Curve.top_clear(93.0, 10.0, [prev, now]) == 90.0
-		and Curve.top_clear(125.0, 10.0, [prev, now]) == 120.0
-		and Curve.top_clear(104.0, 10.0, []) == 104.0
-		and Curve.top_clear(90.0, 10.0, [prev]) == 90.0
-		and Curve.top_clear(111.0, 10.0, [prev]) == 111.0
-		and Curve.top_clear(110.0, 10.0, [prev]) == 111.0
-		and Curve.top_clear(100.0, 10.0, [prev, near]) == 90.0
-		and Curve.top_clear(108.0, 10.0, [prev, near]) == 115.0
-}
-# introductions a few pixels apart are laid out clear of each other, the
-# later one taking the nearer clear edge of the earlier
-expect {
-	prev = { top: 100.0, bot: 111.0 }
-	Curve.top_clear(106.0, 11.0, [prev]) == 111.0 and Curve.top_clear(92.0, 11.0, [prev]) == 89.0 and Curve.top_clear(111.0, 11.0, [prev]) == 111.0 and Curve.top_clear(89.0, 11.0, [prev]) == 89.0
-}
-# the introductions come back in the order of their dots, each crossing label
-# pushed below the one before it: a window best a few watts above the previous
-# puts "this window" first and "previous window" under it; three bests within a
-# few pixels stack best, this window, previous window; labels that do not cross
-# keep their own offsets
-expect {
-	grey = Color.with_alpha(Theme.ctl_c, 130)
-	best = { text: "best ever", y: 92.0, dot: 100.0, color: grey }
-	prev_near = { text: "previous window", y: 97.0, dot: 105.0, color: grey }
-	now_between = { text: "this window", y: 108.0, dot: 102.0, color: Theme.ctl_c }
-	prev = { text: "previous window", y: 92.0, dot: 100.0, color: grey }
-	now_above = { text: "this window", y: 100.0, dot: 94.0, color: Theme.ctl_c }
-	now_far = { text: "this window", y: 136.0, dot: 130.0, color: Theme.ctl_c }
-	pair = |ls| List.map(ls, |l| (l.text, l.y))
-	pair(Curve.layout_intros([prev, now_above])) == [("this window", 100.0), ("previous window", 111.0)]
-		and pair(Curve.layout_intros([best, prev_near, now_between])) == [("best ever", 92.0), ("this window", 108.0), ("previous window", 119.0)]
-		and pair(Curve.layout_intros([prev, now_far])) == [("previous window", 92.0), ("this window", 136.0)]
-		and pair(Curve.layout_intros([prev])) == [("previous window", 92.0)]
-		and Curve.top_clear(100.5, 10.0, [{ top: 100.0, bot: 111.0 }]) == 111.0
-}
 # a fit is usable at the r2 floor with a W' inside the band, and not a hair
 # below either edge; an unanswered fit never is
 expect Curve.fit_usable({ cp: 250.0, w_prime: 15000.0, r2: 0.9, points: 3.0, ok: Bool.True })
@@ -1274,7 +1400,7 @@ expect Curve.best_at([{ secs: 600, w: 260 }, { secs: 1200, w: 254 }], 1200) == 2
 expect {
 	ms = Curve.marks_for("Ride", "Ride", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])
 	match ms {
-		[m] => Curve.target_label(m, 257.0) == "planned 11-05 225W 88%" and Curve.target_label(m, 0.0) == "planned 11-05 225W" and Curve.target_tip(m, 257.0) == "planned 2026-11-05 threshold: 2x15:00 @ 225W - 88% of this window's best at that duration"
+		[m] => Curve.target_label(m, 257.0) == "planned 11-05 225W 88%" and Curve.target_label(m, 0.0) == "planned 11-05 225W" and List.map(Curve.target_card(m, 257.0), |l| l.text) == ["planned 2026-11-05 threshold", "2x15:00 @ 225W", "88% of this window's best there"]
 		_ => Bool.False
 	}
 }
@@ -1332,13 +1458,15 @@ expect {
 		and List.map(Curve.short_chips(1400.0, keys, "Ride", Bool.True, Bool.False), |c| c.x) == [1400.0 - 420.0 + 176.0]
 		and List.map(Curve.short_chips(1400.0, keys, "Rowing", Bool.True, Bool.True), |c| { x: c.x, on: c.on }) == [{ x: 1400.0 - 420.0 + 292.0, on: Bool.True }]
 }
+# the window opens with the short rungs folded
+expect !Curve.show_short_at_boot
 # a hover test lays the columns out from the same left edge the plot uses:
 # with the gutter, the first column's boundary moves right by its width
 expect {
 	left = Theme.pad_l + Curve.short_gutter
 	half = (1400.0 - left - Theme.pad_r) / 3.0 / 2.0
-	Curve.rung_at(left + half - 1.0, Theme.pad_t + 10.0, 1400.0, 900.0, 4, left) == Ok(0)
-		and Curve.rung_at(left + half + 1.0, Theme.pad_t + 10.0, 1400.0, 900.0, 4, left) == Ok(1)
+	Curve.rung_at(left + half - 1.0, Curve.plot_top + 10.0, 1400.0, 900.0, 4, left) == Ok(0)
+		and Curve.rung_at(left + half + 1.0, Curve.plot_top + 10.0, 1400.0, 900.0, 4, left) == Ok(1)
 }
 # the curve chips: right-aligned against the range chips, most-used first,
 # as many as fit beside the title, the one on screen always among them and
@@ -1386,15 +1514,23 @@ expect Curve.empty_note("Rowing") == "no row power on record yet" and Curve.empt
 expect Curve.val_text("pace:Run", Metric, 4000) == "4:10/km" and Curve.val_text("pace:Run", Imperial, 4000) == "6:42/mi" and Curve.val_text("pace:Swim", Imperial, 1000) == "1:40/100m" and Curve.val_text("pace:VirtualRow", Metric, 4000) == "2:05/500m"
 expect Curve.val_text("Ride", Metric, 1234) == "1,234 w" and Curve.axis_text("Ride", Metric, 300) == "300" and Curve.axis_text("pace:Run", Metric, 4000) == "4:10"
 expect Curve.delta_for("pace:Run", Metric, 4000, 3846) == "-10s" and Curve.delta_for("pace:Run", Metric, 3846, 4000) == "+10s" and Curve.delta_for("pace:Run", Metric, 4000, 4000) == "" and Curve.delta_for("Ride", Metric, 354, 340) == "+14w"
-# a power axis rises from zero and rules every 100 W; a pace axis spans its
-# own values and rules round paces, at most six of them
+# a power axis spans the drawn values with a 5% margin, out to round rules:
+# 230-330 W (a 300 W target and a 247 W CP inside) runs 200-350 on 25 W
+# rules, so the gaps between the lines get the height; a value only a
+# target reaches still widens it, and an absent rung never sets the floor
 expect {
-	s = Curve.axis_span("Ride", [500, 0, 300], [225], 0.0)
-	s.lo.abs() < 0.001 and (s.hi - 540.0).abs() < 0.01 and List.map(Curve.grid_vals("Ride", Metric, 0.0, 540.0), |v| Curve.axis_text("Ride", Metric, F32.round_to_i64_try(v) ?? 0)) == ["100", "200", "300", "400", "500"]
+	s = Curve.axis_span("Ride", [330, 0, 230, 271], [300], 247.0)
+	(s.lo - 200.0).abs() < 0.001 and (s.hi - 350.0).abs() < 0.001 and List.map(Curve.grid_vals("Ride", Metric, s.lo, s.hi), |v| Curve.axis_text("Ride", Metric, F32.round_to_i64_try(v) ?? 0)) == ["225", "250", "275", "300", "325"]
 }
 expect {
+	s = Curve.axis_span("Ride", [330, 230], [480], 0.0)
+	(s.lo - 200.0).abs() < 0.001 and (s.hi - 550.0).abs() < 0.001
+}
+expect Curve.power_step(200.0, 350.0) == 25.0 and Curve.power_step(0.0, 540.0) == 100.0 and Curve.power_step(240.0, 260.0) == 5.0
+expect List.len(Curve.grid_vals("Ride", Metric, 0.0, 540.0)) == 5
+expect {
 	s = Curve.axis_span("pace:Run", [4600, 4200, 4000, 0], [3850], 0.0)
-	(s.lo - 3465.0).abs() < 0.5 and (s.hi - 4690.8).abs() < 0.5
+	(s.lo - 3734.5).abs() < 0.5 and (s.hi - 4692.0).abs() < 0.5
 }
 expect List.map(Curve.grid_vals("pace:Run", Metric, 3465.0, 4689.0), |v| Curve.axis_text("pace:Run", Metric, F32.round_to_i64_try(v) ?? 0)) == ["3:45", "4:00", "4:15", "4:30", "4:45"]
 expect List.map(Curve.grid_vals("pace:Swim", Metric, 1200.0, 1500.0), |v| Curve.axis_text("pace:Swim", Metric, F32.round_to_i64_try(v) ?? 0)) == ["1:10", "1:15", "1:20"]
@@ -1446,21 +1582,12 @@ expect {
 	wall = { x0: 300.0, y0: 0.0, x1: 400.0, y1: 400.0 }
 	Curve.delta_spot(d, []) == { left: 360.0, top: 150.0 } and Curve.delta_spot({ ..d, x: 100.0, hi: 400.0 }, [{ x0: 0.0, y0: 0.0, x1: 200.0, y1: 400.0 }, { x0: 0.0, y0: 400.0, x1: 200.0, y1: 0.0 }, { x0: 0.0, y0: 130.0, x1: 200.0, y1: 130.0 }, { x0: 0.0, y0: 175.0, x1: 200.0, y1: 175.0 }]) == { left: 110.0, top: 150.0 } and !Curve.box_crosses(0.0, 1.0, 0.0, 1.0, [wall])
 }
-# the caption row clears the chips and ends before the plot: an 11 pt line
-# under chip_bottom and above Theme.pad_t, so the loading note and caption
-# never overprint a chip at any width
-expect Curve.caption_top >= Curve.chip_bottom + 4.0 and Curve.caption_top + 13.0 <= Theme.pad_t
+# the band above the plot stacks without overlap: the tiles start under
+# the chips, the 11 pt caption row starts under the tiles and ends before
+# the plot, so the legend, caption and loading note never overprint a tile
+# or a chip at any width
+expect Curve.tile_top >= Curve.chip_bottom + 4.0 and Curve.caption_top >= Curve.tile_top + Curve.tile_h + 4.0 and Curve.caption_top + 13.0 <= Curve.plot_top
 expect Curve.chip_bottom - Curve.chip_top == 22.0
-# a label beside a gently falling line keeps its offset; beside a steep one
-# it moves clear of where the line ends up under the label's far edge
-expect (Curve.intro_below(100.0, 0.02, 100.0) - 106.0).abs() < 0.001 and (Curve.intro_below(100.0, 0.24, 100.0) - 126.0).abs() < 0.001
-expect (Curve.intro_above(100.0, 0.24, 100.0) - 92.0).abs() < 0.001 and (Curve.intro_above(100.0, -0.2, 100.0) - 67.0).abs() < 0.001
-# a rule through an introduction starts past its end; one clear of every
-# introduction starts at the plot's edge
-expect {
-	spans = [{ top: 100.0, bot: 111.0, right: 200.0 }, { top: 130.0, bot: 141.0, right: 250.0 }]
-	(Curve.rule_start(105.0, 64.0, spans) - 206.0).abs() < 0.001 and (Curve.rule_start(120.0, 64.0, spans) - 64.0).abs() < 0.001 and (Curve.rule_start(142.5, 64.0, spans) - 256.0).abs() < 0.001
-}
 
 # a usable fit draws its own line; an unusable one gives way to a marked test
 # in force, in the curve's own units; with neither there is no line
@@ -1492,3 +1619,95 @@ expect {
 	title == "open water swim pace - this 90d vs the 90d before it"
 		and List.all(Curve.chips_for(980.0, keys, "pace:OpenWaterSwim", 90), |c| c.x >= 36.0 + U64.to_f32(Str.count_utf8_bytes(title)) * Curve.title_char_w)
 }
+
+# the tiles on a 90-day ride window: the hour best is the record and says
+# PR, the 20-minute best names the record it trails, the FTP says where it
+# came from, and a fit too weak to trust asks for the test with the 20-minute
+# best's age
+expect {
+	prs = [{ rung: "10min", secs: 600, w: 289, day: "2026-05-04" }, { rung: "20min", secs: 1200, w: 285, day: "2026-05-04" }, { rung: "60min", secs: 3600, w: 236, day: "2026-11-11" }]
+	pts = [{ dur_s: 1200, watts: 254.0, aid: 1, name: "a", day: "2026-10-30", ago: 13 }, { dur_s: 3600, watts: 236.4, aid: 2, name: "b", day: "2026-11-11", ago: 1 }]
+	weak = { cp: 252.9, w_prime: 2980.0, r2: 0.84, points: 3.0, ok: Bool.True }
+	none = { value: 0.0, kind: "none", date: "none" }
+	ts = Curve.head_tiles("Ride", Metric, prs, pts, { fit: weak, test: none, thr: 241.0, best20_age: 13 })
+	List.map(ts, |t| (t.value, t.caption, t.good)) == [("236 w", "60min best 11-11 - PR", Bool.True), ("254 w", "20min best 10-30 - PR 285 w", Bool.False), ("241 w", "FTP derived", Bool.False), ("test due", "CP not reliable - 20min best 13d ago", Bool.False)]
+}
+# a marked test names itself on the threshold tile and stands in for a weak
+# fit; a usable fit shows CP and W'; a window with no effort at a rung says so
+expect {
+	prs = [{ rung: "20min", secs: 1200, w: 285, day: "2026-05-04" }, { rung: "60min", secs: 3600, w: 236, day: "2026-11-11" }]
+	weak = { cp: 252.9, w_prime: 2980.0, r2: 0.84, points: 3.0, ok: Bool.True }
+	good = { cp: 250.0, w_prime: 15000.0, r2: 0.95, points: 3.0, ok: Bool.True }
+	test = { value: 246.5, kind: "cp3-12", date: "2026-10-27" }
+	tested = Curve.head_tiles("Ride", Metric, prs, [], { fit: weak, test, thr: 246.5, best20_age: -1 })
+	fitted = Curve.head_tiles("Ride", Metric, prs, [], { fit: good, test: { value: 0.0, kind: "none", date: "none" }, thr: 0.0, best20_age: -1 })
+	List.map(tested, |t| t.caption) == ["60min best: none this window", "20min best: none this window", "FTP from test 10-27", "fit not reliable - test 10-27"]
+		and List.map(tested, |t| t.value) == ["-", "-", "247 w", "CP from test"]
+		and List.map(fitted, |t| (t.value, t.caption)) == [("-", "60min best: none this window"), ("-", "20min best: none this window"), ("-", "no FTP on record"), ("CP 250.0W", "W' 15.0 kJ - fit r2 0.95")]
+}
+# a pace curve's tiles read in pace in the sport's own unit: its two
+# longest rungs, the threshold pace from m/s, and CS with D'
+expect {
+	prs = [{ rung: "5min", secs: 300, w: 4300, day: "2026-10-01" }, { rung: "10min", secs: 600, w: 4100, day: "2026-10-01" }, { rung: "20min", secs: 1200, w: 4000, day: "2026-10-02" }]
+	pts = [{ dur_s: 600, watts: 4100.0, aid: 1, name: "a", day: "2026-10-01", ago: 3 }, { dur_s: 1200, watts: 3900.0, aid: 1, name: "a", day: "2026-10-05", ago: 3 }]
+	good = { cp: 4.0, w_prime: 200.0, r2: 0.95, points: 3.0, ok: Bool.True }
+	ts = Curve.head_tiles("pace:Rowing", Metric, prs, pts, { fit: good, test: { value: 0.0, kind: "none", date: "none" }, thr: 4.0, best20_age: 3 })
+	List.map(ts, |t| (t.value, t.caption)) == [("2:08/500m", "20min best 10-05 - PR 2:05/500m"), ("2:02/500m", "10min best 10-01 - PR"), ("2:05/500m", "threshold derived"), ("CS 2:05/500m", "D' 200 m - fit r2 0.95")]
+}
+# four tiles fill the row from the title's inset to 40 px short of the right
+# edge, at the minimum window and wider
+expect {
+	ends = |w| (Curve.tile_x(w, 0), Curve.tile_x(w, 3) + Curve.tile_w(w))
+	ends(980.0) == (36.0, 940.0) and ends(1400.0) == (36.0, 1360.0) and Curve.tile_w(980.0) > 200.0
+}
+# the hover card titles the rung and gives one row per line with its date,
+# the session behind this window's best, and its quality tags muted
+expect {
+	r = { rung: "10min", rec_w: 289, rec_day: "2026-05-04", now_w: 271, now_day: "2026-08-16", name: "45 min Ride", prev_w: 260, prev_day: "2026-06-01", unp: Bool.False, stale: Bool.True }
+	List.map(Curve.rung_card("Ride", Metric, r), |l| (l.text, l.tone)) == [("10min", Title), ("this window  271 w  2026-08-16", Body), ("previous window  260 w  2026-06-01", Body), ("best ever  289 w  2026-05-04", Body), ("45 min Ride", Muted), ("stale", Muted)]
+		and List.map(Curve.rung_card("Ride", Metric, { ..r, now_w: 0, prev_w: 0 }), |l| l.text) == ["10min", "this window  no effort", "previous window  no effort", "best ever  289 w  2026-05-04"]
+		and List.map(Curve.rung_card("Ride", Metric, { ..r, rec_w: 0 }), |l| l.text) == ["10min", "no effort on record"]
+}
+# the card sits right of its point, flips left at the plot's right edge, and
+# stays between the plot's top and bottom without covering the point
+expect {
+	b = { lo_x: 64.0, hi_x: 894.0, top: 166.0, bot: 544.0 }
+	Curve.card_place(300.0, 300.0, 200.0, 90.0, b) == { left: 314.0, top: 255.0 }
+		and Curve.card_place(800.0, 300.0, 200.0, 90.0, b) == { left: 586.0, top: 255.0 }
+		and Curve.card_place(300.0, 170.0, 200.0, 90.0, b) == { left: 314.0, top: 166.0 }
+		and Curve.card_place(300.0, 540.0, 200.0, 90.0, b) == { left: 314.0, top: 454.0 }
+}
+# the legend names only the lines on the chart, left to right from x0 with a
+# gap between items; the caption at the row's right gives way when it would
+# meet the legend
+expect {
+	all = Curve.legend_items(Bool.True, Bool.True, Bool.True, Bool.True)
+	xs = Curve.legend_xs([100.0, 140.0, 90.0], 36.0, 16.0)
+	List.map(all, |i| i.label) == ["this window", "previous window", "best ever", "planned"]
+		and List.map(Curve.legend_items(Bool.True, Bool.False, Bool.True, Bool.False), |i| i.label) == ["this window", "best ever"]
+		and List.map(Curve.legend_items(Bool.False, Bool.True, Bool.True, Bool.False), |i| i.label) == ["previous window", "best ever"]
+		and xs == [36.0, 152.0, 308.0]
+		and Curve.legend_right(xs, [100.0, 140.0, 90.0]) == 398.0
+		and Curve.caption_fits(398.0, 414.0) and !Curve.caption_fits(398.0, 413.0)
+}
+# the zone bands from a 240 W FTP over a 200-350 W axis: Z3 from 216 W, Z4
+# to 252, Z5 to 288, Z6 open past the axis top and clipped to it; Z1, Z2 and
+# Z7 sit off the axis. Bands tile with no gaps, alternate zones shade, and a
+# pace curve or a missing FTP draws none
+expect {
+	bs = Curve.zone_bands("Ride", 240.0, 200.0, 350.0)
+	near = |a, b| (a - b).abs() < 0.01
+	List.map(bs, |b| b.name) == ["tempo", "threshold", "VO2max", "anaerobic"]
+		and List.map(bs, |b| b.shade) == [Bool.False, Bool.True, Bool.False, Bool.True]
+		and (
+			match bs {
+				[t, th, v, an] => near(t.lo, 200.0) and near(t.hi, 216.0) and near(th.lo, 216.0) and near(th.hi, 252.0) and near(v.hi, 288.0) and near(an.lo, 288.0) and near(an.hi, 350.0)
+				_ => Bool.False
+			}
+		)
+		and Curve.zone_bands("pace:Run", 4.0, 3000.0, 5000.0) == []
+		and Curve.zone_bands("Ride", 0.0, 200.0, 350.0) == []
+}
+# the hover columns start at plot_top, under the tiles: a pointer on the
+# tile row hovers no rung
+expect Curve.rung_at(400.0, Curve.plot_top - 1.0, 980.0, 600.0, 4, Theme.pad_l) == Err(NoRung) and Curve.rung_at(400.0, Curve.plot_top + 1.0, 980.0, 600.0, 4, Theme.pad_l) != Err(NoRung)

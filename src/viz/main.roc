@@ -209,7 +209,7 @@ load_logo! = |acc, boot|
 # face, so a window that cannot reach the athlete's data says why.
 skeleton : Str -> _
 skeleton = |err|
-	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], zo: [], ph: "", b20: -1, tg: [], rw: [], csp: [], ctm: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric, cf: "", keys: { power: [], pace: [] }, ptg: [], sv: Db.empty_strength_view }
+	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], zo: [], ph: "", b20: -1, tg: [], rw: [], csp: [], ctm: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric, cf: "", keys: { power: [], pace: [] }, ptg: [], sv: Db.empty_strength_view, thr: 0.0 }
 
 # boot=True builds the instant skeleton the splash renders over: no database
 # and no engine call - the window opens on frame one and the real load runs
@@ -262,6 +262,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 			zw = Db.load_zone_weeks!(db)
 			zo = Db.load_zone_overrides!(db)
 			b20 = Db.load_best20_age!(db, curve_days, tm, cf)
+			thr = Db.load_threshold!(db, cf)
 			tg = Db.load_targets_at!(db, tm)
 			ptg = Db.load_pace_targets_at!(db, tm)
 			ph = Db.load_plan_horizon!(db)
@@ -275,7 +276,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 			nts = Db.load_day_notes!(db)
 			cpv = Db.load_curve_prev!(db, curve_days, tm, cf)
 			sv = Db.load_strength_view!(db, tm)
-			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, zo, ph, b20, tg, rw, csp, ctm, cs, cfm, prs, tcache, un, cf, keys, ptg, sv }
+			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, zo, ph, b20, tg, rw, csp, ctm, cs, cfm, prs, tcache, un, cf, keys, ptg, sv, thr }
 		}
 		Err(NoStrideDir) => skeleton("no stride directory — the launcher passes it as the first argument")
 		Err(Unreachable) => skeleton("cannot open ${acc.dir}/db.sqlite")
@@ -383,7 +384,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		curve_title: mk!(Curve.title_text(cf, curve_days), 15)?,
 		curve_days,
 		curve_family: cf,
-		show_short: Bool.False,
+		show_short: Curve.show_short_at_boot,
 		curve_keys: loaded.keys,
 		pace_targets: loaded.ptg,
 		trace_ids: loaded.tids,
@@ -445,6 +446,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		segs: loaded.sg,
 		trace_dur: loaded.du,
 		fit_cp: Curve.anchor_line(cf, fit, ft.test),
+		curve_info: { fit, test: ft.test, thr: loaded.thr, best20_age: loaded.b20 },
 		plan_targets: loaded.tg,
 		cp_lbl: mkm!(Curve.anchor_tag(cf, loaded.un, fit, ft.test), 12)?,
 		data: loaded.s.data,
@@ -1586,16 +1588,16 @@ focus_task! = |acc, f|
 # click through the full loader repeats, on every switch, the whole read
 # the boot pays once. This is the chip's own path; R still runs the full
 # loader, which is what R is for.
-CurveWindow : { days : I64, fam : Str, prs : List(Db.PrRung), c : List(Db.CurvePt), cpv : List(Db.CurvePt), lbls : List({ p : Text.Prepared, d : I64 }), title : Text.Prepared, fit_lbl : Text.Prepared, cp_lbl : Text.Prepared, fit_cp : F32 }
+CurveWindow : { days : I64, fam : Str, prs : List(Db.PrRung), c : List(Db.CurvePt), cpv : List(Db.CurvePt), lbls : List({ p : Text.Prepared, d : I64 }), title : Text.Prepared, fit_lbl : Text.Prepared, cp_lbl : Text.Prepared, fit_cp : F32, info : Db.CurveInfo }
 
 load_curve_window! : Access, Text.Font, I64, Str => Try(CurveWindow, [ResourceLimit])
 load_curve_window! = |acc, font, curve_days, curve_family| {
 	read = match open_db!(acc) {
 		Ok(db) => {
 			tm = Db.today_mod!(acc.io.commands(), db)
-			{ c: Db.load_curve!(db, curve_days, tm, curve_family), cpv: Db.load_curve_prev!(db, curve_days, tm, curve_family), b20: Db.load_best20_age!(db, curve_days, tm, curve_family), prs: Db.load_prs!(db, curve_family), un: Db.units!(db) }
+			{ c: Db.load_curve!(db, curve_days, tm, curve_family), cpv: Db.load_curve_prev!(db, curve_days, tm, curve_family), b20: Db.load_best20_age!(db, curve_days, tm, curve_family), prs: Db.load_prs!(db, curve_family), un: Db.units!(db), thr: Db.load_threshold!(db, curve_family) }
 		}
-		Err(_) => { c: [], cpv: [], b20: -1, prs: [], un: Metric }
+		Err(_) => { c: [], cpv: [], b20: -1, prs: [], un: Metric, thr: 0.0 }
 	}
 	ft = Db.load_fit!(acc.io.commands(), curve_days, curve_family)
 	fit = ft.fit
@@ -1624,6 +1626,7 @@ load_curve_window! = |acc, font, curve_days, curve_family| {
 		fit_lbl: mk!(Db.ascii_safe(fit_text), 14)?,
 		cp_lbl: mkm!(Curve.anchor_tag(curve_family, read.un, fit, ft.test), 12)?,
 		fit_cp: Curve.anchor_line(curve_family, fit, ft.test),
+		info: { fit, test: ft.test, thr: read.thr, best20_age: read.b20 },
 	})
 }
 
@@ -1767,7 +1770,7 @@ update! = |model0, program_input, io| {
 				# matched the same way
 				CurveReloaded(w) =>
 					if (w.days != acc.curve_days or w.fam != acc.curve_family) acc
-					else { ..acc, prs: w.prs, curve: w.c, curve_prev: w.cpv, curve_lbls: w.lbls, curve_title: w.title, fit_lbl: w.fit_lbl, cp_lbl: w.cp_lbl, fit_cp: w.fit_cp, reloading: Bool.False }
+					else { ..acc, prs: w.prs, curve: w.c, curve_prev: w.cpv, curve_lbls: w.lbls, curve_title: w.title, fit_lbl: w.fit_lbl, cp_lbl: w.cp_lbl, fit_cp: w.fit_cp, curve_info: w.info, reloading: Bool.False }
 				CurveReloadFailed(days, fam) => if (days != acc.curve_days or fam != acc.curve_family) acc else { ..acc, reloading: Bool.False }
 				# a failed fetch lowers the loading flag only if it was the current
 				# fetch: a failure for a superseded switch must not clear the flag
@@ -1836,7 +1839,7 @@ update! = |model0, program_input, io| {
 					# a model still booting has chosen no curve yet, and takes the one
 					# the load chose
 					if (acc.curve_family == "" or (fresh.curve_days == acc.curve_days and fresh.curve_family == acc.curve_family)) merged
-					else { ..merged, curve_family: acc.curve_family, prs: acc.prs, curve: acc.curve, curve_prev: acc.curve_prev, curve_lbls: acc.curve_lbls, curve_title: acc.curve_title, curve_days: acc.curve_days, fit_lbl: acc.fit_lbl, cp_lbl: acc.cp_lbl, fit_cp: acc.fit_cp, reloading: acc.reloading }
+					else { ..merged, curve_family: acc.curve_family, prs: acc.prs, curve: acc.curve, curve_prev: acc.curve_prev, curve_lbls: acc.curve_lbls, curve_title: acc.curve_title, curve_days: acc.curve_days, fit_lbl: acc.fit_lbl, cp_lbl: acc.cp_lbl, fit_cp: acc.fit_cp, curve_info: acc.curve_info, reloading: acc.reloading }
 				}
 				# only the reply for the current trace generation lands: two switches
 				# faster than the first fetch resolves would otherwise let the first,
@@ -2547,7 +2550,7 @@ update! = |model0, program_input, io| {
 		used = !List.is_empty(d.events) or List.any(d.keys, |k| k != 0) or pointer.x != 0.0 or pointer.y != 0.0 or wheel.x != 0.0 or wheel.y != 0.0 or Mouse.button_down(d.mouse, Left) or Mouse.button_down(d.mouse, Right) or win.w != model.win.w or win.h != model.win.h or directive.has_d
 		last_active = if (used) tick else model.last_active
 		Window.set_target_fps!(frame_rate({ busy, tick, last_active }))
-		Ok({ ..model, lifts_off: lifts_off2, week_off: week_off2, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, show_short: want_short, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, lifts_off: lifts_off2, week_off: week_off2, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, show_short: want_short, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else if (view2 == 1) Curve.plot_top else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 

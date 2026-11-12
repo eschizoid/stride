@@ -1,5 +1,6 @@
 import core.Series
 import core.Sports
+import core.Units
 Metrics :: [].{
 	# ── pure training-science math. no I/O, fully unit-tested. ──────────
 
@@ -1380,19 +1381,10 @@ Metrics :: [].{
 			)
 		).out
 
-	# ── power zones (Coggan / Peloton 7-zone model, watt ranges from FTP) ─
-	# lo_w = 0 means the zone starts at 0 (Z1); hi_w = 0 means it is open above (Z7).
+	# ── power zones: the shared table in core.Units, so the CLI and the
+	# window draw the same edges
 	power_zones : F64 -> List({ z : Str, name : Str, lo_w : F64, hi_w : F64 })
-	power_zones = |ftp|
-		[
-			{ z: "Z1", name: "recovery", lo_w: 0.0, hi_w: ftp * 0.55 },
-			{ z: "Z2", name: "endurance", lo_w: ftp * 0.56, hi_w: ftp * 0.75 },
-			{ z: "Z3", name: "tempo", lo_w: ftp * 0.76, hi_w: ftp * 0.90 },
-			{ z: "Z4", name: "threshold", lo_w: ftp * 0.91, hi_w: ftp * 1.05 },
-			{ z: "Z5", name: "VO2max", lo_w: ftp * 1.06, hi_w: ftp * 1.20 },
-			{ z: "Z6", name: "anaerobic", lo_w: ftp * 1.21, hi_w: ftp * 1.50 },
-			{ z: "Z7", name: "neuromuscular", lo_w: ftp * 1.51, hi_w: 0.0 },
-		]
+	power_zones = |ftp| Units.power_zones(ftp)
 
 	# ── trend of a chronological series (for "am I improving?" verdicts) ─
 	# average of the first third vs the last third (k = max(1, n/3) points each end),
@@ -2673,11 +2665,10 @@ Metrics :: [].{
 	date_known_sql_for = |col| "(CASE WHEN ${col} IS NULL OR date(substr(${col}, 1, 10)) IS NOT substr(${col}, 1, 10) OR substr(${col}, 1, 4) < '1000' THEN 0 ELSE 1 END)"
 
 	# "is this timestamp RANKABLE", and the ordering that uses it — emitted together, as
-	# one clause, because that is the only form that stays correct (#247, #255):
+	# one clause, because that is the only form that stays correct:
 	# THE GUARD'S DOMAIN MUST EQUAL ITS CONSUMER'S. Comparing `MAX(start_local)` as a
 	# string lets a malformed timestamp outrank every real one, putting `rate latest`
-	# on the wrong activity. When #247/#255 opened, eight other queries ordered on the
-	# whole column with no guard at all; every ranking site now emits this clause.
+	# on the wrong activity, so every ranking site emits this clause.
 	# TWO terms, always both — the clause form exists so no caller pairs the predicate
 	# with a key by hand. The flag sorts DESC unconditionally so unrankable rows go last
 	# in EITHER direction: NULL is SQLite's smallest value, so a bare `key ASC` would
@@ -3019,14 +3010,12 @@ Metrics :: [].{
 	#
 	# min_shift is the no-invented-intervals FLOOR on the edge threshold: an edge
 	# requires at least this much level change, so steady rides and GPS wobble
-	# produce no edges at all. It replaced the v1 min_spread IQR *gate* (#170),
-	# which judged the GLOBAL value distribution and failed both ways on real
-	# rides: a genuine 3x12 with short recoveries is ~80% work samples, so its
-	# IQR sat inside the work band and the gate declared "no structure" (false
-	# negative on the maintainer's cleanest session), while a progressive ride's
-	# ramp inflated IQR past the gate and got sliced into pseudo-reps (false
-	# positive). Structure is now judged AFTER segmentation — see the level-gap
-	# threshold, adjacent-work merge, and contrast gate in detect_segments.
+	# produce no edges at all. Structure is judged AFTER segmentation (the
+	# level-gap threshold, adjacent-work merge and contrast gate in
+	# detect_segments), never from the session's global value distribution: a
+	# 3x12 with short recoveries is about 80% work samples, so its IQR sits
+	# inside the work band, while a progressive ride's ramp inflates its IQR,
+	# and a gate on the global spread misjudges both.
 	DetectParams : { smooth_w : U64, hold : U64, shift_frac : F64, min_shift : F64 }
 
 	detect_power_params : DetectParams

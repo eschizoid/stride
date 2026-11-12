@@ -454,30 +454,52 @@ a reader who cares looks at focus, not at the losing row.
 ## The power view (TAB)
 
 A second screen, and the one that answers "am I holding power?": the
-window's power-duration ladder (blue) drawn over the SAME-LENGTH window
-before it (grey), eight rungs from 5s to 60min. The signed change at each
-rung is printed in watts right where it lives — teal going up, alarm
-going down, nothing when either window lacks the rung. The all-time
-record envelope stays as a faint reference above; a rung whose window
-best IS the record still collapses to one teal dot marked "pr" - with
-its delta printed beside it, since a record rung's change is the best
-news on the chart - and a record set in the last seven days still rings
-gold. Hovering a rung reads
-back the record, the day it was set, and both windows' values. The CP fit
-reports from the bottom-right status corner, its dashed line on the chart,
-only when the fit is usable: r2 at least 0.9 and W' between 5 and 40 kJ.
-A fit through steady class bests rather than maximal ones returns a W' of a
-few kJ, so otherwise the line is not drawn and the footer says why, how many
-days ago the window's 20-minute best was set, and that an all-out 20 minutes
-would anchor the fit.
+window's power-duration ladder drawn over the same-length window before it,
+eight rungs from 5s to 60min.
+
+Four tiles under the chips carry the headline numbers before the chart is
+read: the window's best at the ladder's longest rung and at the one before it
+(60 and 20 minutes on a power curve, 20 and 10 on a pace curve), each with
+its day and marked `PR` when it is the all-time best, else naming the record;
+the threshold the engine scores the curve's sessions with (FTP, or the
+threshold pace), `from test` when a marked test is in force and `derived`
+otherwise; and the window's fit, CP and W' (CS and D' on a pace curve) when
+it is usable, the test standing in when one is in force, or `test due` with
+the 20-minute best's age.
+
+The plot draws this window as the solid blue line, the previous window
+dashed grey and the all-time record envelope as a thin faint line with small
+dots, and a legend on the row above the plot names each line on the chart.
+The value axis spans what is drawn on screen (all three lines, the planned
+targets and the threshold line; folded short rungs do not count) with a
+small margin (5% on a power curve, out to round watts; 3% under and 2% over
+on a pace curve), so the gaps between the lines get the height. Behind the lines, faint bands mark the athlete's power zones from the
+FTP (Coggan's seven, the same table `stride zones` prints), alternate ones
+shaded and each named at the window's right edge where it is tall enough.
+A pace curve draws no bands, since Stride has no pace zones.
+
+The signed change at each rung is printed in watts beside it: teal going up,
+alarm going down, nothing when either window lacks the rung. A rung whose
+window best IS the record collapses to one teal dot marked "pr", with its
+delta beside it, and a record set in the last seven days rings gold.
+Hovering a rung opens a card beside it: the duration, this window's,
+the previous window's and the all-time best with their days, the session
+that set this window's best, and `not all-out` or `stale` when they apply.
+The card stays inside the plot and beside the point. The CP fit reports from
+the bottom-right status corner, its dashed line on the chart, only when the
+fit is usable: r2 at least 0.9 and W' between 5 and 40 kJ. A fit through
+steady class bests rather than maximal ones returns a W' of a few kJ, so
+otherwise the line is not drawn and the footer says why, how many days ago
+the window's 20-minute best was set, and that an all-out 20 minutes would
+anchor the fit.
 
 Every open session ahead with a structured target is a dashed gold ring at
 its rep duration and target watts (between rungs, placed linearly in
 seconds), labelled `planned`, its day and the target's share of this
 window's best at that duration, read off the line between the rungs around
 it. The dashes and the `planned` prefix keep a prescription from reading as a
-measured best. Hovering a ring names the session: `planned`, its date, type,
-reps, duration and watts.
+measured best. Hovering a ring opens the same card for each session in it:
+its date, type, reps, duration and watts.
 
 The tab draws one curve at a time, named by a curve key: a sport family's
 head for that family's POWER curve, or `pace:<sport_type>` for that sport's
@@ -502,7 +524,7 @@ last 90 days: its power curve when it has one, else its most-used pace sport.
 A pace curve plots speed, so the faster effort is the higher dot, and reads
 it aloud as pace in the sport's own unit: per 500m for rowing, per 100m for
 swimming, per kilometre or mile (as `units` says) for the foot sports. Its
-gridlines, tooltips, deltas (seconds per unit, negative when the window got
+gridlines, hover card, deltas (seconds per unit, negative when the window got
 faster) and the CS line speak pace. The CS line follows the CP line's rule:
 drawn only from a fit with r2 at the floor and D' inside the sport's own
 band (5-100 m for swimming, 10-300 m for rowing, 10-600 m on foot), and
@@ -520,8 +542,8 @@ A rung whose window best is within 5% of the next longer rung's best
 (`flat_ratio`) was not pushed: it is that session's ordinary output, not an
 all-out effort. Its dot goes muted in that window, no delta is printed
 beside it (a gap between two unpushed rungs reflects which workouts were
-chosen, not fitness), and a line above the fit caption names the window's
-unpushed durations. The longest rung has nothing longer to beat and is never
+chosen, not fitness), and the row above the plot names the window's
+unpushed durations at its right, where it clears the legend. The longest rung has nothing longer to beat and is never
 marked. A window best set more than half the window ago fades. Hovering a
 rung names the session that set the window's best and its day, and TAB on a
 hovered rung opens that session in the trace view.
@@ -534,7 +556,8 @@ When the window holds short rungs and none was pushed, they fold into a narrow
 `short / not pushed` gutter at the left and the remaining rungs take the
 width; one pushed short rung shows them all. The `short` chip, right of the
 range chips, shows them on demand, and appears only while there is something
-to fold. A directive's `short` field (1 shows, 0 folds) steers the same
+to fold. The tab opens folded, and the choice holds for the rest of the
+session. A directive's `short` field (1 shows, 0 folds) steers the same
 switch, and the focus row reports it as `curve_short`: 1 shown, 0 folded, and
 -1 (NULL in the row) when the curve on screen has nothing to fold.
 
@@ -557,7 +580,7 @@ independently — key ORDER cannot silently break the parse, and a missing field
 shows "CP fit unavailable" rather than a fit of zeros.
 
 Rungs are spaced by INDEX rather than by duration: the ladder is a fixed 5s..60min
-set, and a linear time axis piles the six short rungs onto the left edge.
+set, and a linear time axis piles the short rungs onto the left edge.
 
 ## Session trace view (TAB)
 
