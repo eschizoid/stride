@@ -482,10 +482,16 @@ read: the window's best at the ladder's longest rung and at the one before it
 (60 and 20 minutes on a power curve, 20 and 10 on a pace curve), each with
 its day and marked `PR` when it is the all-time best, else naming the record;
 the threshold the engine scores the curve's sessions with (FTP, or the
-threshold pace), `from test` when a marked test is in force and `derived`
-otherwise; and the window's fit, CP and W' (CS and D' on a pace curve) when
-it is usable, the test standing in when one is in force, or `test due` with
-the 20-minute best's age.
+threshold pace), captioned `from test` when a marked test is in force and
+`(20-min x 0.95)` otherwise, the derivation it comes from; and the window's
+fit, captioned `critical power (fit)` with W' (`critical speed (fit)` with D'
+on a pace curve) when it is usable, the test standing in when one is in
+force, or `test due` with the 20-minute best's age. The threshold and the
+fit are different models and can disagree; the captions name which is which.
+
+The dashed threshold line carries its value at the line's left end, inside
+the plot, above the line or below it when a first-rung point sits just
+above.
 
 The plot draws this window as the solid blue line, the previous window
 dashed grey and the all-time record envelope as a thin faint line with small

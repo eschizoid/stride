@@ -184,7 +184,12 @@ Curve :: [].{
 			if model.fit_cp > w_lo and model.fit_cp < w_hi {
 				cpy = cy(model.fit_cp)
 				dashed_line!(frame, { x: pad_l, y: cpy }, { x: pad_l + pw, y: cpy }, Color.with_alpha(tsb_c, 120))
-				model.cp_lbl.draw!(frame, { pos: { x: pad_l + pw + 8.0, y: cpy }, color: tsb_c, align: (Middle, Left) })
+				first_ys = match List.first(rungs) {
+					Ok(r0) => List.map(List.keep_if([r0.pr.w, r0.prev_w, r0.now_w], |w| w > 0), |w| cy(I64.to_f32(w)))
+					Err(_) => []
+				}
+				spot = cp_label_spot(pad_l, cpy, first_ys)
+				model.cp_lbl.draw!(frame, { pos: { x: spot.x, y: spot.y }, color: tsb_c, align: (if (spot.below) Top else Bottom, Left) })
 			}
 			# three envelopes back to front: the record book a thin faint line,
 			# the previous window dashed grey, this window the solid accent.
@@ -576,6 +581,17 @@ Curve :: [].{
 	loading_note : Str
 	loading_note = "loading..."
 
+	# The threshold line's label sits inside the plot at the line's left end,
+	# where the panel edge cannot clip it: above the line, or below it when a
+	# first-rung point sits in the band above, so the label never covers a dot.
+	cp_label_spot : F32, F32, List(F32) -> { x : F32, y : F32, below : Bool }
+	cp_label_spot = |left, line_y, first_ys| {
+		crowded_above = List.any(first_ys, |y| y > line_y - 22.0 and y < line_y + 4.0)
+		crowded_below = List.any(first_ys, |y| y > line_y - 4.0 and y < line_y + 22.0)
+		below = crowded_above and !(crowded_below)
+		{ x: left + 10.0, y: if (below) line_y + 4.0 else line_y - 4.0, below }
+	}
+
 	# ── the headline tiles: four numbers under the chips that say what the
 	# chart says before it is read. The two longest rungs' window bests (a
 	# best that is the record says so), the threshold the engine scores with,
@@ -631,15 +647,16 @@ Curve :: [].{
 				}
 				Err(_) => { value: "-", caption: "no best on record", good: Bool.False }
 			}
-		thr_name = if (is_pace(curve)) "threshold" else "FTP"
+		thr_name = if (is_pace(curve)) "threshold pace" else "FTP"
 		thr_v = F32.round_to_i64_try(if (is_pace(curve)) (info.thr * 1000.0) else info.thr) ?? 0
 		thr_tile =
 			if (info.thr <= 0.0) ({ value: "-", caption: "no ${thr_name} on record", good: Bool.False })
-			else { value: val_text(curve, units, thr_v), caption: if (info.test.value > 0.0) "${thr_name} from test ${short_day(info.test.date)}" else "${thr_name} derived", good: Bool.False }
+			else { value: val_text(curve, units, thr_v), caption: if (info.test.value > 0.0) "${thr_name} from test ${short_day(info.test.date)}" else "${thr_name} (20-min x 0.95)", good: Bool.False }
 		fit_name = if (is_pace(curve)) "CS" else "CP"
+		fit_model = if (is_pace(curve)) "critical speed (fit)" else "critical power (fit)"
 		prime = if (is_pace(curve)) "D' ${Db.fmt_i(info.fit.w_prime)} m" else "W' ${Db.fmt_f(info.fit.w_prime / 1000.0)} kJ"
 		fit_tile =
-			if (fit_usable_for(curve, info.fit)) ({ value: fit_tag(curve, units, info.fit), caption: "${prime} - fit r2 ${r2_str(info.fit.r2)}", good: Bool.True })
+			if (fit_usable_for(curve, info.fit)) ({ value: fit_tag(curve, units, info.fit), caption: "${fit_model} - ${prime}", good: Bool.True })
 			else if (info.test.value > 0.0) ({ value: "${fit_name} from test", caption: "fit not reliable - test ${short_day(info.test.date)}", good: Bool.False })
 			else { value: "test due", caption: "${fit_name} not reliable - ${age_text(info.best20_age)}", good: Bool.False }
 		[best_tile(1), best_tile(2), thr_tile, fit_tile]
@@ -1546,6 +1563,11 @@ expect Curve.d_prime_band("Rowing") == { lo: 10.0, hi: 300.0 } and Curve.d_prime
 expect (Curve.fit_line("pace:Run", { cp: 4.0, w_prime: 200.0, r2: 0.95, points: 3.0, ok: Bool.True }) - 4000.0).abs() < 0.01 and Curve.fit_line("pace:Run", { cp: 4.0, w_prime: 2000.0, r2: 0.95, points: 3.0, ok: Bool.True }) == 0.0
 expect Curve.fit_caption_for("pace:Run", Metric, { cp: 4.0, w_prime: 200.0, r2: 0.95, points: 3.0, ok: Bool.True }, 3) == "CS 4:10/km - D' 200 m - fit r2 0.95 from 3 bests"
 expect Curve.fit_caption_for("pace:Swim", Metric, { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 1.0, ok: Bool.True }, -1) == "no CS fit (fewer than two bests in this window) - no 20-min best in this window; an all-out 20 minutes would anchor it"
+# the threshold label stays inside the plot at the line's left end: above
+# the line, or below it when a first-rung point sits just above
+expect Curve.cp_label_spot(130.0, 500.0, [300.0, 420.0]) == { x: 140.0, y: 496.0, below: Bool.False }
+expect Curve.cp_label_spot(130.0, 500.0, [490.0]) == { x: 140.0, y: 504.0, below: Bool.True }
+expect (Curve.cp_label_spot(130.0, 500.0, [490.0, 510.0])).below == Bool.False
 expect Curve.fit_tag("pace:Run", Metric, { cp: 4.0, w_prime: 200.0, r2: 0.95, points: 3.0, ok: Bool.True }) == "CS 4:10/km" and Curve.fit_tag("Ride", Metric, { cp: 247.3, w_prime: 9000.0, r2: 0.95, points: 3.0, ok: Bool.True }) == "CP 247.3W"
 # two targets at the same duration a few watts apart share one ring; targets
 # at different durations, or the same duration far apart in watts, keep their
@@ -1630,7 +1652,7 @@ expect {
 	weak = { cp: 252.9, w_prime: 2980.0, r2: 0.84, points: 3.0, ok: Bool.True }
 	none = { value: 0.0, kind: "none", date: "none" }
 	ts = Curve.head_tiles("Ride", Metric, prs, pts, { fit: weak, test: none, thr: 241.0, best20_age: 13 })
-	List.map(ts, |t| (t.value, t.caption, t.good)) == [("236 w", "60min best 11-11 - PR", Bool.True), ("254 w", "20min best 10-30 - PR 285 w", Bool.False), ("241 w", "FTP derived", Bool.False), ("test due", "CP not reliable - 20min best 13d ago", Bool.False)]
+	List.map(ts, |t| (t.value, t.caption, t.good)) == [("236 w", "60min best 11-11 - PR", Bool.True), ("254 w", "20min best 10-30 - PR 285 w", Bool.False), ("241 w", "FTP (20-min x 0.95)", Bool.False), ("test due", "CP not reliable - 20min best 13d ago", Bool.False)]
 }
 # a marked test names itself on the threshold tile and stands in for a weak
 # fit; a usable fit shows CP and W'; a window with no effort at a rung says so
@@ -1643,7 +1665,7 @@ expect {
 	fitted = Curve.head_tiles("Ride", Metric, prs, [], { fit: good, test: { value: 0.0, kind: "none", date: "none" }, thr: 0.0, best20_age: -1 })
 	List.map(tested, |t| t.caption) == ["60min best: none this window", "20min best: none this window", "FTP from test 10-27", "fit not reliable - test 10-27"]
 		and List.map(tested, |t| t.value) == ["-", "-", "247 w", "CP from test"]
-		and List.map(fitted, |t| (t.value, t.caption)) == [("-", "60min best: none this window"), ("-", "20min best: none this window"), ("-", "no FTP on record"), ("CP 250.0W", "W' 15.0 kJ - fit r2 0.95")]
+		and List.map(fitted, |t| (t.value, t.caption)) == [("-", "60min best: none this window"), ("-", "20min best: none this window"), ("-", "no FTP on record"), ("CP 250.0W", "critical power (fit) - W' 15.0 kJ")]
 }
 # a pace curve's tiles read in pace in the sport's own unit: its two
 # longest rungs, the threshold pace from m/s, and CS with D'
@@ -1652,7 +1674,7 @@ expect {
 	pts = [{ dur_s: 600, watts: 4100.0, aid: 1, name: "a", day: "2026-10-01", ago: 3 }, { dur_s: 1200, watts: 3900.0, aid: 1, name: "a", day: "2026-10-05", ago: 3 }]
 	good = { cp: 4.0, w_prime: 200.0, r2: 0.95, points: 3.0, ok: Bool.True }
 	ts = Curve.head_tiles("pace:Rowing", Metric, prs, pts, { fit: good, test: { value: 0.0, kind: "none", date: "none" }, thr: 4.0, best20_age: 3 })
-	List.map(ts, |t| (t.value, t.caption)) == [("2:08/500m", "20min best 10-05 - PR 2:05/500m"), ("2:02/500m", "10min best 10-01 - PR"), ("2:05/500m", "threshold derived"), ("CS 2:05/500m", "D' 200 m - fit r2 0.95")]
+	List.map(ts, |t| (t.value, t.caption)) == [("2:08/500m", "20min best 10-05 - PR 2:05/500m"), ("2:02/500m", "10min best 10-01 - PR"), ("2:05/500m", "threshold pace (20-min x 0.95)"), ("CS 2:05/500m", "critical speed (fit) - D' 200 m")]
 }
 # four tiles fill the row from the title's inset to 40 px short of the right
 # edge, at the minimum window and wider
