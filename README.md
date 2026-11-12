@@ -94,12 +94,16 @@ Everything lives in `~/.stride/db.sqlite`. Query it with `sqlite3`, back it up w
     <td colspan="2"><img src="docs/img/form-board.png" alt="The form board" /></td>
   </tr>
   <tr>
-    <td><img src="docs/img/zones.png" alt="The zones view" /></td>
-    <td><img src="docs/img/ramp.png" alt="The ramp view" /></td>
+    <td><img src="docs/img/power-curve.png" alt="The power view" /></td>
+    <td><img src="docs/img/session-trace.png" alt="The session trace" /></td>
   </tr>
   <tr>
-    <td><img src="docs/img/session-trace.png" alt="The session trace" /></td>
-    <td><img src="docs/img/power-curve.png" alt="The power view" /></td>
+    <td><img src="docs/img/plan.png" alt="The plan tab: the week and the days ahead" /></td>
+    <td><img src="docs/img/lifts.png" alt="The lifts tab" /></td>
+  </tr>
+  <tr>
+    <td><img src="docs/img/zones.png" alt="The weeks tab, zones mode" /></td>
+    <td><img src="docs/img/ramp.png" alt="The weeks tab, load mode" /></td>
   </tr>
   <tr>
     <td colspan="2"><img src="docs/img/career.png" alt="The career view" /></td>
