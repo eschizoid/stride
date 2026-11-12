@@ -1002,11 +1002,12 @@ Db :: [].{
 		}
 
 	# twelve Monday weeks off the weekly_ramp view - the ONE definition of
-	# weekly ramp - in tenths (F64 has no narrowing; SQL rounds to integers)
-	RampWeek : { wk : Str, tss : I64, ctl10 : I64, ramp10 : I64 }
+	# weekly ramp - in tenths (F64 has no narrowing; SQL rounds to integers).
+	# `days` counts the week's days the series covers, the way ZoneWeek does.
+	RampWeek : { wk : Str, days : I64, tss : I64, ctl10 : I64, ramp10 : I64 }
 	load_ramp_weeks! : Sqlite.Db => List(RampWeek)
 	load_ramp_weeks! = |db|
-		match db.query!("SELECT CAST(wk AS TEXT) AS wk, CAST(ROUND(tss) AS INTEGER) AS tss, CAST(ROUND(ctl_end * 10) AS INTEGER) AS ctl10, CAST(ROUND(ramp * 10) AS INTEGER) AS ramp10 FROM weekly_ramp ORDER BY wk ASC", []) {
+		match db.query!("SELECT CAST(wk AS TEXT) AS wk, CAST(MIN(7, MAX(0, julianday((SELECT today FROM series_clock)) - julianday(wk) + 1)) AS INTEGER) AS dys, CAST(ROUND(tss) AS INTEGER) AS tss, CAST(ROUND(ctl_end * 10) AS INTEGER) AS ctl10, CAST(ROUND(ramp * 10) AS INTEGER) AS ramp10 FROM weekly_ramp ORDER BY wk ASC", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(
@@ -1016,7 +1017,8 @@ Db :: [].{
 						ts = r.i64("tss") ? |_| "bad"
 						c10 = r.i64("ctl10") ? |_| "bad"
 						r10 = r.i64("ramp10") ? |_| "bad"
-						Ok({ wk, tss: ts, ctl10: c10, ramp10: r10 })
+						dy = r.i64("dys") ? |_| "bad"
+						Ok({ wk, days: dy, tss: ts, ctl10: c10, ramp10: r10 })
 					},
 				)
 		}

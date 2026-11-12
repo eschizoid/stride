@@ -35,6 +35,7 @@ import Table
 import Curve
 import Career
 import Days
+import Weeks
 import Db
 import Scroll
 import Strength
@@ -441,6 +442,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		trace_zoom: 1.0,
 		lifts_off: 0,
 		week_off: 0,
+		week_cursor: "",
 		trace_pan: 0.0,
 		trace_cache: loaded.tcache,
 		segs: loaded.sg,
@@ -480,10 +482,10 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		glow: Unbuilt,
 		last_directive: { id: -1.I64, refused: "", result: "" },
 		glow_on: Bool.False,
-		ramp_title: mk!("the ramp - weekly load and how fast fitness is climbing", 15)?,
-		ramp_hint: mk!("hover a week to read it      TAB  career      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-		zones_title: mk!("time in zone - twelve weeks, and the 80/20 story", 15)?,
-		zones_hint: mk!("hover a week to read it      TAB  ramp      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+		ramp_title: mk!("weekly load, and how fast fitness climbs", 15)?,
+		ramp_hint: mk!("zones / load  modes      hover or click a week      TAB  career      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+		zones_title: mk!("time in zone, and the 80/20 split", 15)?,
+		zones_hint: mk!("zones / load  modes      hover or click a week      TAB  career      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 		heat_title: mk!("training heat - one cell per day", 15)?,
 		heat_hint: mk!("hover a cell to read the day      TAB  lifts      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 		plan_title: mk!("the week and the days ahead", 15)?,
@@ -494,8 +496,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 			{ p: mk!("trace", 13)?, v: 2.U8 },
 			{ p: mk!("plan", 13)?, v: 4.U8 },
 			{ p: mk!("lifts", 13)?, v: 9.U8 },
-			{ p: mk!("zones", 13)?, v: 6.U8 },
-			{ p: mk!("ramp", 13)?, v: 7.U8 },
+			{ p: mk!("weeks", 13)?, v: 6.U8 },
 			{ p: mk!("career", 13)?, v: 8.U8 },
 		],
 		status: mk!(if (boot) "" else loaded.s.err, 16)?,
@@ -1956,11 +1957,12 @@ update! = |model0, program_input, io| {
 			} else -1
 		# the day tab's mode chips: week, log and year switch between the plan,
 		# table and heat views without leaving the tab
-		day_mode = if (Days.is_day(model.view) and Mouse.button_pressed(d.mouse, Left)) (Days.mode_at(m0.x, m0.y)) else -1
+		# the weeks tab's mode chips: zones and load, the same way
+		day_mode = if (Days.is_day(model.view) and Mouse.button_pressed(d.mouse, Left)) (Days.mode_at(m0.x, m0.y)) else if (Weeks.is_week(model.view) and Mouse.button_pressed(d.mouse, Left)) (Weeks.mode_at(m0.x, m0.y)) else -1
 		view_input =
 			if (nav_click >= 0) (
 				match I64.to_u8_try(nav_click) {
-					Ok(v9) => Days.from_pill(v9, model.view)
+					Ok(v9) => if (v9 == 6) (Weeks.from_pill(v9, model.view)) else Days.from_pill(v9, model.view)
 					Err(_) => model.view
 				}
 			)
@@ -2027,6 +2029,8 @@ update! = |model0, program_input, io| {
 		week_last = Plan.week_last(model)
 		lifts_off2 = if (model.view == 9 and scroll_by != 0) Scroll.step(model.lifts_off, scroll_by, lifts_last) else model.lifts_off.min(lifts_last)
 		week_off2 = if (model.view == 4 and scroll_by != 0) Scroll.step(model.week_off, scroll_by, week_last) else model.week_off.min(week_last)
+		# a click on a week's bar in either weeks mode picks it for both
+		week_cursor2 = if (Weeks.is_week(model.view) and Mouse.button_pressed(d.mouse, Left) and m0.y > Weeks.chip_bottom) (Weeks.pick(model.week_cursor, Weeks.hovered_week({ ..model, mouse_x: m0.x, mouse_y: m0.y, win }))) else model.week_cursor
 		m = m0
 		# S writes a PNG of the CURRENT view into ./captures. Spawned rather
 		# than called inline: a screenshot waits for the end of a frame, and
@@ -2382,7 +2386,7 @@ update! = |model0, program_input, io| {
 		chip0h = win.w - 420.0
 		# per-chip, not one wide band: the 8px gaps between chips are not
 		# clickable and must not claim the pointer
-		over_chip = m.y >= 64.0 and m.y <= 86.0 and (((view2 == 0 or view2 == 1) and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0) or (view2 == 1 and Curve.chip_at(List.concat(Curve.chips_for(win.w, model.curve_keys, model.curve_family, model.curve_days), Curve.short_chips(win.w, model.curve_keys, model.curve_family, Curve.layout(model).foldable, model.show_short)), m.x) != ""))) or (view2 == 8 and Career.kind_chip_at(Career.kind_chips(model), m.x).is_ok()) or (Days.is_day(view2) and Days.mode_at(m.x, m.y) >= 0))
+		over_chip = m.y >= 64.0 and m.y <= 86.0 and (((view2 == 0 or view2 == 1) and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0) or (view2 == 1 and Curve.chip_at(List.concat(Curve.chips_for(win.w, model.curve_keys, model.curve_family, model.curve_days), Curve.short_chips(win.w, model.curve_keys, model.curve_family, Curve.layout(model).foldable, model.show_short)), m.x) != ""))) or (view2 == 8 and Career.kind_chip_at(Career.kind_chips(model), m.x).is_ok()) or (Days.is_day(view2) and Days.mode_at(m.x, m.y) >= 0) or (Weeks.is_week(view2) and Weeks.mode_at(m.x, m.y) >= 0))
 		over_row = view2 == 3 and m.x >= 36.0 and m.x < Table.table_edge(win.w, detail_day2) and (
 			match Table.row_at(Table.page_for(model, cursor2), m.y) {
 				Row(_) => Bool.True
@@ -2550,7 +2554,7 @@ update! = |model0, program_input, io| {
 		used = !List.is_empty(d.events) or List.any(d.keys, |k| k != 0) or pointer.x != 0.0 or pointer.y != 0.0 or wheel.x != 0.0 or wheel.y != 0.0 or Mouse.button_down(d.mouse, Left) or Mouse.button_down(d.mouse, Right) or win.w != model.win.w or win.h != model.win.h or directive.has_d
 		last_active = if (used) tick else model.last_active
 		Window.set_target_fps!(frame_rate({ busy, tick, last_active }))
-		Ok({ ..model, lifts_off: lifts_off2, week_off: week_off2, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, show_short: want_short, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else if (view2 == 1) Curve.plot_top else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, lifts_off: lifts_off2, week_off: week_off2, week_cursor: week_cursor2, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, show_short: want_short, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else if (view2 == 1) Curve.plot_top else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
@@ -2671,7 +2675,7 @@ scene! = |model, frame| {
 		List.map_with_index(model.nav, |nv, ni| { nv, ni }),
 		|x| {
 			nx = model.win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.ni) * nav_pitch
-			on2 = x.nv.v == Days.group(model.view)
+			on2 = x.nv.v == Weeks.group(Days.group(model.view))
 			hov2 = model.mouse_x >= nx and model.mouse_x <= nx + nav_width and model.mouse_y >= 30.0 and model.mouse_y <= 54.0
 			style2 = if (on2) (Draw.filled(Color.with_alpha(Theme.ctl_c, 60))) else if (hov2) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
 			frame.rounded_rectangle!({ x: nx, y: 30.0, width: nav_width, height: 24.0, radius: 7.0, segments: 6, style: style2 })
@@ -2716,6 +2720,9 @@ scene! = |model, frame| {
 		}
 	if Days.is_day(model.view) {
 		Days.draw_chips!(model, frame)
+	}
+	if Weeks.is_week(model.view) {
+		Weeks.draw_chips!(model, frame)
 	}
 	# the XP rail rides the panel's left edge on every view - under the
 	# crossfade veil, so it arrives with the view rather than over it

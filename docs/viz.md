@@ -108,7 +108,24 @@ plan view carries the coming one). Hovering a cell reads the
 day back - date, TSS, and the session note when there is one. A directive
 with view 5 opens it.
 
-## The zones view
+## The weeks tab: zones and load
+
+One nav pill, `weeks`, holds the two twelve-week charts, picked by chips at
+the left of the header: `zones` (time in zone, the default) and `load`
+(weekly load and the fitness it gained). Both chart the same Monday weeks
+on the same x-axis. Each mode keeps its own view id on the bus, 6 for zones
+and 7 for load, so a directive for either lands on this tab in that mode,
+and a capture is named for its mode (`zones.png`, `ramp.png`). Clicking the
+pill from another view opens `zones`; clicking it from inside the tab keeps
+the mode on screen.
+
+One week is in focus across both modes: the bar under the pointer, else the
+one last clicked (clicking it again drops it). The header line under the
+chips reads that week the same way in either mode: hours in zones, easy
+share, load and the fitness it gained. With no week in focus, the line shows
+the mode's key.
+
+### Zones mode
 
 Twelve Monday weeks of time in zone as stacked bars, each capped with that
 week's easy share - teal when it holds the 80/20 line, alarm red when it
@@ -125,7 +142,7 @@ not to the cap. A directive with view 6 opens it.
 
 ![The zones view](img/zones.png)
 
-## The ramp view
+### Load mode
 
 The overtraining early warning, also one chart: weekly TSS as gradient
 bars, each wearing a chip with the CTL that week gained. The ramp is
@@ -133,7 +150,10 @@ encoded as the chip's COLOR on the bars' own axis - teal builds, red past
 +6/wk, grey sheds - rather than as a second y-axis, because two scales
 sharing a plot is a lie no legend repairs. The card carries where fitness
 stands and how fast it is moving; a week with no load keeps a base stub, so
-the current partial week never vanishes from the row. The weeks come from
+the current partial week never vanishes from the row. That week, until the
+series covers all seven of its days, is judged by neither: its bar and chip
+are muted, the chip says "so far", and the card reads "ctl per week so far",
+since a partial week's load is not a low one. The weeks come from
 the `weekly_ramp` view - the one definition of weekly ramp. A directive with view
 7 opens it.
 
@@ -170,8 +190,10 @@ read as one, and the career view leaves the tonnage spine to this tab.
 | `G` | toggle the glow pass - the scene renders offscreen and its bright parts come back blurred and added on top; if the GPU refuses any of it, the app draws exactly as before the pass existed |
 | `V` | toggle a WebM recording of the screen into `./captures`, named for the view it started on; FixedStep timing, so the same data replays to the same file |
 | nav pills (top right) | click any view directly; the active one is filled - each wears its vector mark, drawn from primitives (no sprite sheet, crisp at any DPI) |
-| `TAB` | cycle the nav left to right: form board / power view / session trace / the day tab / lifts / zones / ramp / career; from any day mode it steps on to lifts |
+| `TAB` | cycle the nav left to right: form board / power view / session trace / the day tab / lifts / the weeks tab / career; from any day mode it steps on to lifts, and from either weeks mode to career |
 | `week` / `log` / `year` chips (day tab) | switch the day tab between the plan, the data table and the heatmap |
+| `zones` / `load` chips (weeks tab) | switch the weeks tab between time in zone and weekly load |
+| click a week (weeks tab) | keep that week in focus in both modes; click it again to drop it |
 | `1` / `2` / `3` or the chips (power view) | re-window the blue ladder and CP fit to 30/60/90 days |
 | `shift+[` / `shift+]` (trace view) | summon / walk the ghost overlay through sessions of the live one's KIND - same sport, same unit; the walk skips the live session itself, and stepping past the last compatible one dismisses it |
 | `C` (trace view) | clear the ghost in one press, from any state |
@@ -318,7 +340,8 @@ INSERT INTO viz_directives (view, family) VALUES (1, 'pace:Run');
 -- other value is refused by name
 INSERT INTO viz_directives (view, short) VALUES (1, 1);
 -- view 0..9 (form/power/trace/table/plan/heat/zones/ramp/career/lifts;
--- 3, 4 and 5 are the day tab's log, week and year modes) - but read
+-- 3, 4 and 5 are the day tab's log, week and year modes; 6 and 7 are the
+-- weeks tab's zones and load modes) - but read
 -- the list from `stride viz --json`, which the running binary publishes,
 -- rather than from this comment. A directive naming a view outside the
 -- published range leaves the VIEW unchanged; its other fields still land,
