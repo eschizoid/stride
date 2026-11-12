@@ -5,7 +5,10 @@ import core.Bus
 import core.Fmt
 import core.Sports
 import core.Units
+import Chrome
 import Db
+import Labels
+import Scene
 import Theme
 import Ui
 
@@ -18,178 +21,40 @@ Curve :: [].{
 	# curve, with a legend naming each line. The signed number at a rung is
 	# its change against the previous window. A rung whose window best IS the
 	# record collapses to one teal dot, and a record set this week rings gold.
-	# Hovering a rung or a planned ring opens a card beside it.
+	# Hovering a rung or a planned ring opens a card beside it. The shapes
+	# draw from geom and every string from scene, so the drawing, the label
+	# placer and the gate read one layout.
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
-		win_w = model.win.w
-		curve = model.curve_family
-		units = model.units
-		# the planned targets this curve carries (marks_for says which)
-		plan_marks = marks_for(curve, (List.first(model.curve_keys.power)).ok_or(""), model.plan_targets, model.pace_targets)
-		win_h = model.win.h
-		# folded short rungs give up their columns to a narrow gutter at the
-		# left, and the remaining rungs spread over the rest of the plot
-		lay = layout(model)
-		pad_l = lay.left
-		pad_r = Theme.pad_r
-		pad_t = plot_top
-		pad_b = Theme.pad_b
+		measure = Scene.measure_of(model)
 		ink_muted = Theme.ink_muted
-		ink_faint = Theme.ink_faint
 		ctl_c = Theme.ctl_c
 		tsb_c = Theme.tsb_c
-		model.curve_title.draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
-		# a chip click re-fetches the curve in the background; while that is in
-		# flight a note at the caption row's right says so, so a click that
-		# takes a beat reads as working. The old curve stays on screen until the
-		# fresh one lands, and the unpushed caption, which describes it, yields
-		# the slot.
-		if model.reloading {
-			Text.from(loading_note, model.font).size(11).draw!(frame, { pos: { x: win_w - 40.0, y: caption_top }, color: ink_muted, align: (Top, Right) })
-		}
-		# one line above the hint row: the chips own the top-right band, and
-		# hint plus caption together outgrow a single bottom line
-		model.fit_lbl.draw!(frame, { pos: { x: win_w - 40.0, y: win_h - 52.0 }, color: ink_muted, align: (Top, Right) })
-		# the same range chips the form board wears, judged on curve_days -
-		# the window switch must be visible and clickable, not a key secret
-		List.for_each!(
-			List.map_with_index(model.subs, |s, i| { s, i }),
-			|x| {
-				chx = win_w - 420.0 + U64.to_f32(x.i) * 54.0
-				on = (
-					match U64.to_i64_try(x.s.r) {
-						Ok(ri) => ri
-						Err(_) => -1
-					}
-				) == model.curve_days
-				hov = model.mouse_x >= chx and model.mouse_x <= chx + 46.0 and model.mouse_y >= chip_top and model.mouse_y <= chip_bottom
-				style = if (on) (Draw.filled(Color.with_alpha(ctl_c, 60))) else if (hov) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
-				frame.rounded_rectangle!({ x: chx, y: chip_top, width: 46.0, height: chip_bottom - chip_top, radius: 6.0, segments: 6, style })
-				x.s.chip.draw!(frame, { pos: { x: chx + 23.0, y: 68.0 }, color: if (on) Color.white else ink_muted, align: (Top, Center) })
-			},
-		)
-		# the curve chips and the power/pace pair beside the range chips: the
-		# lit ones are the curve on screen and its mode
-		List.for_each!(
-			List.concat(chips_for(win_w, model.curve_keys, curve, model.curve_days), short_chips(win_w, model.curve_keys, curve, layout(model).foldable, model.show_short)),
-			|fc| {
-				hov = model.mouse_x >= fc.x and model.mouse_x <= fc.x + chip_w and model.mouse_y >= chip_top and model.mouse_y <= chip_bottom
-				style = if (fc.on) (Draw.filled(Color.with_alpha(Theme.tsb_c, 60))) else if (hov) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
-				frame.rounded_rectangle!({ x: fc.x, y: chip_top, width: chip_w, height: chip_bottom - chip_top, radius: 6.0, segments: 6, style })
-				Text.from(fc.label, model.font).size(12).draw!(frame, { pos: { x: fc.x + chip_w / 2.0, y: 68.0 }, color: if (fc.on) Color.white else ink_muted, align: (Top, Center) })
-			},
-		)
-		# eight zero rungs IS the no-records state - the loader materializes
-		# every rung, so emptiness is the summed watts, not the list length
-		have = List.fold(model.prs, 0.I64, |a, pr| a + pr.w)
-		if List.is_empty(model.prs) or have == 0 {
-			Text.from(empty_note(curve), model.font).size(14).draw!(frame, { pos: { x: 36.0, y: 130.0 }, color: ink_muted, align: (Top, Left) })
-		} else {
-			# the headline tiles: what the chart says, before the chart is read
+		# the range chips are the form board's, judged on curve_days, so the
+		# window switch is visible and clickable; the curve chips and the
+		# power/pace pair beside them light the curve on screen and its mode
+		List.for_each!(range_chips(model), |c| chip!(frame, model, c.box, c.on, ctl_c))
+		List.for_each!(curve_chip_boxes(model), |c| chip!(frame, model, c.box, c.on, tsb_c))
+		if has_records(model) {
+			g = geom(model)
+			List.for_each!(tile_boxes(model.win.w), |b| frame.rounded_rectangle!({ x: b.x, y: b.y, width: b.w, height: b.h, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) }))
+			# the zone bands behind everything, alternate zones shaded
 			List.for_each!(
-				List.map_with_index(head_tiles(curve, units, model.prs, model.curve, model.curve_info), |t, i| { t, i }),
-				|x| {
-					tx0 = tile_x(win_w, x.i)
-					frame.rounded_rectangle!({ x: tx0, y: tile_top, width: tile_w(win_w), height: tile_h, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
-					Text.from(x.t.value, model.font).size(16).draw!(frame, { pos: { x: tx0 + 10.0, y: tile_top + 6.0 }, color: if (x.t.good) tsb_c else Color.white, align: (Top, Left) })
-					Text.from(x.t.caption, model.font).size(10).draw!(frame, { pos: { x: tx0 + 10.0, y: tile_top + 28.0 }, color: ink_faint, align: (Top, Left) })
-				},
-			)
-			pw = win_w - pad_l - pad_r
-			ph = win_h - pad_t - pad_b
-			# the record ladder is the master axis; the window's value joins by
-			# duration. Index spacing, not time: a linear axis piles the short
-			# rungs onto the left edge.
-			joined = window_w
-			# each window judged on its own, over the whole ladder: a rung within
-			# flat_ratio of the next longer one was not pushed, and its dot and
-			# delta go quiet
-			now_flags = unpushed(List.map(model.prs, |pr| joined(model.curve, pr.secs)))
-			prev_flags = unpushed(List.map(model.prs, |pr| joined(model.curve_prev, pr.secs)))
-			full = List.map_with_index(
-				model.prs,
-				|pr, i| {
-					now_w = joined(model.curve, pr.secs)
-					prev_w = joined(model.curve_prev, pr.secs)
-					now_unp = List.get(now_flags, i) ?? Bool.False
-					prev_unp = List.get(prev_flags, i) ?? Bool.False
-					src = List.find_first(model.curve, |cp| cp.dur_s == pr.secs)
-					src_name = match src {
-						Ok(sp) => sp.name
-						Err(_) => ""
-					}
-					src_day = match src {
-						Ok(sp) => sp.day
-						Err(_) => ""
-					}
-					prev_day = match List.find_first(model.curve_prev, |cp| cp.dur_s == pr.secs) {
-						Ok(pp) => pp.day
-						Err(_) => ""
-					}
-					stale = match src {
-						Ok(sp) => stale_best(sp.ago, model.curve_days)
-						Err(_) => Bool.False
-					}
-					{ pr, now_w, prev_w, i, now_unp, prev_unp, src_name, src_day, prev_day, stale }
-				},
-			)
-			# the rungs on screen, indexed by their column
-			rungs = List.map_with_index(List.keep_if(full, |r| !(lay.folded) or r.pr.secs >= short_secs), |r, i| { ..r, i })
-			span = axis_span(curve, List.join(List.map(rungs, |r| [r.pr.w, r.now_w, r.prev_w])), List.map(plan_marks, |t| t.val), model.fit_cp)
-			w_lo = span.lo
-			w_hi = span.hi
-			nlast = List.len(rungs) - 1
-			cx = |i| if (nlast == 0) (pad_l + pw / 2.0) else pad_l + pw * U64.to_f32(i) / U64.to_f32(nlast)
-			cy = |w| pad_t + ph * (1.0 - (w - w_lo) / (w_hi - w_lo))
-			# the zone bands behind everything: alternate zones shaded, each named
-			# right-aligned to the window's edge where its visible part is tall
-			# enough, clear of the threshold line's label and of the rung labels'
-			# row
-			cp_label_y = if (model.fit_cp > w_lo and model.fit_cp < w_hi) (cy(model.fit_cp)) else -100.0
-			List.for_each!(
-				zone_bands(curve, model.curve_info.thr, w_lo, w_hi),
-				|b| {
-					y_top = cy(b.hi)
-					y_bot = cy(b.lo)
+				band_rows(model, g),
+				|b|
 					if b.shade {
-						frame.rectangle!({ x: pad_l, y: y_top, width: pw, height: y_bot - y_top, style: Draw.filled(Color.with_alpha(Color.white, 7)) })
-					}
-					mid = (y_top + y_bot) / 2.0
-					if y_bot - y_top >= zone_label_min_h and F32.abs(mid - cp_label_y) > 12.0 and mid < pad_t + ph - 26.0 {
-						Text.from(b.name, model.font).size(9).draw!(frame, { pos: { x: win_w - 20.0, y: mid - 5.0 }, color: Color.with_alpha(ink_faint, 160), align: (Top, Right) })
-					}
-				},
+						frame.rectangle!({ x: g.left, y: b.top, width: g.pw, height: b.bot - b.top, style: Draw.filled(Color.with_alpha(Color.white, 7)) })
+					},
 			)
-			# the grid: a faint rule and label at each grid_vals value, which
-			# come from the axis span itself, so any scale gets its rules
-			List.for_each!(
-				# a rule in the band the rung labels sit in, or hard under the plot's
-				# top edge, would run through their text
-				List.keep_if(grid_vals(curve, units, w_lo, w_hi), |gw| cy(gw) > pad_t + 8.0 and cy(gw) < pad_t + ph - 26.0),
-				|gw| {
-					frame.line!({ start: { x: Theme.pad_l, y: cy(gw) }, end: { x: win_w - pad_r, y: cy(gw) }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 36), 1) })
-					Text.from(
-						match F32.round_to_i64_try(gw) {
-							Ok(gi) => axis_text(curve, units, gi)
-							Err(_) => ""
-						},
-						model.font,
-					).size(10).draw!(frame, { pos: { x: Theme.pad_l - 8.0, y: cy(gw) - 6.0 }, color: ink_faint, align: (Top, Right) })
-				},
-			)
+			# the grid: a faint rule at each grid value, labelled in the scene
+			List.for_each!(grid_rows(model, g), |gr| frame.line!({ start: { x: Theme.pad_l, y: gr.y }, end: { x: model.win.w - Theme.pad_r, y: gr.y }, stroke: Draw.stroke(Color.with_alpha(Theme.ink_faint, 36), 1) }))
 			# the threshold line, dashed: CP from the window's fit, which the blue
 			# curve should flatten toward (a fit far from the long rungs is visibly
 			# wrong), or a marked test's threshold when the fit is unusable. The
 			# loader zeroes fit_cp when neither exists, and the footer says why
-			if model.fit_cp > w_lo and model.fit_cp < w_hi {
-				cpy = cy(model.fit_cp)
-				dashed_line!(frame, { x: pad_l, y: cpy }, { x: pad_l + pw, y: cpy }, Color.with_alpha(tsb_c, 120))
-				first_ys = match List.first(rungs) {
-					Ok(r0) => List.map(List.keep_if([r0.pr.w, r0.prev_w, r0.now_w], |w| w > 0), |w| cy(I64.to_f32(w)))
-					Err(_) => []
-				}
-				spot = cp_label_spot(pad_l, cpy, first_ys)
-				model.cp_lbl.draw!(frame, { pos: { x: spot.x, y: spot.y }, color: tsb_c, align: (if (spot.below) Top else Bottom, Left) })
+			match cp_y(model, g) {
+				Ok(cpy) => dashed_line!(frame, { x: g.left, y: cpy }, { x: g.left + g.pw, y: cpy }, Color.with_alpha(tsb_c, 120))
+				Err(_) => {}
 			}
 			# three envelopes back to front: the record book a thin faint line,
 			# the previous window dashed grey, this window the solid accent.
@@ -197,10 +62,10 @@ Curve :: [].{
 			# rung must not drag a line to the floor.
 			pair_each! = |sel, draw_seg!|
 				List.for_each!(
-					rungs,
+					g.rungs,
 					|r|
-						match List.get(rungs, r.i + 1) {
-							Ok(nxt) => if (sel(r) > 0 and sel(nxt) > 0) (draw_seg!({ x: cx(r.i), y: cy(I64.to_f32(sel(r))) }, { x: cx(nxt.i), y: cy(I64.to_f32(sel(nxt))) })) else {}
+						match List.get(g.rungs, r.i + 1) {
+							Ok(nxt) => if (sel(r) > 0 and sel(nxt) > 0) (draw_seg!({ x: x_at(g, r.i), y: y_at(g, I64.to_f32(sel(r))) }, { x: x_at(g, nxt.i), y: y_at(g, I64.to_f32(sel(nxt))) })) else {}
 							Err(_) => {}
 						},
 				)
@@ -208,195 +73,533 @@ Curve :: [].{
 			pair_each!(|r| r.prev_w, |a, b| dashed_line!(frame, a, b, Color.with_alpha(ink_muted, 150)))
 			pair_each!(|r| r.now_w, |a, b| frame.line!({ start: a, end: b, stroke: Draw.stroke(Color.with_alpha(ctl_c, 200), 2) }))
 			# planned targets on the curve: a gold ring at the rep duration and the
-			# target watts, labelled with the day and the share of this window's
-			# best at that duration, so a prescription reads against what the
-			# athlete has done. Targets whose rings would overlap share one ring
-			# with their labels stacked under it, and a ring whose labels would
-			# run into the previous ring's starts below them.
-			rung_secs = List.map(rungs, |r| r.pr.secs)
-			now_pts = List.map(rungs, |r| { secs: r.pr.secs, w: r.now_w })
-			tx = |t| {
-				p = rung_pos(rung_secs, t.dur_s)
-				if (nlast == 0) (pad_l + pw / 2.0) else pad_l + pw * p / U64.to_f32(nlast)
-			}
-			marks = List.map(plan_marks, |t| { x: tx(t), y: cy(I64.to_f32(t.val)) })
-			rings = List.map(
-				cluster_marks(marks, ring_merge),
-				|idxs| {
-					# targets load in date order, so input order stacks a ring's
-					# labels by date
-					in_order = List.sort_with(idxs, |a, b| if (a < b) Before else if (a > b) After else Same)
-					ts = List.keep_oks(in_order, |i| List.get(plan_marks, i))
-					ps = List.keep_oks(in_order, |i| List.get(marks, i))
-					n = F32.max(1.0, U64.to_f32(List.len(ps)))
-					{ ts, x: List.fold(ps, 0.0, |a, p| a + p.x) / n, y: List.fold(ps, 0.0, |a, p| a + p.y) / n }
-				},
-			)
-			ring_rows = List.map2(rings, label_rows(List.map(rings, |g| { x: g.x, lines: List.len(g.ts) }), ring_label_w), |g, base| { g, base })
-			tgt_hover = List.find_first(rings, |g| F32.abs(model.mouse_x - g.x) <= 8.0 and F32.abs(model.mouse_y - g.y) <= 8.0)
-			List.for_each!(
-				ring_rows,
-				|x| {
-					dashed_ring!(frame, x.g.x, x.g.y, 5.5)
-					List.for_each!(
-						List.map_with_index(x.g.ts, |t, k| { t, k }),
-						|e| {
-							lbl = target_label(e.t, best_at(now_pts, e.t.dur_s))
-							lw = model.font.measure({ text: lbl, size: 10.0, spacing: Text.default_spacing }).width
-							Text.from(lbl, model.font).size(10).draw!(frame, { pos: { x: label_center_within(x.g.x, lw / 2.0, pad_l, pad_l + pw - label_inset), y: x.g.y + 10.0 + (x.base + U64.to_f32(e.k)) * 12.0 }, color: Theme.gold_c, align: (Top, Center) })
-						},
-					)
-				},
-			)
-			# the this-window and previous-window lines as segments, for the
-			# deltas to keep clear of
-			seg_list = |ys| List.keep_oks(
-				List.map_with_index(ys, |y, i| { y, i }),
-				|e| match List.get(ys, e.i + 1) {
-					Ok(ny) => if (e.y > 0 and ny > 0) (Ok({ x0: cx(e.i), y0: cy(I64.to_f32(e.y)), x1: cx(e.i + 1), y1: cy(I64.to_f32(ny)) })) else Err(Gap)
-					Err(_) => Err(Gap)
-				},
-			)
-			segs = List.concat(seg_list(List.map(rungs, |r| r.now_w)), seg_list(List.map(rungs, |r| r.prev_w)))
+			# target watts; their labels are in the scene
+			List.for_each!(g.rings, |rg| dashed_ring!(frame, rg.x, rg.y, ring_r))
 			# a record set in the last seven calendar days is NEWS: the rung
-			# earns a pulsing gold ring. Heat carries one row per day, so its
-			# last seven entries ARE the last seven days.
-			recent7 = List.take_last(model.heat, 7)
+			# earns a pulsing gold ring
 			nt = model.tick % 40
 			ntri = (if (nt < 20) (U64.to_f32(nt)) else U64.to_f32(40 - nt)) / 20.0
 			List.for_each!(
-				rungs,
+				g.rungs,
 				|r| {
-					rec_y = cy(I64.to_f32(r.pr.w))
-					fresh = r.pr.w > 0 and List.fold(recent7, Bool.False, |a9, hd| a9 or hd.day == r.pr.day)
-					if fresh {
+					x = x_at(g, r.i)
+					rec_y = y_at(g, I64.to_f32(r.pr.w))
+					if fresh_record(model, r) {
 						halo_a = match F32.to_u8_try(50.0 + ntri * 50.0) {
 							Ok(ha) => ha
 							Err(_) => 50
 						}
-						frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 9.0 + ntri * 3.0, style: Draw.filled(Color.with_alpha(Theme.gold_c, halo_a)) })
-						nr_half = model.font.measure({ text: "new record", size: 11.0, spacing: Text.default_spacing }).width / 2.0
-						Text.from("new record", model.font).size(11).draw!(frame, { pos: { x: label_center_within(cx(r.i), nr_half, pad_l, pad_l + pw - label_inset), y: rec_y - 34.0 }, color: Theme.gold_c, align: (Top, Center) })
+						frame.circle!({ center: { x, y: rec_y }, radius: 9.0 + ntri * 3.0, style: Draw.filled(Color.with_alpha(Theme.gold_c, halo_a)) })
 					}
 					if (r.pr.w == 0) {
 						# a rung with no effort on record keeps its label and rail, nothing else
-					} else if r.now_w >= r.pr.w and r.now_w > 0 {
-						# the window best IS the record: one teal dot, and the delta
-						# still prints, since a record rung's change is the best
-						# news on the chart. Teal is the house "good" accent; the dot
-						# and the text tell themselves apart by shape.
-						frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 5.0, style: Draw.filled(tsb_c) })
-						pr_half = model.font.measure({ text: "pr", size: 10.0, spacing: Text.default_spacing }).width / 2.0
-						Text.from("pr", model.font).size(10).draw!(frame, { pos: { x: label_center_within(cx(r.i), pr_half, pad_l, pad_l + pw - label_inset), y: rec_y - 20.0 }, color: tsb_c, align: (Top, Center) })
-						dpr_txt = if (r.now_unp or r.prev_unp) "" else delta_for(curve, units, r.now_w, r.prev_w)
-						if dpr_txt != "" {
-							dpr_col = if (r.now_w > r.prev_w) tsb_c else Theme.alarm_c
-							dpr_w = model.font.measure({ text: dpr_txt, size: 10.0, spacing: Text.default_spacing }).width
-							Text.from(dpr_txt, model.font).size(10).draw!(frame, { pos: { x: delta_left_x(cx(r.i), dpr_w, pad_l + pw - label_inset), y: (cy(I64.to_f32(r.prev_w)) + rec_y) / 2.0 - 6.0 }, color: dpr_col, align: (Top, Left) })
-						}
+					} else if is_record(r) {
+						# the window best IS the record: one teal dot. Teal is the
+						# house "good" accent; the dot and its delta tell
+						# themselves apart by shape.
+						frame.circle!({ center: { x, y: rec_y }, radius: 5.0, style: Draw.filled(tsb_c) })
 					} else {
-						frame.circle!({ center: { x: cx(r.i), y: rec_y }, radius: 2.5, style: Draw.filled(Color.with_alpha(ink_muted, 90)) })
+						frame.circle!({ center: { x, y: rec_y }, radius: 2.5, style: Draw.filled(Color.with_alpha(ink_muted, 90)) })
 						if r.prev_w > 0 and r.prev_w < r.pr.w {
-							frame.circle!({ center: { x: cx(r.i), y: cy(I64.to_f32(r.prev_w)) }, radius: 3.5, style: Draw.filled(Color.with_alpha(ink_muted, if (r.prev_unp) (70) else 150)) })
+							frame.circle!({ center: { x, y: y_at(g, I64.to_f32(r.prev_w)) }, radius: 3.5, style: Draw.filled(Color.with_alpha(ink_muted, if (r.prev_unp) (70) else 150)) })
 						}
 						if r.now_w > 0 {
-							now_y = cy(I64.to_f32(r.now_w))
-							frame.circle!({ center: { x: cx(r.i), y: now_y }, radius: 4.0, style: Draw.filled(if (r.now_unp) (Color.with_alpha(ink_muted, 170)) else if (r.stale) (Color.with_alpha(ctl_c, 110)) else ctl_c) })
-							# the change against the PREVIOUS window, signed, at the first
-							# spot clear of both lines - green-teal going up, alarm going down
-							d_txt = if (r.now_unp or r.prev_unp) "" else delta_for(curve, units, r.now_w, r.prev_w)
-							if d_txt != "" {
-								d_col = if (r.now_w > r.prev_w) tsb_c else Theme.alarm_c
-								d_w = model.font.measure({ text: d_txt, size: 10.0, spacing: Text.default_spacing }).width
-								prev_y = cy(I64.to_f32(r.prev_w))
-								spot = delta_spot({ x: cx(r.i), w: d_w, h: 10.0, mid: (prev_y + now_y) / 2.0 - 6.0, upper: F32.min(prev_y, now_y), lower: F32.max(prev_y, now_y), lo: pad_l, hi: pad_l + pw - label_inset }, segs)
-								Text.from(d_txt, model.font).size(10).draw!(frame, { pos: { x: spot.left, y: spot.top }, color: d_col, align: (Top, Left) })
-							}
+							frame.circle!({ center: { x, y: y_at(g, I64.to_f32(r.now_w)) }, radius: 4.0, style: Draw.filled(if (r.now_unp) (Color.with_alpha(ink_muted, 170)) else if (r.stale) (Color.with_alpha(ctl_c, 110)) else ctl_c) })
 						}
 					}
-					Text.from(r.pr.rung, model.font).size(12).draw!(frame, { pos: { x: cx(r.i), y: pad_t + ph - 18.0 }, color: ink_faint, align: (Top, Center) })
 				},
 			)
-			if lay.folded {
-				gx = Theme.pad_l + short_gutter / 2.0 - 14.0
-				Text.from("short", model.font).size(11).draw!(frame, { pos: { x: gx, y: pad_t + ph - 18.0 }, color: ink_faint, align: (Top, Center) })
-				Text.from("not pushed", model.font).size(9).draw!(frame, { pos: { x: gx, y: pad_t + ph - 4.0 }, color: Color.with_alpha(ink_faint, 150), align: (Top, Center) })
-			}
-			# the legend on the caption row's left: one swatch per line drawn
-			legend = legend_items(List.any(rungs, |r| r.now_w > 0), List.any(rungs, |r| r.prev_w > 0), List.any(rungs, |r| r.pr.w > 0), !(List.is_empty(plan_marks)))
-			legend_ws = List.map(legend, |it| legend_swatch_w + model.font.measure({ text: it.label, size: 11.0, spacing: Text.default_spacing }).width)
-			legend_lefts = legend_xs(legend_ws, 36.0, legend_gap)
+			# the legend's swatches, one per line drawn, before its names
 			List.for_each!(
-				List.map2(legend, legend_lefts, |it, lx| { it, lx }),
+				legend_rows(g, measure),
 				|e| {
 					sy = caption_top + 6.0
-					a = { x: e.lx, y: sy }
-					b = { x: e.lx + 16.0, y: sy }
+					a = { x: e.x, y: sy }
+					b = { x: e.x + 16.0, y: sy }
 					match e.it.kind {
 						Now => frame.line!({ start: a, end: b, stroke: Draw.stroke(Color.with_alpha(ctl_c, 200), 2) })
 						Prev => dashed_line!(frame, a, b, Color.with_alpha(ink_muted, 150))
 						Best => {
 							frame.line!({ start: a, end: b, stroke: Draw.stroke(Color.with_alpha(ink_muted, best_line_alpha), 1) })
-							frame.circle!({ center: { x: e.lx + 8.0, y: sy }, radius: 2.5, style: Draw.filled(Color.with_alpha(ink_muted, 90)) })
+							frame.circle!({ center: { x: e.x + 8.0, y: sy }, radius: 2.5, style: Draw.filled(Color.with_alpha(ink_muted, 90)) })
 						}
-						Planned => dashed_ring!(frame, e.lx + 8.0, sy, 4.5)
+						Planned => dashed_ring!(frame, e.x + 8.0, sy, 4.5)
 					}
-					Text.from(e.it.label, model.font).size(11).draw!(frame, { pos: { x: e.lx + legend_swatch_w, y: caption_top }, color: ink_muted, align: (Top, Left) })
 				},
 			)
-			legend_end = legend_right(legend_lefts, legend_ws)
-			# the window's unpushed durations at the caption row's right, when it
-			# clears the legend; the hover card says it per rung either way
-			unp_txt = unpushed_caption(List.map(full, |r| r.pr.rung), List.map(full, |r| r.now_unp), model.curve_days)
-			unp_w = model.font.measure({ text: unp_txt, size: 11.0, spacing: Text.default_spacing }).width
-			if unp_txt != "" and !model.reloading and caption_fits(legend_end, win_w - 40.0 - unp_w) {
-				Text.from(unp_txt, model.font).size(11).draw!(frame, { pos: { x: win_w - 40.0, y: caption_top }, color: ink_faint, align: (Top, Right) })
-			}
-			# the hover card, drawn last so it sits over everything: a planned
-			# ring's sessions, or the hovered rung's three values and the session
-			# that set this window's best
-			bounds = { lo_x: pad_l, hi_x: pad_l + pw, top: pad_t, bot: pad_t + ph }
-			card = match tgt_hover {
-				Ok(g) => Ok({ lines: List.join(List.map(g.ts, |t| target_card(t, best_at(now_pts, t.dur_s)))), ax: g.x, ay: g.y })
-				Err(_) =>
-					match rung_at(model.mouse_x, model.mouse_y, win_w, win_h, List.len(rungs), pad_l) {
-						Ok(ci) => match List.get(rungs, ci) {
-							Ok(r) => Ok({ lines: rung_card(curve, units, { rung: r.pr.rung, rec_w: r.pr.w, rec_day: r.pr.day, now_w: r.now_w, now_day: r.src_day, name: r.src_name, prev_w: r.prev_w, prev_day: r.prev_day, unp: r.now_unp, stale: r.stale }), ax: cx(r.i), ay: if (r.now_w > 0) (cy(I64.to_f32(r.now_w))) else pad_t + ph / 2.0 })
-							Err(_) => Err(NoCard)
-						}
-						Err(_) => Err(NoCard)
-					}
-			}
-			match card {
+		}
+		Scene.draw!(frame, model, scene(model, measure))
+		# the hover card, drawn last so it sits over everything: a planned
+		# ring's sessions, or the hovered rung's three values and the session
+		# that set this window's best
+		if has_records(model) {
+			match hover_card(model, geom(model), measure) {
 				Ok(c) => {
-					cw = 2.0 * card_pad + List.fold(c.lines, 0.0, |m, l| F32.max(m, model.font.measure({ text: l.text, size: 11.0, spacing: Text.default_spacing }).width))
-					ch = 2.0 * card_pad + U64.to_f32(List.len(c.lines)) * card_line_h
-					at = card_place(c.ax, c.ay, cw, ch, bounds)
-					frame.rounded_rectangle!({ x: at.left, y: at.top, width: cw, height: ch, radius: 6.0, segments: 6, style: Draw.filled(Color.with_alpha(Theme.card, 245)) })
-					List.for_each!(
-						List.map_with_index(c.lines, |l, k| { l, k }),
-						|e| Text.from(e.l.text, model.font).size(11).draw!(
-							frame,
-							{
-								pos: { x: at.left + card_pad, y: at.top + card_pad + U64.to_f32(e.k) * card_line_h },
-								color: (
-									match e.l.tone {
-										Title => Color.white
-										Body => ink_muted
-										Muted => ink_faint
-									}
-								),
-								align: (Top, Left),
-							},
-						),
-					)
+					frame.rounded_rectangle!({ x: c.box.x, y: c.box.y, width: c.box.w, height: c.box.h, radius: 6.0, segments: 6, style: Draw.filled(Color.with_alpha(Theme.card, 245)) })
+					Scene.draw!(frame, model, Labels.place(c.lines, { boxes: [], segs: [] }))
 				}
 				Err(_) => {}
 			}
 		}
-		model.curve_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
 		Ok({})
 	}
+
+	chip! : Draw.Frame, Ui.Model, Labels.Rect, Bool, Color.Rgba => {}
+	chip! = |frame, model, b, on, lit| {
+		hov = model.mouse_x >= b.x and model.mouse_x <= b.x + b.w and model.mouse_y >= b.y and model.mouse_y <= b.y + b.h
+		style = if (on) (Draw.filled(Color.with_alpha(lit, 60))) else if (hov) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
+		frame.rounded_rectangle!({ x: b.x, y: b.y, width: b.w, height: b.h, radius: 6.0, segments: 6, style })
+	}
+
+	# ── the layout the drawing, the scene and the gate share ───────────────
+	# the rungs with values on record or in either window: eight zero rungs
+	# IS the no-records state, since the loader materializes every rung
+	has_records : Ui.Model -> Bool
+	has_records = |model| !(List.is_empty(model.prs)) and List.fold(model.prs, 0.I64, |a, pr| a + pr.w) != 0
+
+	# one rung as the plot draws it: its record, this window's and the
+	# previous window's best, whether each window pushed it, the session
+	# behind this window's best and whether that best is stale; `i` is its
+	# column on screen
+	Rung : { pr : Db.PrRung, now_w : I64, prev_w : I64, i : U64, now_unp : Bool, prev_unp : Bool, src_name : Str, src_day : Str, prev_day : Str, stale : Bool }
+
+	# a planned ring: the targets that share it and its centre on screen;
+	# `base` is the label row its first label takes (label_rows)
+	Ring : { ts : List(Mark), x : F32, y : F32, base : F32 }
+
+	# the plot on screen: its left edge, width and height (its top is
+	# plot_top), the value axis's span, every rung and the ones on screen,
+	# the planned rings, this window's points for reading a target's share,
+	# and this and the previous window's lines as segments
+	Geom : { left : F32, pw : F32, ph : F32, lo : F32, hi : F32, folded : Bool, full : List(Rung), rungs : List(Rung), rings : List(Ring), now_pts : List({ secs : I64, w : I64 }), segs : List(Labels.Seg) }
+
+	geom : Ui.Model -> Geom
+	geom = |model| {
+		curve = model.curve_family
+		lay = layout(model)
+		pad_l = lay.left
+		pw = model.win.w - pad_l - Theme.pad_r
+		ph = model.win.h - plot_top - Theme.pad_b
+		plan_marks = marks_for(curve, (List.first(model.curve_keys.power)).ok_or(""), model.plan_targets, model.pace_targets)
+		# the record ladder is the master axis; the window's value joins by
+		# duration. Index spacing, not time: a linear axis piles the short
+		# rungs onto the left edge. Each window is judged on its own, over the
+		# whole ladder: a rung within flat_ratio of the next longer one was not
+		# pushed, and its dot and delta go quiet.
+		now_flags = unpushed(List.map(model.prs, |pr| window_w(model.curve, pr.secs)))
+		prev_flags = unpushed(List.map(model.prs, |pr| window_w(model.curve_prev, pr.secs)))
+		full = List.map_with_index(
+			model.prs,
+			|pr, i| {
+				src = List.find_first(model.curve, |cp| cp.dur_s == pr.secs)
+				{
+					pr,
+					now_w: window_w(model.curve, pr.secs),
+					prev_w: window_w(model.curve_prev, pr.secs),
+					i,
+					now_unp: List.get(now_flags, i) ?? Bool.False,
+					prev_unp: List.get(prev_flags, i) ?? Bool.False,
+					src_name: match src {
+						Ok(sp) => sp.name
+						Err(_) => ""
+					},
+					src_day: match src {
+						Ok(sp) => sp.day
+						Err(_) => ""
+					},
+					prev_day: match List.find_first(model.curve_prev, |cp| cp.dur_s == pr.secs) {
+						Ok(pp) => pp.day
+						Err(_) => ""
+					},
+					stale: match src {
+						Ok(sp) => stale_best(sp.ago, model.curve_days)
+						Err(_) => Bool.False
+					},
+				}
+			},
+		)
+		rungs = List.map_with_index(List.keep_if(full, |r| !(lay.folded) or r.pr.secs >= short_secs), |r, i| { ..r, i })
+		span = axis_span(curve, List.join(List.map(rungs, |r| [r.pr.w, r.now_w, r.prev_w])), List.map(plan_marks, |t| t.val), model.fit_cp)
+		g0 = { left: pad_l, pw, ph, lo: span.lo, hi: span.hi, folded: lay.folded, full, rungs, rings: [], now_pts: List.map(rungs, |r| { secs: r.pr.secs, w: r.now_w }), segs: [] }
+		# targets whose rings would overlap share one ring with their labels
+		# stacked under it, in date order, the order the targets load in
+		rung_secs = List.map(rungs, |r| r.pr.secs)
+		marks = List.map(plan_marks, |t| { x: col_x(g0, rung_pos(rung_secs, t.dur_s)), y: y_at(g0, I64.to_f32(t.val)) })
+		grouped = List.map(
+			cluster_marks(marks, ring_merge),
+			|idxs| {
+				in_order = List.sort_with(idxs, |a, b| if (a < b) Before else if (a > b) After else Same)
+				ts = List.keep_oks(in_order, |i| List.get(plan_marks, i))
+				ps = List.keep_oks(in_order, |i| List.get(marks, i))
+				n = F32.max(1.0, U64.to_f32(List.len(ps)))
+				{ ts, x: List.fold(ps, 0.0, |a, p| a + p.x) / n, y: List.fold(ps, 0.0, |a, p| a + p.y) / n }
+			},
+		)
+		rings = List.map2(grouped, label_rows(List.map(grouped, |rg| { x: rg.x, lines: List.len(rg.ts) }), ring_label_w), |rg, base| { ts: rg.ts, x: rg.x, y: rg.y, base })
+		# this and the previous window's lines as segments, for labels to
+		# keep clear of
+		seg_list = |ys| List.keep_oks(
+			List.map_with_index(ys, |y, i| { y, i }),
+			|e| match List.get(ys, e.i + 1) {
+				Ok(ny) => if (e.y > 0 and ny > 0) (Ok({ x0: x_at(g0, e.i), y0: y_at(g0, I64.to_f32(e.y)), x1: x_at(g0, e.i + 1), y1: y_at(g0, I64.to_f32(ny)) })) else Err(Gap)
+				Err(_) => Err(Gap)
+			},
+		)
+		segs = List.concat(seg_list(List.map(rungs, |r| r.now_w)), seg_list(List.map(rungs, |r| r.prev_w)))
+		{ ..g0, rings, segs }
+	}
+
+	# the x of a fractional column: index spacing across the plot, one rung
+	# alone at its centre
+	col_x : Geom, F32 -> F32
+	col_x = |g, p| {
+		n = List.len(g.rungs)
+		if (n <= 1) (g.left + g.pw / 2.0) else g.left + g.pw * p / U64.to_f32(n - 1)
+	}
+
+	x_at : Geom, U64 -> F32
+	x_at = |g, i| col_x(g, U64.to_f32(i))
+
+	y_at : Geom, F32 -> F32
+	y_at = |g, w| plot_top + g.ph * (1.0 - (w - g.lo) / (g.hi - g.lo))
+
+	# the rectangle labels inside the plot stay in: the plot less
+	# label_inset at the right, so a label reads apart from what is beyond
+	plot_box : Geom -> Labels.Rect
+	plot_box = |g| { x: g.left, y: plot_top, w: g.pw - label_inset, h: g.ph }
+
+	is_record : Rung -> Bool
+	is_record = |r| r.now_w >= r.pr.w and r.now_w > 0
+
+	# a record set in the last seven calendar days. Heat carries one row per
+	# day, so its last seven entries ARE the last seven days.
+	fresh_record : Ui.Model, Rung -> Bool
+	fresh_record = |model, r| r.pr.w > 0 and List.any(List.take_last(model.heat, 7), |hd| hd.day == r.pr.day)
+
+	# the threshold line's height, when its value is on the axis
+	cp_y : Ui.Model, Geom -> Try(F32, [OffAxis])
+	cp_y = |model, g| if (model.fit_cp > g.lo and model.fit_cp < g.hi) Ok(y_at(g, model.fit_cp)) else Err(OffAxis)
+
+	# each zone band's top and bottom on screen
+	band_rows : Ui.Model, Geom -> List({ top : F32, bot : F32, name : Str, shade : Bool })
+	band_rows = |model, g| List.map(zone_bands(model.curve_family, model.curve_info.thr, g.lo, g.hi), |b| { top: y_at(g, b.hi), bot: y_at(g, b.lo), name: b.name, shade: b.shade })
+
+	# the grid rules on screen: grid_vals, less any in the rung labels' band
+	# or hard under the plot's top edge, where a rule would run through text
+	grid_rows : Ui.Model, Geom -> List({ v : F32, y : F32 })
+	grid_rows = |model, g| List.keep_if(List.map(grid_vals(model.curve_family, model.units, g.lo, g.hi), |v| { v, y: y_at(g, v) }), |gr| gr.y > plot_top + 8.0 and gr.y < plot_top + g.ph - 26.0)
+
+	range_chips : Ui.Model -> List({ box : Labels.Rect, on : Bool, p : Text.Prepared, label : Str })
+	range_chips = |model|
+		List.map_with_index(
+			model.subs,
+			|s, i| {
+				on = (U64.to_i64_try(s.r) ?? -1) == model.curve_days
+				{ box: { x: model.win.w - 420.0 + U64.to_f32(i) * 54.0, y: chip_top, w: 46.0, h: chip_bottom - chip_top }, on, p: s.chip, label: "${U64.to_str(s.r)}d" }
+			},
+		)
+
+	curve_chip_boxes : Ui.Model -> List({ box : Labels.Rect, on : Bool, label : Str })
+	curve_chip_boxes = |model| {
+		chips = List.concat(chips_for(model.win.w, model.curve_keys, model.curve_family, model.curve_days), short_chips(model.win.w, model.curve_keys, model.curve_family, layout(model).foldable, model.show_short))
+		List.map(chips, |c| { box: { x: c.x, y: chip_top, w: chip_w, h: chip_bottom - chip_top }, on: c.on, label: c.label })
+	}
+
+	tile_boxes : F32 -> List(Labels.Rect)
+	tile_boxes = |win_w| List.map([0, 1, 2, 3], |i| { x: tile_x(win_w, i), y: tile_top, w: tile_w(win_w), h: tile_h })
+
+	# the legend on the caption row's left: one swatch per line drawn, each
+	# item's left edge laid out from its measured name
+	legend_rows : Geom, Scene.Measure -> List({ it : LegendItem, x : F32, w : F32 })
+	legend_rows = |g, measure| {
+		items = legend_items(List.any(g.rungs, |r| r.now_w > 0), List.any(g.rungs, |r| r.prev_w > 0), List.any(g.rungs, |r| r.pr.w > 0), !(List.is_empty(g.rings)))
+		ws = List.map(items, |it| legend_swatch_w + measure(it.label, 11.0, Data))
+		List.map2(List.map2(items, legend_xs(ws, 36.0, legend_gap), |it, x| { it, x }), ws, |e, w| { it: e.it, x: e.x, w })
+	}
+
+	# the hover card, when the pointer is on a planned ring or a rung: its
+	# box beside the point it describes and its lines as fixed text inside it
+	hover_card : Ui.Model, Geom, Scene.Measure -> Try({ box : Labels.Rect, lines : List(Labels.Label(Scene.Item)) }, [NoCard])
+	hover_card = |model, g, measure| {
+		curve = model.curve_family
+		ring = List.find_first(g.rings, |rg| F32.abs(model.mouse_x - rg.x) <= 8.0 and F32.abs(model.mouse_y - rg.y) <= 8.0)
+		found = match ring {
+			Ok(rg) => Ok({ lines: List.join(List.map(rg.ts, |t| target_card(t, best_at(g.now_pts, t.dur_s)))), ax: rg.x, ay: rg.y })
+			Err(_) =>
+				match rung_at(model.mouse_x, model.mouse_y, model.win.w, model.win.h, List.len(g.rungs), g.left) {
+					Ok(ci) => match List.get(g.rungs, ci) {
+						Ok(r) => Ok({ lines: rung_card(curve, model.units, { rung: r.pr.rung, rec_w: r.pr.w, rec_day: r.pr.day, now_w: r.now_w, now_day: r.src_day, name: r.src_name, prev_w: r.prev_w, prev_day: r.prev_day, unp: r.now_unp, stale: r.stale }), ax: x_at(g, r.i), ay: if (r.now_w > 0) (y_at(g, I64.to_f32(r.now_w))) else plot_top + g.ph / 2.0 })
+						Err(_) => Err(NoCard)
+					}
+					Err(_) => Err(NoCard)
+				}
+		}
+		match found {
+			Ok(c) => {
+				cw = 2.0 * card_pad + List.fold(c.lines, 0.0, |m, l| F32.max(m, measure(l.text, 11.0, Data)))
+				ch = 2.0 * card_pad + U64.to_f32(List.len(c.lines)) * card_line_h
+				at = card_place(c.ax, c.ay, cw, ch, { lo_x: g.left, hi_x: g.left + g.pw, top: plot_top, bot: plot_top + g.ph })
+				box = { x: at.left, y: at.top, w: cw, h: ch }
+				tone = |t|
+					match t {
+						Title => Color.white
+						Body => Theme.ink_muted
+						Muted => Theme.ink_faint
+					}
+				lines = List.map_with_index(c.lines, |l, k| Scene.fixed(measure, Scene.data(l.text, 11.0, tone(l.tone)), { x: at.left + card_pad, y: at.top + card_pad + U64.to_f32(k) * card_line_h, align: Left }, box))
+				Ok({ box, lines })
+			}
+			Err(_) => Err(NoCard)
+		}
+	}
+
+	# ── every string the view writes, placed ───────────────────────────────
+	# Fixed text first: the title, the chips, the tiles, the axes, the rung
+	# names, the legend, the footer and its hint. Then, in priority order,
+	# the labels inside the plot: the threshold line's value (kept, it never
+	# drops), the record marks, the deltas, the planned rings' labels, the
+	# zone names and the unpushed caption. Each of those is readable another
+	# way when the placer drops it: the hover card carries every rung's
+	# values, record and push, and a ring's card its targets; a zone band is
+	# its shading.
+	scene : Ui.Model, Scene.Measure -> List(Labels.Placed(Scene.Item))
+	scene = |model, measure| Labels.place(texts(model, measure), obstacles(model, measure))
+
+	# the view's text and the chrome's, as the gate judges them
+	owned : Ui.Model, Scene.Measure -> List(Labels.Owned)
+	owned = |model, measure| List.concat(Scene.owned(Chrome.placed(model, measure)), Scene.owned(scene(model, measure)))
+
+	prio_cp : U64
+	prio_cp = 1
+
+	prio_mark : U64
+	prio_mark = 2
+
+	prio_delta : U64
+	prio_delta = 3
+
+	prio_ring : U64
+	prio_ring = 4
+
+	prio_zone : U64
+	prio_zone = 5
+
+	prio_caption : U64
+	prio_caption = 6
+
+	texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
+	texts = |model, measure| {
+		win_w = model.win.w
+		win_h = model.win.h
+		curve = model.curve_family
+		panel = Labels.panel(model.win)
+		ink_muted = Theme.ink_muted
+		ink_faint = Theme.ink_faint
+		fix = |it, x, y, align, region| Scene.fixed(measure, it, { x, y, align }, region)
+		head = [
+			fix(Scene.prepared(model.curve_title, title_text(curve, model.curve_days), 15.0, Prose, ink_muted), 36.0, 70.0, Left, panel),
+			# one line above the hint row: the chips own the top-right band, and
+			# hint plus caption together outgrow a single bottom line
+			fix(Scene.prepared(model.fit_lbl, fit_label_text(model), 14.0, Prose, ink_muted), win_w - 40.0, win_h - 52.0, Right, panel),
+			fix(Scene.prepared(model.curve_hint, hint_text, 13.0, Prose, ink_faint), 36.0, win_h - 30.0, Left, panel),
+		]
+		# a chip click re-fetches the curve in the background; while that is
+		# in flight a note at the caption row's right says so, so a click that
+		# takes a beat reads as working. The old curve stays on screen until
+		# the fresh one lands, and the unpushed caption, which describes it,
+		# yields the slot.
+		loading = if (model.reloading) [fix(Scene.data(loading_note, 11.0, ink_muted), win_w - 40.0, caption_top, Right, panel)] else []
+		chips = List.concat(
+			List.map(range_chips(model), |c| fix(Scene.prepared(c.p, c.label, 12.0, Data, if (c.on) Color.white else ink_muted), c.box.x + c.box.w / 2.0, 68.0, Center, c.box)),
+			List.map(curve_chip_boxes(model), |c| fix(Scene.data(c.label, 12.0, if (c.on) Color.white else ink_muted), c.box.x + c.box.w / 2.0, 68.0, Center, c.box)),
+		)
+		body = if (has_records(model)) plot_texts(model, measure) else [fix(Scene.data(empty_note(curve), 14.0, ink_muted), 36.0, 130.0, Left, panel)]
+		List.join([head, loading, chips, body])
+	}
+
+	plot_texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
+	plot_texts = |model, measure| {
+		win_w = model.win.w
+		curve = model.curve_family
+		units = model.units
+		g = geom(model)
+		panel = Labels.panel(model.win)
+		plot = plot_box(g)
+		ink_muted = Theme.ink_muted
+		ink_faint = Theme.ink_faint
+		tsb_c = Theme.tsb_c
+		pad_t = plot_top
+		fix = |it, x, y, align, region| Scene.fixed(measure, it, { x, y, align }, region)
+		# the headline tiles: what the chart says, before the chart is read
+		tiles = List.join(
+			List.map2(
+				head_tiles(curve, units, model.prs, model.curve, model.curve_info),
+				tile_boxes(win_w),
+				|t, b| [
+					fix(Scene.data(t.value, 16.0, if (t.good) tsb_c else Color.white), b.x + 10.0, b.y + 6.0, Left, b),
+					fix(Scene.data(t.caption, 10.0, ink_faint), b.x + 10.0, b.y + 28.0, Left, b),
+				],
+			),
+		)
+		grid = List.map(
+			grid_rows(model, g),
+			|gr| fix(Scene.data(axis_text(curve, units, F32.round_to_i64_try(gr.v) ?? 0), 10.0, ink_faint), Theme.pad_l - 8.0, gr.y - 6.0, Right, panel),
+		)
+		rung_names = List.map(g.rungs, |r| fix(Scene.data(r.pr.rung, 12.0, ink_faint), x_at(g, r.i), pad_t + g.ph - 18.0, Center, panel))
+		gutter =
+			if g.folded {
+				gx = Theme.pad_l + short_gutter / 2.0 - 14.0
+				[
+					fix(Scene.data("short", 11.0, ink_faint), gx, pad_t + g.ph - 18.0, Center, panel),
+					fix(Scene.data("not pushed", 9.0, Color.with_alpha(ink_faint, 150)), gx, pad_t + g.ph - 4.0, Center, panel),
+				]
+			} else {
+				[]
+			}
+		legend_rs = legend_rows(g, measure)
+		legend = List.map(legend_rs, |e| fix(Scene.data(e.it.label, 11.0, ink_muted), e.x + legend_swatch_w, caption_top, Left, panel))
+		# the threshold line's value at the line's left end, inside the plot:
+		# above the line, or below it first when a first-rung point sits in
+		# the band above
+		cp = match cp_y(model, g) {
+			Ok(cpy) => {
+				first_ys = match List.first(g.rungs) {
+					Ok(r0) => List.map(List.keep_if([r0.pr.w, r0.prev_w, r0.now_w], |w| w > 0), |w| y_at(g, I64.to_f32(w)))
+					Err(_) => []
+				}
+				lbl = Scene.prepared(model.cp_lbl, anchor_tag(curve, units, model.curve_info.fit, model.curve_info.test), 12.0, Data, tsb_c)
+				[Scene.kept(measure, lbl, List.map(cp_label_spots(g.left, cpy, first_ys), |s| { x: s.x, y: s.y, align: Left }), prio_cp, plot)]
+			}
+			Err(_) => []
+		}
+		centred = |x, text, size| label_center_within(x, measure(text, size, Data) / 2.0, g.left, g.left + g.pw - label_inset)
+		marks = List.join(
+			List.map(
+				g.rungs,
+				|r| {
+					x = x_at(g, r.i)
+					rec_y = y_at(g, I64.to_f32(r.pr.w))
+					fresh =
+						if fresh_record(model, r) {
+							[Scene.free(measure, Scene.data("new record", 11.0, Theme.gold_c), [{ x: centred(x, "new record", 11.0), y: rec_y - 34.0, align: Center }, { x: centred(x, "new record", 11.0), y: rec_y + 14.0, align: Center }], prio_mark, plot)]
+						} else {
+							[]
+						}
+					# the signed change against the PREVIOUS window at the first
+					# spot clear of both lines - teal going up, alarm going down. A
+					# record rung's change still prints: it is the best news on the
+					# chart.
+					d_txt = if (r.now_unp or r.prev_unp) "" else delta_for(curve, units, r.now_w, r.prev_w)
+					d_col = if (r.now_w > r.prev_w) tsb_c else Theme.alarm_c
+					delta = |near_y|
+						if d_txt == "" {
+							[]
+						} else {
+							prev_y = y_at(g, I64.to_f32(r.prev_w))
+							d = { x, w: measure(d_txt, 10.0, Data), h: 10.0, mid: (prev_y + near_y) / 2.0 - 6.0, upper: F32.min(prev_y, near_y), lower: F32.max(prev_y, near_y), lo: g.left, hi: g.left + g.pw - label_inset }
+							[Scene.free(measure, Scene.data(d_txt, 10.0, d_col), List.map(delta_spots(d), |s| { x: s.x, y: s.y, align: Left }), prio_delta, plot)]
+						}
+					if (r.pr.w == 0) fresh
+					else if is_record(r) {
+						pr = Scene.free(measure, Scene.data("pr", 10.0, tsb_c), [{ x: centred(x, "pr", 10.0), y: rec_y - 20.0, align: Center }, { x: centred(x, "pr", 10.0), y: rec_y + 8.0, align: Center }], prio_mark, plot)
+						List.join([fresh, [pr], delta(rec_y)])
+					} else if (r.now_w > 0) List.concat(fresh, delta(y_at(g, I64.to_f32(r.now_w))))
+					else fresh
+				},
+			),
+		)
+		# a planned ring's labels: the day and the share of this window's best
+		# at that duration, stacked under the ring from its label row, else
+		# over it, else beside it on the right or the left
+		rings = List.join(
+			List.map(
+				g.rings,
+				|rg| {
+					n = List.len(rg.ts)
+					List.map_with_index(
+						rg.ts,
+						|t, k| {
+							lbl = target_label(t, best_at(g.now_pts, t.dur_s))
+							x = centred(rg.x, lbl, 10.0)
+							under = rg.y + 10.0 + (rg.base + U64.to_f32(k)) * 12.0
+							over = rg.y - 20.0 - U64.to_f32(n - 1 - k) * 12.0
+							beside = rg.y - 6.0 + (U64.to_f32(k) - U64.to_f32(n - 1) / 2.0) * 12.0
+							Scene.free(measure, Scene.data(lbl, 10.0, Theme.gold_c), [{ x, y: under, align: Center }, { x, y: over, align: Center }, { x: rg.x + ring_r + 6.0, y: beside, align: Left }, { x: rg.x - ring_r - 6.0, y: beside, align: Right }], prio_ring, plot)
+						},
+					)
+				},
+			),
+		)
+		# the zone names, right-aligned to the window's edge where the band's
+		# visible part is tall enough, off the threshold line's level and
+		# above the rung labels' row
+		cp_level = (cp_y(model, g)) ?? -100.0
+		zones = List.keep_oks(
+			band_rows(model, g),
+			|b| {
+				mid = (b.top + b.bot) / 2.0
+				if (b.bot - b.top >= zone_label_min_h and F32.abs(mid - cp_level) > 12.0 and mid < pad_t + g.ph - 26.0) (Ok(Scene.free(measure, Scene.data(b.name, 9.0, Color.with_alpha(ink_faint, 160)), [{ x: win_w - 20.0, y: mid - 5.0, align: Right }], prio_zone, panel))) else Err(Short)
+			},
+		)
+		# the window's unpushed durations at the caption row's right, when it
+		# clears the legend by a legend gap; the hover card says it per rung
+		# either way
+		unp_txt = unpushed_caption(List.map(g.full, |r| r.pr.rung), List.map(g.full, |r| r.now_unp), model.curve_days)
+		unp_w = measure(unp_txt, 11.0, Data)
+		legend_end = legend_right(List.map(legend_rs, |e| e.x), List.map(legend_rs, |e| e.w))
+		caption =
+			if unp_txt != "" and !model.reloading and caption_fits(legend_end, win_w - 40.0 - unp_w) {
+				[Scene.free(measure, Scene.data(unp_txt, 11.0, ink_faint), [{ x: win_w - 40.0, y: caption_top, align: Right }], prio_caption, panel)]
+			} else {
+				[]
+			}
+		List.join([tiles, grid, rung_names, gutter, legend, cp, marks, rings, zones, caption])
+	}
+
+	# what the plot's labels keep off: the chrome, the chips and tiles, every
+	# dot and ring, the legend's swatches, and this and the previous window's
+	# lines. A fresh record's halo is a glow text may sit over, so it is not
+	# one.
+	obstacles : Ui.Model, Scene.Measure -> Labels.Obstacles
+	obstacles = |model, measure| {
+		dot = |x, y, r| { x: x - r, y: y - r, w: 2.0 * r, h: 2.0 * r }
+		chips = List.concat(List.map(range_chips(model), |c| c.box), List.map(curve_chip_boxes(model), |c| c.box))
+		chrome = Chrome.boxes(model, measure)
+		if has_records(model) {
+			g = geom(model)
+			dots = List.join(
+				List.map(
+					g.rungs,
+					|r| {
+						x = x_at(g, r.i)
+						rec_y = y_at(g, I64.to_f32(r.pr.w))
+						own =
+							if (r.pr.w == 0) []
+							else if (is_record(r)) [dot(x, rec_y, 5.0)]
+							else List.join([[dot(x, rec_y, 2.5)], if (r.prev_w > 0 and r.prev_w < r.pr.w) [dot(x, y_at(g, I64.to_f32(r.prev_w)), 3.5)] else [], if (r.now_w > 0) [dot(x, y_at(g, I64.to_f32(r.now_w)), 4.0)] else []])
+						own
+					},
+				),
+			)
+			rings = List.map(g.rings, |rg| dot(rg.x, rg.y, ring_r + 1.0))
+			swatches = List.map(legend_rows(g, measure), |e| { x: e.x, y: caption_top, w: 16.0, h: 12.0 })
+			{ boxes: List.join([chrome, chips, tile_boxes(model.win.w), dots, rings, swatches]), segs: g.segs }
+		} else {
+			{ boxes: List.concat(chrome, chips), segs: [] }
+		}
+	}
+
+	# the planned ring's radius
+	ring_r : F32
+	ring_r = 5.5
+
+	hint_text : Str
+	hint_text = "1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      V  record      ESC quit"
+
+	# the footer's line: the fit, or the test standing in for it, or what is
+	# wrong with the fit and the effort that would fix it
+	fit_label_text : Ui.Model -> Str
+	fit_label_text = |model| Db.ascii_safe(anchor_caption_for(model.curve_family, model.units, model.curve_info.fit, model.curve_info.test, model.curve_info.best20_age))
 
 	# A CP fit is drawn only when it is usable: r2 at or above fit_r2_min and
 	# W' inside a physiologically plausible band. A fit through steady class
@@ -582,15 +785,22 @@ Curve :: [].{
 	loading_note = "loading..."
 
 	# The threshold line's label sits inside the plot at the line's left end,
-	# where the panel edge cannot clip it: above the line, or below it when a
-	# first-rung point sits in the band above, so the label never covers a dot.
-	cp_label_spot : F32, F32, List(F32) -> { x : F32, y : F32, below : Bool }
-	cp_label_spot = |left, line_y, first_ys| {
+	# where the panel edge cannot clip it: the top-left corners of its two
+	# spots, above the line and below it, in order of preference. Below
+	# comes first when a first-rung point sits in the band above and none in
+	# the band below, so the label does not cover a dot.
+	cp_label_spots : F32, F32, List(F32) -> List({ x : F32, y : F32 })
+	cp_label_spots = |left, line_y, first_ys| {
 		crowded_above = List.any(first_ys, |y| y > line_y - 22.0 and y < line_y + 4.0)
 		crowded_below = List.any(first_ys, |y| y > line_y - 4.0 and y < line_y + 22.0)
-		below = crowded_above and !(crowded_below)
-		{ x: left + 10.0, y: if (below) line_y + 4.0 else line_y - 4.0, below }
+		above = { x: left + 10.0, y: line_y - 4.0 - cp_label_size }
+		below = { x: left + 10.0, y: line_y + 4.0 }
+		if (crowded_above and !(crowded_below)) [below, above] else [above, below]
 	}
+
+	# the threshold label's text size
+	cp_label_size : F32
+	cp_label_size = 12.0
 
 	# ── the headline tiles: four numbers under the chips that say what the
 	# chart says before it is read. The two longest rungs' window bests (a
@@ -859,14 +1069,14 @@ Curve :: [].{
 			) else a,
 		)
 
-	# the rungs on screen and where the plot starts, shared by the drawing and
-	# every hover test so the two cannot disagree
 	# the focus row's curve_short: 1 when the short rungs are shown, 0 when
 	# they are folded away, -1 (NULL) when there is nothing to fold, so a coach
 	# never reads "folded" off a curve that has no short rungs to hide
 	focus_short : Bool, Bool -> I64
 	focus_short = |foldable, show| if (!(foldable)) -1 else if (show) 1 else 0
 
+	# the rungs on screen and where the plot starts, shared by the drawing and
+	# every hover test so the two cannot disagree
 	layout : Ui.Model -> { prs : List(Db.PrRung), left : F32, folded : Bool, foldable : Bool }
 	layout = |model| {
 		foldable = fold_short(List.map(model.prs, |pr| pr.secs), List.map(model.prs, |pr| window_w(model.curve, pr.secs)), List.map(model.prs, |pr| pr.w))
@@ -970,53 +1180,22 @@ Curve :: [].{
 		if (half_w * 2.0 >= hi - lo) ((lo + hi) / 2.0)
 		else F32.max(lo + half_w, F32.min(x, hi - half_w))
 
-	# a delta sits 10px right of its rung, left-aligned; when that would run
-	# past the plot's right edge (the last rung is that edge, and the CP label
-	# sits just beyond it) it sits 10px left of the rung instead, ending there
-	delta_left_x : F32, F32, F32 -> F32
-	delta_left_x = |x, w, hi| if (x + 10.0 + w <= hi) (x + 10.0) else x - 10.0 - w
-
-	# A line segment between two rungs, in screen pixels.
-	Seg : { x0 : F32, y0 : F32, x1 : F32, y1 : F32 }
-
-	# a label box crosses a segment when the segment's y-span over the
-	# box's columns meets the box's rows; a segment beside the box, or a
-	# vertical one, does not cross it
-	box_crosses : F32, F32, F32, F32, List(Seg) -> Bool
-	box_crosses = |left, w, top, h, segs|
-		List.any(
-			segs,
-			|s| {
-				lo_x = F32.max(left, F32.min(s.x0, s.x1))
-				hi_x = F32.min(left + w, F32.max(s.x0, s.x1))
-				if (lo_x > hi_x or s.x1 == s.x0) Bool.False
-				else {
-					ya = s.y0 + (s.y1 - s.y0) * (lo_x - s.x0) / (s.x1 - s.x0)
-					yb = s.y0 + (s.y1 - s.y0) * (hi_x - s.x0) / (s.x1 - s.x0)
-					F32.min(ya, yb) < top + h and F32.max(ya, yb) > top
-				}
-			},
-		)
-
-	# where a delta sits: between its two dots, right of the rung and then
-	# left of it; failing both, above the upper dot or below the lower one,
-	# right side first. The first spot clear of every line wins. A side that
-	# would leave the plot is never tried: past hi on the right, where the CP
-	# label sits, or before lo on the left, where the axis labels sit. With no
-	# spot clear the delta takes delta_left_x's spot between the dots.
-	delta_spot : { x : F32, w : F32, h : F32, mid : F32, upper : F32, lower : F32, lo : F32, hi : F32 }, List(Seg) -> { left : F32, top : F32 }
-	delta_spot = |d, segs| {
+	# where a delta may sit, top-left corners in order of preference: between
+	# its two dots, right of the rung and then left of it; then above the
+	# upper dot or below the lower one, right side first. A side that would
+	# leave the plot is never offered: past hi on the right, where the CP
+	# label sits, or before lo on the left, where the axis labels sit. The
+	# placer takes the first spot clear of every line and label, and with
+	# every spot crossed by a line, the first clear of every label.
+	delta_spots : { x : F32, w : F32, h : F32, mid : F32, upper : F32, lower : F32, lo : F32, hi : F32 } -> List({ x : F32, y : F32 })
+	delta_spots = |d| {
 		right = d.x + 10.0
 		left = d.x - 10.0 - d.w
 		sides = List.concat(if (right + d.w <= d.hi) [right] else [], if (left >= d.lo) [left] else [])
-		cands = List.concat(
-			List.map(sides, |l| { left: l, top: d.mid }),
-			List.join(List.map(sides, |l| [{ left: l, top: d.upper - d.h - 6.0 }, { left: l, top: d.lower + 6.0 }])),
+		List.concat(
+			List.map(sides, |l| { x: l, y: d.mid }),
+			List.join(List.map(sides, |l| [{ x: l, y: d.upper - d.h - 6.0 }, { x: l, y: d.lower + 6.0 }])),
 		)
-		match List.find_first(cands, |c| !box_crosses(c.left, d.w, c.top, d.h, segs)) {
-			Ok(c) => c
-			Err(_) => { left: delta_left_x(d.x, d.w, d.hi), top: d.mid }
-		}
 	}
 
 	# ── the signal a curve key draws. A family head draws power in watts; a
@@ -1388,9 +1567,9 @@ expect Curve.delta_label(300, 0) == ""
 # a centred label moves in from the plot's edges by its overhang and no
 # further; one wider than the plot sits on the plot's centre
 expect Curve.label_center_within(100.0, 40.0, 0.0, 110.0) == 70.0 and Curve.label_center_within(50.0, 40.0, 0.0, 110.0) == 50.0 and Curve.label_center_within(10.0, 40.0, 0.0, 110.0) == 40.0 and Curve.label_center_within(100.0, 60.0, 0.0, 110.0) == 55.0
-# a delta that fits to the right of its rung stays there; one that would run
-# past the plot ends 10px left of the rung instead
-expect Curve.delta_left_x(100.0, 30.0, 200.0) == 110.0 and Curve.delta_left_x(170.0, 30.0, 200.0) == 130.0 and Curve.delta_left_x(160.0, 30.0, 200.0) == 170.0
+# a delta's first spot is right of its rung when it fits there, and 10px
+# left of the rung, ending there, when it would run past the plot
+expect List.first(Curve.delta_spots({ x: 100.0, w: 30.0, h: 10.0, mid: 50.0, upper: 45.0, lower: 65.0, lo: 0.0, hi: 200.0 })) == Ok({ x: 110.0, y: 50.0 }) and List.first(Curve.delta_spots({ x: 170.0, w: 30.0, h: 10.0, mid: 50.0, upper: 45.0, lower: 65.0, lo: 0.0, hi: 200.0 })) == Ok({ x: 130.0, y: 50.0 })
 # a fit is usable at the r2 floor with a W' inside the band, and not a hair
 # below either edge; an unanswered fit never is
 expect Curve.fit_usable({ cp: 250.0, w_prime: 15000.0, r2: 0.9, points: 3.0, ok: Bool.True })
@@ -1423,8 +1602,9 @@ expect {
 		_ => Bool.False
 	}
 }
-# a power target sits on the most-trained power family's curve only: a
-# ride's 230 W drawn on a rowing curve would read as 157% of the row's best
+# a power target sits on the most-trained power family's curve only:
+# watts are not comparable across families, so a ride's target read
+# against a row's best would claim a share far over 100%
 expect List.len(Curve.marks_for("Rowing", "Rowing", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])) == 1 and List.len(Curve.marks_for("Rowing", "Ride", [{ day: "2026-11-05", typ: "threshold", reps: 2, dur_s: 900, watts: 225 }], [])) == 0
 # a pace target lands on every pace curve its unit fits, at the speed its
 # pace names; a distance rep takes the time that distance needs at that
@@ -1566,10 +1746,11 @@ expect (Curve.fit_line("pace:Run", { cp: 4.0, w_prime: 200.0, r2: 0.95, points: 
 expect Curve.fit_caption_for("pace:Run", Metric, { cp: 4.0, w_prime: 200.0, r2: 0.95, points: 3.0, ok: Bool.True }, 3) == "CS 4:10/km - D' 200 m - fit r2 0.95 from 3 bests"
 expect Curve.fit_caption_for("pace:Swim", Metric, { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 1.0, ok: Bool.True }, -1) == "no CS fit (fewer than two bests in this window) - no 20-min best in this window; an all-out 20 minutes would anchor it"
 # the threshold label stays inside the plot at the line's left end: above
-# the line, or below it when a first-rung point sits just above
-expect Curve.cp_label_spot(130.0, 500.0, [300.0, 420.0]) == { x: 140.0, y: 496.0, below: Bool.False }
-expect Curve.cp_label_spot(130.0, 500.0, [490.0]) == { x: 140.0, y: 504.0, below: Bool.True }
-expect (Curve.cp_label_spot(130.0, 500.0, [490.0, 510.0])).below == Bool.False
+# the line first, or below it first when a first-rung point sits just above
+# and none just below
+expect Curve.cp_label_spots(130.0, 500.0, [300.0, 420.0]) == [{ x: 140.0, y: 484.0 }, { x: 140.0, y: 504.0 }]
+expect Curve.cp_label_spots(130.0, 500.0, [490.0]) == [{ x: 140.0, y: 504.0 }, { x: 140.0, y: 484.0 }]
+expect List.first(Curve.cp_label_spots(130.0, 500.0, [490.0, 510.0])) == Ok({ x: 140.0, y: 484.0 })
 expect Curve.fit_tag("pace:Run", Metric, { cp: 4.0, w_prime: 200.0, r2: 0.95, points: 3.0, ok: Bool.True }) == "CS 4:10/km" and Curve.fit_tag("Ride", Metric, { cp: 247.3, w_prime: 9000.0, r2: 0.95, points: 3.0, ok: Bool.True }) == "CP 247.3W"
 # two targets at the same duration a few watts apart share one ring; targets
 # at different durations, or the same duration far apart in watts, keep their
@@ -1582,36 +1763,33 @@ expect Curve.cluster_marks([], 14.0) == []
 # a ring within a label's width of the one before it starts below that ring's
 # labels; a far one starts at the top row
 expect Curve.label_rows([{ x: 100.0, lines: 2 }, { x: 150.0, lines: 1 }, { x: 400.0, lines: 1 }], 90.0) == [0.0, 2.0, 0.0]
-# a box crosses a segment that passes through its rows over its columns, and
-# not one that passes above, below or beside it
-expect {
-	s = { x0: 0.0, y0: 100.0, x1: 100.0, y1: 200.0 }
-	Curve.box_crosses(40.0, 20.0, 145.0, 10.0, [s]) and !Curve.box_crosses(40.0, 20.0, 170.0, 10.0, [s]) and !Curve.box_crosses(40.0, 20.0, 120.0, 10.0, [s]) and !Curve.box_crosses(120.0, 20.0, 150.0, 10.0, [s]) and !Curve.box_crosses(40.0, 20.0, 145.0, 10.0, [])
-}
 # a delta keeps its spot right of the rung between the dots when that is clear;
 # a line through it sends it left, and lines on both sides send it above the
 # upper dot
 expect {
+	delta_at = |dd, segs| List.map(Labels.place([{ w: dd.w, h: dd.h, spots: Curve.delta_spots(dd), prio: 0, keep: Bool.False, region: { x: -1000.0, y: -1000.0, w: 3000.0, h: 3000.0 }, item: {} }], { boxes: [], segs }), |p| { left: p.box.x, top: p.box.y })
 	d = { x: 100.0, w: 20.0, h: 10.0, mid: 150.0, upper: 145.0, lower: 165.0, lo: 0.0, hi: 400.0 }
 	through_right = { x0: 100.0, y0: 155.0, x1: 200.0, y1: 155.0 }
 	through_left = { x0: 0.0, y0: 155.0, x1: 100.0, y1: 155.0 }
-	Curve.delta_spot(d, []) == { left: 110.0, top: 150.0 }
-		and Curve.delta_spot(d, [through_right]) == { left: 70.0, top: 150.0 }
-		and Curve.delta_spot(d, [through_right, through_left]) == { left: 110.0, top: 129.0 }
+	delta_at(d, []) == [{ left: 110.0, top: 150.0 }]
+		and delta_at(d, [through_right]) == [{ left: 70.0, top: 150.0 }]
+		and delta_at(d, [through_right, through_left]) == [{ left: 110.0, top: 129.0 }]
 }
 # a delta on the first rung never sits left of it, in the axis labels: with
 # the spot right of it crossed, it goes above the upper dot instead
 expect {
+	delta_at = |dd, segs| List.map(Labels.place([{ w: dd.w, h: dd.h, spots: Curve.delta_spots(dd), prio: 0, keep: Bool.False, region: { x: -1000.0, y: -1000.0, w: 3000.0, h: 3000.0 }, item: {} }], { boxes: [], segs }), |p| { left: p.box.x, top: p.box.y })
 	d = { x: 100.0, w: 20.0, h: 10.0, mid: 150.0, upper: 145.0, lower: 165.0, lo: 100.0, hi: 400.0 }
 	through_right = { x0: 100.0, y0: 155.0, x1: 200.0, y1: 155.0 }
-	Curve.delta_spot(d, [through_right]) == { left: 110.0, top: 129.0 }
+	delta_at(d, [through_right]) == [{ left: 110.0, top: 129.0 }]
 }
 # a delta that cannot fit right of the rung never tries the right side, and
 # with every spot crossed it falls back between the dots
 expect {
+	delta_at = |dd, segs| List.map(Labels.place([{ w: dd.w, h: dd.h, spots: Curve.delta_spots(dd), prio: 0, keep: Bool.False, region: { x: -1000.0, y: -1000.0, w: 3000.0, h: 3000.0 }, item: {} }], { boxes: [], segs }), |p| { left: p.box.x, top: p.box.y })
 	d = { x: 390.0, w: 20.0, h: 10.0, mid: 150.0, upper: 145.0, lower: 165.0, lo: 0.0, hi: 400.0 }
 	wall = { x0: 300.0, y0: 0.0, x1: 400.0, y1: 400.0 }
-	Curve.delta_spot(d, []) == { left: 360.0, top: 150.0 } and Curve.delta_spot({ ..d, x: 100.0, hi: 400.0 }, [{ x0: 0.0, y0: 0.0, x1: 200.0, y1: 400.0 }, { x0: 0.0, y0: 400.0, x1: 200.0, y1: 0.0 }, { x0: 0.0, y0: 130.0, x1: 200.0, y1: 130.0 }, { x0: 0.0, y0: 175.0, x1: 200.0, y1: 175.0 }]) == { left: 110.0, top: 150.0 } and !Curve.box_crosses(0.0, 1.0, 0.0, 1.0, [wall])
+	delta_at(d, []) == [{ left: 360.0, top: 150.0 }] and delta_at({ ..d, x: 100.0, hi: 400.0 }, [{ x0: 0.0, y0: 0.0, x1: 200.0, y1: 400.0 }, { x0: 0.0, y0: 400.0, x1: 200.0, y1: 0.0 }, { x0: 0.0, y0: 130.0, x1: 200.0, y1: 130.0 }, { x0: 0.0, y0: 175.0, x1: 200.0, y1: 175.0 }]) == [{ left: 110.0, top: 150.0 }] and !(Labels.crosses({ x: 0.0, y: 0.0, w: 1.0, h: 1.0 }, wall))
 }
 # the band above the plot stacks without overlap: the tiles start under
 # the chips, the 11 pt caption row starts under the tiles and ends before

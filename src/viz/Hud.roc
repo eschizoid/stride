@@ -124,9 +124,10 @@ Hud :: [].{
 
 	# ── the XP rail: the panel's left edge, filled to level progress ──
 	# Fills bottom-up over the first seconds of a session (eased), carries a
-	# pulsing head, and answers on hover with the full sheet. Views start at
-	# x=36, axis labels end near x=56 - the rail lives at 21..25 and collides
-	# with nothing.
+	# pulsing head, and answers on hover with the full sheet. The rail lives
+	# at x 21..25, left of where every view starts drawing; the level number
+	# under its foot is chrome text (Chrome.rail_level), placed and gated with
+	# the rest of the chrome.
 	rail! : Ui.Model, Draw.Frame => {}
 	rail! = |model, frame| {
 		hours = total_hours(model.career_sports)
@@ -148,7 +149,6 @@ Hud :: [].{
 				tri = (if (t < 20) (U64.to_f32(t)) else U64.to_f32(40 - t)) / 20.0
 				frame.circle!({ center: { x: 23.0, y: bot - fill }, radius: 3.0 + tri * 1.2, style: Draw.filled(Color.with_alpha(Theme.gold_c, 200)) })
 			}
-			Text.from(I64.to_str(lvl), model.font).size(10).draw!(frame, { pos: { x: 23.0, y: bot + 6.0 }, color: Theme.gold_c, align: (Top, Center) })
 			# hover the rail: the character sheet
 			if model.mouse_in and model.mouse_x < 34.0 and model.mouse_y >= top and model.mouse_y <= bot {
 				sk = streak_weeks(model.heat)

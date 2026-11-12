@@ -34,6 +34,7 @@ import Zones
 import Table
 import Curve
 import Career
+import Chrome
 import Days
 import Weeks
 import Db
@@ -41,6 +42,9 @@ import Scroll
 import Strength
 import DisplayScale
 import Hud
+import Labels
+import Gate
+import Scene
 import Theme
 import Trace
 import Ui
@@ -292,9 +296,9 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		Err(Unreachable) => skeleton("cannot open ${acc.dir}/db.sqlite")
 	}
 	ev = Db.find_idx(loaded.s.days, loaded.e.day)
-	# the fit runs the engine; the skeleton cannot afford it
 	# the curve on screen: what the load chose, the ride power curve when
-	# the database could not answer, and still unchosen while booting
+	# the database could not answer, and still unchosen while booting; then
+	# the fit, which runs the engine, so the skeleton skips it
 	cf = if (boot) curve_family else if (loaded.cf == "") "Ride" else loaded.cf
 	ft = if (boot) ({ fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: { value: 0.0, kind: "none", date: "none" } }) else Db.load_fit!(acc.io.commands(), curve_days, cf)
 	fit = ft.fit
@@ -362,7 +366,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 	}
 	initial_layout = DisplayScale.layout(DisplayScale.default_percent, { w: I32.to_f32(Theme.win_w), h: I32.to_f32(Theme.win_h) })
 	Ok({
-		title: mk!("Stride", 30)?,
+		title: mk!(Chrome.wordmark, 30)?,
 		subs: [
 			{ p: mk!("last 30 days, as of ${as_of}", 15)?, r: 30.U64, chip: mkm!("30d", 12)? },
 			{ p: mk!("last 60 days, as of ${as_of}", 15)?, r: 60.U64, chip: mkm!("60d", 12)? },
@@ -499,15 +503,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		heat_hint: mk!("hover a cell to read the day      TAB  lifts      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 		plan_title: mk!("the week and the days ahead", 15)?,
 		plan_hint: mk!("week / log / year  modes      wheel or up/down  scroll      TAB  lifts      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-		nav: [
-			{ p: mk!("form", 13)?, v: 0.U8 },
-			{ p: mk!("power", 13)?, v: 1.U8 },
-			{ p: mk!("trace", 13)?, v: 2.U8 },
-			{ p: mk!("plan", 13)?, v: 4.U8 },
-			{ p: mk!("lifts", 13)?, v: 9.U8 },
-			{ p: mk!("weeks", 13)?, v: 6.U8 },
-			{ p: mk!("career", 13)?, v: 8.U8 },
-		],
+		nav: List.map_try!(Chrome.nav_views, |v| Ok({ p: mk!(Chrome.nav_name(v), 13)?, v }))?,
 		status: mk!(if (boot) "" else loaded.s.err, 16)?,
 		has_error: !boot and loaded.s.err != "",
 		booting: boot,
@@ -516,6 +512,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		reloading: Bool.False,
 		logo: load_logo!(acc, boot),
 		font: mono,
+		prose: head,
 		hint: mk!("1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   V record   G glow   ESC quit", 13)?,
 		empty: mk!("no data yet - sync and analyze first, then reopen", 16)?,
 		range: 90.U64,
@@ -1599,10 +1596,7 @@ focus_task! = |acc, f|
 		}
 	}
 
-# Reload work is Cmd + Sqlite + text preparation — all of it task-legal and
-# none of it update!-legal (the platform panics on Cmd there, by design).
-# update! only ever spawns; results come back through these messages.
-# what a WINDOW change actually depends on: the curve over that window, the
+# What a WINDOW change actually depends on: the curve over that window, the
 # curve over the window before it, and the CP fit across it - three reads.
 # Everything else the model holds (the series, the heat, the career, the
 # plan, the trace) is the same data whatever the window says, so a chip
@@ -1651,6 +1645,9 @@ load_curve_window! = |acc, font, curve_days, curve_family| {
 	})
 }
 
+# Reload work is Cmd, Sqlite and text preparation: all of it legal in a
+# task and none of it in update!, where the platform panics on Cmd.
+# update! only ever spawns; results come back through these messages.
 Msg : [
 	# a window change's answer, carrying the window it answers so a reply
 	# that arrives after the athlete has already clicked another chip is
@@ -1684,19 +1681,6 @@ Msg : [
 	FocusCleared,
 	DayDetail({ day : Str, lines : List(Db.DayLine) }),
 ]
-
-# ONE nav density: every pill carries its 12x12 vector mark beside the
-# label. A tier that switches information off by window width goes dark for
-# whole classes of windows (at the 150% scale default, common laptop
-# displays report less logical width than such a threshold asks), so each
-# pill holds both. The constants are shared by the render and both
-# hit-tests, and at the minimum window width the eight pills clear the title
-# row's scale chip.
-nav_pitch : F32
-nav_pitch = 76.0
-
-nav_width : F32
-nav_width = 70.0
 
 # One entry per pickable session, loaded eagerly: switching and ghost
 # summons read this list instead of a task round-trip per keypress.
@@ -1733,10 +1717,6 @@ view_basename : U8 -> Str
 view_basename = |v|
 	if (v == 0) "form-board" else if (v == 1) "power" else if (v == 2) "session-trace" else if (v == 3) "data-table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else if (v == 8) "career" else "lifts"
 
-# what the bus accepts, as data. caps_views derives from view_basename
-# so the published list can never drift from the dispatch; caps_fields must
-# move together with refusals_for - the accepts column states the same rules
-# that function enforces, and both live in this file so an edit sees both.
 # The first load asks for no family, so load_model! opens the curve on the
 # athlete's most-trained family (Db.default_curve) rather than a fixed sport.
 boot_curve_family : Str
@@ -1744,6 +1724,10 @@ boot_curve_family = ""
 
 expect boot_curve_family == ""
 
+# what the bus accepts, as data. caps_views derives from view_basename
+# so the published list can never drift from the dispatch; caps_fields must
+# move together with refusals_for - the accepts column states the same rules
+# that function enforces, and both live in this file so an edit sees both.
 caps_views : List({ id : I64, name : Str })
 caps_views = List.map([0.U8, 1, 2, 3, 4, 5, 6, 7, 8, 9], |v| { id: U8.to_i64(v), name: view_basename(v) })
 
@@ -1779,10 +1763,9 @@ update! = |model0, program_input, io| {
 				RecCmd(_) => acc
 				MarkDone(mid) => if (mid == acc.quit_mark_pending) ({ ..acc, quit_mark_pending: -1 }) else acc
 				# also the boot task's failure exit: the splash must never spin
-				# forever, so a dead load hands over to the skeleton's own screens
-				# clear reloading too: a failed reload must not leave the power
-				# view's "loading…" note burned on forever — the flag is reset on
-				# BOTH terminal outcomes, not just success
+				# forever, so a dead load hands over to the skeleton's own screens.
+				# A failed reload lowers the reloading flag as a landed one does, so
+				# the power view's loading note never stays on screen after it.
 				ReloadFailed => { ..acc, booting: Bool.False, reloading: Bool.False }
 				# only the answer to the CURRENT window and family lands: a click
 				# moves curve_days or curve_family first, so an older reply no
@@ -1805,11 +1788,11 @@ update! = |model0, program_input, io| {
 				Polled(note) => { ..acc, bus_note: note }
 				FocusWritten => acc
 				FocusCleared => { ..acc, focus_cleared: Bool.True }
-				# a dropped write must not leave the coach stale: resetting
-				# last_focus makes the next throttle tick try again
 				# only the answer for the day still open lands; a result for a day
 				# the user closed or switched away from is dropped
 				DayDetail(dd) => if (dd.day == acc.detail_day) ({ ..acc, detail: dd.lines }) else acc
+				# a dropped write must not leave the coach stale: resetting
+				# last_focus makes the next throttle tick try again
 				FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "", curve_family: "", curve_short: -1 } }
 				# a session-naming directive replaces the picker with the one it
 				# was read against, so the refusal below and the selection it
@@ -1959,9 +1942,6 @@ update! = |model0, program_input, io| {
 		layout = DisplayScale.layout(ui_percent, pixels)
 		win = { w: layout.w, h: layout.h }
 		m0 = DisplayScale.point(d.mouse.position(), layout.scale)
-		# the range chips are buttons: a left click inside one selects it. Chip
-		# geometry mirrors Board's row exactly - right-anchored at
-		# win.w - 420 + i*54, y 64, each 46x22 - and must move with it.
 		# nav clicks mirror the render geometry exactly (right-anchored pills)
 		nav_click =
 			if Mouse.button_pressed(d.mouse, Left) and m0.y >= 30.0 and m0.y <= 54.0 {
@@ -1970,8 +1950,8 @@ update! = |model0, program_input, io| {
 					List.map_with_index(model.nav, |nv2, vi| { nv2, vi }),
 					-1,
 					|acc, x| {
-						nx2 = win.w - 36.0 - U64.to_f32(nav_n - x.vi) * nav_pitch
-						if (m0.x >= nx2 and m0.x <= nx2 + nav_width) (U8.to_i64(x.nv2.v)) else acc
+						nx2 = Chrome.nav_x(win.w, nav_n, x.vi)
+						if (m0.x >= nx2 and m0.x <= nx2 + Chrome.nav_width) (U8.to_i64(x.nv2.v)) else acc
 					},
 				)
 			} else -1
@@ -1999,7 +1979,10 @@ update! = |model0, program_input, io| {
 				Err(_) => view_input
 			}
 		) else view_input
-		# chips hit-test against the frame-true view render will draw
+		# the range chips are buttons: a left click inside one selects it,
+		# hit-tested against the frame-true view render will draw. Chip
+		# geometry mirrors Board's row exactly - right-anchored at
+		# win.w - 420 + i*54, y 64, each 46x22 - and must move with it.
 		clicked_chip =
 			if (view == 0 or view == 1) and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0 {
 				chip0 = win.w - 420.0
@@ -2077,10 +2060,9 @@ update! = |model0, program_input, io| {
 				}
 			}
 		}
-		# on the curve view, 1/2/3 re-window the curve AND its CP fit — a full
-		# reload through the same path as R, keeping what the user was looking at
-		# on the curve view "range" MEANS the curve window — a directive saying
-		# (view 1, range 30) re-windows the ladder and fit, same as the keys
+		# on the curve view "range" MEANS the curve window: a directive saying
+		# (view 1, range 30), a range chip and 1/2/3 all re-window the ladder
+		# and its CP fit, keeping what the user was looking at
 		want_days =
 			if (view == 1 and directive.has_d and (directive.range == 30 or directive.range == 60 or directive.range == 90)) directive.range
 			else if (view == 1 and clicked_chip > 0) (
@@ -2214,23 +2196,23 @@ update! = |model0, program_input, io| {
 			if view2 == 0 and layout.scale == model.ui_scale and cursor2 == model.cursor and cursor2 >= 0 and (m.x != model.mouse_x or m.y != model.mouse_y) and m.y > Theme.pad_t + Board.band_h and m.y < win.h - Theme.pad_b and m.x >= Theme.pad_l and m.x <= win.w - Theme.pad_r {
 				-1
 			} else cursor2
-		# reloads and trace switches SPAWN — Cmd panics in update!, and the
-		# task lane is where Sqlite and text preparation park legally
-		# a directive naming a session day resolves to its picker slot
-		# an id names one session exactly and wins over a day; a day names
-		# whichever session of that day sorts first, which is the newest
 		# TAB on the power view with a rung hovered opens the session that set
-		# that rung's window best (TAB already moves the power view to the trace)
+		# that rung's window best (TAB already moves the power view to the trace).
+		# A directive's session wins over TAB's: an id names one session exactly
+		# and wins over a day, and a day names whichever session of that day
+		# sorts first, which is the newest. Reloads and trace switches SPAWN -
+		# Cmd panics in update!, and the task lane is where Sqlite and text
+		# preparation park legally
 		tab_source = if (model.view == 1 and d.key_pressed(KeyTab)) (Curve.hovered_source(model)) else -1
 		want_sel2 =
 			if (directive.has_d and directive.trace_id >= 0) (sel_for_id(model.trace_ids, directive.trace_id, want_sel))
 			else if (directive.has_d and directive.trace_day != "") (sel_for_day(model.trace_ids, directive.trace_day, want_sel))
 			else if (tab_source >= 0) (sel_for_id(model.trace_ids, tab_source, want_sel))
 			else want_sel
-		# NoSwitch joins List.get's OutOfBounds in one inferred error union
 		# a switch is the selection moving, or a refetch the picker re-read
 		# asked for: the shown session is gone and the index it fell to
-		# names a session whose samples are not on screen
+		# names a session whose samples are not on screen. NoSwitch joins
+		# List.get's OutOfBounds in one inferred error union
 		moving = want_sel2 != model.trace_sel or model.trace_refetch
 		switched = if (moving) (List.get(model.trace_cache, want_sel2)) else Err(NoSwitch)
 		# a switch that misses the cache fetches off the main loop and blanks the
@@ -2418,14 +2400,14 @@ update! = |model0, program_input, io| {
 				List.map_with_index(model.nav, |nv3, vi3| { nv3, vi3 }),
 				Bool.False,
 				|acc, x| {
-					nx3 = win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.vi3) * nav_pitch
-					if (m.x >= nx3 and m.x <= nx3 + nav_width) Bool.True else acc
+					nx3 = Chrome.nav_x(win.w, List.len(model.nav), x.vi3)
+					if (m.x >= nx3 and m.x <= nx3 + Chrome.nav_width) Bool.True else acc
 				},
 			)
 		)
 		Mouse.set_cursor!(if (over_chip or over_row or over_nav) PointingHand else Default)
-		# F cycles the career view's sport; harmless elsewhere
-		# ...and a click on a kind chip shows that kind's arc of the same family
+		# a click on a kind chip shows that kind's arc of the same family, and
+		# F cycles the career view's arc; both act on the career view only
 		clicked_kind = if (view == 8 and Mouse.button_pressed(d.mouse, Left) and m.y >= Career.kind_chip_top and m.y <= Career.kind_chip_bottom) (Career.kind_chip_at(Career.kind_chips(model), m.x)) else Err(None)
 		spine_idx =
 			match clicked_kind {
@@ -2626,21 +2608,14 @@ nav_icon! = |frame, v, x, y, c| {
 	} else if v == 8 {
 		# career: a flag on its pole
 		#
-		# What separates this mark is COMPOSITION, not fill: half the set is
-		# already solid, so being filled would tell it apart from nothing. No
-		# sibling pairs one off-centre block with a stem — the other solids
-		# are full-width strips (table), a page under a header bar (plan), a
-		# four-cell grid (heat) and baseline-anchored columns (zones), and
-		# ramp's fill is a small dot riding a diagonal. That dot is why
-		# nothing here puts one high on the right: at this size a dot resolves
-		# before any path does, and two marks that share one read alike
-		# however differently they bend.
+		# The mark is told apart by composition, since half the set is already
+		# solid: no other mark pairs one off-centre block with a stem. ramp's
+		# fill is a small dot riding a diagonal, and at this size a dot resolves
+		# before any path does, so this mark puts nothing high on the right.
 		#
 		# Every view tests for its OWN number and the chain ends here with no
 		# catch-all. The caller paints and labels each chip regardless, so a
-		# view with no arm shows a labelled chip with an empty mark slot: the
-		# gap is visible, and it belongs to the view that lacks a mark instead
-		# of borrowing whichever neighbour a catch-all happened to reach.
+		# view with no arm shows a labelled chip with an empty mark slot.
 		frame.line!({ start: { x: x + 2.5, y: y + 12.0 }, end: { x: x + 2.5, y: y + 1.0 }, stroke: Draw.stroke(c, 1.5) })
 		frame.rectangle!({ x: x + 3.5, y: y + 1.5, width: 6.5, height: 5.0, style: Draw.filled(c) })
 	} else if v == 9 {
@@ -2659,63 +2634,35 @@ scene! = |model, frame| {
 	# then bottom-edge falloff - two gradient strips standing in for a vignette
 	frame.rectangle_gradient_v!({ x: 16.0, y: 16.0, width: model.win.w - 32.0, height: (model.win.h - 32.0) * 0.4, color_top: Color.with_alpha(Color.from_hex_rgb(0x232332), 40), color_bottom: Color.with_alpha(Theme.panel, 0) })
 	frame.rectangle_gradient_v!({ x: 16.0, y: model.win.h - 96.0, width: model.win.w - 32.0, height: 80.0, color_top: Color.with_alpha(Theme.bg, 0), color_bottom: Color.with_alpha(Theme.bg, 90) })
-	model.title.draw!(frame, { pos: { x: 34.0, y: 30.0 }, color: Color.white, align: (Top, Left) })
-	# the scale chip shows the PERCENT only once the athlete has moved it off the
-	# default: a standing "150%" reads as a value something set wrong, when it is
-	# just the shipped default. At rest it is a plain affordance; a changed scale
-	# earns the number, because then it is the athlete's own choice and feedback.
-	scale_label = if (model.ui_percent == DisplayScale.default_percent) "Ctrl +/-  resize" else "${Db.fmt_i(model.ui_scale * 100.0)}%  Ctrl +/-"
-	Text.from(scale_label, model.font).size(11).draw!(frame, { pos: { x: 152.0, y: 40.0 }, color: Theme.ink_muted, align: (Top, Left) })
 	# the recording badge lives below the pills on every view: a red dot
 	# while filming, a quiet confirmation once the file is written
-	_ = match model.rec_status {
-		Active(af) => {
+	_ = match Chrome.rec_text(model) {
+		Ok(r) => if r.dot {
 			frame.circle!({ center: { x: model.win.w - 148.0, y: 64.0 }, radius: 4.0, style: Draw.filled(Theme.alarm_c) })
-			Text.from("rec ${U64.to_str(af.frames)}f   V stops", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 138.0, y: 58.0 }, color: Theme.alarm_c, align: (Top, Left) })
 		}
-		Finished(ff) => {
-			Text.from("recording saved to captures/ (${U64.to_str(ff.bytes / 1024)}kb)", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 40.0, y: 58.0 }, color: Theme.tsb_c, align: (Top, Right) })
-		}
-		Failed(ff2) => {
-			why = match ff2.reason {
-				PathInvalid | PathEscapesOutputDir => "bad path"
-				AlreadyRecording => "already recording"
-				BudgetExceeded | OutOfMemory => "out of memory - try again shorter"
-				WriteFailed => "could not write captures/"
-				EncodeFailed | UnsupportedFormat => "encoder refused webm"
-				_ => "unknown"
-			}
-			Text.from("recording failed: ${why}   V retries", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 40.0, y: 58.0 }, color: Theme.alarm_c, align: (Top, Right) })
-		}
-		Idle => {}
+		Err(_) => {}
 	}
 	# the nav: every view, visible and clickable, active one filled - TAB
 	# stays as the keyboard accelerator
 	List.for_each!(
 		List.map_with_index(model.nav, |nv, ni| { nv, ni }),
 		|x| {
-			nx = model.win.w - 36.0 - U64.to_f32(List.len(model.nav) - x.ni) * nav_pitch
+			pill = Chrome.nav_pill(model.win.w, List.len(model.nav), x.ni)
 			on2 = x.nv.v == Weeks.group(Days.group(model.view))
-			hov2 = model.mouse_x >= nx and model.mouse_x <= nx + nav_width and model.mouse_y >= 30.0 and model.mouse_y <= 54.0
+			hov2 = model.mouse_x >= pill.x and model.mouse_x <= pill.x + pill.w and model.mouse_y >= pill.y and model.mouse_y <= pill.y + pill.h
 			style2 = if (on2) (Draw.filled(Color.with_alpha(Theme.ctl_c, 60))) else if (hov2) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
-			frame.rounded_rectangle!({ x: nx, y: 30.0, width: nav_width, height: 24.0, radius: 7.0, segments: 6, style: style2 })
-			ic = if (on2) Color.white else Theme.ink_muted
-			nav_icon!(frame, x.nv.v, nx + 7.0, 36.0, ic)
-			# the label centers in the span RIGHT of the mark, not the pill - a
-			# pill-centered label would sit under the icon
-			x.nv.p.draw!(frame, { pos: { x: nx + 44.0, y: 35.0 }, color: ic, align: (Top, Center) })
+			frame.rounded_rectangle!({ x: pill.x, y: pill.y, width: pill.w, height: pill.h, radius: 7.0, segments: 6, style: style2 })
+			nav_icon!(frame, x.nv.v, pill.x + 7.0, 36.0, if (on2) Color.white else Theme.ink_muted)
 		},
 	)
-	# Legend belongs to the FORM BOARD only: it draws in the same row the
-	# other views put their titles in, and overprinted them.
+	# the legend belongs to the form board only: it sits on the row the
+	# other views put their titles in. A 14x3 rounded swatch before each name.
 	if model.view == 0 {
-		# the artifact's legend: a 14x3 rounded swatch before each label
-		List.for_each!([{ x: 36.0, c: Theme.ctl_c }, { x: 128.0, c: Theme.atl_c }, { x: 226.0, c: Theme.tsb_c }], |sw|
-			frame.rounded_rectangle!({ x: sw.x, y: 77.0, width: 14.0, height: 3.0, radius: 1.5, segments: 4, style: Draw.filled(sw.c) }))
-		model.leg_fit.draw!(frame, { pos: { x: 56.0, y: 70.0 }, color: Theme.ctl_c, align: (Top, Left) })
-		model.leg_fat.draw!(frame, { pos: { x: 148.0, y: 70.0 }, color: Theme.atl_c, align: (Top, Left) })
-		model.leg_form.draw!(frame, { pos: { x: 246.0, y: 70.0 }, color: Theme.tsb_c, align: (Top, Left) })
+		List.for_each!(Chrome.legend, |sw| frame.rounded_rectangle!({ x: sw.x, y: 77.0, width: 14.0, height: 3.0, radius: 1.5, segments: 4, style: Draw.filled(sw.c) }))
 	}
+	# the chrome's text, over the shapes above, from the same definitions
+	# every view registers as fixed text
+	Scene.draw!(frame, model, Chrome.placed(model, Scene.measure_of(model)))
 	drawn =
 		if model.view == 9 {
 			Strength.draw!(model, frame)
@@ -2808,10 +2755,10 @@ splash! = |model, frame| {
 	# ending at an invisible edge
 	_ = match model.logo {
 		Logo(lt) => {
-			# the authored mark itself - hand-drawn approximations kept
-			# drifting from the artwork, so the artwork renders. It fades
-			# in over the first moments and breathes gently while the
-			# load works; the glow shader has nothing to add here.
+			# the authored mark itself, so the splash shows the artwork rather
+			# than a drawing of it. It fades in over the first moments and
+			# breathes gently while the load works; the glow shader has nothing
+			# to add here.
 			tf = U64.to_f32(model.tick)
 			ar = if (tf > 42.0) (255.0) else tf * 6.0
 			a8 = match F32.to_u8_try(ar) {

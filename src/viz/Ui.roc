@@ -179,7 +179,10 @@ Ui :: [].{
 		# the brand mark as the authored PNG, loaded for the splash only, so the
 		# splash shows the artwork itself rather than a drawing of it
 		logo : [NoLogo, Logo(Texture.Texture)],
+		# the data face (JetBrains Mono) every fresh view text draws in, and the
+		# prose face (Quicksand) the prepared titles, legends and hints use
 		font : Text.Font,
+		prose : Text.Font,
 		hint : Text.Prepared,
 		empty : Text.Prepared,
 		range : U64,
