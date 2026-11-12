@@ -11,16 +11,24 @@ Ramp :: [].{
 	# The weeks tab's load mode: twelve Monday weeks of load as gradient
 	# bars, each wearing a chip with the CTL it gained: value as text, verdict
 	# as color, so the plot keeps one y-scale. Two scales on one plot cannot
-	# both be read honestly.
+	# both be read honestly. The current week, until the series covers all
+	# seven of its days, is judged by neither: its bar and chip are muted and
+	# the chip says "so far", since a partial week's load is not a low one.
 	pad : F32
 	pad = 36.0
 	danger : F32
 	danger = 6.0
 
 	# the verdict a week's ramp earns, and the color that says it. Zero is
-	# grey with the sheds: a flat week is not a build.
-	verdict : F32 -> Color.Rgba
-	verdict = |rv| if (rv > danger) (Theme.alarm_c) else if (rv > 0.0) (Theme.tsb_c) else Theme.ink_faint
+	# grey with the sheds: a flat week is not a build. A week still running
+	# earns none and reads muted.
+	verdict : F32, I64 -> Color.Rgba
+	verdict = |rv, days| if (Weeks.partial(days)) (Theme.ink_muted) else if (rv > danger) (Theme.alarm_c) else if (rv > 0.0) (Theme.tsb_c) else Theme.ink_faint
+
+	# the bar's opacity: the focused week brightest, a week still running
+	# muted, every finished week the same
+	bar_alpha : Bool, I64 -> U8
+	bar_alpha = |focused, days| if (focused) (250.U8) else if (Weeks.partial(days)) 110 else 220
 
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
@@ -40,15 +48,15 @@ Ramp :: [].{
 			# language the form board established
 			last = match List.last(model.ramp_weeks) {
 				Ok(l) => l
-				Err(_) => { wk: "", tss: 0, ctl10: 0, ramp10: 0 }
+				Err(_) => { wk: "", days: 7, tss: 0, ctl10: 0, ramp10: 0 }
 			}
-			lc = verdict(I64.to_f32(last.ramp10) / 10.0)
+			lc = verdict(I64.to_f32(last.ramp10) / 10.0, last.days)
 			card_x = win_w - pad - 260.0
 			frame.rounded_rectangle!({ x: card_x, y: 60.0, width: 260.0, height: 64.0, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
 			Text.from(Fmt.tenths(last.ctl10), model.font).size(28).draw!(frame, { pos: { x: card_x + 16.0, y: 68.0 }, color: Theme.ctl_c, align: (Top, Left) })
 			Text.from("ctl now", model.font).size(11).draw!(frame, { pos: { x: card_x + 16.0, y: 102.0 }, color: ink_faint, align: (Top, Left) })
 			Text.from(Fmt.tenths_signed(last.ramp10), model.font).size(28).draw!(frame, { pos: { x: win_w - pad - 16.0, y: 68.0 }, color: lc, align: (Top, Right) })
-			Text.from("ctl per week", model.font).size(11).draw!(frame, { pos: { x: win_w - pad - 16.0, y: 102.0 }, color: ink_faint, align: (Top, Right) })
+			Text.from(if (Weeks.partial(last.days)) "ctl per week so far" else "ctl per week", model.font).size(11).draw!(frame, { pos: { x: win_w - pad - 16.0, y: 102.0 }, color: ink_faint, align: (Top, Right) })
 			bars_top = 168.0
 			bars_bot = win_h - 96.0
 			bars_h = bars_bot - bars_top
@@ -64,9 +72,9 @@ Ramp :: [].{
 					cx = pad + (U64.to_f32(x.i) + 0.5) * slot
 					x0 = cx - bw / 2.0
 					bh = I64.to_f32(x.w.tss) / I64.to_f32(peak) * bars_h
-					vc = verdict(I64.to_f32(x.w.ramp10) / 10.0)
+					vc = verdict(I64.to_f32(x.w.ramp10) / 10.0, x.w.days)
 					hovered = x.w.wk == focus
-					body = if (hovered) (250.U8) else 220
+					body = bar_alpha(hovered, x.w.days)
 					top_y = bars_bot - bh
 					if bh > 3.0 {
 						frame.rounded_rectangle!({ x: x0, y: top_y, width: bw, height: bh, radius: 7.0, segments: 5, style: Draw.filled(Color.with_alpha(Theme.ctl_c, body)) })
@@ -79,6 +87,9 @@ Ramp :: [].{
 					chip_y = F32.max(bars_top - 30.0, top_y - 30.0)
 					frame.rounded_rectangle!({ x: cx - 27.0, y: chip_y, width: 54.0, height: 20.0, radius: 6.0, segments: 5, style: Draw.filled(Color.with_alpha(vc, if (hovered) (70.U8) else 42)) })
 					Text.from(Fmt.tenths_signed(x.w.ramp10), model.font).size(11).draw!(frame, { pos: { x: cx, y: chip_y + 4.0 }, color: vc, align: (Top, Center) })
+					if Weeks.partial(x.w.days) {
+						Text.from("so far", model.font).size(10).draw!(frame, { pos: { x: cx, y: chip_y - 14.0 }, color: ink_faint, align: (Top, Center) })
+					}
 					if x.i % 2 == 0 {
 						Text.from(Str.from_utf8_lossy(List.drop_first(Str.to_utf8(x.w.wk), 5)), model.font).size(10).draw!(frame, { pos: { x: cx, y: bars_bot + 10.0 }, color: ink_faint, align: (Top, Center) })
 					}
@@ -89,3 +100,9 @@ Ramp :: [].{
 		Ok({})
 	}
 }
+
+# a finished week's ramp is judged; a week still running is muted whatever
+# its ramp, and so is its bar
+expect Ramp.verdict(7.0, 7) == Theme.alarm_c and Ramp.verdict(1.0, 7) == Theme.tsb_c and Ramp.verdict(0.0, 7) == Theme.ink_faint
+expect Ramp.verdict(7.0, 3) == Theme.ink_muted and Ramp.verdict(-1.9, 6) == Theme.ink_muted
+expect Ramp.bar_alpha(False, 3) < Ramp.bar_alpha(False, 7) and Ramp.bar_alpha(True, 3) == Ramp.bar_alpha(True, 7)

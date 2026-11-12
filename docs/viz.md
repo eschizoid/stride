@@ -150,7 +150,10 @@ encoded as the chip's COLOR on the bars' own axis - teal builds, red past
 +6/wk, grey sheds - rather than as a second y-axis, because two scales
 sharing a plot is a lie no legend repairs. The card carries where fitness
 stands and how fast it is moving; a week with no load keeps a base stub, so
-the current partial week never vanishes from the row. The weeks come from
+the current partial week never vanishes from the row. That week, until the
+series covers all seven of its days, is judged by neither: its bar and chip
+are muted, the chip says "so far", and the card reads "ctl per week so far",
+since a partial week's load is not a low one. The weeks come from
 the `weekly_ramp` view - the one definition of weekly ramp. A directive with view
 7 opens it.
 

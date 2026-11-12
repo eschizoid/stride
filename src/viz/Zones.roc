@@ -20,15 +20,11 @@ Zones :: [].{
 	easy_floor : I64
 	easy_floor = 80
 
-	# a week the series covers fewer than all seven days of is still running
-	partial : I64 -> Bool
-	partial = |days| days < 7
-
 	# absence is not a failed verdict, and neither is a week still running:
 	# both read muted, never in the color that means "you broke the rule"
 	verdict : I64, I64, I64 -> Color.Rgba
 	verdict = |easy, itot, days|
-		if (itot <= 0 or partial(days)) (Theme.ink_muted)
+		if (itot <= 0 or Weeks.partial(days)) (Theme.ink_muted)
 		else if (easy * 100 // itot >= easy_floor) (Theme.tsb_c)
 		else Theme.alarm_c
 
@@ -66,7 +62,7 @@ Zones :: [].{
 			frame.rounded_rectangle!({ x: card_x, y: 60.0, width: 260.0, height: 64.0, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
 			pct_txt = if (li > 0) ("${I64.to_str(last.easy * 100 // li)}%") else "-"
 			Text.from(pct_txt, model.font).size(28).draw!(frame, { pos: { x: card_x + 16.0, y: 68.0 }, color: lc, align: (Top, Left) })
-			wk_lbl = if (last.wk == "") ("no training yet") else if (partial(last.days)) "easy so far, wk of ${Str.from_utf8_lossy(List.drop_first(Str.to_utf8(last.wk), 5))}" else "easy, wk of ${Str.from_utf8_lossy(List.drop_first(Str.to_utf8(last.wk), 5))}"
+			wk_lbl = if (last.wk == "") ("no training yet") else if (Weeks.partial(last.days)) "easy so far, wk of ${Str.from_utf8_lossy(List.drop_first(Str.to_utf8(last.wk), 5))}" else "easy, wk of ${Str.from_utf8_lossy(List.drop_first(Str.to_utf8(last.wk), 5))}"
 			Text.from(wk_lbl, model.font).size(11).draw!(frame, { pos: { x: card_x + 16.0, y: 102.0 }, color: ink_faint, align: (Top, Left) })
 			Text.from(hours(last.z1 + last.z2 + last.z3 + last.z4 + last.z5), model.font).size(28).draw!(frame, { pos: { x: win_w - pad - 16.0, y: 68.0 }, color: Theme.ctl_c, align: (Top, Right) })
 			Text.from("in zones", model.font).size(11).draw!(frame, { pos: { x: win_w - pad - 16.0, y: 102.0 }, color: ink_faint, align: (Top, Right) })
@@ -125,7 +121,7 @@ Zones :: [].{
 								Err(_) => ink_faint
 							}
 							if seg > 1.5 {
-								frame.rectangle!({ x: x0, y: bars_bot - yacc - seg, width: bw, height: seg - 1.0, style: Draw.filled(Color.with_alpha(zc, if (hovered) (255.U8) else if (partial(x.w.days)) 120 else 235)) })
+								frame.rectangle!({ x: x0, y: bars_bot - yacc - seg, width: bw, height: seg - 1.0, style: Draw.filled(Color.with_alpha(zc, if (hovered) (255.U8) else if (Weeks.partial(x.w.days)) 120 else 235)) })
 							}
 							Ok(yacc + seg)
 						},
@@ -143,7 +139,7 @@ Zones :: [].{
 						vc = verdict(x.w.easy, itot, x.w.days)
 						frame.rounded_rectangle!({ x: cx - 27.0, y: cap_y, width: 54.0, height: 20.0, radius: 6.0, segments: 5, style: Draw.filled(Color.with_alpha(vc, if (hovered) (70.U8) else 42)) })
 						Text.from("${I64.to_str(x.w.easy * 100 // itot)}%", model.font).size(11).draw!(frame, { pos: { x: cx, y: cap_y + 4.0 }, color: vc, align: (Top, Center) })
-						if partial(x.w.days) {
+						if Weeks.partial(x.w.days) {
 							Text.from("so far", model.font).size(10).draw!(frame, { pos: { x: cx, y: cap_y - 14.0 }, color: ink_faint, align: (Top, Center) })
 						}
 					}
@@ -166,8 +162,6 @@ expect Zones.verdict(79, 100, 7) == Theme.alarm_c
 expect Zones.verdict(39, 100, 3) == Theme.ink_muted
 expect Zones.verdict(95, 100, 6) == Theme.ink_muted
 expect Zones.verdict(0, 0, 7) == Theme.ink_muted
-expect Zones.partial(6)
-expect !Zones.partial(7)
 
 # every sport on the global zones says so; per-sport bounds are named
 expect Zones.zones_note([]) == "one set of HR zones for every sport"

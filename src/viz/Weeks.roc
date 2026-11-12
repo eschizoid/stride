@@ -86,6 +86,11 @@ Weeks :: [].{
 			if (i >= 0 and i < (U64.to_i64_try(n) ?? 0)) i else -1
 		}
 
+	# a week the series covers fewer than all seven days of is still running,
+	# and both modes draw it muted rather than judge it
+	partial : I64 -> Bool
+	partial = |days| days < 7
+
 	# the week a mode's bars are keyed by, for each slot
 	weeks_of : Ui.Model -> List(Str)
 	weeks_of = |model| if (model.view == 7) (List.map(model.ramp_weeks, |w| w.wk)) else List.map(model.zone_weeks, |w| w.wk)
@@ -164,6 +169,7 @@ Weeks :: [].{
 	}
 }
 
+expect Weeks.partial(6) and !Weeks.partial(7)
 expect Weeks.group(6) == 6 and Weeks.group(7) == 6 and Weeks.group(4) == 4
 expect Weeks.from_pill(6, 7) == 7 and Weeks.from_pill(6, 1) == 6 and Weeks.from_pill(8, 7) == 8
 expect Weeks.mode_at(40.0, 70.0) == 6 and Weeks.mode_at(100.0, 70.0) == 7
@@ -180,7 +186,7 @@ expect Weeks.pick("", "2026-11-02") == "2026-11-02" and Weeks.pick("2026-11-02",
 # only that mode's parts
 expect {
 	zw = [{ wk: "2026-11-02", days: 7, z1: 3600, z2: 18000, z3: 3600, z4: 0, z5: 0, easy: 21600, moderate: 3600, hard: 0 }]
-	rw = [{ wk: "2026-11-02", tss: 393, ctl10: 496, ramp10: 10 }]
+	rw = [{ wk: "2026-11-02", days: 7, tss: 393, ctl10: 496, ramp10: 10 }]
 	Weeks.week_line("2026-11-02", zw, rw) == "wk of 2026-11-02   7.0 h   easy 85%   393 load   ctl +1.0/wk"
 		and Weeks.week_line("2026-11-02", [], rw) == "wk of 2026-11-02   393 load   ctl +1.0/wk"
 }
