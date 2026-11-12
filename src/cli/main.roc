@@ -61,7 +61,7 @@ import ThresholdTest
 import Import
 
 version : Str
-version = "stride 0.20.0" # x-release-please-version
+version = "stride 0.21.0" # x-release-please-version
 
 help_text =
 	\\stride — a local-first, deterministic training analytics engine (built in Roc)
