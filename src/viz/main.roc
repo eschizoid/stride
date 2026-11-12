@@ -411,7 +411,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		units: loaded.un,
 		trace_sport: "",
 		curve_hint: mk!("1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-		trace_hint: mk!("[ / ]  older/newer session      X  sport filter      shift+[ / shift+]  ghost older/newer      C  clear ghost      wheel zoom  drag pan  0 reset      TAB  data table      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+		trace_hint: mk!("[ / ]  older/newer session      X  sport filter      shift+[ / shift+]  ghost older/newer      C  clear ghost      wheel zoom  drag pan  0 reset      TAB  plan      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 		table_hint: mk!("arrows  scroll days      TAB  lifts      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 		table_title: mk!("data table", 15)?,
 		table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?, mk!("session", 13)?],
@@ -1632,7 +1632,7 @@ Msg : [
 	# that arrives after the athlete has already clicked another chip is
 	# recognised as stale and dropped rather than painted over the newer one
 	CurveReloaded(CurveWindow),
-	CurveReloadFailed(I64),
+	CurveReloadFailed(I64, Str),
 	# a fetch reply names the generation it was spawned under, not the picker
 	# index it read: the model applies it only while that generation is still
 	# current, so a reply for a superseded switch lands nowhere
@@ -1760,14 +1760,15 @@ update! = |model0, program_input, io| {
 				# view's "loading…" note burned on forever — the flag is reset on
 				# BOTH terminal outcomes, not just success
 				ReloadFailed => { ..acc, booting: Bool.False, reloading: Bool.False }
-				# only the answer to the CURRENT window lands; curve_days moved on
-				# the click, so an older reply's days no longer match and it is
-				# dropped whole - including its reloading flag, which the newer
-				# request still owns
+				# only the answer to the CURRENT window and family lands: a click
+				# moves curve_days or curve_family first, so an older reply no
+				# longer matches and is dropped whole, its reloading flag
+				# included, which the newer request still owns; a failure is
+				# matched the same way
 				CurveReloaded(w) =>
 					if (w.days != acc.curve_days or w.fam != acc.curve_family) acc
 					else { ..acc, prs: w.prs, curve: w.c, curve_prev: w.cpv, curve_lbls: w.lbls, curve_title: w.title, fit_lbl: w.fit_lbl, cp_lbl: w.cp_lbl, fit_cp: w.fit_cp, reloading: Bool.False }
-				CurveReloadFailed(days) => if (days != acc.curve_days) acc else { ..acc, reloading: Bool.False }
+				CurveReloadFailed(days, fam) => if (days != acc.curve_days or fam != acc.curve_family) acc else { ..acc, reloading: Bool.False }
 				# a failed fetch lowers the loading flag only if it was the current
 				# fetch: a failure for a superseded switch must not clear the flag
 				# the newer fetch still owns

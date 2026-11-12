@@ -345,14 +345,18 @@ CREATE TABLE IF NOT EXISTS viz_focus (
   view INTEGER NOT NULL, range INTEGER NOT NULL,
   cursor_day TEXT, trace_day TEXT, ghost_day TEXT,
   trace_id INTEGER, ghost_id INTEGER,
-  detail_day TEXT, sport TEXT, family TEXT);
+  detail_day TEXT, sport TEXT, family TEXT,
+  curve_family TEXT, curve_short INTEGER);
 
 -- observe: one row, upserted when what the human sees changes (throttled
 -- ~2/s) and on a heartbeat every 30 seconds regardless. Beyond the session
 -- it names the day whose detail panel is open on the table, the trace's
--- sport filter and the family the career view is on, each NULL when none
+-- sport filter, the family the career view is on, the power view's curve
+-- (curve_family) and whether its short rungs are shown (curve_short, 1
+-- shown, 0 folded), each NULL when none
 SELECT view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id,
-       detail_day, sport, family, updated_at FROM viz_focus;
+       detail_day, sport, family, curve_family, curve_short, updated_at
+FROM viz_focus;
 ```
 
 The focus row has a liveness rule, and a reader must apply it: a row is
