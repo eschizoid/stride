@@ -519,6 +519,16 @@ run_sync! = || {
 	check!("after the first sync setup is complete", su!("", "[.data.complete, .data.next_step, ([.data.steps[].done] | all)] | @tsv") == "true\tdone\ttrue")?
 	check!("...on a synced database", Str.trim(sql!(sdb, "SELECT COUNT(*) > 0 FROM activities;")) == "1")?
 	_ = sh!("rm -rf '${shome}'")
+	# the secret through the environment, as the strava_app instruction tells a
+	# coach to pass it: setup stores it, so a later call without the variable
+	# still finds the app and can authorize
+	ehome = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+	eu! = |envs, args, filter| Str.trim(sh!("HOME='${ehome}' STRIDE_API_BASE='${base}' STRIDE_FORMAT=json ${envs} '${bin}' setup ${args} 2>/dev/null | jq -r '${filter}'"))
+	_ = eu!("", "client_id=e2e-id", ".data.next_step")
+	check!("a secret given through STRAVA_CLIENT_SECRET is stored by setup", eu!("STRAVA_CLIENT_SECRET=e2e-secret", "", "[.data.next_step, (.data.ran | index(\"client_secret\") != null)] | @tsv") == "authorize\ttrue")?
+	check!("...so a call without the variable still moves on from the app", eu!("", "", ".data.next_step") == "authorize")?
+	check!("...and the code exchange finds both credentials", eu!("", "'code=http://localhost/?state=&code=fakecode'", ".data.next_step") == "timezone")?
+	_ = sh!("rm -rf '${ehome}'")
 
 	_ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','stale-access'),('strava_refresh_token','stale-refresh'),('strava_expires_at','1');")
 
