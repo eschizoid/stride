@@ -8,11 +8,11 @@
 [![Release](https://img.shields.io/github/v/release/eschizoid/stride)](https://github.com/eschizoid/stride/releases)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-informational)](https://github.com/eschizoid/stride/actions/workflows/build.yml)
 [![Built with Roc](https://img.shields.io/badge/built%20with-Roc-7c4dff)](https://www.roc-lang.org)
-[![Claude Code](https://img.shields.io/badge/Claude%20Code-skill-D97757?logo=claude&logoColor=white)](#coaching-with-claude)
-[![Codex](https://img.shields.io/badge/Codex-skill%20%2B%20plugin-000000?logo=openai&logoColor=white)](#coaching-with-claude)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-skill-D97757?logo=claude&logoColor=white)](#coaching-with-an-ai-agent)
+[![Codex](https://img.shields.io/badge/Codex-skill%20%2B%20plugin-000000?logo=openai&logoColor=white)](#coaching-with-an-ai-agent)
 [![License](https://img.shields.io/github/license/eschizoid/stride)](LICENSE)
 
-stride is a training engine for your own Strava history, for every sport: riding, running, swimming, rowing, walking and strength. It pulls your activities into a SQLite file on your machine and computes the numbers a coach needs: training load, fitness and fatigue, time in zone, polarization, derived thresholds, power and pace curves, and how each planned session went against its target. Every number is deterministic and traceable to its inputs. An AI coach such as Claude reads those numbers as JSON, adds the judgment, and writes your plan back. It never does the math.
+stride is a training engine for your own Strava history, for every sport: riding, running, swimming, rowing, walking and strength. It pulls your activities into a SQLite file on your machine and computes the numbers a coach needs: training load, fitness and fatigue, time in zone, polarization, derived thresholds, power and pace curves, and how each planned session went against its target. Every number is deterministic and traceable to its inputs. An AI agent (Claude Code, Codex, or any agent that can run a command and read JSON) reads those numbers, adds the judgment, and writes your plan back. It never does the math.
 
 ## Install
 
@@ -36,9 +36,9 @@ Holding Strava API credentials needs an active Strava subscription ([Strava's an
 
 The first sync pulls your whole history but stays inside Strava's read limits: it stops after about 95 reads, says so, and continues when you run it again 15 minutes later. A long history takes a few days of that. After the first pull, a sync takes seconds.
 
-## Coaching with Claude
+## Coaching with an AI agent
 
-The repo ships a coaching skill at [`skills/stride/`](skills/stride/SKILL.md). In Claude Code, run `/plugin marketplace add eschizoid/stride` and install `stride`. Codex installs the same skill with `codex plugin add`, or by asking it to install the `skills/stride` directory from this repo. Then talk to it about your training. A coaching session runs:
+Any agent that can run a shell command can coach with it: every command answers `--json`, and `stride --json` describes every command, its arguments and its error codes. The repo ships the coaching instructions as a skill at [`skills/stride/`](skills/stride/SKILL.md), packaged as plugins for two agents: in Claude Code, run `/plugin marketplace add eschizoid/stride` and install `stride`; in Codex, use `codex plugin add`. Any other agent can read the same SKILL.md as its instructions. Then talk to it about your training. A coaching session runs:
 
 1. `stride sync` and `stride analyze` to bring the data up to date.
 2. `stride plan` for the planning bundle: form, zones, recent sessions, open sessions and adherence.
