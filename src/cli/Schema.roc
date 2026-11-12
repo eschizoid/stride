@@ -459,40 +459,37 @@ Schema :: [].{
 
 	monthly_threshold_drop =
 		\\DROP VIEW IF EXISTS monthly_threshold
+	# the families a pace threshold is a spine for: the pace sports, never a
+	# cycling family whose speed follows the terrain
+	pace_spine_sql : Str
+	pace_spine_sql = sql_list(Sports.pace_target_families)
+
 	monthly_threshold =
 		\\CREATE VIEW monthly_threshold AS
 		\\-- one row per family, month and threshold KIND: a family can hold both a
 		\\-- power and a pace threshold (a run with a power meter), and each kind's
-		\\-- month-close value is the one its own last scored session carried
-		\\SELECT fm.month AS month,
-		\\       fm.fam AS fam,
-		\\       'power' AS kind,
-		\\       CAST(m.ftp_used AS REAL) AS value
-		\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
-		\\JOIN activity_family_month fm ON fm.activity_id = a.id
-		\\WHERE COALESCE(m.ftp_used, 0) > 0
-		\\  AND a.id = (SELECT a2.id FROM activities a2
-		\\              JOIN activity_metrics m2 ON m2.activity_id = a2.id
-		\\              JOIN activity_family_month fm2 ON fm2.activity_id = a2.id
-		\\              WHERE COALESCE(m2.ftp_used, 0) > 0
-		\\                AND fm2.fam = fm.fam
-		\\                AND fm2.month = fm.month
-		\\              ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)
+		\\-- month-close value is the one its own last scored session carried. The
+		\\-- last session per family and month is found by one grouped pass over a
+		\\-- sortable key (start time, then zero-padded id) and joined back, so the
+		\\-- view reads each activity a bounded number of times however long the
+		\\-- history; a correlated subquery per row would rescan every activity.
+		\\WITH pw AS (
+		\\  SELECT fm.fam AS fam, fm.month AS month, a.start_local || ':' || printf('%020d', a.id) AS k, m.ftp_used AS v
+		\\  FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
+		\\  JOIN activity_family_month fm ON fm.activity_id = a.id
+		\\  WHERE COALESCE(m.ftp_used, 0) > 0),
+		\\pw_last AS (SELECT fam, month, MAX(k) AS k FROM pw GROUP BY fam, month),
+		\\pc AS (
+		\\  SELECT fm.fam AS fam, fm.month AS month, a.start_local || ':' || printf('%020d', a.id) AS k, m.threshold_pace_used AS v
+		\\  FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
+		\\  JOIN activity_family_month fm ON fm.activity_id = a.id
+		\\  WHERE COALESCE(m.threshold_pace_used, 0) > 0 AND fm.fam IN (${pace_spine_sql})),
+		\\pc_last AS (SELECT fam, month, MAX(k) AS k FROM pc GROUP BY fam, month)
+		\\SELECT pw.month AS month, pw.fam AS fam, 'power' AS kind, CAST(pw.v AS REAL) AS value
+		\\FROM pw JOIN pw_last l ON l.fam = pw.fam AND l.month = pw.month AND l.k = pw.k
 		\\UNION ALL
-		\\SELECT fm.month AS month,
-		\\       fm.fam AS fam,
-		\\       'pace' AS kind,
-		\\       CAST(m.threshold_pace_used AS REAL) AS value
-		\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
-		\\JOIN activity_family_month fm ON fm.activity_id = a.id
-		\\WHERE COALESCE(m.threshold_pace_used, 0) > 0
-		\\  AND a.id = (SELECT a2.id FROM activities a2
-		\\              JOIN activity_metrics m2 ON m2.activity_id = a2.id
-		\\              JOIN activity_family_month fm2 ON fm2.activity_id = a2.id
-		\\              WHERE COALESCE(m2.threshold_pace_used, 0) > 0
-		\\                AND fm2.fam = fm.fam
-		\\                AND fm2.month = fm.month
-		\\              ORDER BY a2.start_local DESC, a2.id DESC LIMIT 1)
+		\\SELECT pc.month AS month, pc.fam AS fam, 'pace' AS kind, CAST(pc.v AS REAL) AS value
+		\\FROM pc JOIN pc_last l ON l.fam = pc.fam AND l.month = pc.month AND l.k = pc.k
 		\\-- tonnage is not a threshold: this view is the monthly SPINE series, keyed
 		\\-- by kind, and the strength arm sums a month's lifted mass (kg) per family.
 		\\-- The view keeps its threshold-era name because the window's spine discovery

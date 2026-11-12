@@ -58,10 +58,10 @@ Plan :: [].{
 									{ name: ":at", value: String(Metrics.epoch_to_iso(Db.now_secs!({}))) },
 								],
 							})?
-							# a rating is a metric input — invalidate so analyze rescores
+							# a rating is a metric input: invalidating it makes analyze
+							# rescore the activity, and analyze then refreshes the stored
+							# target results that read the rating
 							Strava.invalidate_metrics!(path, activity_id)?
-							# an RPE target's stored result reads the rating
-							refresh_target_results_for!(path, activity_id)?
 							Output.out!({ rated: activity_id, rpe }, |p| "activity ${I64.to_str(p.rated)} rated ${Render.fmt0(p.rpe)}/10 — run `stride analyze` to rescore")
 						}
 				}
@@ -696,10 +696,10 @@ Plan :: [].{
 	note_fields = |tm| { target_kind: tm.target_kind, target_literal: tm.target_literal, target_pace_unit: tm.target_pace_unit, target_rpe: tm.target_rpe, detected_known: tm.detected_known, detected_reps: tm.detected_reps, detected_mean_dur_s: tm.detected_mean_dur_s, detected_mean_watts: tm.detected_mean_watts, exec_known: tm.exec_known, exec_reason: tm.exec_reason, hr_under_s: tm.hr_under_s, hr_in_s: tm.hr_in_s, hr_over_s: tm.hr_over_s, hr_mean: tm.hr_mean, zone_below_s: tm.zone_below_s, zone_in_s: tm.zone_in_s, zone_above_s: tm.zone_above_s, pace_basis: tm.pace_basis, pace_actual_s: tm.pace_actual_s, pace_reps: tm.pace_reps, rpe_actual: tm.rpe_actual }
 
 	# The session's target result as text, beside the row it describes, for readers
-	# that cannot run the scoring (the window). It is a snapshot taken when `complete`
-	# links the activity and again when `rate` changes the activity's rating; a
-	# session completed before its activity was analyzed keeps the result it had
-	# then until it is completed again.
+	# that cannot run the scoring (the window). `complete` writes it when it links
+	# the activity, and every `analyze` rewrites it for every done targeted session
+	# from the freshly computed metrics and segments, so a rescore (a rating, a
+	# stream arriving, a zone edit, a threshold test) never leaves it stale.
 	store_target_result! : Str, I64, Str => Try({}, _)
 	store_target_result! = |path, session_id, text| {
 		_ = Sql.execute!({
@@ -710,20 +710,25 @@ Plan :: [].{
 		Ok({})
 	}
 
-	# every done session the activity completes gets its stored result recomputed
-	refresh_target_results_for! : Str, I64 => Try({}, _)
-	refresh_target_results_for! = |path, activity_id| {
-		ids = Sql.query_many!({
+	# every done session that carries a target gets its stored result recomputed
+	# from the current metrics; analyze calls this after it rescores
+	refresh_all_target_results! : Str => Try({}, _)
+	refresh_all_target_results! = |path| {
+		rows = Sql.query_many!({
 			path: Path.utf8(path),
-			query: "SELECT id AS sid FROM planned_sessions WHERE completed_activity_id = :aid AND status = 'done'",
-			bindings: [{ name: ":aid", value: Integer(activity_id) }],
-			rows: |cols| |stmt| Sql.i64("sid")(cols)(stmt),
+			query: "SELECT id AS sid, CAST(completed_activity_id AS INTEGER) AS aid FROM planned_sessions WHERE status = 'done' AND COALESCE(completed_activity_id, 0) > 0 AND (COALESCE(target_literal, '') <> '' OR COALESCE(target_reps, 0) > 0)",
+			bindings: [],
+			rows: |cols| |stmt| {
+				sid = Sql.i64("sid")(cols)(stmt)?
+				aid = Sql.i64("aid")(cols)(stmt)?
+				Ok({ sid, aid })
+			},
 		})?
 		_ = List.map_try!(
-			ids,
-			|sid| {
-				tm = target_match!(path, sid, activity_id)?
-				store_target_result!(path, sid, Render.target_result_text(note_fields(tm)))
+			rows,
+			|r| {
+				tm = target_match!(path, r.sid, r.aid)?
+				store_target_result!(path, r.sid, Render.target_result_text(note_fields(tm)))
 			},
 		)?
 		Ok({})
@@ -1434,7 +1439,7 @@ Plan :: [].{
 	# target unpriced; an unreadable zone value is the same fault analyze reports.
 	projection_inputs! : Str => Try(Metrics.ProjectionInputs, _)
 	projection_inputs! = |path| {
-		ftp = Db.derive_sport_ftp!(path, "Ride")?
+		ftp = power_target_ftp!(path)?
 		zones =
 			(
 				match Analyze.load_zone_config!(path) {
@@ -1446,6 +1451,33 @@ Plan :: [].{
 		pace_thresholds = List.map_try!(Sports.pace_target_families, |family| (Db.derive_family_threshold_speed!(path, family)).map_ok(|speed| { family, speed }))?
 		Ok({ ftp, zones, pace_thresholds })
 	}
+	# A planned session names no sport, so a power target is priced at the FTP
+	# of the power family the athlete trains most: the family with the most
+	# sessions carrying a 20-minute power best in the last 90 days, the curve
+	# the window draws power targets on. When that family has no FTP yet, the
+	# next one with an FTP prices it; with none, power targets are unprojected.
+	power_target_ftp! : Str => Try(F64, _)
+	power_target_ftp! = |path| {
+		cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - 90)
+		fams = Sql.query_many!({
+			path: Path.utf8(path),
+			query: "SELECT CAST(a.sport_family AS TEXT) AS fam FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE COALESCE(m.best_20min_w, 0) > 0 AND a.start_local >= :cutoff AND COALESCE(a.sport_family, '') <> '' GROUP BY a.sport_family ORDER BY COUNT(*) DESC, a.sport_family",
+			bindings: [{ name: ":cutoff", value: String(cutoff) }],
+			rows: |cols| |stmt| Sql.str("fam")(cols)(stmt),
+		})?
+		first_ftp!(path, fams)
+	}
+
+	first_ftp! : Str, List(Str) => Try(F64, _)
+	first_ftp! = |path, fams|
+		match fams {
+			[] => Ok(0.0)
+			[fam, .. as rest] => {
+				ftp = Db.derive_sport_ftp!(path, fam)?
+				if (ftp > 0.0) Ok(ftp) else first_ftp!(path, rest)
+			}
+		}
+
 	# every open session's date and target, the target read back through
 	# stored_target so a row from before schema v42 keeps its power numbers
 	open_targets! : Str => Try(List({ date : Str, d : I64, target : Metrics.Target }), _)

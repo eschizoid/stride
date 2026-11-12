@@ -312,7 +312,7 @@ Db :: [].{
 	# bump when the schema changes; ensure_schema! re-runs migrations when the db's
 	# PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 	# that post-date the original CREATE statements in Schema.roc.)
-	schema_version = 45
+	schema_version = 46
 
 	run_migrations! : Str => Try({}, _)
 	run_migrations! = |path| {
@@ -579,7 +579,9 @@ Db :: [].{
 		# v37: a family's load and sessions per month, on the shared keys
 		Sql.execute!({ path: Path.utf8(path), query: Schema.monthly_family_load_drop, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.monthly_family_load, bindings: [] })?
-		# v33: the same quantity for every family, with its kind beside it
+		# v33: the same quantity for every family, with its kind beside it; v46
+		# finds each month's last session in one grouped pass and keeps the pace
+		# spine to the pace sports
 		Sql.execute!({ path: Path.utf8(path), query: Schema.monthly_threshold_drop, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.monthly_threshold, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: "CREATE INDEX IF NOT EXISTS idx_planned_sessions_date_id ON planned_sessions (target_date, id)", bindings: [] })

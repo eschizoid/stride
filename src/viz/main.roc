@@ -411,7 +411,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		units: loaded.un,
 		trace_sport: "",
 		curve_hint: mk!("1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-		trace_hint: mk!("[ / ]  older/newer session      X  sport filter      shift+[ / shift+]  ghost older/newer      C  clear ghost      wheel zoom  drag pan  0 reset      TAB  data table      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+		trace_hint: mk!("[ / ]  older/newer session      X  sport filter      shift+[ / shift+]  ghost older/newer      C  clear ghost      wheel zoom  drag pan  0 reset      TAB  plan      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 		table_hint: mk!("arrows  scroll days      TAB  lifts      R  reload      S  screenshot      V  record      ESC quit", 13)?,
 		table_title: mk!("data table", 15)?,
 		table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?, mk!("session", 13)?],
@@ -1632,7 +1632,7 @@ Msg : [
 	# that arrives after the athlete has already clicked another chip is
 	# recognised as stale and dropped rather than painted over the newer one
 	CurveReloaded(CurveWindow),
-	CurveReloadFailed(I64),
+	CurveReloadFailed(I64, Str),
 	# a fetch reply names the generation it was spawned under, not the picker
 	# index it read: the model applies it only while that generation is still
 	# current, so a reply for a superseded switch lands nowhere
@@ -1713,6 +1713,13 @@ view_basename = |v|
 # so the published list can never drift from the dispatch; caps_fields must
 # move together with refusals_for - the accepts column states the same rules
 # that function enforces, and both live in this file so an edit sees both.
+# The first load asks for no family, so load_model! opens the curve on the
+# athlete's most-trained family (Db.default_curve) rather than a fixed sport.
+boot_curve_family : Str
+boot_curve_family = ""
+
+expect boot_curve_family == ""
+
 caps_views : List({ id : I64, name : Str })
 caps_views = List.map([0.U8, 1, 2, 3, 4, 5, 6, 7, 8, 9], |v| { id: U8.to_i64(v), name: view_basename(v) })
 
@@ -1727,6 +1734,7 @@ caps_fields = [
 	{ name: "ghost_id", kind: "integer", accepts: "an activity id among the trace picker's sessions, of the same kind as the session shown; takes precedence over ghost_day, and 'none' in ghost_day still dismisses" },
 	{ name: "capture", kind: "text", accepts: "'png' writes the view the directive lands on, once it has settled, to captures/<view>.png under the directory the window was launched from; 'webm_start' and 'webm_stop' begin and end a WebM recording of it; the row stays pending until the host answers, then result names the file by its absolute path" },
 	{ name: "family", kind: "text", accepts: "a sport family's head ('Ride', 'Rowing', 'Run', ...) switches the power view to that family's power curve, record book and CP fit; 'pace:' and a sport type ('pace:Run', 'pace:Swim', 'pace:Rowing') switches it to that sport's pace curve and critical-speed fit; refused by name when the athlete has no such data; omitted leaves it unchanged" },
+	{ name: "short", kind: "integer", accepts: "1 shows the power or pace curve's short rungs (under 5 minutes), 0 folds them when none was pushed all-out; any other value is refused by name; omitted leaves it unchanged" },
 ]
 
 update! : Model, App.Input(Msg), App.Io => Try(Model, [Exit(I64)])
@@ -1752,14 +1760,15 @@ update! = |model0, program_input, io| {
 				# view's "loading…" note burned on forever — the flag is reset on
 				# BOTH terminal outcomes, not just success
 				ReloadFailed => { ..acc, booting: Bool.False, reloading: Bool.False }
-				# only the answer to the CURRENT window lands; curve_days moved on
-				# the click, so an older reply's days no longer match and it is
-				# dropped whole - including its reloading flag, which the newer
-				# request still owns
+				# only the answer to the CURRENT window and family lands: a click
+				# moves curve_days or curve_family first, so an older reply no
+				# longer matches and is dropped whole, its reloading flag
+				# included, which the newer request still owns; a failure is
+				# matched the same way
 				CurveReloaded(w) =>
 					if (w.days != acc.curve_days or w.fam != acc.curve_family) acc
 					else { ..acc, prs: w.prs, curve: w.c, curve_prev: w.cpv, curve_lbls: w.lbls, curve_title: w.title, fit_lbl: w.fit_lbl, cp_lbl: w.cp_lbl, fit_cp: w.fit_cp, reloading: Bool.False }
-				CurveReloadFailed(days) => if (days != acc.curve_days) acc else { ..acc, reloading: Bool.False }
+				CurveReloadFailed(days, fam) => if (days != acc.curve_days or fam != acc.curve_family) acc else { ..acc, reloading: Bool.False }
 				# a failed fetch lowers the loading flag only if it was the current
 				# fetch: a failure for a superseded switch must not clear the flag
 				# the newer fetch still owns
@@ -2057,7 +2066,7 @@ update! = |model0, program_input, io| {
 			else model.curve_days
 		# the power view's curve: a directive's (a refused one changes nothing),
 		# or the curve or mode chip clicked on the power view
-		clicked_family = if (view == 1 and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0) (Curve.chip_at(Curve.curve_chips(win.w, model.curve_keys, model.curve_family), m0.x)) else ""
+		clicked_family = if (view == 1 and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0) (Curve.chip_at(Curve.chips_for(win.w, model.curve_keys, model.curve_family, model.curve_days), m0.x)) else ""
 		want_family =
 			if (directive.has_d and directive.family != "" and Bus.family_refusal(directive.family) == "" and curve_on_record(model.curve_keys, directive.family)) directive.family
 			else if (clicked_family != "") clicked_family
@@ -2363,14 +2372,14 @@ update! = |model0, program_input, io| {
 				program_input,
 				|| match load_curve_window!(acc3r, f3, want_days, want_family) {
 					Ok(w) => CurveReloaded(w)
-					Err(_) => CurveReloadFailed(want_days)
+					Err(_) => CurveReloadFailed(want_days, want_family)
 				},
 			)
 		}
 		chip0h = win.w - 420.0
 		# per-chip, not one wide band: the 8px gaps between chips are not
 		# clickable and must not claim the pointer
-		over_chip = m.y >= 64.0 and m.y <= 86.0 and (((view2 == 0 or view2 == 1) and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0) or (view2 == 1 and Curve.chip_at(List.concat(Curve.curve_chips(win.w, model.curve_keys, model.curve_family), Curve.short_chips(win.w, model.curve_keys, model.curve_family, Curve.layout(model).foldable, model.show_short)), m.x) != ""))) or (view2 == 8 and Career.kind_chip_at(Career.kind_chips(model), m.x).is_ok()) or (Days.is_day(view2) and Days.mode_at(m.x, m.y) >= 0))
+		over_chip = m.y >= 64.0 and m.y <= 86.0 and (((view2 == 0 or view2 == 1) and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0) or (view2 == 1 and Curve.chip_at(List.concat(Curve.chips_for(win.w, model.curve_keys, model.curve_family, model.curve_days), Curve.short_chips(win.w, model.curve_keys, model.curve_family, Curve.layout(model).foldable, model.show_short)), m.x) != ""))) or (view2 == 8 and Career.kind_chip_at(Career.kind_chips(model), m.x).is_ok()) or (Days.is_day(view2) and Days.mode_at(m.x, m.y) >= 0))
 		over_row = view2 == 3 and m.x >= 36.0 and m.x < Table.table_edge(win.w, detail_day2) and (
 			match Table.row_at(Table.page_for(model, cursor2), m.y) {
 				Row(_) => Bool.True
@@ -2408,7 +2417,7 @@ update! = |model0, program_input, io| {
 			cwd0 = model.cwd
 			Task.spawn!(
 				program_input,
-				|| match load_model!(acc0r, cwd0, f0, 90, "Ride", Bool.False) {
+				|| match load_model!(acc0r, cwd0, f0, 90, boot_curve_family, Bool.False) {
 					Ok(m2) => Reloaded(m2)
 					Err(_) => ReloadFailed
 				},
@@ -2459,7 +2468,7 @@ update! = |model0, program_input, io| {
 			sport: want_sport2,
 			family: Career.spine_at(model.career_spines, spine_idx).fam,
 			curve_family: want_family,
-			curve_short: if (want_short) 1 else 0,
+			curve_short: Curve.focus_short(Curve.layout(model).foldable, want_short),
 		}
 		# written when what the human sees changed, at most twice a second,
 		# and on a heartbeat regardless: updated_at is the coach's liveness

@@ -364,7 +364,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1427)?
+	checks_ran_exactly!(1432)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -519,6 +519,16 @@ run_sync! = || {
 	check!("after the first sync setup is complete", su!("", "[.data.complete, .data.next_step, ([.data.steps[].done] | all)] | @tsv") == "true\tdone\ttrue")?
 	check!("...on a synced database", Str.trim(sql!(sdb, "SELECT COUNT(*) > 0 FROM activities;")) == "1")?
 	_ = sh!("rm -rf '${shome}'")
+	# the secret through the environment, as the strava_app instruction tells a
+	# coach to pass it: setup stores it, so a later call without the variable
+	# still finds the app and can authorize
+	ehome = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+	eu! = |envs, args, filter| Str.trim(sh!("HOME='${ehome}' STRIDE_API_BASE='${base}' STRIDE_FORMAT=json ${envs} '${bin}' setup ${args} 2>/dev/null | jq -r '${filter}'"))
+	_ = eu!("", "client_id=e2e-id", ".data.next_step")
+	check!("a secret given through STRAVA_CLIENT_SECRET is stored by setup", eu!("STRAVA_CLIENT_SECRET=e2e-secret", "", "[.data.next_step, (.data.ran | index(\"client_secret\") != null)] | @tsv") == "authorize\ttrue")?
+	check!("...so a call without the variable still moves on from the app", eu!("", "", ".data.next_step") == "authorize")?
+	check!("...and the code exchange finds both credentials", eu!("", "'code=http://localhost/?state=&code=fakecode'", ".data.next_step") == "timezone")?
+	_ = sh!("rm -rf '${ehome}'")
 
 	_ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','stale-access'),('strava_refresh_token','stale-refresh'),('strava_expires_at','1');")
 
@@ -6141,6 +6151,13 @@ b_targets! = |ctx| {
 	zid = Str.trim(strjq!(ctx, ["week", "add", "2099-09-11", "endurance", "z2", "r", "1x90:00@Z2"], ".data.id"))
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9803,'zone probe','Ride','2099-09-11T10:00:00Z',3600,30000); INSERT INTO activity_metrics (activity_id,z1_s,z2_s,z3_s,z4_s,z5_s,hr_samples_total,metrics_rev) VALUES (9803,100,200,300,50,10,660,1);")
 	check!("completing a zone target splits time below, inside and above the zone", strjq!(ctx, ["complete", zid, "9803"], "[.data.exec_known, .data.target_zone, .data.zone_below_s, .data.zone_in_s, .data.zone_above_s] | map(tostring) | join(\",\")") == "true,2,100,200,360")?
+	# `rate` invalidates the activity's metrics and segments; the stored result
+	# must not be rebuilt from those emptied tables, only by the analyze that
+	# recomputes them
+	zone_result = Str.trim(sql!(ctx.db, "SELECT CAST(target_result AS TEXT) FROM planned_sessions WHERE id = ${zid};"))
+	_ = stride!(ctx.bin, ctx.home, ["rate", "9803", "5"])
+	check!("rating a completed activity leaves its stored target result for analyze to refresh (got ${zone_result})", Str.trim(sql!(ctx.db, "SELECT CAST(target_result AS TEXT) FROM planned_sessions WHERE id = ${zid};")) == zone_result and Str.starts_with(zone_result, "in zone"))?
+	_ = sql!(ctx.db, "DELETE FROM ratings WHERE activity_id = 9803; INSERT OR REPLACE INTO activity_metrics (activity_id,z1_s,z2_s,z3_s,z4_s,z5_s,hr_samples_total,metrics_rev) VALUES (9803,100,200,300,50,10,660,1);")
 	# pace: a run with no detected reps reads its whole moving portion (10 km in
 	# 2500 s is 4.0 m/s, 4:10/km). A hill-rep run is the other basis: the detector's
 	# segments carry GRADE-ADJUSTED speed (4.0 m/s, 4:10/km), while the distance
@@ -6169,7 +6186,8 @@ b_targets! = |ctx| {
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time) VALUES (9808,'lift','WeightTraining','2099-09-16T10:00:00Z',2700);")
 	check!("completing an RPE target before a rating names the gap", strjq!(ctx, ["complete", rid, "9808"], "[.data.exec_known, .data.exec_reason, .data.rpe_known, .data.rpe_actual] | map(tostring) | join(\",\")") == "false,no_rating,false,0")?
 	_ = stride!(ctx.bin, ctx.home, ["rate", "9808", "7"])
-	check!("rating the linked activity refreshes the session's stored result", Str.trim(sql!(ctx.db, "SELECT CAST(target_result AS TEXT) FROM planned_sessions WHERE id = ${rid};")) == "rated 7.0")?
+	_ = stride!(ctx.bin, ctx.home, ["analyze"])
+	check!("the analyze after a rating refreshes the session's stored result", Str.trim(sql!(ctx.db, "SELECT CAST(target_result AS TEXT) FROM planned_sessions WHERE id = ${rid};")) == "rated 7.0")?
 	check!("...and once rated, reports the stored rating", strjq!(ctx, ["complete", rid, "9808"], "[.data.exec_known, .data.rpe_known, .data.rpe_actual, .data.target_rpe] | map(tostring) | join(\",\")") == "true,true,7,6")?
 	check!("...and the human line states it", Str.contains(stride_human!(ctx.bin, ctx.home, ["complete", rid, "9808"]), "(target 1x45:00@RPE6; rated 7.0)"))?
 	check!("the complete payload conforms to its schema with an RPE target", validate_schema!(ctx, "complete ${rid} 9808", "complete") == "")?
@@ -6347,6 +6365,16 @@ b_events! = |ctx| {
 	check!("...and events counts the same coverage", strjq!(ctx, ["events"], "[.data.events[] | select(.id == ${kid})][0] | [.planned_in_window, .sessions_projected] | map(tostring) | join(\",\")") == "4,3")?
 	check!("the project payload conforms to its schema with every kind priced", validate_schema!(ctx, "project ${ten}", "project") == "")?
 	_ = sql!(ctx.db, "DELETE FROM events WHERE name = 'Kinds Probe'; DELETE FROM planned_sessions WHERE id IN (${r1}, ${r2}, ${r3}, ${r4}); DELETE FROM activity_metrics WHERE activity_id IN (9811, 9812); DELETE FROM activities WHERE id IN (9811, 9812);")
+	# a planned session names no sport: a power target is priced at the FTP of the
+	# power family the athlete trains most. A rower with no ride power still gets
+	# their power targets projected, at the rowing FTP.
+	rhome = Str.trim(sh!("mktemp -d"))
+	rdb = "${rhome}/.stride/db.sqlite"
+	_ = stride!(ctx.bin, rhome, ["init"])
+	_ = sql!(rdb, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9821,'row a','Rowing','${ctx.today}T06:00:00Z',3600,12000),(9822,'row b','Rowing','${ctx.today}T07:00:00Z',3600,12000); INSERT INTO activity_metrics (activity_id,best_20min_w,metrics_rev) VALUES (9821,231.6,1),(9822,231.6,1);")
+	rowed = Str.trim(sh!("HOME='${rhome}' STRIDE_FORMAT=json '${ctx.bin}' project ${ten} \"${five}=4x8:00@200W\" | jq -r '[.data.sessions_projected, (.data.unprojected | length)] | map(tostring) | join(\",\")'"))
+	check!("a rower's power target is priced at the rowing FTP, not left without one (got ${rowed})", rowed == "1,0")?
+	_ = sh!("rm -rf '${rhome}'")
 	Ok({})
 }
 
@@ -7967,13 +7995,14 @@ b_viz_caps! = |ctx| {
 	_ = sql!(ctx.db, "DELETE FROM viz_focus;")
 	check!("a cleared row - the window quit - reads as no focus", strjq!(ctx, ["viz"], ".data.focus.present | tostring") == "false")?
 	_ = sql!(ctx.db, "DROP TABLE viz_focus;")
-	# the NAMES the window publishes equal the directive columns the poll's
-	# winner query in core.Bus reads through COALESCE, in both directions.
-	# Not pinned here or anywhere: the accepts text (prose), and whether
-	# update!'s resolver acts on a field - refusals_for's expects judge a
-	# resolved selection, not the fold that resolves it. An empty extraction
-	# fails rather than matching empty against empty.
-	field_parity = Str.trim(sh!("pub=$(awk '/^caps_fields = \\[/{p=1} p{print} p&&/\\]/{exit}' src/viz/main.roc | grep -oE 'name: \"[a-z_]+\"' | sed 's/name: \"//; s/\"//' | LC_ALL=C sort -u | tr '\\n' ' '); q=$(grep -oE 'COALESCE\\((view|range|cursor_day|trace_day|ghost_day|trace_id|ghost_id|capture|family)' src/core/Bus.roc | grep -oE '[a-z_]+$' | LC_ALL=C sort -u | tr '\\n' ' '); if [ -n \"$pub\" ] && [ \"$pub\" = \"$q\" ]; then echo same; else echo \"pub=$pub q=$q\"; fi"))
+	# the NAMES the window publishes equal the directive columns the bus DDL
+	# creates (the CREATE TABLE and every ADD COLUMN in core.Bus), minus the
+	# row's own bookkeeping (id, created_at, consumed, status, error, applied_at,
+	# result), in both directions, so a column added to the DDL and not
+	# published fails here. Not pinned: the
+	# accepts text (prose), and whether update!'s resolver acts on a field. An
+	# empty extraction fails rather than matching empty against empty.
+	field_parity = Str.trim(sh!("pub=$(awk '/^caps_fields = \\[/{p=1} p{print} p&&/\\]/{exit}' src/viz/main.roc | grep -oE 'name: \"[a-z_]+\"' | sed 's/name: \"//; s/\"//' | LC_ALL=C sort -u | tr '\\n' ' '); q=$({ grep 'CREATE TABLE IF NOT EXISTS viz_directives (' src/core/Bus.roc | sed 's/.*viz_directives (//; s/)[^)]*$//' | tr ',' '\\n' | awk '{print $1}'; grep -oE 'ALTER TABLE viz_directives ADD COLUMN [a-z_]+' src/core/Bus.roc | awk '{print $NF}'; } | grep -vxE 'id|created_at|consumed|status|error|applied_at|result' | LC_ALL=C sort -u | tr '\\n' ' '); if [ -n \"$pub\" ] && [ \"$pub\" = \"$q\" ]; then echo same; else echo \"pub=$pub q=$q\"; fi"))
 	check!("the published field names equal the columns the poll reads (${field_parity})", field_parity == "same")?
 	# the accepts text of every field is prose the binary never reads, so each
 	# claim it makes that the code also makes is compared across the two
@@ -8516,6 +8545,22 @@ b_migration! = |ctx| {
 	_ = stride!(ctx.bin, v44home, ["config", "get", "timezone"])
 	check!("migrating a v44 database adds the plan's target_result column", Str.trim(sql!(v44db, "SELECT count(*) FROM pragma_table_info('planned_sessions') WHERE name = 'target_result';")) == "1")?
 	_ = sh!("rm -rf '${v44home}'")
+	# ── v45 to v46: the monthly_threshold view is rebuilt. A v45 database keeps
+	# whatever view it was built with until the version moves; the new one finds
+	# each month's last session in one grouped pass (no correlated scan) and
+	# keeps rides out of the pace spine.
+	v45home = Str.trim(sh!("mktemp -d"))
+	v45db = "${v45home}/.stride/db.sqlite"
+	_ = stride!(ctx.bin, v45home, ["init"])
+	_ = sql!(v45db, "DROP VIEW monthly_threshold; CREATE VIEW monthly_threshold AS SELECT '2000-01' AS month, 'Ride' AS fam, 'pace' AS kind, 1.0 AS value; PRAGMA user_version = 45;")
+	_ = sql!(v45db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9831,'ride with speed','Ride','2026-05-02T08:00:00Z',3600,30000),(9832,'run','Run','2026-05-03T08:00:00Z',1800,6000); INSERT INTO activity_metrics (activity_id,ftp_used,threshold_pace_used,metrics_rev) VALUES (9831,240,8.0,1),(9832,0,3.6,1);")
+	_ = stride!(ctx.bin, v45home, ["config", "get", "timezone"])
+	check!("migrating a v45 database rebuilds the monthly_threshold view", Str.contains(Str.trim(sql!(v45db, "SELECT sql FROM sqlite_master WHERE name = 'monthly_threshold';")), "pc_last"))?
+	# a correlated subquery that SCANS is a full pass per outer row (quadratic);
+	# one that SEARCHES an index, as strength_coverage's EXISTS does, is a lookup
+	check!("...whose plan scans nothing per row", Str.trim(sh!("sqlite3 '${v45db}' 'EXPLAIN QUERY PLAN SELECT * FROM monthly_threshold;' | awk '/CORRELATED/{c=1; next} c && /SCAN/{bad=1} {c=0} END{print (bad ? \"scan\" : \"ok\")}'")) == "ok")?
+	check!("...and whose pace spine leaves rides out", Str.trim(sql!(v45db, "SELECT group_concat(fam || ':' || kind, ',') FROM (SELECT fam, kind FROM monthly_threshold WHERE month = '2026-05' AND kind <> 'tonnage' ORDER BY fam, kind);")) == "Ride:power,Run:pace")?
+	_ = sh!("rm -rf '${v45home}'")
 	Ok({})
 }
 

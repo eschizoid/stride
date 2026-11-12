@@ -12,8 +12,12 @@ import Strength
 
 Analyze :: [].{
 
-	analyze! : {} => Try({}, _)
-	analyze! = |{}| {
+	# `after!` runs on the database path once the scores, daily load and
+	# strength sets are rebuilt and before the envelope prints: a reader of
+	# those rows that lives above this module (the plan's stored target
+	# results) refreshes there, so a rescore never leaves it stale.
+	analyze! : (Str => Try({}, _)) => Try({}, _)
+	analyze! = |after!| {
 		path = Db.open_db!({})?
 		match load_zone_config!(path) {
 			Err(MissingConfig) => Output.missing_config!({})
@@ -58,6 +62,7 @@ Analyze :: [].{
 				Output.say!("rebuilding daily load…")?
 				rebuild_daily_load!(path)?
 				rebuild_strength_sets!(path)?
+				after!(path)?
 				# The last 10 days, not just today: the verdict carries the weekly delta,
 				# which needs the value 7 days back. query_many rather than query! because
 				# an empty daily_load is a normal state (nothing analyzed yet), and the

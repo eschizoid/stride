@@ -202,7 +202,7 @@ Ui :: [].{
 		zone_overrides : List(Str),
 		career_spines : List(Db.CareerSpine),
 		# months a marked test sets a family's spine from (Db.load_test_months!)
-		career_tests : List({ fam : Str, month : Str, kind : Str }),
+		career_tests : List({ fam : Str, month : Str, kind : Str, signal : Str }),
 		career_sports : List(Db.CareerSport),
 		# per-family monthly load and session count, so the career view can show
 		# what the SELECTED family did in each month rather than only the pooled

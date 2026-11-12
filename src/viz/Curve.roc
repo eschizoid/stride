@@ -74,7 +74,7 @@ Curve :: [].{
 		# the curve chips and the power/pace pair beside the range chips: the
 		# lit ones are the curve on screen and its mode
 		List.for_each!(
-			List.concat(curve_chips(win_w, model.curve_keys, curve), short_chips(win_w, model.curve_keys, curve, layout(model).foldable, model.show_short)),
+			List.concat(chips_for(win_w, model.curve_keys, curve, model.curve_days), short_chips(win_w, model.curve_keys, curve, layout(model).foldable, model.show_short)),
 			|fc| {
 				hov = model.mouse_x >= fc.x and model.mouse_x <= fc.x + chip_w and model.mouse_y >= chip_top and model.mouse_y <= chip_bottom
 				style = if (fc.on) (Draw.filled(Color.with_alpha(Theme.tsb_c, 60))) else if (hov) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
@@ -635,6 +635,12 @@ Curve :: [].{
 
 	# the rungs on screen and where the plot starts, shared by the drawing and
 	# every hover test so the two cannot disagree
+	# the focus row's curve_short: 1 when the short rungs are shown, 0 when
+	# they are folded away, -1 (NULL) when there is nothing to fold, so a coach
+	# never reads "folded" off a curve that has no short rungs to hide
+	focus_short : Bool, Bool -> I64
+	focus_short = |foldable, show| if (!(foldable)) -1 else if (show) 1 else 0
+
 	layout : Ui.Model -> { prs : List(Db.PrRung), left : F32, folded : Bool, foldable : Bool }
 	layout = |model| {
 		foldable = fold_short(List.map(model.prs, |pr| pr.secs), List.map(model.prs, |pr| window_w(model.curve, pr.secs)), List.map(model.prs, |pr| pr.w))
@@ -1112,8 +1118,18 @@ Curve :: [].{
 	chip_pitch : F32
 	chip_pitch = 58.0
 
-	title_reserve : F32
-	title_reserve = 340.0
+	# the title shares the chip row, so the chips start where its text ends:
+	# its left inset, its width at the title's size (title_char_w per
+	# character, an upper bound for the size-15 face) and a gap
+	title_char_w : F32
+	title_char_w = 9.0
+
+	title_reserve_for : Str -> F32
+	title_reserve_for = |title| 36.0 + U64.to_f32(Str.count_utf8_bytes(title)) * title_char_w + 12.0
+
+	# the chip row for the curve on screen, laid out against its own title
+	chips_for : F32, Db.CurveKeys, Str, I64 -> List(Chip)
+	chips_for = |win_w, keys, cur, days| curve_chips(win_w, keys, cur, title_reserve_for(title_text(cur, days)))
 
 	# the same sport's curve of the other kind: a power family's most-used
 	# pace sport, or a pace sport's power family; '' when it has none
@@ -1132,8 +1148,8 @@ Curve :: [].{
 			Power(_) => ""
 		}
 
-	curve_chips : F32, Db.CurveKeys, Str -> List(Chip)
-	curve_chips = |win_w, keys, cur| {
+	curve_chips : F32, Db.CurveKeys, Str, F32 -> List(Chip)
+	curve_chips = |win_w, keys, cur, title_reserve| {
 		chip0 = win_w - 420.0
 		pace_on = is_pace(cur)
 		other = counterpart(keys, cur)
@@ -1332,9 +1348,9 @@ expect {
 # has no pace curve, shows none.
 expect {
 	keys = { power: ["Ride", "Rowing", "Run"], pace: ["pace:Rowing", "pace:Run", "pace:Swim", "pace:TrailRun", "pace:Walk"] }
-	bike = Curve.curve_chips(1400.0, keys, "Ride")
-	row = Curve.curve_chips(1400.0, keys, "Rowing")
-	narrow = Curve.curve_chips(980.0, keys, "pace:TrailRun")
+	bike = Curve.curve_chips(1400.0, keys, "Ride", 340.0)
+	row = Curve.curve_chips(1400.0, keys, "Rowing", 340.0)
+	narrow = Curve.curve_chips(980.0, keys, "pace:TrailRun", 340.0)
 	labels = |cs| List.map(cs, |c| c.label)
 	labels(bike) == ["bike", "row", "run", "swim", "walk"]
 		and List.map(List.keep_if(bike, |c| c.on), |c| c.label) == ["bike"]
@@ -1345,7 +1361,7 @@ expect {
 		and labels(narrow) == ["row", "run", "trail", "power", "pace"]
 		and List.map(List.keep_if(narrow, |c| c.on), |c| c.key) == ["pace:TrailRun", "pace:TrailRun"]
 		and List.map(List.keep_if(narrow, |c| c.label == "power"), |c| c.key) == ["Run"]
-		and List.all(narrow, |c| c.x >= Curve.title_reserve)
+		and List.all(narrow, |c| c.x >= 340.0)
 		and Curve.chip_at(bike, 1400.0 - 420.0 - 2.0) == ""
 }
 # a pace sport's counterpart is its family's power curve, and a power
@@ -1355,10 +1371,10 @@ expect {
 	Curve.counterpart(keys, "Run") == "pace:TrailRun" and Curve.counterpart(keys, "pace:Run") == "Run" and Curve.counterpart(keys, "Ride") == "" and Curve.counterpart(keys, "pace:Swim") == ""
 }
 # one kind of curve on record: no power and pace pair
-expect List.map(Curve.curve_chips(1400.0, { power: [], pace: ["pace:Swim", "pace:OpenWaterSwim"] }, "pace:Swim"), |c| c.label) == ["swim", "open"]
+expect List.map(Curve.curve_chips(1400.0, { power: [], pace: ["pace:Swim", "pace:OpenWaterSwim"] }, "pace:Swim", 340.0), |c| c.label) == ["swim", "open"]
 # the chips' last right edge sits 14 px left of the first range chip
 expect {
-	cs = Curve.curve_chips(1400.0, { power: ["Ride", "Rowing"], pace: [] }, "Ride")
+	cs = Curve.curve_chips(1400.0, { power: ["Ride", "Rowing"], pace: [] }, "Ride", 340.0)
 	match List.last(cs) {
 		Ok(c) => c.x + Curve.chip_w == 1400.0 - 420.0 - 14.0
 		Err(_) => Bool.False
@@ -1464,3 +1480,15 @@ expect Curve.anchor_caption_for("Ride", Metric, { cp: 252.9, w_prime: 2980.0, r2
 expect Curve.anchor_caption_for("pace:Run", Metric, { cp: 4.0, w_prime: 2000.0, r2: 0.95, points: 3.0, ok: Bool.True }, { value: 4.0, kind: "5k", date: "2026-11-01" }, 3) == "threshold 4:10/km from a 5k test on 2026-11-01 - this window's CS fit is not usable"
 # with no test the caption is the fit's own, prompt included
 expect Curve.anchor_caption_for("Ride", Metric, { cp: 252.9, w_prime: 2980.0, r2: 0.84, points: 3.0, ok: Bool.True }, { value: 0.0, kind: "none", date: "none" }, 9) == Curve.fit_caption({ cp: 252.9, w_prime: 2980.0, r2: 0.84, points: 3.0, ok: Bool.True }, 9)
+
+expect Curve.focus_short(Bool.False, Bool.False) == -1 and Curve.focus_short(Bool.False, Bool.True) == -1
+expect Curve.focus_short(Bool.True, Bool.False) == 0 and Curve.focus_short(Bool.True, Bool.True) == 1
+
+# the longest title a pace curve takes, at the minimum width with three
+# curves on record: no chip starts inside the title's text
+expect {
+	keys = { power: [], pace: ["pace:OpenWaterSwim", "pace:Swim", "pace:Run"] }
+	title = Curve.title_text("pace:OpenWaterSwim", 90)
+	title == "open water swim pace - this 90d vs the 90d before it"
+		and List.all(Curve.chips_for(980.0, keys, "pace:OpenWaterSwim", 90), |c| c.x >= 36.0 + U64.to_f32(Str.count_utf8_bytes(title)) * Curve.title_char_w)
+}

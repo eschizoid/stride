@@ -2,6 +2,7 @@ import Db
 import Output
 import Strava
 import Analyze
+import Plan
 import ReportHealth
 import Config
 import pf.Stdin
@@ -34,7 +35,10 @@ Setup :: [].{
 		db_existed = ((Path.is_file!(Path.utf8("${home}/.stride/db.sqlite"))) ?? False)
 		_ = Path.create_dir!(Path.utf8("${home}/.stride"))
 		path = Db.open_db!({})?
-		ran0 = if (db_existed) [] else ["init"]
+		# credentials supplied through the environment are stored like `key=`
+		# ones, so the next call (with or without them) sees the same app
+		stored = store_env_creds!(path)?
+		ran0 = List.concat(if (db_existed) [] else ["init"], stored)
 		applied =
 			match input {
 				None => Ok("")
@@ -141,6 +145,21 @@ Setup :: [].{
 		} else {
 			Ok({})
 		}
+	}
+
+	# STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET in the environment are stored, through
+	# set_cred! so a changed credential still clears the old app's tokens; the
+	# keys stored are named in the run's `ran` list
+	store_env_creds! : Str => Try(List(Str), _)
+	store_env_creds! = |path| {
+		one! = |env_name, key, label|
+			match Env.var_str!(OsStr.from_str(env_name)) {
+				Ok(v) if Str.trim(v) != "" => set_cred!(path, key, Str.trim(v)).map_ok(|_| [label])
+				_ => Ok([])
+			}
+		id = one!("STRAVA_CLIENT_ID", "strava_client_id", "client_id")?
+		secret = one!("STRAVA_CLIENT_SECRET", "strava_client_secret", "client_secret")?
+		Ok(List.concat(id, secret))
 	}
 
 	# an empty answer keeps the stored value
@@ -364,7 +383,7 @@ Setup :: [].{
 		} else if next == "sync" {
 			Output.human_line!("First sync. A long history spans several runs: Strava limits reads per 15 minutes and per day, and each run says when to come back.")?
 			Strava.sync!(False)?
-			Analyze.analyze!({})?
+			Analyze.analyze!(Plan.refresh_all_target_results!)?
 			ReportHealth.doctor!({})
 		} else {
 			Ok({})

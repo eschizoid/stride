@@ -149,8 +149,9 @@ Trace :: [].{
 	strength_session = |sport| Sports.canonical(sport) == "WeightTraining"
 
 	# one stored row as the panel prints it: the exercise name cut to 32
-	# columns, sets x reps or sets x seconds for a hold, then the weight in
-	# the athlete's units when one was moved
+	# columns, sets x reps or sets x seconds for a hold, then the weight when
+	# one was moved, in the mass units the lifts tab uses (Db.mass_units), so
+	# the same set reads the same weight on both
 	set_line : [Metric, Imperial], Db.SetRow -> Str
 	set_line = |units, r| {
 		shape = if (r.hold_s > 0) "${I64.to_str(r.sets)}x${I64.to_str(r.hold_s)}s hold" else "${I64.to_str(r.sets)}x${I64.to_str(r.reps)}"
@@ -179,7 +180,7 @@ Trace :: [].{
 	panel_lines = |model|
 		if (!lifting_shown(model)) []
 		else if (List.is_empty(model.trace_sets.rows)) [no_sets_note(model.trace_sets.pasted)]
-		else List.map(List.take_first(model.trace_sets.rows, 18), |r| set_line(model.units, r))
+		else List.map(List.take_first(model.trace_sets.rows, 18), |r| set_line(model.strength.mass, r))
 
 	# the plot's right padding: a lifting session's sets panel takes its own
 	# column, as wide as its longest line, so the trace never runs under the
