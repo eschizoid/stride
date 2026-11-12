@@ -188,7 +188,7 @@ read as one, and the career view leaves the tonnage spine to this tab.
 | `←` / `→` | walk the day cursor (form board; ← older, → newer, past newest turns it off) |
 | `R` | reload everything from the database without reopening |
 | `G` | toggle the glow pass - the scene renders offscreen and its bright parts come back blurred and added on top; if the GPU refuses any of it, the app draws exactly as before the pass existed |
-| `V` | toggle a WebM recording of the screen into `./captures`, named for the view it started on; FixedStep timing, so the same data replays to the same file |
+| `V` | toggle a WebM recording of the screen into `captures/` under the launch directory, named for the view it started on; FixedStep timing, so the same data replays to the same file |
 | nav pills (top right) | click any view directly; the active one is filled - each wears its vector mark, drawn from primitives (no sprite sheet, crisp at any DPI) |
 | `TAB` | cycle the nav left to right: form board / power view / session trace / the day tab / lifts / the weeks tab / career; from any day mode it steps on to lifts, and from either weeks mode to career |
 | `week` / `log` / `year` chips (day tab) | switch the day tab between the plan, the data table and the heatmap |
@@ -203,7 +203,7 @@ read as one, and the career view leaves the tonnage spine to this tab.
 | `←` / `→` (table view) | scroll the window through the whole series (rows fill the window height) |
 | click a date (table view) | open that day's detail panel: sessions, minutes, km, TSS, NP |
 | window edges | drag to resize; every view reflows live (980x600 floor) |
-| `S` | save a PNG of the current view into `./captures` |
+| `S` | save a PNG of the current view into `captures/` under the launch directory |
 | mouse hover | crosshair + per-day dots + a top-right readout (form board) |
 | `ESC` | quit |
 
@@ -469,7 +469,7 @@ a reader who cares looks at focus, not at the losing row.
   packaged launchers, which change to it before they exec), and two programs:
   `stride` for the CP fit and `sh` for the one script that asks `date` for the
   zone offset under the configured timezone. Captures are allowed beneath
-  `./captures` without a declaration. Nothing else: no environment, no network,
+  `captures/` under the launch directory (`./captures` when none is passed) without a declaration. Nothing else: no environment, no network,
   no other program.
   Launched with no argument, the window opens and says it has no database.
 - `has` is a reserved word; uppercase identifiers are types.
@@ -654,7 +654,7 @@ across the full width; on the reference activity the two differ by one second in
 
 ## Screenshots (S)
 
-`S` writes a PNG of the current view into `./captures`, named for the view.
+`S` writes a PNG of the current view into `captures/` under the launch directory, named for the view.
 Reference captures of all three live in `docs/img/`.
 
 These are how the agent reviews its own rendering. Every value drawn derives from
