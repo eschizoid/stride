@@ -1,8 +1,10 @@
 import rr.Color
 import rr.Draw
-import rr.Text
 import core.Fmt
+import Chrome
 import Db
+import Labels
+import Scene
 import Theme
 import Ui
 import Weeks
@@ -14,6 +16,7 @@ Ramp :: [].{
 	# both be read honestly. The current week, until the series covers all
 	# seven of its days, is judged by neither: its bar and chip are muted and
 	# the chip says "so far", since a partial week's load is not a low one.
+
 	pad : F32
 	pad = 36.0
 	danger : F32
@@ -30,73 +33,150 @@ Ramp :: [].{
 	bar_alpha : Bool, I64 -> U8
 	bar_alpha = |focused, days| if (focused) (250.U8) else if (Weeks.partial(days)) 110 else 220
 
-	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
-	draw! = |model, frame| {
+	title_text : Str
+	title_text = "weekly load, and how fast fitness climbs"
+
+	hint_text : Str
+	hint_text = "zones / load  modes      hover or click a week      TAB  career      R  reload      S  screenshot      V  record      ESC quit"
+
+	key_text : Str
+	key_text = "chips: the ctl each week gained     teal builds     red past +6/wk     grey holds or sheds"
+
+	# the chart draws once any week holds load
+	charted : Ui.Model -> Bool
+	charted = |model| !(List.is_empty(model.ramp_weeks)) and List.fold(model.ramp_weeks, 0.I64, |a, w| a + w.tss) != 0
+
+	# each week's bar on screen: its slot's centre, its top, and its body
+	# (a 3px stub for a week with no load), scaled to the heaviest week
+	bars : Ui.Model -> List({ w : Db.RampWeek, i : U64, cx : F32, top : F32, box : Labels.Rect })
+	bars = |model| {
+		n = List.len(model.ramp_weeks)
+		slot = (model.win.w - pad * 2.0) / U64.to_f32(n)
+		bw = F32.min(74.0, slot * 0.60)
+		bot = Weeks.bars_bot(model.win.h)
+		peak = List.fold(model.ramp_weeks, 1.I64, |a, w| if (w.tss > a) (w.tss) else a)
+		List.map_with_index(
+			model.ramp_weeks,
+			|w, i| {
+				cx = pad + (U64.to_f32(i) + 0.5) * slot
+				bh = I64.to_f32(w.tss) / I64.to_f32(peak) * (bot - Weeks.bars_top)
+				{ w, i, cx, top: bot - bh, box: if (bh > 3.0) { x: cx - bw / 2.0, y: bot - bh, w: bw, h: bh } else { x: cx - bw / 2.0, y: bot - 3.0, w: bw, h: 3.0 } }
+			},
+		)
+	}
+
+	newest : Ui.Model -> Db.RampWeek
+	newest = |model| (List.last(model.ramp_weeks)) ?? { wk: "", days: 7, tss: 0, ctl10: 0, ramp10: 0 }
+
+	# ── every string the view writes, placed ───────────────────────────────
+	# Fixed text but the scale's top value, which a tall first week's chip
+	# may cover: it drops then, and the focus line reads any week's load.
+	scene : Ui.Model, Scene.Measure -> List(Labels.Placed(Scene.Item))
+	scene = |model, measure| Labels.place(texts(model, measure), obstacles(model, measure))
+
+	# the view's text and the chrome's, as the gate judges them
+	owned : Ui.Model, Scene.Measure -> List(Labels.Owned)
+	owned = |model, measure| List.concat(Scene.owned(Chrome.placed(model, measure)), Scene.owned(scene(model, measure)))
+
+	texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
+	texts = |model, measure| {
 		win_w = model.win.w
 		win_h = model.win.h
+		panel = Labels.panel(model.win)
 		ink_muted = Theme.ink_muted
 		ink_faint = Theme.ink_faint
-		model.ramp_title.draw!(frame, { pos: { x: Weeks.title_x, y: 70.0 }, color: ink_muted, align: (Top, Left) })
-		grand = List.fold(model.ramp_weeks, 0.I64, |a, w| a + w.tss)
-		if List.is_empty(model.ramp_weeks) or grand == 0 {
-			Text.from("no load history yet", model.font).size(14).draw!(frame, { pos: { x: pad, y: 130.0 }, color: ink_muted, align: (Top, Left) })
-		} else {
-			n = List.len(model.ramp_weeks)
-			slot = (win_w - pad * 2.0) / U64.to_f32(n)
-			bw = F32.min(74.0, slot * 0.60)
-			# where fitness stands and how fast it is moving, in the KPI card
-			# language the form board established
-			last = match List.last(model.ramp_weeks) {
-				Ok(l) => l
-				Err(_) => { wk: "", days: 7, tss: 0, ctl10: 0, ramp10: 0 }
+		fix = |it, x, y, align, region| Scene.fixed(measure, it, { x, y, align }, region)
+		head = [fix(Scene.prepared(model.ramp_title, title_text, 15.0, Prose, ink_muted), Weeks.title_x, 70.0, Left, panel)]
+		chart =
+			if !(charted(model)) {
+				[fix(Scene.data("no load history yet", 14.0, ink_muted), pad, 130.0, Left, panel)]
+			} else {
+				# where fitness stands and how fast it is moving
+				last = newest(model)
+				card = Weeks.card_box(win_w)
+				peak = List.fold(model.ramp_weeks, 1.I64, |a, w| if (w.tss > a) (w.tss) else a)
+				bot = Weeks.bars_bot(win_h)
+				per_bar = List.join(
+					List.map(
+						bars(model),
+						|b| {
+							cb = Weeks.cap_box(b.cx, b.top)
+							vc = verdict(I64.to_f32(b.w.ramp10) / 10.0, b.w.days)
+							List.join([
+								[fix(Scene.data(Fmt.tenths_signed(b.w.ramp10), 11.0, vc), b.cx, cb.y + 4.0, Center, cb)],
+								if (Weeks.partial(b.w.days)) [fix(Scene.data("so far", 10.0, ink_faint), b.cx, cb.y - 14.0, Center, panel)] else [],
+								if (b.i % 2 == 0) [fix(Scene.data(Weeks.week_label(b.w.wk), 10.0, ink_faint), b.cx, bot + 10.0, Center, panel)] else [],
+							])
+						},
+					),
+				)
+				List.concat(
+					[
+						fix(Scene.data(Fmt.tenths(last.ctl10), 28.0, Theme.ctl_c), card.x + 16.0, 68.0, Left, card),
+						fix(Scene.data("ctl now", 11.0, ink_faint), card.x + 16.0, 102.0, Left, card),
+						fix(Scene.data(Fmt.tenths_signed(last.ramp10), 28.0, verdict(I64.to_f32(last.ramp10) / 10.0, last.days)), win_w - pad - 16.0, 68.0, Right, card),
+						fix(Scene.data(if (Weeks.partial(last.days)) "ctl per week so far" else "ctl per week", 11.0, ink_faint), win_w - pad - 16.0, 102.0, Right, card),
+						Scene.free(measure, Scene.data("${I64.to_str(peak)} tss", 10.0, ink_faint), [{ x: pad, y: Weeks.bars_top - 14.0, align: Left }], 1, panel),
+						fix(Scene.data("0", 10.0, ink_faint), pad, bot - 12.0, Left, panel),
+						Weeks.focus_text(model, measure, key_text),
+					],
+					per_bar,
+				)
 			}
-			lc = verdict(I64.to_f32(last.ramp10) / 10.0, last.days)
-			card_x = win_w - pad - 260.0
-			frame.rounded_rectangle!({ x: card_x, y: 60.0, width: 260.0, height: 64.0, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
-			Text.from(Fmt.tenths(last.ctl10), model.font).size(28).draw!(frame, { pos: { x: card_x + 16.0, y: 68.0 }, color: Theme.ctl_c, align: (Top, Left) })
-			Text.from("ctl now", model.font).size(11).draw!(frame, { pos: { x: card_x + 16.0, y: 102.0 }, color: ink_faint, align: (Top, Left) })
-			Text.from(Fmt.tenths_signed(last.ramp10), model.font).size(28).draw!(frame, { pos: { x: win_w - pad - 16.0, y: 68.0 }, color: lc, align: (Top, Right) })
-			Text.from(if (Weeks.partial(last.days)) "ctl per week so far" else "ctl per week", model.font).size(11).draw!(frame, { pos: { x: win_w - pad - 16.0, y: 102.0 }, color: ink_faint, align: (Top, Right) })
-			bars_top = 168.0
-			bars_bot = win_h - 96.0
-			bars_h = bars_bot - bars_top
-			peak = List.fold(model.ramp_weeks, 1.I64, |a, w| if (w.tss > a) (w.tss) else a)
-			Text.from("${I64.to_str(peak)} tss", model.font).size(10).draw!(frame, { pos: { x: pad, y: bars_top - 14.0 }, color: ink_faint, align: (Top, Left) })
-			Text.from("0", model.font).size(10).draw!(frame, { pos: { x: pad, y: bars_bot - 12.0 }, color: ink_faint, align: (Top, Left) })
-			frame.line!({ start: { x: pad, y: bars_bot }, end: { x: win_w - pad, y: bars_bot }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 70), 1) })
+		foot = [fix(Scene.prepared(model.ramp_hint, hint_text, 13.0, Prose, ink_faint), pad, win_h - 30.0, Left, panel)]
+		List.join([head, chart, foot, Weeks.chip_texts(model, measure)])
+	}
+
+	# what the scale's top value keeps off: the chrome, the card, the bars
+	# and their chips
+	obstacles : Ui.Model, Scene.Measure -> Labels.Obstacles
+	obstacles = |model, measure| { boxes: List.concat(Chrome.boxes(model, measure), List.map(marks(model), |m| m.box)), segs: [] }
+
+	# the shapes no text may cover but its own: the pills, the mode chips,
+	# the card, and every bar and chip
+	marks : Ui.Model -> List(Labels.Mark)
+	marks = |model|
+		if charted(model) {
+			List.join([
+				Chrome.marks(model),
+				Weeks.chip_marks,
+				[{ key: "the ctl card", box: Weeks.card_box(model.win.w) }],
+				List.join(List.map(bars(model), |b| [{ key: "the ${b.w.wk} bar", box: b.box }, { key: "the ${b.w.wk} chip", box: Weeks.cap_box(b.cx, b.top) }])),
+			])
+		} else {
+			List.concat(Chrome.marks(model), Weeks.chip_marks)
+		}
+
+	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
+	draw! = |model, frame| {
+		ink_faint = Theme.ink_faint
+		if charted(model) {
+			win_w = model.win.w
+			bot = Weeks.bars_bot(model.win.h)
+			card = Weeks.card_box(win_w)
+			frame.rounded_rectangle!({ x: card.x, y: card.y, width: card.w, height: card.h, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
+			frame.line!({ start: { x: pad, y: bot }, end: { x: win_w - pad, y: bot }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 70), 1) })
 			focus = Weeks.focus_week(model)
-			Weeks.draw_focus!(model, frame, "chips: the ctl each week gained     teal builds     red past +6/wk     grey holds or sheds")
 			List.for_each!(
-				List.map_with_index(model.ramp_weeks, |w, i| { w, i }),
-				|x| {
-					cx = pad + (U64.to_f32(x.i) + 0.5) * slot
-					x0 = cx - bw / 2.0
-					bh = I64.to_f32(x.w.tss) / I64.to_f32(peak) * bars_h
-					vc = verdict(I64.to_f32(x.w.ramp10) / 10.0, x.w.days)
-					hovered = x.w.wk == focus
-					body = bar_alpha(hovered, x.w.days)
-					top_y = bars_bot - bh
-					if bh > 3.0 {
-						frame.rounded_rectangle!({ x: x0, y: top_y, width: bw, height: bh, radius: 7.0, segments: 5, style: Draw.filled(Color.with_alpha(Theme.ctl_c, body)) })
+				bars(model),
+				|b| {
+					vc = verdict(I64.to_f32(b.w.ramp10) / 10.0, b.w.days)
+					hovered = b.w.wk == focus
+					body = bar_alpha(hovered, b.w.days)
+					if b.box.h > 3.0 {
+						frame.rounded_rectangle!({ x: b.box.x, y: b.box.y, width: b.box.w, height: b.box.h, radius: 7.0, segments: 5, style: Draw.filled(Color.with_alpha(Theme.ctl_c, body)) })
 						# depth: the bar darkens toward its base, below the rounded cap
-						frame.rectangle_gradient_v!({ x: x0, y: top_y + 8.0, width: bw, height: bh - 8.0, color_top: Color.with_alpha(Theme.bg, 0), color_bottom: Color.with_alpha(Theme.bg, 120) })
+						frame.rectangle_gradient_v!({ x: b.box.x, y: b.box.y + 8.0, width: b.box.w, height: b.box.h - 8.0, color_top: Color.with_alpha(Theme.bg, 0), color_bottom: Color.with_alpha(Theme.bg, 120) })
 					} else {
-						frame.rounded_rectangle!({ x: x0, y: bars_bot - 3.0, width: bw, height: 3.0, radius: 1.5, segments: 3, style: Draw.filled(Color.with_alpha(ink_faint, 90)) })
+						frame.rounded_rectangle!({ x: b.box.x, y: b.box.y, width: b.box.w, height: b.box.h, radius: 1.5, segments: 3, style: Draw.filled(Color.with_alpha(ink_faint, 90)) })
 					}
 					# the ramp chip rides above its bar, never above the panel
-					chip_y = F32.max(bars_top - 30.0, top_y - 30.0)
-					frame.rounded_rectangle!({ x: cx - 27.0, y: chip_y, width: 54.0, height: 20.0, radius: 6.0, segments: 5, style: Draw.filled(Color.with_alpha(vc, if (hovered) (70.U8) else 42)) })
-					Text.from(Fmt.tenths_signed(x.w.ramp10), model.font).size(11).draw!(frame, { pos: { x: cx, y: chip_y + 4.0 }, color: vc, align: (Top, Center) })
-					if Weeks.partial(x.w.days) {
-						Text.from("so far", model.font).size(10).draw!(frame, { pos: { x: cx, y: chip_y - 14.0 }, color: ink_faint, align: (Top, Center) })
-					}
-					if x.i % 2 == 0 {
-						Text.from(Str.from_utf8_lossy(List.drop_first(Str.to_utf8(x.w.wk), 5)), model.font).size(10).draw!(frame, { pos: { x: cx, y: bars_bot + 10.0 }, color: ink_faint, align: (Top, Center) })
-					}
+					cb = Weeks.cap_box(b.cx, b.top)
+					frame.rounded_rectangle!({ x: cb.x, y: cb.y, width: cb.w, height: cb.h, radius: 6.0, segments: 5, style: Draw.filled(Color.with_alpha(vc, if (hovered) (70.U8) else 42)) })
 				},
 			)
 		}
-		model.ramp_hint.draw!(frame, { pos: { x: pad, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
+		Scene.draw!(frame, model, scene(model, Scene.measure_of(model)))
 		Ok({})
 	}
 }

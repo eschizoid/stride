@@ -1,24 +1,37 @@
 import rr.Text
+import core.Series
 import core.Sports
+import Board
 import Career
+import Chrome
 import Curve
 import Db
 import DisplayScale
+import Heat
+import Hud
 import Labels
+import Plan
+import Ramp
 import Scene
+import Strength
+import Table
 import Theme
+import Trace
 import Ui
+import Zones
 
 Gate :: [].{
 	# ── the label gate ──────────────────────────────────────────────────────
-	# A headless layout pass of each view over fixture athletes at the
+	# A headless layout pass of every view over fixture athletes at the
 	# minimum, default and wide window sizes. Every scene's placed text, the
 	# chrome's included, must hold no two overlapping boxes and no box
-	# outside its region (Labels.check). The athletes come from the sport
-	# families in core.Sports, one per family plus a mixed one carrying a
-	# single session of a sport no family holds, and every pace family is
-	# also drawn in imperial units. Text is measured with headless fonts
-	# carrying the shipped faces' advances, so the gate needs no font file.
+	# outside its region (Labels.check), and on the views that list their
+	# shapes no text may cover a shape but the one it is written inside
+	# (Labels.covers). The athletes come from the sport families in
+	# core.Sports, one per family plus a mixed one carrying a single session
+	# of a sport no family holds, and every pace family is also drawn in
+	# imperial units. Text is measured with headless fonts carrying the
+	# shipped faces' advances, so the gate needs no font file.
 
 	# the data face's metrics as the window loads them: JetBrains Mono's
 	# advance is 600 of 1320 units of line height, and the 24 px atlas
@@ -310,6 +323,7 @@ Gate :: [].{
 	empty_model : { w : F32, h : F32 } -> Ui.Model
 	empty_model = |sz| {
 		p = Text.Prepared.stub
+		t = { p, s: "", size: 13.0 }
 		{
 			title: p,
 			subs: [],
@@ -318,10 +332,10 @@ Gate :: [].{
 			leg_form: p,
 			ylabels: [],
 			ends: [],
-			ev_label: p,
+			ev_label: t,
 			ev_found: Bool.False,
 			ev_idx: 0,
-			ev_warn: p,
+			ev_warn: t,
 			ev_warn_found: Bool.False,
 			stale: p,
 			stale_found: Bool.False,
@@ -339,10 +353,10 @@ Gate :: [].{
 			kpis: [],
 			ev_tile_name: [],
 			ev_tile_proj: [],
-			ev_tile_sub: p,
+			ev_tile_sub: t,
 			zero_note: p,
 			ridden_found: Bool.False,
-			ridden_note: p,
+			ridden_note: t,
 			curve_empty: p,
 			trace: [],
 			segs: [],
@@ -391,7 +405,7 @@ Gate :: [].{
 			quit_tick: 0,
 			focus_cleared: Bool.False,
 			quit_mark_pending: -1,
-			status: p,
+			status: t,
 			has_error: Bool.False,
 			booting: Bool.False,
 			reloading: Bool.False,
@@ -445,11 +459,540 @@ Gate :: [].{
 		}
 	}
 
-	# every fixture's failures under a view's scene, each named by its
+	# every fixture's failures under a view's judge, each named by its
 	# fixture: empty is a clean gate. roc test reports only that an expect
 	# failed, so `dbg` this list inside the expect to read what overlapped.
-	failures : (Ui.Model -> List(Labels.Owned)), List({ name : Str, model : Ui.Model }) -> List(Str)
-	failures = |owned, fixtures| List.join(List.map(fixtures, |f| List.map(Labels.check(owned(f.model)), |e| "${f.name}: ${e}")))
+	failures : (Ui.Model -> List(Str)), List({ name : Str, model : Ui.Model }) -> List(Str)
+	failures = |judge, fixtures| List.join(List.map(fixtures, |f| List.map(judge(f.model), |e| "${f.name}: ${e}")))
+
+	# one scene's failures: two texts that overlap, a text outside its
+	# region, and a text over a shape it must keep off
+	judge : List(Labels.Owned), List(Labels.Mark) -> List(Str)
+	judge = |texts, marks| List.concat(Labels.check(texts), Labels.covers(texts, marks))
+
+	# a prepared copy the gate stands in for: the string and size it was
+	# prepared from, which is all the scene measures
+	txt : Str, F32 -> Ui.Txt
+	txt = |s, size| { p: Text.Prepared.stub, s, size }
+
+	# ── the form board's fixtures ───────────────────────────────────────────
+	# the days up to the as-of day, as many as the window's series reads
+	series_days : List(Str)
+	series_days = List.join([
+		List.map(seq(17), |d| "2026-08-${two(d + 14)}"),
+		List.map(seq(30), |d| "2026-09-${two(d)}"),
+		List.map(seq(31), |d| "2026-10-${two(d)}"),
+		List.map(seq(12), |d| "2026-11-${two(d)}"),
+	])
+
+	# Two shapes of series, alternating by athlete. A steady one holds form
+	# within a few points of zero, so the zero rule sits at the top of the
+	# load rug, and its biggest day is the day before the last, a bar that
+	# reaches the rule's right end. A building one walks a weekly rhythm
+	# through the fitness and fatigue averages with a harder last week,
+	# so fatigue runs well above fitness. `k` scales the load, so each
+	# athlete's plot differs.
+	board_series : U64 -> List(Db.Point)
+	board_series = |k| {
+		scale = 0.6 + 0.15 * U64.to_f32(k % 7)
+		n = List.len(series_days)
+		if k % 2 == 0 {
+			lean = [-6.0, -2.0, 3.0, 8.0, 4.0, -1.0, -4.0]
+			week = [0.0, 55.0, 80.0, 40.0, 90.0, 0.0, 120.0]
+			List.map_with_index(
+				series_days,
+				|_d, i| {
+					ctl = (50.0 + U64.to_f32(i % 10) * 0.4) * scale
+					d = (List.get(lean, i % 7)) ?? 0.0
+					{ ctl, atl: ctl + d, tsb: 0.0 - d, tss: if (i + 2 == n) 150.0 * scale else ((List.get(week, i % 7)) ?? 0.0) * scale }
+				},
+			)
+		} else {
+			week = [0.0, 60.0, 85.0, 45.0, 95.0, 0.0, 150.0]
+			walk = List.fold(
+				List.map_with_index(series_days, |_d, i| i),
+				{ ctl: 40.0, atl: 40.0, out: [] },
+				|acc, i| {
+					t = ((List.get(week, i % 7)) ?? 0.0) * scale * (if (i + 7 >= n) 1.6 else 1.0)
+					ctl = acc.ctl + (t - acc.ctl) / 42.0
+					atl = acc.atl + (t - acc.atl) / 7.0
+					{ ctl, atl, out: List.append(acc.out, { ctl, atl, tsb: acc.ctl - acc.atl, tss: t }) }
+				},
+			)
+			walk.out
+		}
+	}
+
+	# One board per athlete, range and event state. `ev` picks the event
+	# tile's story: 0 an event ahead with a two-line name and a projection,
+	# 1 an event today marked on the plot, a recent ridden event and an
+	# event record the database could not read.
+	board_model : Ui.Model, Athlete, U64, U64, U64 -> Ui.Model
+	board_model = |base, a, k, range, ev| {
+		data = board_series(k)
+		event = "${(List.first(athlete_heads(a))) ?? "Ride"} championship, the long course with every hill"
+		name = Board.ev_name(prose_font, event)
+		p = Text.Prepared.stub
+		{
+			..base,
+			view: 0,
+			range,
+			data,
+			days: series_days,
+			ylabels: List.map([-30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100], |v| { p, v: I64.to_f32(v) }),
+			ends: List.map([0.U8, 1, 2], |sel| { p, sel }),
+			kpis: List.map([0.U8, 1, 2], |sel| { v: p, cap: p, sel }),
+			ev_tile_name: List.map(name.lines, |l| txt(l, name.size)),
+			ev_tile_sub: txt(if (ev == 0) "in 226d, 2027-06-26" else "today, 2026-11-12", 11.0),
+			ev_tile_proj: if (ev == 0) List.map(Board.proj_lines("2026-11-22", "2027-06-26", { ok: Bool.True, ctl: 54.2, tsb: -9.8, considered: 10, projected: 8 }), |l| txt(l, 10.0)) else [],
+			ridden_found: ev == 1,
+			ridden_note: txt(Board.ev_line(prose_font, event, " done, 3d ago", 10.0), 10.0),
+			ev_label: txt(event, 13.0),
+			ev_found: ev == 1,
+			ev_idx: List.len(series_days) - 1,
+			ev_warn: txt("event record unreadable", 13.0),
+			ev_warn_found: ev == 1,
+			stale_found: Bool.True,
+		}
+	}
+
+	board_models : List({ name : Str, model : Ui.Model })
+	board_models = {
+		per_athlete = List.join(
+			List.map_with_index(
+				athletes,
+				|a, k| List.join(
+					List.map(
+						sizes,
+						|sz| {
+							base = athlete_model(a, sz)
+							List.join(List.map([30.U64, 60, 90], |r| List.map([0.U64, 1], |ev| { name: "${a.name} form ${U64.to_str(r)}d event=${U64.to_str(ev)} at ${size_name(sz)}", model: board_model(base, a, k, r, ev) })))
+						},
+					),
+				),
+			),
+		)
+		# the two boards with no plot: an error loading the series, and a
+		# series too short to draw
+		bare = List.join(
+			List.map(
+				sizes,
+				|sz| {
+					base = empty_model(sz)
+					[
+						{ name: "form with a load error at ${size_name(sz)}", model: { ..base, view: 0, has_error: Bool.True, status: txt("daily_load query failed - analyzed yet?", 16.0) } },
+						{ name: "form with no data at ${size_name(sz)}", model: { ..base, view: 0 } },
+					]
+				},
+			),
+		)
+		List.concat(per_athlete, bare)
+	}
+
+	# ── the session trace's fixtures ────────────────────────────────────────
+	# the channel a session plots: power on a ride, pace where a pace unit
+	# fits the family, heart rate otherwise
+	chan_of : Str -> Str
+	chan_of = |sport| {
+		fam = Sports.canonical(sport)
+		if (Sports.class(fam) == Endurance and !(List.contains(Sports.pace_target_families, fam))) Db.watts_chan else if (List.contains(Sports.pace_target_families, fam)) Db.pace_chan else Db.hr_chan
+	}
+
+	# a rise and fall over 100 samples, 0 at either end and 1 at the middle
+	tri : U64 -> F32
+	tri = |i| {
+		t = U64.to_f32(i % 100) / 50.0
+		if (t <= 1.0) t else 2.0 - t
+	}
+
+	# a session's samples in its channel's own unit: watts, metres per
+	# second at the family's plausible pace, or heart rate
+	samples_of : Str -> List(F32)
+	samples_of = |sport| {
+		chan = chan_of(sport)
+		at = |i|
+			if chan == Db.watts_chan {
+				150.0 + 120.0 * tri(i)
+			} else if chan == Db.pace_chan {
+				base_of("pace:${Sports.canonical(sport)}") / 1000.0 * (0.85 + 0.3 * tri(i))
+			} else {
+				100.0 + 60.0 * tri(i)
+			}
+		List.map_with_index(List.repeat({}, 800), |_u, i| at(i))
+	}
+
+	# splits at the session's split length, more than the panel holds
+	splits_of : [Metric, Imperial], Str -> List(Series.Split)
+	splits_of = |units, sport| {
+		len = Db.split_len_for(units, sport)
+		speed = F32.to_f64(base_of("pace:${Sports.canonical(sport)}")) / 1000.0
+		List.map(seq(20), |n| { n, distance_m: len, elapsed_s: F64.round_to_i64_try(len / speed) ?? 0 + n % 3, elev_gain_m: 0.0, elev_known: Bool.False, avg_hr: 0.0, hr_known: Bool.False })
+	}
+
+	# stored sets, more than the panel holds, with the long exercise names a
+	# pasted log carries and a hold among them
+	set_rows : List(Db.SetRow)
+	set_rows =
+		List.map(
+			seq(20),
+			|n| {
+				names = ["Wide Grip Chest Press", "Dumbbell Pass Through to Push Up", "Tall Kneeling Dumbbell Overhead Press", "Reverse Grip Tricep Kickback", "Plank"]
+				name = (List.get(names, I64.to_u64_wrap(n % 5))) ?? "Curl"
+				if (name == "Plank") { exercise: name, sets: 3, reps: 0, kg: 0.0, hold_s: 60 } else { exercise: name, sets: 3, reps: 8 + n % 9, kg: 11.3398 + I64.to_f64(n % 4) * 2.268, hold_s: 0 }
+			},
+		)
+
+	# the athlete's picker: one session per sport, the newest first
+	picker_of : Athlete -> List({ id : I64, day : Str, name : Str, sport : Str, chan : Str })
+	picker_of = |a| List.map_with_index(a.sports, |s, i| { id: 500 + U64.to_i64_wrap(i), day: "2026-11-${two(12 - U64.to_i64_wrap(i))}", name: "Evening ${s.sport} session on the lakefront", sport: s.sport, chan: chan_of(s.sport) })
+
+	# One trace per athlete, session and camera. `moved` 0 is the session at
+	# home with every sport offered; 1 zooms and pans it, filters the picker
+	# to its sport and lays the athlete's next session over it as a ghost.
+	trace_model : Ui.Model, Athlete, U64, U64 -> Ui.Model
+	trace_model = |base, a, sel, moved| {
+		ids = picker_of(a)
+		entry = (List.get(ids, sel)) ?? { id: 0, day: "", name: "", sport: "Ride", chan: Db.watts_chan }
+		ghost = (List.get(ids, (sel + 1) % List.len(ids))) ?? entry
+		unit = Db.trace_unit(entry.chan, a.units, entry.sport)
+		{
+			..base,
+			view: 2,
+			trace_ids: ids,
+			trace_sel: sel,
+			trace_day: entry.day,
+			trace: samples_of(entry.sport),
+			trace_dur: 3600.0,
+			trace_unit: unit,
+			segs: if (entry.chan == Db.hr_chan) [] else [{ kind: "work", start_s: 600, dur_s: 480 }, { kind: "recovery", start_s: 1080, dur_s: 240 }, { kind: "work", start_s: 1320, dur_s: 480 }, { kind: "work", start_s: 2040, dur_s: 480 }],
+			trace_splits: if (entry.chan == Db.pace_chan) splits_of(a.units, entry.sport) else [],
+			trace_sets: { rows: if (Trace.strength_session(entry.sport)) set_rows else [], pasted: Bool.False },
+			trace_sport: if (moved == 1) entry.sport else "",
+			trace_zoom: if (moved == 1) 2.5 else 1.0,
+			trace_pan: if (moved == 1) 0.2 else 0.0,
+			ghost: if (moved == 1 and ghost.chan == entry.chan) List.map(samples_of(ghost.sport), |v| v * 0.9) else [],
+			ghost_dur: 3000.0,
+			ghost_day: if (moved == 1 and ghost.chan == entry.chan) ghost.day else "",
+		}
+	}
+
+	trace_models : List({ name : Str, model : Ui.Model })
+	trace_models = {
+		sessions = List.join(
+			List.map(
+				athletes,
+				|a| List.join(
+					List.map(
+						sizes,
+						|sz| {
+							base = athlete_model(a, sz)
+							List.join(List.map_with_index(a.sports, |s, sel| List.map([0.U64, 1], |moved| { name: "${a.name} trace ${s.sport} ${if (moved == 1) "zoomed with a ghost" else "at home"} at ${size_name(sz)}", model: trace_model(base, a, sel, moved) })))
+						},
+					),
+				),
+			),
+		)
+		# the blank plots: a fetch in flight, a stream with nothing to plot,
+		# and an athlete with no session at all
+		blank = List.join(
+			List.map(
+				sizes,
+				|sz| {
+					a = (List.first(athletes)) ?? { name: "", units: Metric, sports: [] }
+					m = trace_model(athlete_model(a, sz), a, 0, 0)
+					[
+						{ name: "trace loading at ${size_name(sz)}", model: { ..m, trace: [], trace_loading: Bool.True } },
+						{ name: "trace with no samples at ${size_name(sz)}", model: { ..m, trace: [] } },
+						{ name: "trace with no sessions at ${size_name(sz)}", model: { ..m, trace: [], trace_ids: [] } },
+					]
+				},
+			),
+		)
+		List.concat(sessions, blank)
+	}
+
+	# ── the day tab's fixtures ──────────────────────────────────────────────
+	# the athlete's sport for a session slot, cycling through its families
+	sport_at : Athlete, U64 -> Str
+	sport_at = |a, i| {
+		hs = athlete_heads(a)
+		(List.get(hs, i % U64.max(1, List.len(hs)))) ?? "Ride"
+	}
+
+	# a session's target in its own signal and the result `complete` stored
+	# for it: watts on a power family, a pace in the family's unit, an RPE on
+	# strength work
+	with_target : Db.PlanRow, [Metric, Imperial], Str -> Db.PlanRow
+	with_target = |p, units, sport| {
+		fam = Sports.canonical(sport)
+		label = (Curve.pace_unit_for(units, fam)).label
+		if List.contains(Sports.pace_target_families, fam) {
+			{ ..p, tgt_lit: "5x4:00@4:10${label}", tgt_res: "whole session at 4:14${label}" }
+		} else if Sports.class(fam) == Endurance {
+			{ ..p, tgt_reps: 2, tgt_dur_s: 900, tgt_watts: 225.0, det_reps: 2, det_dur_s: 905, det_watts: 228.0 }
+		} else {
+			{ ..p, tgt_lit: "1x45:00@RPE6", tgt_res: "rated 7.0" }
+		}
+	}
+
+	long_detail : Str
+	long_detail = "Warm up 15 min easy, then 3 x 12 min at threshold with 4 min easy between, keeping the effort steady and the cadence high; cool down 10 min, and if the legs are heavy from the weekend cut the third rep and finish with 20 min easy instead"
+
+	long_rationale : Str
+	long_rationale = "Fatigue is high after the weekend block, so the threshold work stays short and the long day moves to Saturday, two easy days after it"
+
+	# A planned week from Monday 11-09 to the Wednesday after the as-of
+	# Thursday: past sessions done, skipped with and without a substitute
+	# and several a day, more of them than the widest window's ladder holds,
+	# a rest day rested, today's session open with a long prescription
+	# beside one already done, and the days ahead open with prescriptions
+	# long enough to wrap.
+	plan_rows : Athlete -> List(Db.PlanRow)
+	plan_rows = |a| {
+		at = |day, wi, typ, i| { ..Plan.blank_row, day, wi, typ, detail: "${sport_at(a, i)}: ${typ} as written, 60 min", today: Bool.False, past: wi < 3, day_load_known: Bool.True, day_load: 60.0 }
+		done = |p, i| with_target({ ..p, status: "done", act_name: "Morning ${sport_at(a, i)} on the river loop", act_secs: 3720, act_load: 64 }, a.units, sport_at(a, i))
+		ahead = |p| { ..p, detail: long_detail, rationale: long_rationale }
+		# a past day's extra sessions, each done
+		more = |day, wi| List.map(seq(5), |n| done(at(day, wi, if (n % 2 == 0) "endurance" else "strength", I64.to_u64_wrap(n)), I64.to_u64_wrap(n)))
+		List.join([
+			[
+				done(at("2026-11-09", 0, "endurance", 0), 0),
+				done(at("2026-11-09", 0, "strength", 1), 1),
+				{ ..at("2026-11-09", 0, "vo2", 2), status: "skipped", reason: "the pool was closed for a meet" },
+			],
+			more("2026-11-09", 0),
+			[
+				done(at("2026-11-10", 1, "threshold", 3), 3),
+				{ ..at("2026-11-10", 1, "threshold", 4), status: "skipped", reason: "sick", sub_id: 7, sub_name: "Easy ${sport_at(a, 4)} with the club" },
+			],
+			more("2026-11-10", 1),
+			[
+				{ ..at("2026-11-11", 2, "rest", 0), day_load: 0.0 },
+				{ ..done(at("2026-11-11", 2, "endurance", 5), 5), done_day: "2026-11-12" },
+				{ ..at("2026-11-11", 2, "strength", 2), status: "skipped", reason: "travel day, the hotel gym was closed" },
+			],
+			more("2026-11-11", 2),
+			[
+				done(at("2026-11-12", 3, "strength", 6), 6),
+				{ ..ahead(at("2026-11-12", 3, "threshold", 0)), today: Bool.True, past: Bool.False },
+				ahead(at("2026-11-13", 4, "vo2", 1)),
+				ahead(at("2026-11-14", 5, "endurance", 2)),
+				{ ..at("2026-11-15", 6, "rest", 0), past: Bool.False, day_load_known: Bool.False },
+				ahead(at("2026-11-16", 7, "strength", 3)),
+				ahead(at("2026-11-17", 8, "threshold", 4)),
+				ahead(at("2026-11-18", 9, "endurance", 5)),
+			],
+		])
+	}
+
+	plan_models : List({ name : Str, model : Ui.Model })
+	plan_models =
+		List.join(
+			List.map(
+				athletes,
+				|a| List.join(
+					List.map(
+						sizes,
+						|sz| {
+							base = { ..athlete_model(a, sz), view: 4, plan: plan_rows(a), week_tss: { this: 412, last: 1385 }, bus_note: "11-12 08:14 plan / 30d", plan_week: { done: 4, total: 6 } }
+							[
+								{ name: "${a.name} week at ${size_name(sz)}", model: base },
+								{ name: "${a.name} week scrolled with the quest complete at ${size_name(sz)}", model: { ..base, week_off: 4, plan_week: { done: 6, total: 6 } } },
+							]
+						},
+					),
+				),
+			),
+		)
+
+	# a day's sessions, named as the activity list names them, two on some
+	# days and long enough to wrap the session column
+	day_notes_of : Athlete -> List({ day : Str, note : Str })
+	day_notes_of = |a| List.map_with_index(series_days, |day, i| { day, note: if (i % 3 == 0) "45 min ${sport_at(a, i)} with the Saturday group + Evening ${sport_at(a, i + 1)} around the lake" else "Morning ${sport_at(a, i)}" })
+
+	# the open day's activities: three blocks with long titles and their
+	# load, physiology and zone lines
+	detail_lines : Athlete -> List(Db.DayLine)
+	detail_lines = |a| {
+		du = Str.drop_prefix((Curve.pace_unit_for(a.units, "Run")).label, "/")
+		List.map([0, 1, 2], |i| { title: "Evening ${sport_at(a, i)} along the lakefront path and back through the park [${sport_at(a, i)}]", stats: "62 min  42.1${du}  85 tss  230 w np", extra: "IF 0.84   142 bpm avg   rpe 6.0", zones: [600, 1500, 900, 420, 60] })
+	}
+
+	table_models : List({ name : Str, model : Ui.Model })
+	table_models =
+		List.join(
+			List.map_with_index(
+				athletes,
+				|a, k| List.join(
+					List.map(
+						sizes,
+						|sz| {
+							base = { ..athlete_model(a, sz), view: 3, data: board_series(k), days: series_days, day_notes: day_notes_of(a), table_head: List.map(Table.head_texts, |_t| Text.Prepared.stub) }
+							[
+								{ name: "${a.name} log at ${size_name(sz)}", model: base },
+								{ name: "${a.name} log scrolled with a day open at ${size_name(sz)}", model: { ..base, cursor: 30, detail_day: "2026-10-13", detail: detail_lines(a) } },
+								{ name: "${a.name} log with a day loading at ${size_name(sz)}", model: { ..base, detail_day: "2026-11-12", detail: [] } },
+							]
+						},
+					),
+				),
+			),
+		)
+
+	# 2025-10-01, a Wednesday, through the as-of day: more weeks than the
+	# widest window holds
+	year_days : List(Db.HeatDay)
+	year_days = {
+		spans = [{ y: 2025, m: 10, n: 31 }, { y: 2025, m: 11, n: 30 }, { y: 2025, m: 12, n: 31 }, { y: 2026, m: 1, n: 31 }, { y: 2026, m: 2, n: 28 }, { y: 2026, m: 3, n: 31 }, { y: 2026, m: 4, n: 30 }, { y: 2026, m: 5, n: 31 }, { y: 2026, m: 6, n: 30 }, { y: 2026, m: 7, n: 31 }, { y: 2026, m: 8, n: 31 }, { y: 2026, m: 9, n: 30 }, { y: 2026, m: 10, n: 31 }, { y: 2026, m: 11, n: 12 }]
+		days = List.join(List.map(spans, |mo| List.map(seq(mo.n), |d| "${I64.to_str(mo.y)}-${two(mo.m)}-${two(d)}")))
+		List.map_with_index(days, |day, i| { day, tss: if (i % 7 == 4) 0 else 30 + U64.to_i64_wrap(i % 9) * 15, dow: U64.to_i64_wrap((i + 3) % 7) })
+	}
+
+	heat_models : List({ name : Str, model : Ui.Model })
+	heat_models = {
+		per_athlete = List.join(
+			List.map(
+				athletes,
+				|a| List.join(
+					List.map(
+						sizes,
+						|sz| {
+							base = { ..athlete_model(a, sz), view: 5, heat: year_days }
+							[
+								{ name: "${a.name} year at ${size_name(sz)}", model: base },
+								{ name: "${a.name} year with event days at ${size_name(sz)}", model: { ..base, heat_events: ["2026-06-27", "2026-11-08"] } },
+							]
+						},
+					),
+				),
+			),
+		)
+		empty = List.map(sizes, |sz| { name: "year with no history at ${size_name(sz)}", model: { ..empty_model(sz), view: 5 } })
+		List.concat(per_athlete, empty)
+	}
+
+	# ── the weeks tab's fixtures ────────────────────────────────────────────
+	# the Mondays the weeks tab charts, up to the as-of week, which is still
+	# running
+	week_starts : List(Str)
+	week_starts = ["2026-08-24", "2026-08-31", "2026-09-07", "2026-09-14", "2026-09-21", "2026-09-28", "2026-10-05", "2026-10-12", "2026-10-19", "2026-10-26", "2026-11-02", "2026-11-09"]
+
+	# a week's share of the athlete's usual volume: the first week the
+	# biggest, so its cap or chip rises to the scale's top value, a rest
+	# week in the middle and the running week partial
+	week_share : U64 -> I64
+	week_share = |i| (List.get([140, 90, 100, 110, 60, 0, 105, 115, 120, 95, 100, 40], i)) ?? 100
+
+	zone_weeks_of : U64 -> List(Db.ZoneWeek)
+	zone_weeks_of = |k|
+		List.map_with_index(
+			week_starts,
+			|wk, i| {
+				s = week_share(i) * (60 + 15 * U64.to_i64_wrap(k % 5))
+				z = { z1: s * 25, z2: s * 40, z3: s * 18, z4: s * 12, z5: s * 5 }
+				easy = z.z1 + z.z2 - (if (i % 3 == 1) s * 30 else 0)
+				{ wk, days: if (i == 11) 4 else 7, z1: z.z1, z2: z.z2, z3: z.z3, z4: z.z4, z5: z.z5, easy, moderate: z.z3 + (if (i % 3 == 1) s * 30 else 0), hard: z.z4 + z.z5 }
+			},
+		)
+
+	ramp_weeks_of : U64 -> List(Db.RampWeek)
+	ramp_weeks_of = |k|
+		List.map_with_index(
+			week_starts,
+			|wk, i| {
+				tss = week_share(i) * (4 + U64.to_i64_wrap(k % 4))
+				{ wk, days: if (i == 11) 4 else 7, tss, ctl10: 480 + U64.to_i64_wrap(i) * 7, ramp10: (List.get([75, -12, 18, 31, 0, -19, 42, 64, 25, 8, 12, -5], i)) ?? 0 }
+			},
+		)
+
+	# ── the lifts tab's fixtures ────────────────────────────────────────────
+	# lifts, more rows than the widest window holds, each trained on several
+	# days, rising, flat or falling, some named past the column's cut
+	lifts : List(Db.Lift)
+	lifts =
+		List.map(
+			seq(50),
+			|n| {
+				names = ["Back Squat", "Romanian Deadlift", "Tall Kneeling Dumbbell Overhead Press", "Dumbbell Pass Through to Push Up", "Pull Up", "Reverse Grip Tricep Kickback", "Bench Press"]
+				name = (List.get(names, I64.to_u64_wrap(n % 7))) ?? "Curl"
+				step = I64.to_f64(n % 3) - 1.0
+				{ exercise: "${name} ${I64.to_str(n)}", points: List.map(seq(5), |d| { day: "2026-10-${two(d * 5)}", kg: 20.0 + I64.to_f64(n % 9) * 5.0 + step * I64.to_f64(d) * 2.5 }) }
+			},
+		)
+
+	# the strength view for an athlete who lifts, in a mass unit: the
+	# latest session's sets with newer unlogged sessions above them, the
+	# weeks of sessions and the months of tonnage, the last in progress
+	strength_of : [Metric, Imperial] -> Db.StrengthView
+	strength_of = |mass| {
+		lifts,
+		last: { id: 9, day: "2026-11-09", name: "Afternoon Workout - full body with the Tuesday group at the gym downtown", log: { rows: set_rows, pasted: Bool.False } },
+		unlogged: [{ day: "2026-11-12", name: "Morning Workout" }, { day: "2026-11-11", name: "Yoga" }],
+		weeks: List.map_with_index(week_starts, |mon, i| { mon, total: 2 + U64.to_i64_wrap(i % 3), with_sets: 1 + U64.to_i64_wrap(i % 2) }),
+		tonnage: List.map_with_index(List.take_last(months, 12), |month, i| { month, kg: 9000.0 + U64.to_f64(i % 5) * 2500.0, covered: 3 + U64.to_i64_wrap(i % 4), total: 8, partial: i == 11 }),
+		mass,
+	}
+
+	lifts_models : List({ name : Str, model : Ui.Model })
+	lifts_models =
+		List.join(
+			List.map(
+				athletes,
+				|a| List.join(
+					List.map(
+						sizes,
+						|sz| {
+							base = { ..athlete_model(a, sz), view: 9 }
+							if List.any(athlete_heads(a), |h| Sports.class(h) == StrengthLike) {
+								[
+									{ name: "${a.name} lifts at ${size_name(sz)}", model: { ..base, strength: strength_of(Metric) } },
+									{ name: "${a.name} lifts in pounds, scrolled at ${size_name(sz)}", model: { ..base, strength: strength_of(Imperial), lifts_off: 10 } },
+								]
+							} else {
+								[{ name: "${a.name} lifts with no lifting at ${size_name(sz)}", model: base }]
+							}
+						},
+					),
+				),
+			),
+		)
+	# ── the boot splash's fixtures: its words at every size, at each dot
+	# count, with and without the note a slow load earns ─────────────────
+	splash_models : List({ name : Str, model : Ui.Model, slow : Str })
+	splash_models =
+		List.join(
+			List.map(
+				sizes,
+				|sz| List.join(
+					List.map(
+						[10.U64, 40, 70],
+						|tick| List.map(["", "still loading after 25 s - R retries, ESC quits"], |slow| { name: "splash at tick ${U64.to_str(tick)}${if (slow == "") "" else " running slow"} at ${size_name(sz)}", model: { ..empty_model(sz), booting: Bool.True, tick }, slow }),
+					),
+				),
+			),
+		)
+
+	weeks_models : U8 -> List({ name : Str, model : Ui.Model })
+	weeks_models = |view|
+		List.join(
+			List.map_with_index(
+				athletes,
+				|a, k| List.join(
+					List.map(
+						sizes,
+						|sz| {
+							base = { ..athlete_model(a, sz), view, zone_weeks: zone_weeks_of(k), ramp_weeks: ramp_weeks_of(k) }
+							mode = if (view == 6) "zones" else "load"
+							[
+								{ name: "${a.name} ${mode} at ${size_name(sz)}", model: base },
+								{ name: "${a.name} ${mode} on a picked week with per-sport zones at ${size_name(sz)}", model: { ..base, week_cursor: "2026-11-09", zone_overrides: athlete_heads(a) } },
+								{ name: "${a.name} ${mode} with no history at ${size_name(sz)}", model: { ..base, zone_weeks: [], ramp_weeks: [] } },
+							]
+						},
+					),
+				),
+			),
+		)
 }
 
 # the gate's measure is the window's: the data face advances 10 of 24 px
@@ -465,7 +1008,40 @@ expect !(List.contains(List.join(List.map(Sports.families, |f| f.sports)), Gate.
 # the power view's gate: every curve, range and short-rung choice of every
 # athlete at every size places its text with no overlap and inside its
 # regions
-expect Gate.failures(|m| Curve.owned(m, Gate.measure), Gate.curve_models) == []
+expect Gate.failures(|m| Labels.check(Curve.owned(m, Gate.measure)), Gate.curve_models) == []
 
 # the career view's gate: every spine of every athlete at every size
-expect Gate.failures(|m| Career.owned(m, Gate.measure), Gate.career_models) == []
+expect Gate.failures(|m| Labels.check(Career.owned(m, Gate.measure)), Gate.career_models) == []
+
+# the form board's gate: every athlete's board at every range, with an
+# event ahead and with the event-day story, at every size, and the two
+# boards with no plot; no text over a chip, a tile or a load bar
+expect Gate.failures(|m| Gate.judge(Board.owned(m, Gate.measure), Board.marks(m)), Gate.board_models) == []
+
+# the session trace's gate: every session of every athlete at home and
+# zoomed with a ghost, and the three blank plots, at every size
+expect Gate.failures(|m| Gate.judge(Trace.owned(m, Gate.measure), Trace.marks(m)), Gate.trace_models) == []
+
+# the day tab's gates: the week with its card, ladder, scroll hints and
+# quest, the log with a day open and loading, and the year with and without
+# event days, for every athlete at every size
+expect Gate.failures(|m| Gate.judge(Plan.owned(m, Gate.measure), Plan.marks(m)), Gate.plan_models) == []
+expect Gate.failures(|m| Gate.judge(Table.owned(m, Gate.measure), Table.marks(m)), Gate.table_models) == []
+expect Gate.failures(|m| Gate.judge(Heat.owned(m, Gate.measure), Heat.marks(m)), Gate.heat_models) == []
+
+# the weeks tab's gates: zones and load for every athlete at every size,
+# with no week picked, on a picked week with per-sport zones, and with no
+# history
+expect Gate.failures(|m| Gate.judge(Zones.owned(m, Gate.measure), Zones.marks(m)), Gate.weeks_models(6)) == []
+expect Gate.failures(|m| Gate.judge(Ramp.owned(m, Gate.measure), Ramp.marks(m)), Gate.weeks_models(7)) == []
+
+# the lifts tab's gate: every athlete who lifts, in kilograms and scrolled
+# in pounds, and every athlete who does not, at every size
+expect Gate.failures(|m| Gate.judge(Strength.owned(m, Gate.measure), Strength.marks(m)), Gate.lifts_models) == []
+
+# the boot splash's gate: its words at every size and dot count, slow or not
+expect List.join(List.map(Gate.splash_models, |f| List.map(Labels.check(Scene.owned(Chrome.splash(f.model, Gate.measure, f.slow))), |e| "${f.name}: ${e}"))) == []
+
+# the XP rail's sheet holds its lines inside its card for every athlete at
+# every size
+expect List.join(List.map(Gate.board_models, |f| List.map(Labels.check(Scene.owned(Labels.place((Hud.sheet(f.model, Gate.measure)).lines, { boxes: [], segs: [] }))), |e| "${f.name}: ${e}"))) == []

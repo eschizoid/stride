@@ -1,13 +1,15 @@
 import rr.Color
 import rr.Draw
-import rr.Text
 import core.Units
 import Career
+import Chrome
 import Db
+import Labels
+import Scene
+import Scroll
 import Theme
 import Trace
 import Ui
-import Scroll
 import Wrap
 
 Strength :: [].{
@@ -18,6 +20,7 @@ Strength :: [].{
 	# that always shows its coverage. Beside the lifts: the latest session's
 	# sets and twelve weeks of strength sessions split by whether their sets
 	# were logged.
+
 	Dir : [Up, Flat, Down]
 
 	# a lift moved when its latest heaviest weight differs from its first by
@@ -125,8 +128,6 @@ Strength :: [].{
 	row_h : F32
 	row_h = 26.0
 
-	# the left column holds the lifts; its width is a share of the window so
-	# the right column keeps room for a set line at the minimum width
 	# the lifts list starts here and scrolls (Scroll) when its rows outgrow
 	# the room above the footer, less a line for the `more below` hint
 	lift_top : F32
@@ -139,6 +140,8 @@ Strength :: [].{
 	lifts_last : Ui.Model -> U64
 	lifts_last = |model| Scroll.last_offset(List.repeat(row_h, List.len(model.strength.lifts)), lift_room(model.win.h))
 
+	# the left column holds the lifts; its width is a share of the window so
+	# the right column keeps room for a set line at the minimum width
 	left_w : F32 -> F32
 	left_w = |win_w| win_w * 0.55
 
@@ -153,92 +156,202 @@ Strength :: [].{
 				frame.line!({ start: { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }, end: { x: a.x + (b.x - a.x) * (t + 0.1), y: a.y + (b.y - a.y) * (t + 0.1) }, stroke: Draw.stroke(c, 2) }),
 		)
 
-	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
-	draw! = |model, frame| {
+	title_text : Str
+	title_text = "lifts - the heaviest weight each lift moved, newest on the right"
+
+	hint_text : Str
+	hint_text = "wheel or up/down  scroll      TAB  zones      R  reload      S  screenshot      V  record      ESC quit"
+
+	# ── the layout the drawing, the scene and the gate share ───────────────
+	# the lifts on screen from the scroll offset, each with its row's top,
+	# and where the scrollbar and its hints sit
+	shown_lifts : Ui.Model -> { rows : List({ l : Db.Lift, y : F32 }), off : U64, n_shown : U64, at : { x : F32, top : F32, bottom : F32, hint_x : F32 } }
+	shown_lifts = |model| {
+		heights = List.repeat(row_h, List.len(model.strength.lifts))
+		room = lift_room(model.win.h)
+		off = model.lifts_off.min(Scroll.last_offset(heights, room))
+		n_shown = Scroll.shown(heights, off, room)
+		{
+			rows: List.map_with_index(List.take_first(List.drop_first(model.strength.lifts, off), n_shown), |l, i| { l, y: lift_top + U64.to_f32(i) * row_h }),
+			off,
+			n_shown,
+			at: { x: 36.0 + left_w(model.win.w) - 6.0, top: lift_top, bottom: lift_top + room, hint_x: 36.0 },
+		}
+	}
+
+	# a lift row's sparkline, last dot included, and its direction mark
+	spark_box : F32 -> Labels.Rect
+	spark_box = |y| { x: 206.0, y: y - 1.5, w: 122.5, h: 19.0 }
+
+	arrow_box : F32 -> Labels.Rect
+	arrow_box = |y| { x: 335.0, y: y + 3.0, w: 12.0, h: 9.0 }
+
+	# the right column: the latest session, then the weeks, then tonnage
+	right_x : F32 -> F32
+	right_x = |win_w| 36.0 + left_w(win_w) + 24.0
+
+	right_w : F32 -> F32
+	right_w = |win_w| win_w - right_x(win_w) - 40.0
+
+	weeks_top : F32
+	weeks_top = lift_top + 40.0 + 7.0 * 17.0 + 16.0
+
+	bars_top : F32
+	bars_top = weeks_top + 22.0
+
+	bars_h : F32
+	bars_h = 56.0
+
+	ton_top : F32
+	ton_top = bars_top + bars_h + 34.0
+
+	# the tonnage chart's top and bottom, and whether the window leaves it
+	# room to draw
+	ton_span : F32 -> { top : F32, bottom : F32, drawn : Bool }
+	ton_span = |win_h| {
+		top = ton_top + 22.0
+		bottom = win_h - 84.0 - 22.0
+		{ top, bottom, drawn: bottom - top >= 30.0 }
+	}
+
+	# ── every string the view writes, placed ───────────────────────────────
+	# All of it is fixed: the title, each lift's name and values, the scroll
+	# hints, the latest session, the weeks chart's captions, the tonnage
+	# captions and the footer.
+	scene : Ui.Model, Scene.Measure -> List(Labels.Placed(Scene.Item))
+	scene = |model, measure| Labels.place(texts(model, measure), { boxes: Chrome.boxes(model, measure), segs: [] })
+
+	# the view's text and the chrome's, as the gate judges them
+	owned : Ui.Model, Scene.Measure -> List(Labels.Owned)
+	owned = |model, measure| List.concat(Scene.owned(Chrome.placed(model, measure)), Scene.owned(scene(model, measure)))
+
+	texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
+	texts = |model, measure| {
 		win_w = model.win.w
 		win_h = model.win.h
+		panel = Labels.panel(model.win)
 		# the view's own unit: config units when set, else what the stored
 		# weights were entered in (Db.mass_units)
 		units = model.strength.mass
 		sv = model.strength
 		ink_muted = Theme.ink_muted
 		ink_faint = Theme.ink_faint
-		txt! = |s, sz, x, y, c| Text.from(s, model.font).size(sz).draw!(frame, { pos: { x, y }, color: c, align: (Top, Left) })
-		txt!("lifts - the heaviest weight each lift moved, newest on the right", 15, 36.0, 70.0, ink_muted)
-
+		txt = |s, sz, x, y, c| Scene.fixed(measure, Scene.data(s, sz, c), { x, y, align: Left }, panel)
 		# ── lifts, the headline
-		heights = List.repeat(row_h, List.len(sv.lifts))
-		room = lift_room(win_h)
-		off = model.lifts_off.min(Scroll.last_offset(heights, room))
-		n_shown = Scroll.shown(heights, off, room)
-		if List.is_empty(sv.lifts) {
-			txt!("no lift trained on two days with its weight logged yet", 13, 36.0, lift_top, ink_muted)
-		} else {
-			List.for_each!(
-				List.map_with_index(List.take_first(List.drop_first(sv.lifts, off), n_shown), |l, i| { l, i }),
-				|x| {
-					y = lift_top + U64.to_f32(x.i) * row_h
-					name = (List.first(Wrap.fit(x.l.exercise, 22, 1))).ok_or(x.l.exercise)
-					txt!(name, 12, 36.0, y, Color.white)
-					# sparkline
-					sx = 206.0
-					sw = 120.0
-					kgs = List.map(x.l.points, |p| p.kg)
-					lo = List.fold(kgs, 1000000.0, |a, k| F64.min(a, k))
-					hi = List.fold(kgs, 0.0, |a, k| F64.max(a, k))
-					n = List.len(kgs)
-					px = |i| sx + (if (n <= 1) 0.0 else U64.to_f32(i) * sw / U64.to_f32(n - 1))
-					py = |k| y + 15.0 - f32((k - lo) / spark_span(lo, hi)) * 14.0
-					List.for_each!(
-						List.map_with_index(List.drop_first(kgs, 1), |k, i| { k, i }),
-						|s| {
-							prev = (List.get(kgs, s.i)).ok_or(s.k)
-							frame.line!({ start: { x: px(s.i), y: py(prev) }, end: { x: px(s.i + 1), y: py(s.k) }, stroke: Draw.stroke(Color.with_alpha(Theme.ctl_c, 200), 1.5) })
-						},
-					)
-					last_k = (List.last(kgs)).ok_or(0.0)
-					frame.circle!({ center: { x: px(n - 1), y: py(last_k) }, radius: 2.5, style: Draw.filled(Theme.ctl_c) })
-					# direction mark
-					ax = 336.0
-					match direction(x.l.points) {
-						Up => {
-							frame.line!({ start: { x: ax, y: y + 11.0 }, end: { x: ax + 5.0, y: y + 4.0 }, stroke: Draw.stroke(Theme.tsb_c, 2) })
-							frame.line!({ start: { x: ax + 5.0, y: y + 4.0 }, end: { x: ax + 10.0, y: y + 11.0 }, stroke: Draw.stroke(Theme.tsb_c, 2) })
-						}
-						Down => {
-							frame.line!({ start: { x: ax, y: y + 4.0 }, end: { x: ax + 5.0, y: y + 11.0 }, stroke: Draw.stroke(Theme.alarm_c, 2) })
-							frame.line!({ start: { x: ax + 5.0, y: y + 11.0 }, end: { x: ax + 10.0, y: y + 4.0 }, stroke: Draw.stroke(Theme.alarm_c, 2) })
-						}
-						Flat => frame.line!({ start: { x: ax, y: y + 8.0 }, end: { x: ax + 10.0, y: y + 8.0 }, stroke: Draw.stroke(ink_muted, 2) })
-					}
-					txt!(lift_values(units, x.l.points), 12, 354.0, y, ink_muted)
-				},
-			)
-			Scroll.draw!(frame, model.font, { x: 36.0 + left_w(win_w) - 6.0, top: lift_top, bottom: lift_top + room, hint_x: 36.0 }, off, n_shown, List.len(sv.lifts))
-		}
-
-		# ── right column: the latest session, then the weeks, then tonnage
-		rx = 36.0 + left_w(win_w) + 24.0
-		rw = win_w - rx - 40.0
-		if sv.last.id < 0 {
-			txt!("no strength session yet", 13, rx, lift_top, ink_muted)
-		} else {
-			head = if (List.is_empty(sv.last.log.rows)) "last session - ${sv.last.day}" else "last logged session - ${sv.last.day}"
-			txt!(head, 13, rx, lift_top, Color.white)
-			txt!((List.first(Wrap.fit(sv.last.name, 46, 1))).ok_or(""), 12, rx, lift_top + 18.0, ink_faint)
-			note = unlogged_note(sv.unlogged)
-			if note != "" {
-				txt!((List.first(Wrap.fit(note, 46, 1))).ok_or(""), 11, rx, lift_top + 34.0, ink_faint)
+		s = shown_lifts(model)
+		lifts =
+			if List.is_empty(sv.lifts) {
+				[txt("no lift trained on two days with its weight logged yet", 13.0, 36.0, lift_top, ink_muted)]
+			} else {
+				List.concat(
+					List.join(List.map(s.rows, |r| [txt((List.first(Wrap.fit(r.l.exercise, 22, 1))).ok_or(r.l.exercise), 12.0, 36.0, r.y, Color.white), txt(lift_values(units, r.l.points), 12.0, 354.0, r.y, ink_muted)])),
+					Scroll.hints(measure, s.at, s.off, s.n_shown, List.len(sv.lifts), panel),
+				)
 			}
-			first_y = if (note == "") (lift_top + 40.0) else lift_top + 52.0
-			lines = if (List.is_empty(sv.last.log.rows)) [Trace.no_sets_note(sv.last.log.pasted)] else List.map(List.take_first(sv.last.log.rows, 6), |r| (List.first(Wrap.fit(set_text(units, r), 46, 1))).ok_or(""))
-			List.for_each!(List.map_with_index(lines, |l, i| { l, i }), |x| txt!(x.l, 12, rx, first_y + U64.to_f32(x.i) * 17.0, ink_muted))
-		}
+		rx = right_x(win_w)
+		rw = right_w(win_w)
+		last =
+			if sv.last.id < 0 {
+				[txt("no strength session yet", 13.0, rx, lift_top, ink_muted)]
+			} else {
+				head = if (List.is_empty(sv.last.log.rows)) "last session - ${sv.last.day}" else "last logged session - ${sv.last.day}"
+				note = unlogged_note(sv.unlogged)
+				first_y = if (note == "") (lift_top + 40.0) else lift_top + 52.0
+				lines = if (List.is_empty(sv.last.log.rows)) [Trace.no_sets_note(sv.last.log.pasted)] else List.map(List.take_first(sv.last.log.rows, 6), |r| (List.first(Wrap.fit(set_text(units, r), 46, 1))).ok_or(""))
+				List.join([
+					[txt(head, 13.0, rx, lift_top, Color.white), txt((List.first(Wrap.fit(sv.last.name, 46, 1))).ok_or(""), 12.0, rx, lift_top + 18.0, ink_faint)],
+					if (note == "") [] else [txt((List.first(Wrap.fit(note, 46, 1))).ok_or(""), 11.0, rx, lift_top + 34.0, ink_faint)],
+					List.map_with_index(lines, |l, i| txt(l, 12.0, rx, first_y + U64.to_f32(i) * 17.0, ink_muted)),
+				])
+			}
+		weeks =
+			if List.is_empty(sv.weeks) {
+				[]
+			} else {
+				[
+					txt("12 weeks ago", 11.0, rx, bars_top + bars_h + 6.0, ink_faint),
+					Scene.fixed(measure, Scene.data("this week so far", 11.0, ink_faint), { x: rx + rw, y: bars_top + bars_h + 6.0, align: Right }, panel),
+				]
+			}
+		ton_bottom = win_h - 84.0
+		List.join([
+			[txt(title_text, 15.0, 36.0, 70.0, ink_muted)],
+			lifts,
+			last,
+			[txt("sessions a week: with sets, without", 12.0, rx, weeks_top, ink_muted)],
+			weeks,
+			[txt("tonnage - volume, not strength", 12.0, rx, ton_top, ink_muted)],
+			List.map_with_index(tonnage_caption(units, sv.tonnage), |l, i| txt(l, 11.0, rx, ton_bottom - 10.0 + U64.to_f32(i) * 15.0, ink_faint)),
+			[txt(hint_text, 13.0, 36.0, win_h - 30.0, ink_faint)],
+		])
+	}
 
-		wk_top = lift_top + 40.0 + 7.0 * 17.0 + 16.0
-		txt!("sessions a week: with sets, without", 12, rx, wk_top, ink_muted)
-		bars_top = wk_top + 22.0
-		bars_h = 56.0
+	# the shapes no text may cover: the pills, each lift's sparkline and
+	# direction mark, the scrollbar, the weeks chart and the tonnage chart
+	marks : Ui.Model -> List(Labels.Mark)
+	marks = |model| {
+		s = shown_lifts(model)
+		h = Scroll.hidden(s.off, s.n_shown, List.len(model.strength.lifts))
+		rx = right_x(model.win.w)
+		rw = right_w(model.win.w)
+		ton = ton_span(model.win.h)
+		List.join([
+			Chrome.marks(model),
+			List.join(List.map(s.rows, |r| [{ key: "the ${r.l.exercise} sparkline", box: spark_box(r.y) }, { key: "the ${r.l.exercise} direction", box: arrow_box(r.y) }])),
+			if (h.above == 0 and h.below == 0) [] else [{ key: "the scrollbar", box: { x: s.at.x, y: s.at.top, w: 3.0, h: s.at.bottom - s.at.top } }],
+			if (List.is_empty(model.strength.weeks)) [] else [{ key: "the weeks chart", box: { x: rx, y: bars_top, w: rw, h: bars_h + 1.0 } }],
+			if (List.is_empty(model.strength.tonnage) or !(ton.drawn)) [] else [{ key: "the tonnage chart", box: { x: rx - 3.5, y: ton.top - 3.5, w: rw + 7.0, h: ton.bottom - ton.top + 7.0 } }],
+		])
+	}
+
+	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
+	draw! = |model, frame| {
+		win_w = model.win.w
+		sv = model.strength
+		ink_muted = Theme.ink_muted
+		ink_faint = Theme.ink_faint
+		s = shown_lifts(model)
+		List.for_each!(
+			s.rows,
+			|r| {
+				y = r.y
+				# sparkline
+				sx = 206.0
+				sw = 120.0
+				kgs = List.map(r.l.points, |p| p.kg)
+				lo = List.fold(kgs, 1000000.0, |a, k| F64.min(a, k))
+				hi = List.fold(kgs, 0.0, |a, k| F64.max(a, k))
+				n = List.len(kgs)
+				px = |i| sx + (if (n <= 1) 0.0 else U64.to_f32(i) * sw / U64.to_f32(n - 1))
+				py = |k| y + 15.0 - f32((k - lo) / spark_span(lo, hi)) * 14.0
+				List.for_each!(
+					List.map_with_index(List.drop_first(kgs, 1), |k, i| { k, i }),
+					|e| {
+						prev = (List.get(kgs, e.i)).ok_or(e.k)
+						frame.line!({ start: { x: px(e.i), y: py(prev) }, end: { x: px(e.i + 1), y: py(e.k) }, stroke: Draw.stroke(Color.with_alpha(Theme.ctl_c, 200), 1.5) })
+					},
+				)
+				frame.circle!({ center: { x: px(n - 1), y: py((List.last(kgs)).ok_or(0.0)) }, radius: 2.5, style: Draw.filled(Theme.ctl_c) })
+				# direction mark
+				ax = 336.0
+				match direction(r.l.points) {
+					Up => {
+						frame.line!({ start: { x: ax, y: y + 11.0 }, end: { x: ax + 5.0, y: y + 4.0 }, stroke: Draw.stroke(Theme.tsb_c, 2) })
+						frame.line!({ start: { x: ax + 5.0, y: y + 4.0 }, end: { x: ax + 10.0, y: y + 11.0 }, stroke: Draw.stroke(Theme.tsb_c, 2) })
+					}
+					Down => {
+						frame.line!({ start: { x: ax, y: y + 4.0 }, end: { x: ax + 5.0, y: y + 11.0 }, stroke: Draw.stroke(Theme.alarm_c, 2) })
+						frame.line!({ start: { x: ax + 5.0, y: y + 11.0 }, end: { x: ax + 10.0, y: y + 4.0 }, stroke: Draw.stroke(Theme.alarm_c, 2) })
+					}
+					Flat => frame.line!({ start: { x: ax, y: y + 8.0 }, end: { x: ax + 10.0, y: y + 8.0 }, stroke: Draw.stroke(ink_muted, 2) })
+				}
+			},
+		)
+		if !(List.is_empty(sv.lifts)) {
+			Scroll.draw!(frame, s.at, s.off, s.n_shown, List.len(sv.lifts))
+		}
+		rx = right_x(win_w)
+		rw = right_w(win_w)
 		n_w = List.len(sv.weeks)
 		if n_w > 0 {
 			gap = 4.0
@@ -249,8 +362,7 @@ Strength :: [].{
 				List.map_with_index(sv.weeks, |w, i| { w, i }),
 				|x| {
 					bx = rx + U64.to_f32(x.i) * (bw + gap)
-					current = x.i == n_w - 1
-					a = if (current) 110 else 255
+					a = if (x.i == n_w - 1) 110 else 255
 					with_h = I64.to_f32(x.w.with_sets) * unit_h
 					without_h = I64.to_f32(x.w.total - x.w.with_sets) * unit_h
 					base = bars_top + bars_h
@@ -259,32 +371,25 @@ Strength :: [].{
 					frame.rectangle!({ x: bx, y: base, width: bw, height: 1.0, style: Draw.filled(Color.with_alpha(ink_faint, 120)) })
 				},
 			)
-			txt!("12 weeks ago", 11, rx, bars_top + bars_h + 6.0, ink_faint)
-			Text.from("this week so far", model.font).size(11).draw!(frame, { pos: { x: rx + rw, y: bars_top + bars_h + 6.0 }, color: ink_faint, align: (Top, Right) })
 		}
-
 		# tonnage: complete measured months joined by a line, a thin month as a
 		# hollow point, the month in progress joined dashed and muted
-		ton_top = bars_top + bars_h + 34.0
-		ton_bottom = win_h - 84.0
-		txt!("tonnage - volume, not strength", 12, rx, ton_top, ink_muted)
-		chart_top = ton_top + 22.0
-		chart_bottom = ton_bottom - 22.0
 		ms = sv.tonnage
 		n_m = List.len(ms)
-		if n_m > 0 and chart_bottom - chart_top >= 30.0 {
+		ton = ton_span(model.win.h)
+		if n_m > 0 and ton.drawn {
 			hi = List.fold(ms, 1.0, |a, m| F64.max(a, m.kg))
 			mx = |i| rx + (if (n_m <= 1) (rw / 2.0) else U64.to_f32(i) * rw / U64.to_f32(n_m - 1))
-			my = |kg| chart_bottom - f32(kg / hi) * (chart_bottom - chart_top)
+			my = |kg| ton.bottom - f32(kg / hi) * (ton.bottom - ton.top)
 			List.for_each!(
 				List.map_with_index(List.drop_first(ms, 1), |m, i| { m, i }),
-				|s| {
-					prev = (List.get(ms, s.i)).ok_or(s.m)
-					a = { x: mx(s.i), y: my(prev.kg) }
-					b = { x: mx(s.i + 1), y: my(s.m.kg) }
-					if s.m.partial {
+				|e| {
+					prev = (List.get(ms, e.i)).ok_or(e.m)
+					a = { x: mx(e.i), y: my(prev.kg) }
+					b = { x: mx(e.i + 1), y: my(e.m.kg) }
+					if e.m.partial {
 						dashed!(frame, a, b, Color.with_alpha(ink_muted, 160))
-					} else if measured(prev) and measured(s.m) {
+					} else if measured(prev) and measured(e.m) {
 						frame.line!({ start: a, end: b, stroke: Draw.stroke(Color.with_alpha(strength_c, 220), 2) })
 					} else {
 						dashed!(frame, a, b, Color.with_alpha(ink_faint, 140))
@@ -304,8 +409,7 @@ Strength :: [].{
 				},
 			)
 		}
-		List.for_each!(List.map_with_index(tonnage_caption(units, ms), |l, i| { l, i }), |x| txt!(x.l, 11, rx, ton_bottom - 10.0 + U64.to_f32(x.i) * 15.0, ink_faint))
-		txt!("wheel or up/down  scroll      TAB  zones      R  reload      S  screenshot      V  record      ESC quit", 13, 36.0, win_h - 30.0, ink_faint)
+		Scene.draw!(frame, model, scene(model, Scene.measure_of(model)))
 		Ok({})
 	}
 }

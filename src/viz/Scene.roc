@@ -44,10 +44,18 @@ Scene :: [].{
 	data : Str, F32, Color.Rgba -> Item
 	data = |text, size, color| { text, size, color, face: Data, prep: Fresh }
 
+	# an Item drawn fresh each frame in the prose face
+	prose : Str, F32, Color.Rgba -> Item
+	prose = |text, size, color| { text, size, color, face: Prose, prep: Fresh }
+
 	# an Item the window prepared at load, measured from the string it was
 	# prepared from
 	prepared : Text.Prepared, Str, F32, Face, Color.Rgba -> Item
 	prepared = |p, text, size, face, color| { text, size, color, face, prep: Kept(p) }
+
+	# an Item from a prepared copy that carries its own string and size
+	txt : Ui.Txt, Face, Color.Rgba -> Item
+	txt = |t, face, color| prepared(t.p, t.s, t.size, face, color)
 
 	spot_of : F32, Anchor -> Labels.Pt
 	spot_of = |w, a| { x: Labels.left_of(a.x, w, a.align), y: a.y }

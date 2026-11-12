@@ -145,11 +145,6 @@ init! = App.init_for_args(
 	},
 )
 
-# Everything the window knows, rebuilt from the local stride sources in one
-# call — the database for every series, plus the engine's power-curve command
-# for the CP fit. init! runs it once at launch, and the R key runs it again
-# without reopening.
-
 # The database the engine writes, opened from the declared directory. Opening
 # creates nothing that matters: the directory is the athlete's own and the
 # engine made it long before the window ran.
@@ -225,9 +220,12 @@ skeleton : Str -> _
 skeleton = |err|
 	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], zo: [], ph: "", b20: -1, tg: [], rw: [], csp: [], ctm: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric, cf: "", keys: { power: [], pace: [] }, ptg: [], sv: Db.empty_strength_view, thr: 0.0 }
 
-# boot=True builds the instant skeleton the splash renders over: no database
-# and no engine call - the window opens on frame one and the real load runs
-# in a spawned task that answers with Reloaded.
+# Everything the window knows, rebuilt from the local stride sources in one
+# call: the database for every series, plus the engine's power-curve
+# command for the CP fit. boot=True builds the instant skeleton the splash
+# renders over, with no database and no engine call, so the window opens
+# on frame one; the real load runs in a spawned task that answers with
+# Reloaded, at launch and again on R.
 load_model! : Access, Str, Text.Font, I64, Str, Bool => Try(Ui.Model, [ResourceLimit])
 load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 	loaded = if boot {
@@ -244,13 +242,13 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 			cf = if (curve_family == "") Db.default_curve(keys, Db.load_top_family!(db, tm)) else curve_family
 			c = Db.load_curve!(db, curve_days, tm, cf)
 			tids = Db.load_trace_ids!(db)
-			# ONLY the selected session is cached at boot. The roc-ray SQLite
-			# binding marshals result rows one at a time, and each session's
-			# downsampled trace is hundreds of rows, so caching the whole
-			# picker would hold the first frame for every session's rows. A
-			# switch or ghost summon to an uncached session falls through to
-			# the one-session load the cache-miss path spawns (trace_task! /
-			# ghost_task!), so the cost is paid per session looked at.
+			# ONLY the newest session is cached by the load. The roc-ray
+			# SQLite binding marshals result rows one at a time, and each
+			# session's downsampled trace is a long run of rows, so caching
+			# the whole picker would delay the load by every session's rows.
+			# A switch or ghost summon to an uncached session falls through
+			# to the one-session load the cache-miss path spawns (trace_task!
+			# / ghost_task!), so the cost is paid per session looked at.
 			un = Db.units!(db)
 			tcache = load_tcache!(db, un, List.take_first(tids, 1))
 			tr = match List.first(tcache) {
@@ -319,6 +317,8 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 	mk! = |txt, sz| Text.from(txt, if (sz >= 24) title_font else head).size(sz).prepare!()
 	mkm! = |txt, sz| Text.from(txt, mono).size(sz).prepare!()
 	mkb! = |txt, sz| Text.from(txt, mono_big).size(sz).prepare!()
+	# a prose copy that keeps the string and size it was prepared from
+	mkt! = |txt, sz| mk!(txt, sz).map_ok(|p| { p, s: txt, size: sz })
 	curve_lbls = List.map_try!(
 		loaded.c,
 		|c| {
@@ -329,25 +329,22 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 	ylabels = List.map_try!(
 		[-30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
 		|v| {
-			p = mkm!(I64.to_str(v), 12)?
+			p = mkm!(Board.y_text(v), 12)?
 			Ok({ p, v: I64.to_f32(v) })
 		},
 	)?
 	ends = List.map_try!(
 		[
-			{ s: "CTL ${Db.fmt1(loaded.s.last.c)}", k: 0.U8 },
-			{ s: "ATL ${Db.fmt1(loaded.s.last.a)}", k: 1.U8 },
-			{ s: "TSB ${Db.fmt1(loaded.s.last.t)}", k: 2.U8 },
+			{ s: Board.end_text(loaded.s.data, 0), k: 0.U8 },
+			{ s: Board.end_text(loaded.s.data, 1), k: 1.U8 },
+			{ s: Board.end_text(loaded.s.data, 2), k: 2.U8 },
 		],
 		|e| {
 			p = mkm!(e.s, 13)?
 			Ok({ p, sel: e.k })
 		},
 	)?
-	as_of = match List.last(loaded.s.days) {
-		Ok(ld) => ld
-		Err(_) => "no data"
-	}
+	as_of = Board.as_of(loaded.s.days)
 	# the event tile prefers the future; an event inside the last week still
 	# gets its "done" moment, in words that fit any sport; otherwise the slot
 	# says so
@@ -359,36 +356,26 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		} else {
 			{ top: "no event planned", sub: "stride event add <date> <name>" }
 		}
-	# the event name in one line at 14, or two at 12 when it needs them
-	ev_name = {
-		l14 = Board.ev_lines(head, ev_tile.top, 14.0)
-		if (List.len(l14) <= 1) { lines: l14, size: 14 } else { lines: Board.ev_lines(head, ev_tile.top, 12.0), size: 12 }
-	}
+	ev_name = Board.ev_name(head, ev_tile.top)
 	initial_layout = DisplayScale.layout(DisplayScale.default_percent, { w: I32.to_f32(Theme.win_w), h: I32.to_f32(Theme.win_h) })
 	Ok({
 		title: mk!(Chrome.wordmark, 30)?,
 		subs: [
-			{ p: mk!("last 30 days, as of ${as_of}", 15)?, r: 30.U64, chip: mkm!("30d", 12)? },
-			{ p: mk!("last 60 days, as of ${as_of}", 15)?, r: 60.U64, chip: mkm!("60d", 12)? },
-			{ p: mk!("last 90 days, as of ${as_of}", 15)?, r: 90.U64, chip: mkm!("90d", 12)? },
+			{ p: mk!(Board.sub_text(30, as_of), 15)?, r: 30.U64, chip: mkm!("30d", 12)? },
+			{ p: mk!(Board.sub_text(60, as_of), 15)?, r: 60.U64, chip: mkm!("60d", 12)? },
+			{ p: mk!(Board.sub_text(90, as_of), 15)?, r: 90.U64, chip: mkm!("90d", 12)? },
 		],
 		leg_fit: mk!("Fitness", 15)?,
 		leg_fat: mk!("Fatigue", 15)?,
 		leg_form: mk!("Form", 15)?,
 		ylabels,
 		ends,
-		ev_label: mk!(loaded.e.name, 13)?,
+		ev_label: mkt!(loaded.e.name, 13)?,
 		ev_found: ev.found,
 		ev_idx: ev.idx,
-		ev_warn: mk!(if (loaded.e.err != "") loaded.e.err else loaded.rd.err, 13)?,
+		ev_warn: mkt!(if (loaded.e.err != "") loaded.e.err else loaded.rd.err, 13)?,
 		ev_warn_found: loaded.e.err != "" or loaded.rd.err != "",
-		stale: mk!(
-			match List.last(loaded.s.days) {
-				Ok(ld) => "data as of ${ld} - analyze to refresh"
-				Err(_) => ""
-			},
-			13,
-		)?,
+		stale: mk!(Board.stale_text(loaded.s.days), 13)?,
 		stale_found: loaded.st > 0,
 		view: 0,
 		curve: loaded.c,
@@ -425,22 +412,22 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		},
 		units: loaded.un,
 		trace_sport: "",
-		curve_hint: mk!("1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-		trace_hint: mk!("[ / ]  older/newer session      X  sport filter      shift+[ / shift+]  ghost older/newer      C  clear ghost      wheel zoom  drag pan  0 reset      TAB  plan      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-		table_hint: mk!("arrows  scroll days      TAB  lifts      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-		table_title: mk!("data table", 15)?,
-		table_head: [mk!("day", 13)?, mk!("fitness", 13)?, mk!("fatigue", 13)?, mk!("form", 13)?, mk!("load", 13)?, mk!("session", 13)?],
+		curve_hint: mk!(Curve.hint_text, 13)?,
+		trace_hint: mk!(Trace.hint_text, 13)?,
+		table_hint: mk!(Table.hint_text, 13)?,
+		table_title: mk!(Table.title_text, 15)?,
+		table_head: List.map_try!(Table.head_texts, |t| mk!(t, 13))?,
 		kpis: [
-			{ v: mkb!(Db.fmt1(loaded.s.last.c), 27)?, cap: mk!("fitness - 42-day load avg", 11)?, sel: 0.U8 },
-			{ v: mkb!(Db.fmt1(loaded.s.last.a), 27)?, cap: mk!("fatigue - 7-day load avg", 11)?, sel: 1.U8 },
-			{ v: mkb!(Db.fmt1(loaded.s.last.t), 27)?, cap: mk!("form - fitness minus fatigue", 11)?, sel: 2.U8 },
+			{ v: mkb!(Board.kpi_value(loaded.s.data, 0), 27)?, cap: mk!(Board.kpi_caption(0), 11)?, sel: 0.U8 },
+			{ v: mkb!(Board.kpi_value(loaded.s.data, 1), 27)?, cap: mk!(Board.kpi_caption(1), 11)?, sel: 1.U8 },
+			{ v: mkb!(Board.kpi_value(loaded.s.data, 2), 27)?, cap: mk!(Board.kpi_caption(2), 11)?, sel: 2.U8 },
 		],
-		ev_tile_name: List.map_try!(ev_name.lines, |l| mk!(l, ev_name.size))?,
-		ev_tile_proj: List.map_try!(Board.proj_lines(loaded.ph, loaded.e.day, proj), |l| mk!(l, 10))?,
-		ev_tile_sub: mk!(ev_tile.sub, 11)?,
-		zero_note: mk!("fresh above", 11)?,
+		ev_tile_name: List.map_try!(ev_name.lines, |l| mkt!(l, ev_name.size))?,
+		ev_tile_proj: List.map_try!(Board.proj_lines(loaded.ph, loaded.e.day, proj), |l| mkt!(l, 10))?,
+		ev_tile_sub: mkt!(ev_tile.sub, 11)?,
+		zero_note: mk!(Board.zero_text, 11)?,
 		ridden_found: loaded.rd.ago >= 0 and loaded.rd.ago <= 7 and loaded.e.day != "",
-		ridden_note: mk!(Board.ev_line(head, loaded.rd.name, " done, ${I64.to_str(loaded.rd.ago)}d ago", 10.0), 10)?,
+		ridden_note: mkt!(Board.ev_line(head, loaded.rd.name, " done, ${I64.to_str(loaded.rd.ago)}d ago", 10.0), 10)?,
 		curve_empty: mk!("no rides in the selected window - the curve has nothing to draw", 16)?,
 		trace: loaded.tr,
 		ghost: [],
@@ -495,16 +482,16 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		glow: Unbuilt,
 		last_directive: { id: -1.I64, refused: "", result: "" },
 		glow_on: Bool.False,
-		ramp_title: mk!("weekly load, and how fast fitness climbs", 15)?,
-		ramp_hint: mk!("zones / load  modes      hover or click a week      TAB  career      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-		zones_title: mk!("time in zone, and the 80/20 split", 15)?,
-		zones_hint: mk!("zones / load  modes      hover or click a week      TAB  career      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-		heat_title: mk!("training heat - one cell per day", 15)?,
-		heat_hint: mk!("hover a cell to read the day      TAB  lifts      R  reload      S  screenshot      V  record      ESC quit", 13)?,
-		plan_title: mk!("the week and the days ahead", 15)?,
-		plan_hint: mk!("week / log / year  modes      wheel or up/down  scroll      TAB  lifts      R  reload      S  screenshot      V  record      ESC quit", 13)?,
+		ramp_title: mk!(Ramp.title_text, 15)?,
+		ramp_hint: mk!(Ramp.hint_text, 13)?,
+		zones_title: mk!(Zones.title_text, 15)?,
+		zones_hint: mk!(Zones.hint_text, 13)?,
+		heat_title: mk!(Heat.title_text, 15)?,
+		heat_hint: mk!(Heat.hint_text, 13)?,
+		plan_title: mk!(Plan.title_text, 15)?,
+		plan_hint: mk!(Plan.hint_text, 13)?,
 		nav: List.map_try!(Chrome.nav_views, |v| Ok({ p: mk!(Chrome.nav_name(v), 13)?, v }))?,
-		status: mk!(if (boot) "" else loaded.s.err, 16)?,
+		status: mkt!(if (boot) "" else loaded.s.err, 16)?,
 		has_error: !boot and loaded.s.err != "",
 		booting: boot,
 		# a freshly loaded model is never mid-reload; the flag is raised in
@@ -513,8 +500,8 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		logo: load_logo!(acc, boot),
 		font: mono,
 		prose: head,
-		hint: mk!("1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   V record   G glow   ESC quit", 13)?,
-		empty: mk!("no data yet - sync and analyze first, then reopen", 16)?,
+		hint: mk!(Board.hint_text, 13)?,
+		empty: mk!(Board.empty_text, 16)?,
 		range: 90.U64,
 		mouse_x: 0.0,
 		mouse_y: 0.0,
@@ -1596,13 +1583,12 @@ focus_task! = |acc, f|
 		}
 	}
 
-# What a WINDOW change actually depends on: the curve over that window, the
-# curve over the window before it, and the CP fit across it - three reads.
-# Everything else the model holds (the series, the heat, the career, the
-# plan, the trace) is the same data whatever the window says, so a chip
-# click through the full loader repeats, on every switch, the whole read
-# the boot pays once. This is the chip's own path; R still runs the full
-# loader, which is what R is for.
+# What a curve change (its window or its family) depends on: the curve over
+# the window and over the window before it, the window's 20-minute best,
+# the curve's record rungs and threshold, and the CP fit. Everything else
+# the model holds (the series, the heat, the career, the plan, the trace)
+# is the same whatever the window says, so a chip click reads only these.
+# R still runs the full loader, which is what R is for.
 CurveWindow : { days : I64, fam : Str, prs : List(Db.PrRung), c : List(Db.CurvePt), cpv : List(Db.CurvePt), lbls : List({ p : Text.Prepared, d : I64 }), title : Text.Prepared, fit_lbl : Text.Prepared, cp_lbl : Text.Prepared, fit_cp : F32, info : Db.CurveInfo }
 
 load_curve_window! : Access, Text.Font, I64, Str => Try(CurveWindow, [ResourceLimit])
@@ -1682,9 +1668,10 @@ Msg : [
 	DayDetail({ day : Str, lines : List(Db.DayLine) }),
 ]
 
-# One entry per pickable session, loaded eagerly: switching and ghost
-# summons read this list instead of a task round-trip per keypress.
-# Recursion because an effectful body cannot reassign an outer var.
+# One cache entry per picker row it is given, in the same order: trace,
+# segments, duration, unit, splits and sets. The load passes only the
+# newest row. Recursion because an effectful body cannot reassign an
+# outer var.
 load_tcache! : Sqlite.Db, [Metric, Imperial], List(TraceId) => List({ tr : List(F32), sg : List(Db.Seg), du : F32, un : Str, sp : List(Series.Split), st : Db.StrengthLog })
 load_tcache! = |db, units, ids|
 	match List.first(ids) {
@@ -1696,10 +1683,10 @@ load_tcache! = |db, units, ids|
 			# splits only where a pace trace draws them - the panel is the
 			# pace channel's companion, and the arrays are only read once
 			sp9 = if (te.chan == Db.pace_chan) (Db.load_splits!(db, te.id, Db.split_len_for(units, te.sport))) else []
+			st9 = if (Trace.strength_session(te.sport)) (Db.load_sets!(db, te.id)) else { rows: [], pasted: Bool.False }
 			# the unit travels with the samples so a cache read needs no second
 			# lookup into the picker row; prepend so picker order survives
 			# without List.reverse, which this stdlib lacks
-			st9 = if (Trace.strength_session(te.sport)) (Db.load_sets!(db, te.id)) else { rows: [], pasted: Bool.False }
 			List.prepend(load_tcache!(db, units, List.drop_first(ids, 1)), { tr: tr9, sg: sg9, du: du9, un: Db.trace_unit(te.chan, units, te.sport), sp: sp9, st: st9 })
 		}
 	}
@@ -1833,15 +1820,13 @@ update! = |model0, program_input, io| {
 					}
 				Reloaded(fresh) => {
 					merged = { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_active: acc.last_active, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending }
-					# R reads the window it was pressed on, and it is the slow path.
-					# A chip clicked while it ran has since moved curve_days and
-					# landed its own curve for the window now on screen; when the
-					# two disagree that slice is the newer answer and is kept, while
-					# R still refreshes everything the window does not drive. The
-					# reloading flag stays the chip's too, since its request may
-					# still be in flight.
-					# a model still booting has chosen no curve yet, and takes the one
-					# the load chose
+					# R reads the curve it was pressed on, and it is the slow path.
+					# A chip clicked while it ran has since moved curve_days or
+					# curve_family and landed its own curve; when the two disagree
+					# that slice is the newer answer and is kept, with the chip's
+					# reloading flag, since its request may still be in flight,
+					# while R refreshes everything else. A model still booting has
+					# chosen no curve yet and takes the one the load chose.
 					if (acc.curve_family == "" or (fresh.curve_days == acc.curve_days and fresh.curve_family == acc.curve_family)) merged
 					else { ..merged, curve_family: acc.curve_family, prs: acc.prs, curve: acc.curve, curve_prev: acc.curve_prev, curve_lbls: acc.curve_lbls, curve_title: acc.curve_title, curve_days: acc.curve_days, fit_lbl: acc.fit_lbl, cp_lbl: acc.cp_lbl, fit_cp: acc.fit_cp, curve_info: acc.curve_info, reloading: acc.reloading }
 				}
@@ -1955,9 +1940,9 @@ update! = |model0, program_input, io| {
 					},
 				)
 			} else -1
-		# the day tab's mode chips: week, log and year switch between the plan,
-		# table and heat views without leaving the tab
-		# the weeks tab's mode chips: zones and load, the same way
+		# the tabs' mode chips: week, log and year switch the day tab between
+		# the plan, table and heat views, and zones and load switch the weeks
+		# tab the same way, without leaving the tab
 		day_mode = if (Days.is_day(model.view) and Mouse.button_pressed(d.mouse, Left)) (Days.mode_at(m0.x, m0.y)) else if (Weeks.is_week(model.view) and Mouse.button_pressed(d.mouse, Left)) (Weeks.mode_at(m0.x, m0.y)) else -1
 		view_input =
 			if (nav_click >= 0) (
@@ -2121,9 +2106,9 @@ update! = |model0, program_input, io| {
 			}
 			else if (d.key_pressed(KeyRightBracket)) (if (model.ghost_sel >= 0) (next_ghost(model.trace_ids, model.ghost_sel, model.trace_sel, Bool.False)) else -1)
 			else model.ghost_sel
-		# clicking a table row jumps to that day's crosshair on the form board
-		# -2 = no directive OR day not in the series: both leave the cursor
-		# alone. A found day maps to its days-back index (>= 0).
+		# the cursor a directive's day asks for: its days-back index (>= 0),
+		# or -2 when there is no directive or the day is not in the series,
+		# both of which leave the cursor alone
 		cursor_dir =
 			if directive.has_d and directive.cursor_day != "" {
 				total2 = List.len(model.days)
@@ -2182,7 +2167,8 @@ update! = |model0, program_input, io| {
 			Task.spawn!(program_input, || detail_task!(accd, unitsd, dayd))
 		}
 		view2 = view
-		# a directive naming a day parks the crosshair there
+		# a clicked table row parks the crosshair on its day; otherwise the
+		# cursor stands where the arrows and a directive put it
 		cursor2 = if (row_hit.hit) row_hit.cb else cursor_pre
 		# moving the mouse over the form board's plot un-parks the crosshair:
 		# the hover takes over while inside, and nothing lingers on the way
@@ -2361,8 +2347,8 @@ update! = |model0, program_input, io| {
 				}
 			} else model.trace_unit
 		reload_spawned = want_days != model.curve_days or want_family != model.curve_family or d.key_pressed(KeyR)
-		# R is the full reload - every table, for an athlete who just synced.
-		# A chip is a window change, and takes the three-read path.
+		# R is the full reload: every table, for an athlete who just synced. A
+		# chip is a curve change, and takes load_curve_window!'s path.
 		_ = if d.key_pressed(KeyR) {
 			f2 = model.font
 			acc2r = { io, dir: model.stride_dir }
@@ -2561,7 +2547,10 @@ update! = |model0, program_input, io| {
 }
 
 # 12x12 vector marks, one per view: iconography drawn from primitives -
-# no sprite sheet to ship, crisp at any DPI, colored with its label
+# no sprite sheet to ship, crisp at any DPI, colored with its label. Each
+# arm tests for its own view number and the chain has no catch-all: the
+# caller paints and labels every pill, so a view with no arm shows a
+# labelled pill with an empty mark slot.
 nav_icon! : Draw.Frame, U8, F32, F32, Color.Rgba => {}
 nav_icon! = |frame, v, x, y, c| {
 	if v == 0 {
@@ -2606,16 +2595,8 @@ nav_icon! = |frame, v, x, y, c| {
 		frame.line!({ start: { x: x, y: y + 11.0 }, end: { x: x + 12.0, y: y + 2.0 }, stroke: Draw.stroke(c, 1.5) })
 		frame.circle!({ center: { x: x + 9.0, y: y + 4.0 }, radius: 2.0, style: Draw.filled(c) })
 	} else if v == 8 {
-		# career: a flag on its pole
-		#
-		# The mark is told apart by composition, since half the set is already
-		# solid: no other mark pairs one off-centre block with a stem. ramp's
-		# fill is a small dot riding a diagonal, and at this size a dot resolves
-		# before any path does, so this mark puts nothing high on the right.
-		#
-		# Every view tests for its OWN number and the chain ends here with no
-		# catch-all. The caller paints and labels each chip regardless, so a
-		# view with no arm shows a labelled chip with an empty mark slot.
+		# career: a flag on its pole, the only mark that pairs one off-centre
+		# block with a stem
 		frame.line!({ start: { x: x + 2.5, y: y + 12.0 }, end: { x: x + 2.5, y: y + 1.0 }, stroke: Draw.stroke(c, 1.5) })
 		frame.rectangle!({ x: x + 3.5, y: y + 1.5, width: 6.5, height: 5.0, style: Draw.filled(c) })
 	} else if v == 9 {
@@ -2642,8 +2623,8 @@ scene! = |model, frame| {
 		}
 		Err(_) => {}
 	}
-	# the nav: every view, visible and clickable, active one filled - TAB
-	# stays as the keyboard accelerator
+	# the nav: one pill per tab, each visible and clickable, the active
+	# tab's pill filled; TAB walks the same pills from the keyboard
 	List.for_each!(
 		List.map_with_index(model.nav, |nv, ni| { nv, ni }),
 		|x| {
@@ -2663,6 +2644,13 @@ scene! = |model, frame| {
 	# the chrome's text, over the shapes above, from the same definitions
 	# every view registers as fixed text
 	Scene.draw!(frame, model, Chrome.placed(model, Scene.measure_of(model)))
+	# a tab's mode chips, under the view, which writes their labels
+	if Days.is_day(model.view) {
+		Days.draw_chips!(model, frame)
+	}
+	if Weeks.is_week(model.view) {
+		Weeks.draw_chips!(model, frame)
+	}
 	drawn =
 		if model.view == 9 {
 			Strength.draw!(model, frame)
@@ -2685,12 +2673,6 @@ scene! = |model, frame| {
 		} else {
 			Board.draw!(model, frame)
 		}
-	if Days.is_day(model.view) {
-		Days.draw_chips!(model, frame)
-	}
-	if Weeks.is_week(model.view) {
-		Weeks.draw_chips!(model, frame)
-	}
 	# the XP rail rides the panel's left edge on every view - under the
 	# crossfade veil, so it arrives with the view rather than over it
 	Hud.rail!(model, frame)
@@ -2715,17 +2697,15 @@ scene! = |model, frame| {
 # geometry over the tick - no asset, nothing to load before the loader.
 splash! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 splash! = |model, frame| {
-	# The splash clears to the tile's own ground, RGB(1, 2, 9), a value from
-	# the interior of img/stride-icon.png away from the mark, so the logo sits
-	# on a field of its own color rather than framing itself in a slightly
-	# different black. The interior bakes a faint topo texture, so its ground
-	# is a spread of values clustered near (0, 2, 8), and picking one is a
-	# judgement call. The asset is RGB with no alpha channel and also carries
-	# a lighter, exactly uniform padding outside the rounded corners, which a
-	# single clear cannot match: four faint corner wedges stay visible until
-	# the mark ships as a transparent export. Nothing at runtime can read a
-	# texture's pixels back, so a re-exported asset needs this value measured
-	# again by hand. The app views clear to Theme.bg.
+	# The splash clears to RGB(1, 2, 9), the ground of img/stride-icon.png's
+	# interior away from the mark, so the logo sits on a field of its own
+	# color rather than in a slightly different black; the clear is the only
+	# ground, with no backdrop drawn over it. The asset is RGB with no alpha
+	# and has a lighter padding outside its rounded corners, which a single
+	# clear cannot match, so faint corner wedges show. Nothing at runtime can
+	# read a texture's pixels back, so this value is measured by hand and
+	# must be measured again when the asset changes. The app views clear to
+	# Theme.bg.
 	frame.rectangle!({ x: 0.0, y: 0.0, width: model.win.w, height: model.win.h, style: Draw.filled(Color.rgb(1, 2, 9)) })
 	cx = model.win.w / 2.0
 	cy = model.win.h / 2.0 - 30.0
@@ -2750,9 +2730,6 @@ splash! = |model, frame| {
 			Color.rgb(lerp(79.0, 166.0, k), lerp(142.0, 107.0, k), lerp(247.0, 250.0, k))
 		}
 	}
-	# no drawn backdrop texture: the ground stays a flat field of the tile's
-	# own color, so nothing competes with the mark or reads as stray lines
-	# ending at an invisible edge
 	_ = match model.logo {
 		Logo(lt) => {
 			# the authored mark itself, so the splash shows the artwork rather
@@ -2772,11 +2749,7 @@ splash! = |model, frame| {
 		}
 		NoLogo => splash_route!(model, frame, cx, cy, pi, mixc)
 	}
-	Text.from("Stride", model.font).size(30).draw!(frame, { pos: { x: cx, y: cy + 124.0 }, color: Color.white, align: (Top, Center) })
-	dots = if (model.tick % 90 < 30) "." else if (model.tick % 90 < 60) ".." else "..."
-	Text.from("loading your training story${dots}", model.font).size(13).draw!(frame, { pos: { x: cx, y: cy + 164.0 }, color: Theme.ink_muted, align: (Top, Center) })
-	slow = splash_slow_note(model.tick)
-	_ = if (slow != "") Text.from(slow, model.font).size(12).draw!(frame, { pos: { x: cx, y: cy + 188.0 }, color: Theme.ink_muted, align: (Top, Center) })
+	Scene.draw!(frame, model, Chrome.splash(model, Scene.measure_of(model), splash_slow_note(model.tick)))
 	Ok({})
 }
 

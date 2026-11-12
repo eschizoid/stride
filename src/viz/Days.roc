@@ -1,6 +1,7 @@
 import rr.Color
 import rr.Draw
-import rr.Text
+import Labels
+import Scene
 import Theme
 import Ui
 
@@ -68,19 +69,29 @@ Days :: [].{
 	title_x : F32
 	title_x = chip_x(List.len(modes)) + 12.0
 
+	chip_box : U64 -> Labels.Rect
+	chip_box = |i| { x: chip_x(i), y: chip_top, w: chip_w, h: chip_bottom - chip_top }
+
+	# the chips' shapes; their labels are fixed text in each mode's scene
 	draw_chips! : Ui.Model, Draw.Frame => {}
 	draw_chips! = |model, frame|
 		List.for_each!(
 			List.map_with_index(modes, |m, i| { m, i }),
 			|e| {
-				cx = chip_x(e.i)
+				b = chip_box(e.i)
 				on = e.m.v == model.view
-				hov = model.mouse_x >= cx and model.mouse_x <= cx + chip_w and model.mouse_y >= chip_top and model.mouse_y <= chip_bottom
+				hov = model.mouse_x >= b.x and model.mouse_x <= b.x + b.w and model.mouse_y >= b.y and model.mouse_y <= b.y + b.h
 				style = if (on) (Draw.filled(Color.with_alpha(Theme.ctl_c, 60))) else if (hov) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
-				frame.rounded_rectangle!({ x: cx, y: chip_top, width: chip_w, height: 22.0, radius: 6.0, segments: 6, style })
-				Text.from(e.m.label, model.font).size(12).draw!(frame, { pos: { x: cx + chip_w / 2.0, y: 68.0 }, color: if (on) Color.white else Theme.ink_muted, align: (Top, Center) })
+				frame.rounded_rectangle!({ x: b.x, y: b.y, width: b.w, height: b.h, radius: 6.0, segments: 6, style })
 			},
 		)
+
+	# each chip's label inside its chip, the one on screen lit
+	chip_texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
+	chip_texts = |model, measure| List.map_with_index(modes, |m, i| Scene.fixed(measure, Scene.data(m.label, 12.0, if (m.v == model.view) Color.white else Theme.ink_muted), { x: chip_x(i) + chip_w / 2.0, y: 68.0, align: Center }, chip_box(i)))
+
+	chip_marks : List(Labels.Mark)
+	chip_marks = List.map_with_index(modes, |m, i| { key: "the ${m.label} chip", box: chip_box(i) })
 }
 
 expect Days.group(3) == 4 and Days.group(4) == 4 and Days.group(5) == 4 and Days.group(9) == 9

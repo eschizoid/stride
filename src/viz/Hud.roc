@@ -1,7 +1,8 @@
 import rr.Color
 import rr.Draw
-import rr.Text
 import Db
+import Labels
+import Scene
 import Theme
 import Ui
 
@@ -124,17 +125,46 @@ Hud :: [].{
 
 	# ── the XP rail: the panel's left edge, filled to level progress ──
 	# Fills bottom-up over the first seconds of a session (eased), carries a
-	# pulsing head, and answers on hover with the full sheet. The rail lives
-	# at x 21..25, left of where every view starts drawing; the level number
-	# under its foot is chrome text (Chrome.rail_level), placed and gated with
-	# the rest of the chrome.
+	# pulsing head, and answers on hover with the full sheet. The rail runs
+	# at x 21..25 from rail_top to rail_bot, left of where every view starts
+	# drawing; the level number under its foot is chrome text
+	# (Chrome.rail_level), placed and gated with the rest of the chrome.
+	rail_top : F32
+	rail_top = 40.0
+
+	rail_bot : F32 -> F32
+	rail_bot = |win_h| win_h - 44.0
+
+	# the rail and the reach of its breathing head, when the athlete has any
+	# hours at all: the box a view's text keeps off
+	rail_box : Ui.Model -> Try(Labels.Rect, [NoHours])
+	rail_box = |model| if (total_hours(model.career_sports) <= 0) Err(NoHours) else Ok({ x: 18.0, y: rail_top - 5.0, w: 10.0, h: rail_bot(model.win.h) - rail_top + 10.0 })
+
+	# the character sheet a hover on the rail opens: its card above the
+	# rail's foot and its three lines inside it
+	sheet : Ui.Model, Scene.Measure -> { box : Labels.Rect, lines : List(Labels.Label(Scene.Item)) }
+	sheet = |model, measure| {
+		hours = total_hours(model.career_sports)
+		lvl = level_of(hours)
+		bot = rail_bot(model.win.h)
+		box = { x: 40.0, y: bot - 84.0, w: 250.0, h: 72.0 }
+		line = |text, size, color, y| Scene.fixed(measure, Scene.data(text, size, color), { x: 54.0, y, align: Left }, box)
+		{
+			box,
+			lines: [
+				line("level ${I64.to_str(lvl)} - ${tier(lvl)}", 14.0, Theme.gold_c, bot - 72.0),
+				line("${Db.num_unit(hours_to_next(hours), "h")} to level ${I64.to_str(lvl + 1)}", 11.0, Theme.ink_muted, bot - 52.0),
+				line("${I64.to_str(streak_weeks(model.heat))} week streak", 11.0, Theme.ink_muted, bot - 36.0),
+			],
+		}
+	}
+
 	rail! : Ui.Model, Draw.Frame => {}
 	rail! = |model, frame| {
 		hours = total_hours(model.career_sports)
 		if (hours <= 0) {} else {
-			lvl = level_of(hours)
-			top = 40.0
-			bot = model.win.h - 44.0
+			top = rail_top
+			bot = rail_bot(model.win.h)
 			span = bot - top
 			# arrive over ~1.5s: the fill is the greeting
 			arr0 = U64.to_f32(model.tick) / 90.0
@@ -149,13 +179,11 @@ Hud :: [].{
 				tri = (if (t < 20) (U64.to_f32(t)) else U64.to_f32(40 - t)) / 20.0
 				frame.circle!({ center: { x: 23.0, y: bot - fill }, radius: 3.0 + tri * 1.2, style: Draw.filled(Color.with_alpha(Theme.gold_c, 200)) })
 			}
-			# hover the rail: the character sheet
+			# hover the rail: the character sheet, over everything
 			if model.mouse_in and model.mouse_x < 34.0 and model.mouse_y >= top and model.mouse_y <= bot {
-				sk = streak_weeks(model.heat)
-				frame.rounded_rectangle!({ x: 40.0, y: bot - 84.0, width: 250.0, height: 72.0, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
-				Text.from("level ${I64.to_str(lvl)} - ${tier(lvl)}", model.font).size(14).draw!(frame, { pos: { x: 54.0, y: bot - 72.0 }, color: Theme.gold_c, align: (Top, Left) })
-				Text.from("${Db.num_unit(hours_to_next(hours), "h")} to level ${I64.to_str(lvl + 1)}", model.font).size(11).draw!(frame, { pos: { x: 54.0, y: bot - 52.0 }, color: Theme.ink_muted, align: (Top, Left) })
-				Text.from("${I64.to_str(sk)} week streak", model.font).size(11).draw!(frame, { pos: { x: 54.0, y: bot - 36.0 }, color: Theme.ink_muted, align: (Top, Left) })
+				s = sheet(model, Scene.measure_of(model))
+				frame.rounded_rectangle!({ x: s.box.x, y: s.box.y, width: s.box.w, height: s.box.h, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
+				Scene.draw!(frame, model, Labels.place(s.lines, { boxes: [], segs: [] }))
 			}
 		}
 	}

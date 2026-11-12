@@ -1,6 +1,7 @@
 import rr.Color
 import rr.Draw
-import rr.Text
+import Labels
+import Scene
 import Theme
 
 Scroll :: [].{
@@ -50,23 +51,26 @@ Scroll :: [].{
 			{ y, h }
 		}
 
-	# the scrollbar on the list's right edge and the `N more above` / `N more
-	# below` hints at its top and bottom; nothing at all when the list fits
-	draw! : Draw.Frame, Text.Font, { x : F32, top : F32, bottom : F32, hint_x : F32 }, U64, U64, U64 => {}
-	draw! = |frame, font, at, off, n_shown, total| {
+	# the scrollbar on the list's right edge; nothing at all when the list
+	# fits
+	draw! : Draw.Frame, { x : F32, top : F32, bottom : F32, hint_x : F32 }, U64, U64, U64 => {}
+	draw! = |frame, at, off, n_shown, total| {
 		h = hidden(off, n_shown, total)
 		if (h.above == 0 and h.below == 0) {} else {
 			track = at.bottom - at.top
 			t = thumb(track, off, n_shown, total)
 			frame.rounded_rectangle!({ x: at.x, y: at.top, width: 3.0, height: track, radius: 1.5, segments: 4, style: Draw.filled(Color.with_alpha(Theme.ink_faint, 60)) })
 			frame.rounded_rectangle!({ x: at.x, y: at.top + t.y, width: 3.0, height: t.h, radius: 1.5, segments: 4, style: Draw.filled(Theme.ink_muted) })
-			if h.above > 0 {
-				Text.from("${U64.to_str(h.above)} more above", font).size(10).draw!(frame, { pos: { x: at.hint_x, y: at.top - 14.0 }, color: Theme.ink_faint, align: (Top, Left) })
-			}
-			if h.below > 0 {
-				Text.from("${U64.to_str(h.below)} more below", font).size(10).draw!(frame, { pos: { x: at.hint_x, y: at.bottom + 2.0 }, color: Theme.ink_faint, align: (Top, Left) })
-			}
 		}
+	}
+
+	# the `N more above` / `N more below` hints at the list's top and bottom
+	# edges, as fixed text in the region given
+	hints : Scene.Measure, { x : F32, top : F32, bottom : F32, hint_x : F32 }, U64, U64, U64, Labels.Rect -> List(Labels.Label(Scene.Item))
+	hints = |measure, at, off, n_shown, total, region| {
+		h = hidden(off, n_shown, total)
+		line = |n, word, y| if (n > 0) [Scene.fixed(measure, Scene.data("${U64.to_str(n)} more ${word}", 10.0, Theme.ink_faint), { x: at.hint_x, y, align: Left }, region)] else []
+		List.concat(line(h.above, "above", at.top - 14.0), line(h.below, "below", at.bottom + 2.0))
 	}
 }
 

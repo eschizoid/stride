@@ -1,8 +1,10 @@
 import rr.Color
 import rr.Draw
-import rr.Text
+import Chrome
 import Days
 import Db
+import Labels
+import Scene
 import Theme
 import Ui
 import Wrap
@@ -217,142 +219,188 @@ Table :: [].{
 	col_x : List(F32)
 	col_x = [36.0, 260.0, 380.0, 490.0, 590.0, session_x]
 
-	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
-	draw! = |model, frame| {
-		win_w = model.win.w
-		win_h = model.win.h
-		ink_muted = Theme.ink_muted
-		ink_faint = Theme.ink_faint
-		# master-detail: with the panel open, the whole table lives left of it -
-		# no element draws underneath the card
-		edge = table_edge(win_w, model.detail_day)
-		model.table_title.draw!(frame, { pos: { x: Days.title_x, y: 70.0 }, color: ink_muted, align: (Top, Left) })
-		List.for_each!(
-			List.map_with_index(model.table_head, |h, i| { h, i }),
-			|x| {
-				hx = match List.get(col_x, x.i) {
-					Ok(v) => v
-					Err(_) => 36.0
-				}
-				if hx < edge - 60.0 {
-					x.h.draw!(frame, { pos: { x: hx, y: 108.0 }, color: ink_faint, align: (Top, Left) })
-				}
+	title_text : Str
+	title_text = "data table"
+
+	hint_text : Str
+	hint_text = "arrows  scroll days      TAB  lifts      R  reload      S  screenshot      V  record      ESC quit"
+
+	# the column headers, one per entry of col_x
+	head_texts : List(Str)
+	head_texts = ["day", "fitness", "fatigue", "form", "load", "session"]
+
+	# The day-detail panel: it opens over the right half when a row is
+	# clicked, and the same row again closes it. Its left edge comes from
+	# the SAME edge the table clamps to, px = edge + 24 by construction, so
+	# render and hit-tests cannot drift. Each activity block is a title
+	# wrapped to two lines through the shared rule (a long name grows its
+	# block instead of running off the card), a load line, a physiology line
+	# and a zone bar. Only the blocks that fit the panel draw; the tail
+	# becomes a count.
+	Detail : { box : Labels.Rect, blocks : List({ ln : Db.DayLine, lines : List(Str), top : F32 }), hidden : U64, more_y : F32 }
+
+	detail_geom : Ui.Model -> Detail
+	detail_geom = |model| {
+		px = panel_edge(model.win.w) + 24.0
+		pw2 = model.win.w - 36.0 - px
+		title_cols = Wrap.cols_for(pw2 - 36.0, 7.8)
+		blocks = List.map(
+			model.detail,
+			|ln| {
+				lines = Wrap.fit(ln.title, title_cols, 2)
+				{ ln, lines, h: 92.0 + (U64.to_f32(List.len(lines)) - 1.0) * 16.0 }
 			},
 		)
+		ph2 = 78.0 + List.fold(blocks, 0.0, |acc, b| acc + b.h)
+		room = model.win.h - 150.0 - 48.0 - 20.0
+		taken = List.fold(List.take_first(blocks, blocks_fit(List.map(blocks, |b| b.h), room)), { out: [], y: 148.0 }, |st, b| { out: List.append(st.out, { ln: b.ln, lines: b.lines, top: st.y }), y: st.y + b.h })
+		{ box: { x: px, y: 100.0, w: pw2, h: F32.min(ph2, model.win.h - 150.0) }, blocks: taken.out, hidden: List.len(model.detail) - List.len(taken.out), more_y: taken.y }
+	}
+
+	# a block's body starts under its title's last line
+	body_y : { ln : Db.DayLine, lines : List(Str), top : F32 } -> F32
+	body_y = |b| b.top + (U64.to_f32(List.len(b.lines)) - 1.0) * 16.0
+
+	# the session's TIME by zone (seconds in, proportions out), as a stacked
+	# bar under the block
+	zone_bar : Detail, { ln : Db.DayLine, lines : List(Str), top : F32 } -> Labels.Rect
+	zone_bar = |d, b| { x: d.box.x + 18.0, y: body_y(b) + 56.0, w: d.box.w - 36.0, h: 8.0 }
+
+	# ── every string the view writes, placed ───────────────────────────────
+	# All of it is fixed: the title, the headers, the position note, every
+	# cell and session line, the detail panel's text, the footer and the
+	# mode chips.
+	scene : Ui.Model, Scene.Measure -> List(Labels.Placed(Scene.Item))
+	scene = |model, measure| Labels.place(texts(model, measure), { boxes: Chrome.boxes(model, measure), segs: [] })
+
+	# the view's text and the chrome's, as the gate judges them
+	owned : Ui.Model, Scene.Measure -> List(Labels.Owned)
+	owned = |model, measure| List.concat(Scene.owned(Chrome.placed(model, measure)), Scene.owned(scene(model, measure)))
+
+	texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
+	texts = |model, measure| {
+		win_w = model.win.w
+		win_h = model.win.h
+		panel = Labels.panel(model.win)
+		ink_muted = Theme.ink_muted
+		ink_faint = Theme.ink_faint
+		fix = |it, x, y, align, region| Scene.fixed(measure, it, { x, y, align }, region)
+		# master-detail: with the panel open, the whole table lives left of
+		# it - no element draws underneath the card
+		edge = table_edge(win_w, model.detail_day)
+		head = List.join([
+			[fix(Scene.prepared(model.table_title, title_text, 15.0, Prose, ink_muted), Days.title_x, 70.0, Left, panel)],
+			List.keep_oks(
+				List.map3(model.table_head, head_texts, col_x, |p, t, hx| { p, t, hx }),
+				|h| if (h.hx < edge - 60.0) Ok(fix(Scene.prepared(h.p, h.t, 13.0, Prose, ink_faint), h.hx, 108.0, Left, panel)) else Err(Hidden),
+			),
+		])
 		# the arrow cursor scrolls the window back through the whole series:
-		# cursor N shows the page ending N days before the latest
+		# cursor N shows the page ending N days before the latest. A page
+		# over data always holds its newest row, so the indicator speaks only
+		# over data.
 		total = List.len(model.data)
 		page = page_for(model, model.cursor)
-		kept = page.kept
-		# no rows, no arithmetic on them — the indicator only speaks over data
-		if total > 0 {
-			# a page over data always holds its newest row, so the arm below is
-			# only the match being total
-			first = match List.first(page.rows) {
-				Ok(r) => r.i + 1
-				Err(_) => kept
+		pos =
+			if total > 0 {
+				first = match List.first(page.rows) {
+					Ok(r) => r.i + 1
+					Err(_) => page.kept
+				}
+				[fix(Scene.data("days ${U64.to_str(first)}-${U64.to_str(page.kept)} of ${U64.to_str(total)}", 13.0, ink_muted), edge, 70.0, Right, panel)]
+			} else {
+				[]
 			}
-			pos_note = "days ${U64.to_str(first)}-${U64.to_str(kept)} of ${U64.to_str(total)}"
-			Text.from(pos_note, model.font).size(13).draw!(frame, { pos: { x: edge, y: 70.0 }, color: ink_muted, align: (Top, Right) })
-		}
+		rows = List.join(
+			List.map(
+				page.rows,
+				|row| {
+					day = (List.get(model.days, row.i)) ?? ""
+					r = (List.get(model.data, row.i)) ?? { ctl: 0.0, atl: 0.0, tsb: 0.0, tss: 0.0 }
+					cells = [day, Db.fmt_f(r.ctl), Db.fmt_f(r.atl), Db.fmt_f(r.tsb), Db.fmt_f(r.tss)]
+					List.concat(
+						List.keep_oks(List.map_with_index(List.map2(cells, col_x, |c, cx| { c, cx }), |e, j| { c: e.c, cx: e.cx, j }), |e| if (e.cx < edge - 60.0) Ok(fix(Scene.data(e.c, 13.0, if (e.j == 3) Theme.tsb_c else Color.white), e.cx, row.top, Left, panel)) else Err(Hidden)),
+						# the session column: the day's names, wrapped through the
+						# shared rule, cut to the lines the row was sized for
+						List.map_with_index(note_lines_in(model.day_notes, day, win_w, model.detail_day), |ln, li| fix(Scene.data(ln, 13.0, ink_muted), session_x, row.top + U64.to_f32(li) * line_h, Left, panel)),
+					)
+				},
+			),
+		)
+		detail =
+			if model.detail_day != "" {
+				d = detail_geom(model)
+				x = d.box.x + 18.0
+				in_card = |it, y| fix(it, x, y, Left, d.box)
+				List.join([
+					[in_card(Scene.data(model.detail_day, 15.0, Color.white), 116.0)],
+					if (List.is_empty(model.detail)) [in_card(Scene.data("loading...", 12.0, ink_muted), 148.0)] else [],
+					List.join(
+						List.map(
+							d.blocks,
+							|b| List.concat(
+								List.map_with_index(b.lines, |tl, ti| in_card(Scene.data(tl, 13.0, Theme.ctl_c), b.top + U64.to_f32(ti) * 16.0)),
+								[in_card(Scene.data(b.ln.stats, 12.0, Color.white), body_y(b) + 19.0), in_card(Scene.data(b.ln.extra, 11.0, ink_muted), body_y(b) + 37.0)],
+							),
+						),
+					),
+					if (d.hidden > 0) [in_card(Scene.data("+ ${U64.to_str(d.hidden)} more (enlarge the window)", 11.0, ink_faint), d.more_y)] else [],
+				])
+			} else {
+				[]
+			}
+		foot = [fix(Scene.prepared(model.table_hint, hint_text, 13.0, Prose, ink_faint), 36.0, win_h - 30.0, Left, panel)]
+		List.join([head, pos, rows, detail, foot, Days.chip_texts(model, measure)])
+	}
+
+	# the shapes no text may cover but its own: the pills, the mode chips,
+	# and the open detail card and each of its zone bars
+	marks : Ui.Model -> List(Labels.Mark)
+	marks = |model| {
+		card =
+			if model.detail_day != "" {
+				d = detail_geom(model)
+				List.prepend(List.keep_oks(d.blocks, |b| if (List.fold(b.ln.zones, 0.I64, |a, z| a + z) > 0) Ok({ key: "the zone bar of '${b.ln.title}'", box: zone_bar(d, b) }) else Err(NoZones)), { key: "the detail card", box: d.box })
+			} else {
+				[]
+			}
+		List.join([Chrome.marks(model), Days.chip_marks, card])
+	}
+
+	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
+	draw! = |model, frame| {
+		edge = table_edge(model.win.w, model.detail_day)
 		List.for_each!(
-			page.rows,
+			(page_for(model, model.cursor)).rows,
 			|row| {
 				ry = row.top
 				# the row under the mouse lifts - hover feedback to match the pointer
-				row_right = edge
-				if model.mouse_y >= ry and model.mouse_y < ry + row.h and model.mouse_x >= 36.0 and model.mouse_x < row_right {
-					frame.rectangle!({ x: 34.0, y: ry - 2.0, width: row_right - 34.0, height: row.h - 1.0, style: Draw.filled(Color.with_alpha(Color.white, 10)) })
+				if model.mouse_y >= ry and model.mouse_y < ry + row.h and model.mouse_x >= 36.0 and model.mouse_x < edge {
+					frame.rectangle!({ x: 34.0, y: ry - 2.0, width: edge - 34.0, height: row.h - 1.0, style: Draw.filled(Color.with_alpha(Color.white, 10)) })
 				}
-				day = match List.get(model.days, row.i) {
-					Ok(d) => d
-					Err(_) => ""
-				}
-				r = match List.get(model.data, row.i) {
-					Ok(p) => p
-					Err(_) => { ctl: 0.0, atl: 0.0, tsb: 0.0, tss: 0.0 }
-				}
-				cells = [day, Db.fmt_f(r.ctl), Db.fmt_f(r.atl), Db.fmt_f(r.tsb), Db.fmt_f(r.tss)]
 				# the artifact's row separators, under the row's last line
 				frame.line!({ start: { x: 36.0, y: ry + row.h - 5.0 }, end: { x: edge, y: ry + row.h - 5.0 }, stroke: Draw.stroke(Color.with_alpha(Color.white, 14), 1) })
-				List.for_each!(
-					List.map_with_index(cells, |c, j| { c, j }),
-					|cell| {
-						cx = match List.get(col_x, cell.j) {
-							Ok(v) => v
-							Err(_) => 36.0
-						}
-						col = if (cell.j == 3) (Theme.tsb_c) else Color.white
-						if cx < edge - 60.0 {
-							Text.from(cell.c, model.font).size(13).draw!(frame, { pos: { x: cx, y: ry }, color: col, align: (Top, Left) })
-						}
-					},
-				)
-				# the session column: the day's names, wrapped through the shared
-				# rule, cut to the lines the row was sized for
-				if note_shown(edge) {
-					List.for_each!(List.map_with_index(note_lines_in(model.day_notes, day, win_w, model.detail_day), |ln, li| { ln, li }), |x|
-						Text.from(x.ln, model.font).size(13).draw!(frame, { pos: { x: session_x, y: ry + U64.to_f32(x.li) * line_h }, color: Theme.ink_muted, align: (Top, Left) }))
-				}
 			},
 		)
-		# the day-detail panel: opens over the right half when a row is clicked,
-		# same row again closes it. Db delivers structured { title, stats } rows.
 		if model.detail_day != "" {
-			# derived from the SAME edge the table clamps to - px = edge + 24 by
-			# construction, so render and hit-tests cannot drift
-			px = panel_edge(win_w) + 24.0
-			pw2 = win_w - 36.0 - px
-			ph2 = 78.0 + List.fold(model.detail, 0.0, |acc, ln| acc + 92.0 + U64.to_f32(List.len(Wrap.fit(ln.title, Wrap.cols_for(pw2 - 36.0, 7.8), 2)) - 1) * 16.0)
-			ph2c = if (ph2 > win_h - 150.0) (win_h - 150.0) else ph2
-			frame.rounded_rectangle!({ x: px, y: 100.0, width: pw2, height: ph2c, radius: 10.0, segments: 8, style: Draw.filled(Theme.card) })
-			Text.from(model.detail_day, model.font).size(15).draw!(frame, { pos: { x: px + 18.0, y: 116.0 }, color: Color.white, align: (Top, Left) })
-			if List.is_empty(model.detail) {
-				Text.from("loading...", model.font).size(12).draw!(frame, { pos: { x: px + 18.0, y: 148.0 }, color: ink_muted, align: (Top, Left) })
-			}
-			# each activity block: title (wrapped to two lines through the shared
-			# rule, so a long name grows its block instead of running off the
-			# card), load line, physiology line, zone bar. Only the blocks that
-			# fit the panel draw; the tail becomes a count
-			title_cols = Wrap.cols_for(pw2 - 36.0, 7.8)
-			blocks = List.map(
-				model.detail,
-				|ln| {
-					lines = Wrap.fit(ln.title, title_cols, 2)
-					{ ln, lines, h: 92.0 + U64.to_f32(List.len(lines) - 1) * 16.0 }
-				},
-			)
-			room = win_h - 150.0 - 48.0 - 20.0
-			taken = List.fold(List.take_first(blocks, blocks_fit(List.map(blocks, |b| b.h), room)), { out: [], y: 148.0 }, |st, b|
-				{ out: List.append(st.out, { b, top: st.y }), y: st.y + b.h })
-			shown = taken.out
+			d = detail_geom(model)
+			frame.rounded_rectangle!({ x: d.box.x, y: d.box.y, width: d.box.w, height: d.box.h, radius: 10.0, segments: 8, style: Draw.filled(Theme.card) })
 			List.for_each!(
-				shown,
-				|x| {
-					ly = x.top
-					List.for_each!(List.map_with_index(x.b.lines, |tl, ti| { tl, ti }), |t|
-						Text.from(t.tl, model.font).size(13).draw!(frame, { pos: { x: px + 18.0, y: ly + U64.to_f32(t.ti) * 16.0 }, color: Theme.ctl_c, align: (Top, Left) }))
-					body_y = ly + U64.to_f32(List.len(x.b.lines) - 1) * 16.0
-					Text.from(x.b.ln.stats, model.font).size(12).draw!(frame, { pos: { x: px + 18.0, y: body_y + 19.0 }, color: Color.white, align: (Top, Left) })
-					Text.from(x.b.ln.extra, model.font).size(11).draw!(frame, { pos: { x: px + 18.0, y: body_y + 37.0 }, color: ink_muted, align: (Top, Left) })
-					# the session's TIME by zone (seconds in, proportions out), as a
-					# stacked bar in the intensity ramp
-					ztot = List.fold(x.b.ln.zones, 0, |a2, z| a2 + z)
+				d.blocks,
+				|b| {
+					ztot = List.fold(b.ln.zones, 0, |a2, z| a2 + z)
 					if ztot > 0 {
-						bw2 = pw2 - 36.0
+						bar = zone_bar(d, b)
 						_ = List.fold_try!(
-							List.map_with_index(x.b.ln.zones, |z, zi| { z, zi }),
+							List.map_with_index(b.ln.zones, |z, zi| { z, zi }),
 							0.0,
 							|xacc, zz| {
-								seg = bw2 * I64.to_f32(zz.z) / I64.to_f32(ztot)
-								zc = match List.get(Theme.zone_ramp, zz.zi) {
-									Ok(c2) => c2
-									Err(_) => Theme.ink_faint
-								}
+								seg = bar.w * I64.to_f32(zz.z) / I64.to_f32(ztot)
+								zc = (List.get(Theme.zone_ramp, zz.zi)) ?? Theme.ink_faint
 								if seg > 1.5 {
 									# -1 leaves a hairline gap between segments; the guard
 									# keeps the drawn width strictly positive
-									frame.rectangle!({ x: px + 18.0 + xacc, y: body_y + 56.0, width: seg - 1.0, height: 8.0, style: Draw.filled(zc) })
+									frame.rectangle!({ x: bar.x + xacc, y: bar.y, width: seg - 1.0, height: bar.h, style: Draw.filled(zc) })
 								}
 								Ok(xacc + seg)
 							},
@@ -360,12 +408,8 @@ Table :: [].{
 					}
 				},
 			)
-			hidden = List.len(model.detail) - List.len(shown)
-			if hidden > 0 {
-				Text.from("+ ${U64.to_str(hidden)} more (enlarge the window)", model.font).size(11).draw!(frame, { pos: { x: px + 18.0, y: taken.y }, color: ink_faint, align: (Top, Left) })
-			}
 		}
-		model.table_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
+		Scene.draw!(frame, model, scene(model, Scene.measure_of(model)))
 		Ok({})
 	}
 }
