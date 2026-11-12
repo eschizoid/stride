@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.22.0](https://github.com/eschizoid/stride/compare/v0.21.0...v0.22.0) (2026-11-12)
+
+
+### Features
+
+* **viz:** fold zones and ramp into one weeks tab with zones and load modes ([#685](https://github.com/eschizoid/stride/issues/685)) ([da57ffd](https://github.com/eschizoid/stride/commit/da57ffd54810301fd8a892f85c2db76a41d4fa58))
+* **viz:** power tab headline tiles, fitted axis, hover card, distinct lines, zone bands ([#680](https://github.com/eschizoid/stride/issues/680)) ([4b8add0](https://github.com/eschizoid/stride/commit/4b8add03ff32120194214fc35ab2e286f3788ca3))
+
+
+### Bug Fixes
+
+* **viz:** keep the CS/CP label inside the panel, and label the threshold and fit tiles ([#683](https://github.com/eschizoid/stride/issues/683)) ([32006a2](https://github.com/eschizoid/stride/commit/32006a2353caf6c713563337033f35fa33327f9d))
+* **viz:** keep the power delta out of the axis labels, name the strip's last sliver ([#692](https://github.com/eschizoid/stride/issues/692)) ([d433842](https://github.com/eschizoid/stride/commit/d4338425f27fa44b5e161e01e0a2fe826fd02a21))
+* **viz:** report the capture path the window actually wrote ([#687](https://github.com/eschizoid/stride/issues/687)) ([3e9dd24](https://github.com/eschizoid/stride/commit/3e9dd24ebb78e6310192c26bc0799e9f14817c77))
+
 ## [0.21.0](https://github.com/eschizoid/stride/compare/v0.20.0...v0.21.0) (2026-11-12)
 
 
