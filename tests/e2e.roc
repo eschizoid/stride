@@ -8544,6 +8544,22 @@ b_migration! = |ctx| {
 	_ = stride!(ctx.bin, v44home, ["config", "get", "timezone"])
 	check!("migrating a v44 database adds the plan's target_result column", Str.trim(sql!(v44db, "SELECT count(*) FROM pragma_table_info('planned_sessions') WHERE name = 'target_result';")) == "1")?
 	_ = sh!("rm -rf '${v44home}'")
+	# ── v45 to v46: the monthly_threshold view is rebuilt. A v45 database keeps
+	# whatever view it was built with until the version moves; the new one finds
+	# each month's last session in one grouped pass (no correlated scan) and
+	# keeps rides out of the pace spine.
+	v45home = Str.trim(sh!("mktemp -d"))
+	v45db = "${v45home}/.stride/db.sqlite"
+	_ = stride!(ctx.bin, v45home, ["init"])
+	_ = sql!(v45db, "DROP VIEW monthly_threshold; CREATE VIEW monthly_threshold AS SELECT '2000-01' AS month, 'Ride' AS fam, 'pace' AS kind, 1.0 AS value; PRAGMA user_version = 45;")
+	_ = sql!(v45db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9831,'ride with speed','Ride','2026-05-02T08:00:00Z',3600,30000),(9832,'run','Run','2026-05-03T08:00:00Z',1800,6000); INSERT INTO activity_metrics (activity_id,ftp_used,threshold_pace_used,metrics_rev) VALUES (9831,240,8.0,1),(9832,0,3.6,1);")
+	_ = stride!(ctx.bin, v45home, ["config", "get", "timezone"])
+	check!("migrating a v45 database rebuilds the monthly_threshold view", Str.contains(Str.trim(sql!(v45db, "SELECT sql FROM sqlite_master WHERE name = 'monthly_threshold';")), "pc_last"))?
+	# a correlated subquery that SCANS is a full pass per outer row (quadratic);
+	# one that SEARCHES an index, as strength_coverage's EXISTS does, is a lookup
+	check!("...whose plan scans nothing per row", Str.trim(sh!("sqlite3 '${v45db}' 'EXPLAIN QUERY PLAN SELECT * FROM monthly_threshold;' | awk '/CORRELATED/{c=1; next} c && /SCAN/{bad=1} {c=0} END{print (bad ? \"scan\" : \"ok\")}'")) == "ok")?
+	check!("...and whose pace spine leaves rides out", Str.trim(sql!(v45db, "SELECT group_concat(fam || ':' || kind, ',') FROM (SELECT fam, kind FROM monthly_threshold WHERE month = '2026-05' AND kind <> 'tonnage' ORDER BY fam, kind);")) == "Ride:power,Run:pace")?
+	_ = sh!("rm -rf '${v45home}'")
 	Ok({})
 }
 
