@@ -238,7 +238,7 @@ ReportReview :: [].{
 		start_rows = at!(mon - 1, Metrics.days_to_date_str(mon - 1))?
 		end_rows = at!(end_day, mon_s)?
 		in_progress : Bool
-		in_progress = today >= mon and today < sun
+		in_progress = Metrics.week_in_progress(today, mon, sun)
 		Ok({
 			week_start: mon_s,
 			week_end: Metrics.days_to_date_str(sun),

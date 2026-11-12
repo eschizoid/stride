@@ -912,9 +912,9 @@ Metrics :: [].{
 		} else if t.kind == "pace" {
 			fams = Sports.pace_unit_families(t.pace_unit)
 			speed = if (t.pace_s > 0.0) pace_unit_m(t.pace_unit) / t.pace_s else 0.0
-			thr = nearest_threshold(List.keep_if(inp.pace_thresholds, |p| p.speed > 0.0 and List.contains(fams, p.family)), speed)
+			thr = family_threshold(fams, inp.pace_thresholds, speed)
 			match thr {
-				Ok(p) if speed > 0.0 and speed / p.speed <= max_plausible_if => {
+				Ok(p) if speed > 0.0 => {
 					dur_s = if (t.dist_m > 0.0) (t.reps).to_f64() * t.dist_m / speed else ((t.reps * t.dur_s)).to_f64()
 					Load(pace_tss({ ngp_speed: speed, threshold_speed: p.speed, dur_s, exponent: Sports.pace_tss_exponent(p.family) }))
 				}
@@ -925,20 +925,32 @@ Metrics :: [].{
 		}
 	}
 
-	# the threshold whose speed is closest to the target's: a pace unit names
-	# several families (/km reads run and walk), and the nearest threshold is the
-	# family the target pace belongs to
-	nearest_threshold : List({ family : Str, speed : F64 }), F64 -> Try({ family : Str, speed : F64 }, [ListWasEmpty])
-	nearest_threshold = |cands, speed|
-		List.fold(
-			cands,
-			Err(ListWasEmpty),
-			|best, c|
-				match best {
-					Ok(b) => if ((c.speed - speed).abs() < (b.speed - speed).abs()) Ok(c) else Ok(b)
-					Err(_) => Ok(c)
-				},
-		)
+	# The threshold a pace target is priced against. A pace unit names its
+	# families in Sports order (/km and /mi read run, then walk), and the first
+	# family with a threshold that puts the target inside the plausible
+	# intensity band prices it. An easy run pace prices against run; a pace too
+	# slow to be a run at that threshold (below min_family_if) falls to walk; a
+	# pace beyond max_plausible_if of every threshold is not projected.
+	family_threshold : List(Str), List({ family : Str, speed : F64 }), F64 -> Try({ family : Str, speed : F64 }, [NoFamily])
+	family_threshold = |fams, cands, speed|
+		match fams {
+			[] => Err(NoFamily)
+			[fam, .. as rest] =>
+				match List.first(List.keep_if(cands, |c| c.family == fam and c.speed > 0.0)) {
+					Ok(c) if speed / c.speed >= min_family_if and speed / c.speed <= max_plausible_if => Ok(c)
+					_ => family_threshold(rest, cands, speed)
+				}
+		}
+
+	# a Mon-Sun week (epoch days) is still running from its Monday through its
+	# Sunday, Sunday included
+	week_in_progress : I64, I64, I64 -> Bool
+	week_in_progress = |today, mon, sun| today >= mon and today <= sun
+
+	# the lowest intensity a target pace can carry and still belong to a family:
+	# a run at under 45% of its threshold speed is a walk
+	min_family_if : F64
+	min_family_if = 0.45
 
 	# the hrTSS-per-hour rate of HR zone n, 1-5; the top rate above zone 5
 	hr_zone_rate : I64 -> F64
@@ -5874,11 +5886,15 @@ expect {
 		and near(load_of("1x1:00:00@1:15/100m", inp), (4.0 / 3.0).pow(3.0) * 100.0)
 		# a /km target reads any family the unit names: a walker's threshold prices it
 		and near(load_of("1x1:00:00@10:00/km", { ..inp, pace_thresholds: [{ family: "Walk", speed: 1000.0 / 600.0 }] }), 100.0)
-		# of the families a unit names, the threshold nearest the target pace prices
-		# it: a hike pace (12:00/km) goes to walk (1.45 m/s), not run (3.8 m/s)
+		# a pace too slow to be a run at that threshold falls to walk: a hike pace
+		# (12:00/km, 1.39 m/s) is 0.37 of run's 3.8 m/s, so walk (1.45 m/s) prices it
 		and near(load_of("1x2:00:00@12:00/km", { ..inp, pace_thresholds: [{ family: "Run", speed: 3.8 }, { family: "Walk", speed: 1.45 }] }), (1000.0 / 720.0 / 1.45).pow(2.0) * 200.0)
 		# and a run pace to run, whichever family is listed first
 		and near(load_of("1x1:00:00@4:10/km", { ..inp, pace_thresholds: [{ family: "Walk", speed: 1.45 }, { family: "Run", speed: 4.0 }] }), 100.0)
+		# an easy run pace prices against run even when walk's threshold is nearer:
+		# 7:00/km is 2.38 m/s, 0.64 of run's 3.70, so about 41 for the hour
+		and near(load_of("1x1:00:00@7:00/km", { ..inp, pace_thresholds: [{ family: "Run", speed: 3.70 }, { family: "Walk", speed: 1.60 }] }), (1000.0 / 420.0 / 3.70).pow(2.0) * 100.0)
+		and near(load_of("1x1:00:00@6:30/km", { ..inp, pace_thresholds: [{ family: "Run", speed: 3.70 }, { family: "Walk", speed: 1.60 }] }), (1000.0 / 390.0 / 3.70).pow(2.0) * 100.0)
 		# an intensity beyond max_plausible_if is refused, as analyze refuses it: a
 		# run pace against a walker's only threshold is not a projection
 		and reason_of(tgt("1x1:00:00@4:30/km"), { ..inp, pace_thresholds: [{ family: "Run", speed: 0.0 }, { family: "Walk", speed: 1.52 }] }) == "no_threshold_pace"
@@ -5914,3 +5930,7 @@ expect {
 	r = Metrics.tss_ladder({ ..Metrics.ladder_base, sport_type: "Run", ngp: Ok(3.0), threshold_speed: 3.0 })
 	r.model == "rtss"
 }
+
+# Sunday is the last day of a running week, not a past one
+expect Metrics.week_in_progress(20410, 20404, 20410)
+expect Metrics.week_in_progress(20404, 20404, 20410) and !(Metrics.week_in_progress(20411, 20404, 20410)) and !(Metrics.week_in_progress(20403, 20404, 20410))
