@@ -74,7 +74,7 @@ Curve :: [].{
 		# the curve chips and the power/pace pair beside the range chips: the
 		# lit ones are the curve on screen and its mode
 		List.for_each!(
-			List.concat(curve_chips(win_w, model.curve_keys, curve), short_chips(win_w, model.curve_keys, curve, layout(model).foldable, model.show_short)),
+			List.concat(chips_for(win_w, model.curve_keys, curve, model.curve_days), short_chips(win_w, model.curve_keys, curve, layout(model).foldable, model.show_short)),
 			|fc| {
 				hov = model.mouse_x >= fc.x and model.mouse_x <= fc.x + chip_w and model.mouse_y >= chip_top and model.mouse_y <= chip_bottom
 				style = if (fc.on) (Draw.filled(Color.with_alpha(Theme.tsb_c, 60))) else if (hov) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
@@ -1118,8 +1118,18 @@ Curve :: [].{
 	chip_pitch : F32
 	chip_pitch = 58.0
 
-	title_reserve : F32
-	title_reserve = 340.0
+	# the title shares the chip row, so the chips start where its text ends:
+	# its left inset, its width at the title's size (title_char_w per
+	# character, an upper bound for the size-15 face) and a gap
+	title_char_w : F32
+	title_char_w = 9.0
+
+	title_reserve_for : Str -> F32
+	title_reserve_for = |title| 36.0 + U64.to_f32(Str.count_utf8_bytes(title)) * title_char_w + 12.0
+
+	# the chip row for the curve on screen, laid out against its own title
+	chips_for : F32, Db.CurveKeys, Str, I64 -> List(Chip)
+	chips_for = |win_w, keys, cur, days| curve_chips(win_w, keys, cur, title_reserve_for(title_text(cur, days)))
 
 	# the same sport's curve of the other kind: a power family's most-used
 	# pace sport, or a pace sport's power family; '' when it has none
@@ -1138,8 +1148,8 @@ Curve :: [].{
 			Power(_) => ""
 		}
 
-	curve_chips : F32, Db.CurveKeys, Str -> List(Chip)
-	curve_chips = |win_w, keys, cur| {
+	curve_chips : F32, Db.CurveKeys, Str, F32 -> List(Chip)
+	curve_chips = |win_w, keys, cur, title_reserve| {
 		chip0 = win_w - 420.0
 		pace_on = is_pace(cur)
 		other = counterpart(keys, cur)
@@ -1338,9 +1348,9 @@ expect {
 # has no pace curve, shows none.
 expect {
 	keys = { power: ["Ride", "Rowing", "Run"], pace: ["pace:Rowing", "pace:Run", "pace:Swim", "pace:TrailRun", "pace:Walk"] }
-	bike = Curve.curve_chips(1400.0, keys, "Ride")
-	row = Curve.curve_chips(1400.0, keys, "Rowing")
-	narrow = Curve.curve_chips(980.0, keys, "pace:TrailRun")
+	bike = Curve.curve_chips(1400.0, keys, "Ride", 340.0)
+	row = Curve.curve_chips(1400.0, keys, "Rowing", 340.0)
+	narrow = Curve.curve_chips(980.0, keys, "pace:TrailRun", 340.0)
 	labels = |cs| List.map(cs, |c| c.label)
 	labels(bike) == ["bike", "row", "run", "swim", "walk"]
 		and List.map(List.keep_if(bike, |c| c.on), |c| c.label) == ["bike"]
@@ -1351,7 +1361,7 @@ expect {
 		and labels(narrow) == ["row", "run", "trail", "power", "pace"]
 		and List.map(List.keep_if(narrow, |c| c.on), |c| c.key) == ["pace:TrailRun", "pace:TrailRun"]
 		and List.map(List.keep_if(narrow, |c| c.label == "power"), |c| c.key) == ["Run"]
-		and List.all(narrow, |c| c.x >= Curve.title_reserve)
+		and List.all(narrow, |c| c.x >= 340.0)
 		and Curve.chip_at(bike, 1400.0 - 420.0 - 2.0) == ""
 }
 # a pace sport's counterpart is its family's power curve, and a power
@@ -1361,10 +1371,10 @@ expect {
 	Curve.counterpart(keys, "Run") == "pace:TrailRun" and Curve.counterpart(keys, "pace:Run") == "Run" and Curve.counterpart(keys, "Ride") == "" and Curve.counterpart(keys, "pace:Swim") == ""
 }
 # one kind of curve on record: no power and pace pair
-expect List.map(Curve.curve_chips(1400.0, { power: [], pace: ["pace:Swim", "pace:OpenWaterSwim"] }, "pace:Swim"), |c| c.label) == ["swim", "open"]
+expect List.map(Curve.curve_chips(1400.0, { power: [], pace: ["pace:Swim", "pace:OpenWaterSwim"] }, "pace:Swim", 340.0), |c| c.label) == ["swim", "open"]
 # the chips' last right edge sits 14 px left of the first range chip
 expect {
-	cs = Curve.curve_chips(1400.0, { power: ["Ride", "Rowing"], pace: [] }, "Ride")
+	cs = Curve.curve_chips(1400.0, { power: ["Ride", "Rowing"], pace: [] }, "Ride", 340.0)
 	match List.last(cs) {
 		Ok(c) => c.x + Curve.chip_w == 1400.0 - 420.0 - 14.0
 		Err(_) => Bool.False

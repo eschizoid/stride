@@ -2065,7 +2065,7 @@ update! = |model0, program_input, io| {
 			else model.curve_days
 		# the power view's curve: a directive's (a refused one changes nothing),
 		# or the curve or mode chip clicked on the power view
-		clicked_family = if (view == 1 and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0) (Curve.chip_at(Curve.curve_chips(win.w, model.curve_keys, model.curve_family), m0.x)) else ""
+		clicked_family = if (view == 1 and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0) (Curve.chip_at(Curve.chips_for(win.w, model.curve_keys, model.curve_family, model.curve_days), m0.x)) else ""
 		want_family =
 			if (directive.has_d and directive.family != "" and Bus.family_refusal(directive.family) == "" and curve_on_record(model.curve_keys, directive.family)) directive.family
 			else if (clicked_family != "") clicked_family
@@ -2371,14 +2371,14 @@ update! = |model0, program_input, io| {
 				program_input,
 				|| match load_curve_window!(acc3r, f3, want_days, want_family) {
 					Ok(w) => CurveReloaded(w)
-					Err(_) => CurveReloadFailed(want_days)
+					Err(_) => CurveReloadFailed(want_days, want_family)
 				},
 			)
 		}
 		chip0h = win.w - 420.0
 		# per-chip, not one wide band: the 8px gaps between chips are not
 		# clickable and must not claim the pointer
-		over_chip = m.y >= 64.0 and m.y <= 86.0 and (((view2 == 0 or view2 == 1) and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0) or (view2 == 1 and Curve.chip_at(List.concat(Curve.curve_chips(win.w, model.curve_keys, model.curve_family), Curve.short_chips(win.w, model.curve_keys, model.curve_family, Curve.layout(model).foldable, model.show_short)), m.x) != ""))) or (view2 == 8 and Career.kind_chip_at(Career.kind_chips(model), m.x).is_ok()) or (Days.is_day(view2) and Days.mode_at(m.x, m.y) >= 0))
+		over_chip = m.y >= 64.0 and m.y <= 86.0 and (((view2 == 0 or view2 == 1) and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0) or (view2 == 1 and Curve.chip_at(List.concat(Curve.chips_for(win.w, model.curve_keys, model.curve_family, model.curve_days), Curve.short_chips(win.w, model.curve_keys, model.curve_family, Curve.layout(model).foldable, model.show_short)), m.x) != ""))) or (view2 == 8 and Career.kind_chip_at(Career.kind_chips(model), m.x).is_ok()) or (Days.is_day(view2) and Days.mode_at(m.x, m.y) >= 0))
 		over_row = view2 == 3 and m.x >= 36.0 and m.x < Table.table_edge(win.w, detail_day2) and (
 			match Table.row_at(Table.page_for(model, cursor2), m.y) {
 				Row(_) => Bool.True
