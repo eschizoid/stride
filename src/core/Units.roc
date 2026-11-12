@@ -137,4 +137,21 @@ Units :: [].{
 	expect mass_label(Metric, 27.2155422) == "27.2 kg"
 	expect mass_label(Imperial, 27.2155422) == "60.0 lb"
 	expect mass_label(Metric, 0.0) == "0.0 kg"
+
+	# Power zones, Coggan's 7-zone model, as watt ranges from an FTP. lo_w 0
+	# opens Z1 at 0 W and hi_w 0 leaves Z7 open above. `stride zones` and the
+	# window's zone bands both read this table, so the two draw the same edges.
+	power_zones : F64 -> List({ z : Str, name : Str, lo_w : F64, hi_w : F64 })
+	power_zones = |ftp|
+		[
+			{ z: "Z1", name: "recovery", lo_w: 0.0, hi_w: ftp * 0.55 },
+			{ z: "Z2", name: "endurance", lo_w: ftp * 0.56, hi_w: ftp * 0.75 },
+			{ z: "Z3", name: "tempo", lo_w: ftp * 0.76, hi_w: ftp * 0.90 },
+			{ z: "Z4", name: "threshold", lo_w: ftp * 0.91, hi_w: ftp * 1.05 },
+			{ z: "Z5", name: "VO2max", lo_w: ftp * 1.06, hi_w: ftp * 1.20 },
+			{ z: "Z6", name: "anaerobic", lo_w: ftp * 1.21, hi_w: ftp * 1.50 },
+			{ z: "Z7", name: "neuromuscular", lo_w: ftp * 1.51, hi_w: 0.0 },
+		]
+
+	expect List.len(power_zones(200.0)) == 7
 }

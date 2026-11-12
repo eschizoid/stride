@@ -132,6 +132,10 @@ Ui :: [].{
 		# the threshold line: the window's CP when its fit is usable, else a marked
 		# test's threshold in force (Curve.anchor_line), else 0
 		fit_cp : F32,
+		# what the power tab's headline tiles read: the window's fit, a marked
+		# test in force, the engine's newest threshold for the curve, and the
+		# window's 20-minute best's age
+		curve_info : Db.CurveInfo,
 		# open sessions ahead with a structured target, for the power view
 		plan_targets : List(Db.Target),
 		cp_lbl : Text.Prepared,
