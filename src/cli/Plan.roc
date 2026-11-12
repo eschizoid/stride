@@ -1439,7 +1439,7 @@ Plan :: [].{
 	# target unpriced; an unreadable zone value is the same fault analyze reports.
 	projection_inputs! : Str => Try(Metrics.ProjectionInputs, _)
 	projection_inputs! = |path| {
-		ftp = Db.derive_sport_ftp!(path, "Ride")?
+		ftp = power_target_ftp!(path)?
 		zones =
 			(
 				match Analyze.load_zone_config!(path) {
@@ -1451,6 +1451,33 @@ Plan :: [].{
 		pace_thresholds = List.map_try!(Sports.pace_target_families, |family| (Db.derive_family_threshold_speed!(path, family)).map_ok(|speed| { family, speed }))?
 		Ok({ ftp, zones, pace_thresholds })
 	}
+	# A planned session names no sport, so a power target is priced at the FTP
+	# of the power family the athlete trains most: the family with the most
+	# sessions carrying a 20-minute power best in the last 90 days, the curve
+	# the window draws power targets on. When that family has no FTP yet, the
+	# next one with an FTP prices it; with none, power targets are unprojected.
+	power_target_ftp! : Str => Try(F64, _)
+	power_target_ftp! = |path| {
+		cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - 90)
+		fams = Sql.query_many!({
+			path: Path.utf8(path),
+			query: "SELECT CAST(a.sport_family AS TEXT) AS fam FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE COALESCE(m.best_20min_w, 0) > 0 AND a.start_local >= :cutoff AND COALESCE(a.sport_family, '') <> '' GROUP BY a.sport_family ORDER BY COUNT(*) DESC, a.sport_family",
+			bindings: [{ name: ":cutoff", value: String(cutoff) }],
+			rows: |cols| |stmt| Sql.str("fam")(cols)(stmt),
+		})?
+		first_ftp!(path, fams)
+	}
+
+	first_ftp! : Str, List(Str) => Try(F64, _)
+	first_ftp! = |path, fams|
+		match fams {
+			[] => Ok(0.0)
+			[fam, .. as rest] => {
+				ftp = Db.derive_sport_ftp!(path, fam)?
+				if (ftp > 0.0) Ok(ftp) else first_ftp!(path, rest)
+			}
+		}
+
 	# every open session's date and target, the target read back through
 	# stored_target so a row from before schema v42 keeps its power numbers
 	open_targets! : Str => Try(List({ date : Str, d : I64, target : Metrics.Target }), _)

@@ -364,7 +364,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1427)?
+	checks_ran_exactly!(1432)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6365,6 +6365,16 @@ b_events! = |ctx| {
 	check!("...and events counts the same coverage", strjq!(ctx, ["events"], "[.data.events[] | select(.id == ${kid})][0] | [.planned_in_window, .sessions_projected] | map(tostring) | join(\",\")") == "4,3")?
 	check!("the project payload conforms to its schema with every kind priced", validate_schema!(ctx, "project ${ten}", "project") == "")?
 	_ = sql!(ctx.db, "DELETE FROM events WHERE name = 'Kinds Probe'; DELETE FROM planned_sessions WHERE id IN (${r1}, ${r2}, ${r3}, ${r4}); DELETE FROM activity_metrics WHERE activity_id IN (9811, 9812); DELETE FROM activities WHERE id IN (9811, 9812);")
+	# a planned session names no sport: a power target is priced at the FTP of the
+	# power family the athlete trains most. A rower with no ride power still gets
+	# their power targets projected, at the rowing FTP.
+	rhome = Str.trim(sh!("mktemp -d"))
+	rdb = "${rhome}/.stride/db.sqlite"
+	_ = stride!(ctx.bin, rhome, ["init"])
+	_ = sql!(rdb, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9821,'row a','Rowing','${ctx.today}T06:00:00Z',3600,12000),(9822,'row b','Rowing','${ctx.today}T07:00:00Z',3600,12000); INSERT INTO activity_metrics (activity_id,best_20min_w,metrics_rev) VALUES (9821,231.6,1),(9822,231.6,1);")
+	rowed = Str.trim(sh!("HOME='${rhome}' STRIDE_FORMAT=json '${ctx.bin}' project ${ten} \"${five}=4x8:00@200W\" | jq -r '[.data.sessions_projected, (.data.unprojected | length)] | map(tostring) | join(\",\")'"))
+	check!("a rower's power target is priced at the rowing FTP, not left without one (got ${rowed})", rowed == "1,0")?
+	_ = sh!("rm -rf '${rhome}'")
 	Ok({})
 }
 

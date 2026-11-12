@@ -199,8 +199,10 @@ reason `--json` and still answers in JSON).
   `{projected_from, baseline_known, ftp_known, events:[{id, event_date, name, days_away, ctl, atl, tsb, planned_in_window, sessions_projected, unprojected}]}`:
   CTL/ATL/TSB projected onto each event date over the open plan's targets, window
   `(projected_from, event_date]`. Each target kind is priced on the rung analyze scores
-  by: power as TSS against the ride FTP, pace as rTSS against the 60-day threshold
-  speed of its sport family (pooled over the family, the one nearest the target pace;
+  by: power as TSS against the FTP of the power family trained most (in 90 days; the
+  next family with an FTP when that one has none), pace as rTSS against the 60-day threshold
+  speed of its sport family (pooled over the family; run before walk, the first family
+  whose threshold puts the target between 0.45 and 1.5 intensity;
   analyze prices the finished session against its own sport type, so a treadmill,
   trail or virtual session can differ), a heart-rate band or zone as hrTSS (a band at
   its midpoint's zone, under the global zones), a rating as session-RPE load. A session
@@ -296,8 +298,10 @@ a pair, or a barbell's or machine's total, whichever source wrote it, so one lif
 weight reads the same from a paste and from a log, and tonnage is volume on that per-hand
 weight. Log weights are kept as entered (pounds converted to kg). An athlete who enters a
 dumbbell pair's combined weight in Strava sets `stride config set strength_log_weight
-total --json`, and logged weights are then halved unless the exercise names a barbell,
-machine, cable, smith, EZ or trap bar, landmine, sled, plate or kettlebell; the default
+total --json`, and logged weights are then halved, except an exercise naming a one-piece
+implement (barbell, machine, cable, smith, EZ or trap bar, landmine, sled, plate,
+kettlebell) or lift (deadlift, squat, leg press, pulldown, hip thrust) that does not also
+name a dumbbell or double kettlebell; the default
 is `per_hand`. Ask the athlete which one they use before setting it.
 
 **Holds.** A set with a duration and no reps (an isometric hold: a weight held still, a

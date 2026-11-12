@@ -61,9 +61,11 @@ Each of those forms has a literal athletes already write: `HR125-147`, `Z2`,
 
 6. **Every kind projects a load.** `project`, `events` and the form board price each
    open target on the rung analyze scores a finished session by:
-   - **power:** TSS against the ride family's FTP, as before.
+   - **power:** TSS against the FTP of the power family the athlete trains most (see the
+     2026-11-11 amendment).
    - **pace:** rTSS against the threshold speed of the sport family the unit names
-     whose threshold is nearest the target pace (best 20-minute speed over 60 days ×
+     in the unit's order (run before walk for `/km` and `/mi`), the first whose threshold
+     puts the target between 0.45 and 1.5 intensity (best 20-minute speed over 60 days ×
      0.95, pooled over the family, once two sessions carry it), at that family's
      exponent. A planned session names no sport, so the threshold is the family's;
      analyze prices the finished session against its own sport type, so a treadmill,
@@ -87,3 +89,8 @@ Each of those forms has a literal athletes already write: `HR125-147`, `Z2`,
 - **Sport-specific zones in a projection:** a planned session names no sport, so a
   heart-rate target is priced under the global zones. Completion still reads the zones
   in force for the activity's sport.
+
+## Amendment, 2026-11-11
+
+- **Power targets** are priced at the FTP of the power family the athlete trains most: the family with the most sessions carrying a 20-minute power best in the last 90 days, falling back to the next family with an FTP. A planned session names no sport, and a rower's or a runner's power targets priced at a ride FTP they may not have were either unprojected or wrong. The window draws power targets on the same family's curve.
+- **Pace targets** are priced against the first family the unit names (run before walk for `/km` and `/mi`) whose threshold puts the target between 0.45 and 1.5 intensity. The nearest-threshold rule it replaces priced an easy run against a walking threshold.
