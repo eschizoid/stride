@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.21.0](https://github.com/eschizoid/stride/compare/v0.20.0...v0.21.0) (2026-11-12)
+
+
+### Features
+
+* mark a session as a threshold test for any sport and anchor thresholds to it ([#661](https://github.com/eschizoid/stride/issues/661)) ([d5f49ad](https://github.com/eschizoid/stride/commit/d5f49ad469bebf16bc36c95637ac82a546b89c8c))
+* stride review, one weekly payload across every sport ([#656](https://github.com/eschizoid/stride/issues/656)) ([6f66108](https://github.com/eschizoid/stride/commit/6f66108800418ac3afe33b66df02656b96933ac3))
+* stride setup, one guided first run, and a one-line installer ([#666](https://github.com/eschizoid/stride/issues/666)) ([a1f050a](https://github.com/eschizoid/stride/commit/a1f050ad50a28957610cdc725b6fa57d5bf50a81))
+* **viz:** a strength tab for lift progress, and table, plan and heat folded into one tab ([#671](https://github.com/eschizoid/stride/issues/671)) ([be66d4a](https://github.com/eschizoid/stride/commit/be66d4a362fe66414bd3eaa8681fa70b7ce39838))
+* **viz:** fold the short power and pace rungs away when none was pushed all-out ([#675](https://github.com/eschizoid/stride/issues/675)) ([072bae2](https://github.com/eschizoid/stride/commit/072bae225b1b5056280b889cac78718f16c00364))
+* **viz:** scroll long lists instead of asking to grow the window ([#674](https://github.com/eschizoid/stride/issues/674)) ([40947a7](https://github.com/eschizoid/stride/commit/40947a74afa0d25e10b4ec45512baa09f22ab4be))
+* **viz:** show every target kind's result on the plan, and power targets on every power curve ([#657](https://github.com/eschizoid/stride/issues/657)) ([5c306b7](https://github.com/eschizoid/stride/commit/5c306b7579cda184473c56570dddde5ef5c47a2e))
+
+
+### Bug Fixes
+
+* **db:** migrate to schema 45 so the plan's target_result column lands ([#664](https://github.com/eschizoid/stride/issues/664)) ([5eaad69](https://github.com/eschizoid/stride/commit/5eaad69e26901c196083fd09b7f6c0e1143b2612))
+* engine and window findings from the week's review ([#677](https://github.com/eschizoid/stride/issues/677)) ([489df52](https://github.com/eschizoid/stride/commit/489df52ba9b0da351911f93abf05cd35b61adc59))
+* **strength:** store paste and log weights on one convention, per hand ([#670](https://github.com/eschizoid/stride/issues/670)) ([a40460f](https://github.com/eschizoid/stride/commit/a40460f13731f902dd9c5fb4e9a621ea77f49d32))
+* **viz:** label planned targets as planned, and offer pace only for pace sports ([#663](https://github.com/eschizoid/stride/issues/663)) ([acfa8f7](https://github.com/eschizoid/stride/commit/acfa8f7212c96bb03cba57cb074d29d0e3801a36))
+* **viz:** load a long session's trace in linear time, and say when boot stalls ([#659](https://github.com/eschizoid/stride/issues/659)) ([da1d992](https://github.com/eschizoid/stride/commit/da1d992611a986b602ae209465ca32170adc762a))
+* **viz:** swim splits per 100 m, a rowing pace trace, both career thresholds, per-sport D′ band ([#665](https://github.com/eschizoid/stride/issues/665)) ([f541160](https://github.com/eschizoid/stride/commit/f541160cf4c8bb84f01d3e8ee5f749bb4d37cd53))
+
 ## [0.20.0](https://github.com/eschizoid/stride/compare/v0.19.0...v0.20.0) (2026-11-06)
 
 
