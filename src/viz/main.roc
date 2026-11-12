@@ -1713,6 +1713,13 @@ view_basename = |v|
 # so the published list can never drift from the dispatch; caps_fields must
 # move together with refusals_for - the accepts column states the same rules
 # that function enforces, and both live in this file so an edit sees both.
+# The first load asks for no family, so load_model! opens the curve on the
+# athlete's most-trained family (Db.default_curve) rather than a fixed sport.
+boot_curve_family : Str
+boot_curve_family = ""
+
+expect boot_curve_family == ""
+
 caps_views : List({ id : I64, name : Str })
 caps_views = List.map([0.U8, 1, 2, 3, 4, 5, 6, 7, 8, 9], |v| { id: U8.to_i64(v), name: view_basename(v) })
 
@@ -2408,7 +2415,7 @@ update! = |model0, program_input, io| {
 			cwd0 = model.cwd
 			Task.spawn!(
 				program_input,
-				|| match load_model!(acc0r, cwd0, f0, 90, "Ride", Bool.False) {
+				|| match load_model!(acc0r, cwd0, f0, 90, boot_curve_family, Bool.False) {
 					Ok(m2) => Reloaded(m2)
 					Err(_) => ReloadFailed
 				},
