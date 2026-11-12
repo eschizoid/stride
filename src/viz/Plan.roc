@@ -1,12 +1,14 @@
 import rr.Color
 import rr.Draw
-import rr.Text
 import core.Fmt
+import Chrome
 import Days
 import Db
+import Labels
+import Scene
+import Scroll
 import Theme
 import Ui
-import Scroll
 import Wrap
 
 Plan :: [].{
@@ -14,6 +16,7 @@ Plan :: [].{
 	# done, its result) in a card, the whole Mon-Sun week plus the days ahead
 	# with what happened on each, the week as a row of day pips, the load
 	# strip, and the coach corner - the bus made visible.
+
 	type_color : Str -> Color.Rgba
 	type_color = |typ|
 		if (typ == "threshold") Theme.tsb_c
@@ -159,107 +162,196 @@ Plan :: [].{
 		Scroll.last_offset(l.heights, l.room)
 	}
 
+	title_text : Str
+	title_text = "the week and the days ahead"
+
+	hint_text : Str
+	hint_text = "week / log / year  modes      wheel or up/down  scroll      TAB  lifts      R  reload      S  screenshot      V  record      ESC quit"
+
+	# ── the layout the drawing, the scene and the gate share ───────────────
+	# the week as a quest: one pip per weekday, Monday first, right-aligned
+	# on the title row
+	pip_w : F32
+	pip_w = 18.0
+
+	pips_x : F32 -> F32
+	pips_x = |win_w| win_w - 36.0 - 7.0 * (pip_w + 4.0)
+
+	pip_box : F32, U64 -> Labels.Rect
+	pip_box = |win_w, i| { x: pips_x(win_w) + U64.to_f32(i) * (pip_w + 4.0), y: 70.0, w: pip_w, h: 8.0 }
+
+	# today's card and the type stripe down its left side
+	card_box : F32, F32 -> Labels.Rect
+	card_box = |win_w, h| { x: 36.0, y: 100.0, w: win_w - 72.0, h }
+
+	stripe_box : F32 -> Labels.Rect
+	stripe_box = |h| { x: 52.0, y: 116.0, w: 10.0, h: h - 32.0 }
+
+	# a ladder row's type pill
+	type_pill : F32 -> Labels.Rect
+	type_pill = |top| { x: 150.0, y: top + 2.0, w: 92.0, h: 16.0 }
+
+	# the ladder rows on screen from the scroll offset, each with its top
+	# and height, and where the scrollbar and its hints sit
+	shown_rows : Ui.Model -> { rows : List({ p : Db.PlanRow, top : F32, h : F32 }), off : U64, n_shown : U64, cols : U64, at : { x : F32, top : F32, bottom : F32, hint_x : F32 } }
+	shown_rows = |model| {
+		lad = ladder(model)
+		off = model.week_off.min(Scroll.last_offset(lad.heights, lad.room))
+		n_shown = Scroll.shown(lad.heights, off, lad.room)
+		walk = List.fold(
+			List.take_first(List.drop_first(model.plan, off), n_shown),
+			{ out: [], y: lad.top },
+			|acc, p| {
+				h = row_height(p, lad.cols)
+				{ out: List.append(acc.out, { p, top: acc.y, h }), y: acc.y + h }
+			},
+		)
+		{ rows: walk.out, off, n_shown, cols: lad.cols, at: { x: model.win.w - 30.0, top: lad.top, bottom: lad.top + lad.room, hint_x: 260.0 } }
+	}
+
+	# the scrollbar's track, when the ladder outgrows its room
+	scroll_box : Ui.Model -> Try(Labels.Rect, [Fits])
+	scroll_box = |model| {
+		s = shown_rows(model)
+		h = Scroll.hidden(s.off, s.n_shown, List.len(model.plan))
+		if (h.above == 0 and h.below == 0) Err(Fits) else Ok({ x: s.at.x, y: s.at.top, w: 3.0, h: s.at.bottom - s.at.top })
+	}
+
+	# ── every string the view writes, placed ───────────────────────────────
+	# All of it is fixed: the title and the quest label, today's card, each
+	# ladder row's day, type, prescription, outcome and status, the scroll
+	# hints, the load strip, the coach corner, the footer and the mode chips.
+	scene : Ui.Model, Scene.Measure -> List(Labels.Placed(Scene.Item))
+	scene = |model, measure| Labels.place(texts(model, measure), { boxes: Chrome.boxes(model, measure), segs: [] })
+
+	# the view's text and the chrome's, as the gate judges them
+	owned : Ui.Model, Scene.Measure -> List(Labels.Owned)
+	owned = |model, measure| List.concat(Scene.owned(Chrome.placed(model, measure)), Scene.owned(scene(model, measure)))
+
+	texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
+	texts = |model, measure| {
+		win_w = model.win.w
+		win_h = model.win.h
+		panel = Labels.panel(model.win)
+		ink_muted = Theme.ink_muted
+		ink_faint = Theme.ink_faint
+		fix = |it, x, y, align, region| Scene.fixed(measure, it, { x, y, align }, region)
+		head = [fix(Scene.prepared(model.plan_title, title_text, 15.0, Prose, ink_muted), Days.title_x, 70.0, Left, panel)]
+		# the quest label counts the done sessions beside the pips
+		qt = model.plan_week.total
+		qd = model.plan_week.done
+		quest =
+			if qt > 0 {
+				complete = qd >= qt
+				[fix(Scene.data(if (complete) "week complete" else "quest ${I64.to_str(qd)}/${I64.to_str(qt)}", 11.0, if (complete) Theme.gold_c else ink_muted), pips_x(win_w) - 10.0, 72.0, Right, panel)]
+			} else {
+				[]
+			}
+		card = today_card(model.plan, win_w)
+		cb = card_box(win_w, card.h)
+		nd = U64.to_f32(List.len(card.dlines))
+		card_texts = List.join([
+			[fix(Scene.data(card.head, 14.0, type_color(card.today.typ)), 76.0, 112.0, Left, cb)],
+			List.map_with_index(card.dlines, |ln, i| fix(Scene.data(ln, 13.0, Color.white), 76.0, 134.0 + U64.to_f32(i) * 19.0, Left, cb)),
+			List.map_with_index(card.rlines, |ln, i| fix(Scene.data(ln, 11.0, ink_faint), 76.0, 134.0 + nd * 19.0 + 4.0 + U64.to_f32(i) * 16.0, Left, cb)),
+		])
+		# the ladder: Monday through the days ahead. A past or current day
+		# takes one line of prescription (the card holds today's in full) and
+		# one of outcome, and a day ahead up to three, so the coming days fit
+		# under the week's history. Rows that do not fit above the load strip
+		# scroll (Scroll), so no day is ever shed.
+		s = shown_rows(model)
+		rows = List.join(
+			List.map(
+				s.rows,
+				|r| {
+					lines = row_lines(r.p, s.cols)
+					nl = U64.to_f32(List.len(lines))
+					ink = if (r.p.today) Color.white else if (r.p.past) ink_faint else ink_muted
+					k = kind_of(r.p)
+					rcol = if (k == Done) Theme.tsb_c else ink_faint
+					scol = if (k == Done) Theme.tsb_c else if (k == Rested) Theme.tsb_c else if (k == Open and r.p.today) Theme.ctl_c else ink_faint
+					List.join([
+						[
+							fix(Scene.data(r.p.day, 12.0, ink), 44.0, r.top, Left, panel),
+							fix(Scene.data(r.p.typ, 11.0, type_color(r.p.typ)), 196.0, r.top + 3.0, Center, type_pill(r.top)),
+						],
+						List.map_with_index(lines, |ln, i| fix(Scene.data(ln, 12.0, ink), 260.0, r.top + U64.to_f32(i) * 18.0, Left, panel)),
+						List.map_with_index(Wrap.fit(result_text(r.p), s.cols, 1), |ln, i| fix(Scene.data(ln, 11.0, rcol), 260.0, r.top + nl * 18.0 + U64.to_f32(i) * 16.0, Left, panel)),
+						[fix(Scene.data(status_text(r.p), 12.0, scol), win_w - 44.0, r.top, Right, panel)],
+					])
+				},
+			),
+		)
+		# load strip + coach corner. The week's session count lives in the
+		# quest label only; the strip states load, Monday-aligned on both
+		# sides.
+		strip = "${Db.num_unit(model.week_tss.this, "tss")} this week (last ${Db.grouped(model.week_tss.last)})"
+		foot = [
+			fix(Scene.data(strip, 13.0, ink_muted), 36.0, win_h - 84.0, Left, panel),
+			fix(Scene.data("coach: ${model.bus_note}", 11.0, ink_faint), 36.0, win_h - 60.0, Left, panel),
+			fix(Scene.prepared(model.plan_hint, hint_text, 13.0, Prose, ink_faint), 36.0, win_h - 30.0, Left, panel),
+		]
+		List.join([head, quest, card_texts, rows, Scroll.hints(measure, s.at, s.off, s.n_shown, List.len(model.plan), panel), foot, Days.chip_texts(model, measure)])
+	}
+
+	# the shapes no text may cover but its own: the pills, the mode chips,
+	# the quest pips, today's card and its stripe, each row's type pill and
+	# the scrollbar
+	marks : Ui.Model -> List(Labels.Mark)
+	marks = |model| {
+		card = today_card(model.plan, model.win.w)
+		List.join([
+			Chrome.marks(model),
+			Days.chip_marks,
+			if (model.plan_week.total > 0) [{ key: "the quest pips", box: { x: pips_x(model.win.w), y: 70.0, w: 7.0 * (pip_w + 4.0) - 4.0, h: 8.0 } }] else [],
+			[{ key: "today's card", box: card_box(model.win.w, card.h) }, { key: "today's stripe", box: stripe_box(card.h) }],
+			List.map((shown_rows(model)).rows, |r| { key: "the ${r.p.day} type pill", box: type_pill(r.top) }),
+			match scroll_box(model) {
+				Ok(b) => [{ key: "the scrollbar", box: b }]
+				Err(_) => []
+			},
+		])
+	}
+
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
 		win_w = model.win.w
-		win_h = model.win.h
-		ink_muted = Theme.ink_muted
-		ink_faint = Theme.ink_faint
-		model.plan_title.draw!(frame, { pos: { x: Days.title_x, y: 70.0 }, color: ink_muted, align: (Top, Left) })
-		# ── the week as a quest: one pip per weekday, Monday first, colored by
-		# what became of that day, and the label counts the done sessions.
-		# The whole row pulses when every prescribed session is done.
+		# the quest pips, colored by what became of each day; the whole row
+		# pulses when every prescribed session is done
 		qt = model.plan_week.total
-		qd = model.plan_week.done
 		if qt > 0 {
-			pipw = 18.0
-			qx0 = win_w - 36.0 - 7.0 * (pipw + 4.0)
-			complete = qd >= qt
+			complete = model.plan_week.done >= qt
 			t9 = model.tick % 40
 			tri9 = (if (t9 < 20) (U64.to_f32(t9)) else U64.to_f32(40 - t9)) / 20.0
-			label = if (complete) "week complete" else "quest ${I64.to_str(qd)}/${I64.to_str(qt)}"
-			lc9 = if (complete) (Theme.gold_c) else ink_muted
-			Text.from(label, model.font).size(11).draw!(frame, { pos: { x: qx0 - 10.0, y: 72.0 }, color: lc9, align: (Top, Right) })
-			pulse_a = match F32.round_to_u64_try(200.0 + tri9 * 55.0) {
-				Ok(u8v) => (
-					match U64.to_u8_try(u8v) {
-						Ok(a9) => a9
-						Err(_) => 255.U8
-					}
-				)
-				Err(_) => 255.U8
-			}
+			pulse_a = (F32.round_to_u64_try(200.0 + tri9 * 55.0) ?? 255).to_u8_try() ?? 255
 			List.for_each!(
 				List.map_with_index(week_kinds(model.plan), |k, i| { k, i }),
 				|q| {
-					px = qx0 + U64.to_f32(q.i) * (pipw + 4.0)
+					b = pip_box(win_w, q.i)
 					c = if (complete and q.k == Done) (Color.with_alpha(Theme.gold_c, pulse_a)) else pip_color(q.k)
-					frame.rounded_rectangle!({ x: px, y: 70.0, width: pipw, height: 8.0, radius: 4.0, segments: 4, style: Draw.filled(c) })
+					frame.rounded_rectangle!({ x: b.x, y: b.y, width: b.w, height: b.h, radius: 4.0, segments: 4, style: Draw.filled(c) })
 				},
 			)
 		}
-
-		# today's card (today_card)
 		card = today_card(model.plan, win_w)
-		today = card.today
-		card_head = card.head
-		dlines = card.dlines
-		rlines = card.rlines
-		nd = U64.to_f32(List.len(dlines))
-		card_h = card.h
-		frame.rounded_rectangle!({ x: 36.0, y: 100.0, width: win_w - 72.0, height: card_h, radius: 10.0, segments: 8, style: Draw.filled(Theme.card) })
-		frame.rounded_rectangle!({ x: 52.0, y: 116.0, width: 10.0, height: card_h - 32.0, radius: 4.0, segments: 4, style: Draw.filled(type_color(today.typ)) })
-		Text.from(card_head, model.font).size(14).draw!(frame, { pos: { x: 76.0, y: 112.0 }, color: type_color(today.typ), align: (Top, Left) })
-		List.for_each!(List.map_with_index(dlines, |ln, i| { ln, i }), |d|
-			Text.from(d.ln, model.font).size(13).draw!(frame, { pos: { x: 76.0, y: 134.0 + U64.to_f32(d.i) * 19.0 }, color: Color.white, align: (Top, Left) }))
-		List.for_each!(List.map_with_index(rlines, |ln, i| { ln, i }), |r|
-			Text.from(r.ln, model.font).size(11).draw!(frame, { pos: { x: 76.0, y: 134.0 + nd * 19.0 + 4.0 + U64.to_f32(r.i) * 16.0 }, color: ink_faint, align: (Top, Left) }))
-
-		# the ladder: Monday through the days ahead. A past or current day takes
-		# one line of prescription (the card holds today's in full) and one of
-		# outcome, and a day ahead up to three, so the coming days fit under the
-		# week's history. Rows that do not fit above the load strip scroll
-		# (Scroll), so no day is ever shed.
-		lad = ladder(model)
-		row_cols = lad.cols
-		ladder_top = lad.top
-		off = model.week_off.min(Scroll.last_offset(lad.heights, lad.room))
-		n_shown = Scroll.shown(lad.heights, off, lad.room)
-		_ = List.fold_try!(
-			List.take_first(List.drop_first(List.map_with_index(model.plan, |p, i| { p, i }), off), n_shown),
-			{ y: ladder_top },
-			|acc, x| {
-				lines = row_lines(x.p, row_cols)
-				res = Wrap.fit(result_text(x.p), row_cols, 1)
-				nl = U64.to_f32(List.len(lines))
-				row_h = row_height(x.p, row_cols)
-				ly = acc.y
-				ink = if (x.p.today) Color.white else if (x.p.past) ink_faint else ink_muted
-				if x.p.today {
-					frame.rectangle!({ x: 34.0, y: ly - 4.0, width: win_w - 68.0, height: row_h - 3.0, style: Draw.filled(Color.with_alpha(Color.white, 14)) })
+		cb = card_box(win_w, card.h)
+		sb = stripe_box(card.h)
+		frame.rounded_rectangle!({ x: cb.x, y: cb.y, width: cb.w, height: cb.h, radius: 10.0, segments: 8, style: Draw.filled(Theme.card) })
+		frame.rounded_rectangle!({ x: sb.x, y: sb.y, width: sb.w, height: sb.h, radius: 4.0, segments: 4, style: Draw.filled(type_color(card.today.typ)) })
+		s = shown_rows(model)
+		List.for_each!(
+			s.rows,
+			|r| {
+				if r.p.today {
+					frame.rectangle!({ x: 34.0, y: r.top - 4.0, width: win_w - 68.0, height: r.h - 3.0, style: Draw.filled(Color.with_alpha(Color.white, 14)) })
 				}
-				Text.from(x.p.day, model.font).size(12).draw!(frame, { pos: { x: 44.0, y: ly }, color: ink, align: (Top, Left) })
-				frame.rounded_rectangle!({ x: 150.0, y: ly + 2.0, width: 92.0, height: 16.0, radius: 5.0, segments: 4, style: Draw.filled(Color.with_alpha(type_color(x.p.typ), 45)) })
-				Text.from(x.p.typ, model.font).size(11).draw!(frame, { pos: { x: 196.0, y: ly + 3.0 }, color: type_color(x.p.typ), align: (Top, Center) })
-				List.for_each!(List.map_with_index(lines, |ln, i| { ln, i }), |d|
-					Text.from(d.ln, model.font).size(12).draw!(frame, { pos: { x: 260.0, y: ly + U64.to_f32(d.i) * 18.0 }, color: ink, align: (Top, Left) }))
-				k = kind_of(x.p)
-				rcol = if (k == Done) Theme.tsb_c else ink_faint
-				List.for_each!(List.map_with_index(res, |ln, i| { ln, i }), |d|
-					Text.from(d.ln, model.font).size(11).draw!(frame, { pos: { x: 260.0, y: ly + nl * 18.0 + U64.to_f32(d.i) * 16.0 }, color: rcol, align: (Top, Left) }))
-				scol = if (k == Done) Theme.tsb_c else if (k == Rested) Theme.tsb_c else if (k == Open and x.p.today) Theme.ctl_c else ink_faint
-				Text.from(status_text(x.p), model.font).size(12).draw!(frame, { pos: { x: win_w - 44.0, y: ly }, color: scol, align: (Top, Right) })
-				Ok({ y: ly + row_h })
+				pb = type_pill(r.top)
+				frame.rounded_rectangle!({ x: pb.x, y: pb.y, width: pb.w, height: pb.h, radius: 5.0, segments: 4, style: Draw.filled(Color.with_alpha(type_color(r.p.typ), 45)) })
 			},
-		)?
-		Scroll.draw!(frame, model.font, { x: win_w - 30.0, top: ladder_top, bottom: ladder_top + lad.room, hint_x: 260.0 }, off, n_shown, List.len(model.plan))
-
-		# load strip + coach corner. The week's session count lives in the
-		# quest label only; the strip states load, Monday-aligned on both sides.
-		strip = "${Db.num_unit(model.week_tss.this, "tss")} this week (last ${Db.grouped(model.week_tss.last)})"
-		Text.from(strip, model.font).size(13).draw!(frame, { pos: { x: 36.0, y: win_h - 84.0 }, color: ink_muted, align: (Top, Left) })
-		Text.from("coach: ${model.bus_note}", model.font).size(11).draw!(frame, { pos: { x: 36.0, y: win_h - 60.0 }, color: ink_faint, align: (Top, Left) })
-		model.plan_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
+		)
+		Scroll.draw!(frame, s.at, s.off, s.n_shown, List.len(model.plan))
+		Scene.draw!(frame, model, scene(model, Scene.measure_of(model)))
 		Ok({})
 	}
 

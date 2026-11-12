@@ -137,6 +137,24 @@ Chrome :: [].{
 		List.join([[title, scale], pills, rec, leg, lvl])
 	}
 
+	# the boot splash's words under the mark, centred: the wordmark, the
+	# loading line with its dots on the tick, and the note a slow load earns
+	splash : Ui.Model, Scene.Measure, Str -> List(Labels.Placed(Scene.Item))
+	splash = |model, measure, slow| {
+		panel = Labels.panel(model.win)
+		cx = model.win.w / 2.0
+		cy = model.win.h / 2.0 - 30.0
+		dots = if (model.tick % 90 < 30) "." else if (model.tick % 90 < 60) ".." else "..."
+		line = |it, y| Scene.fixed(measure, it, { x: cx, y, align: Center }, panel)
+		Labels.place(
+			List.concat(
+				[line(Scene.data(wordmark, 30.0, Color.white), cy + 124.0), line(Scene.data("loading your training story${dots}", 13.0, Theme.ink_muted), cy + 164.0)],
+				if (slow == "") [] else [line(Scene.data(slow, 12.0, Theme.ink_muted), cy + 188.0)],
+			),
+			{ boxes: [], segs: [] },
+		)
+	}
+
 	# the chrome text where main.roc draws it
 	placed : Ui.Model, Scene.Measure -> List(Labels.Placed(Scene.Item))
 	placed = |model, measure| Labels.place(labels(model, measure), { boxes: [], segs: [] })
@@ -146,11 +164,20 @@ Chrome :: [].{
 	boxes : Ui.Model, Scene.Measure -> List(Labels.Rect)
 	boxes = |model, measure| List.concat(List.map(placed(model, measure), |p| p.box), shapes(model))
 
-	# the chrome's shapes a view label must keep off: the nav pills
+	# the chrome's shapes a view label must keep off: the nav pills and
+	# the XP rail
 	shapes : Ui.Model -> List(Labels.Rect)
-	shapes = |model| {
+	shapes = |model| List.map(marks(model), |m| m.box)
+
+	# the same shapes as the gate holds a view's text off them
+	marks : Ui.Model -> List(Labels.Mark)
+	marks = |model| {
 		n = List.len(model.nav)
-		List.map_with_index(model.nav, |_nv, i| nav_pill(model.win.w, n, i))
+		pills = List.map_with_index(model.nav, |nv, i| { key: "the ${nav_name(nv.v)} pill", box: nav_pill(model.win.w, n, i) })
+		match Hud.rail_box(model) {
+			Ok(b) => List.append(pills, { key: "the XP rail", box: b })
+			Err(_) => pills
+		}
 	}
 }
 

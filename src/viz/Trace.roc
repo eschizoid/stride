@@ -4,10 +4,13 @@ import rr.Text
 import core.Fmt
 import core.Sports
 import core.Units
+import Chrome
 import Db
-import Wrap
+import Labels
+import Scene
 import Theme
 import Ui
+import Wrap
 
 Trace :: [].{
 	# The y grid step for a plot whose ceiling is `hi`: enough rules to read a
@@ -168,14 +171,15 @@ Trace :: [].{
 	no_sets_note : Bool -> Str
 	no_sets_note = |pasted| if (pasted) "no sets read - the description holds text no adapter parsed" else "no sets logged"
 
-	# whether the selected session is a lifting one, and the lines its sets
-	# panel prints: the stored rows (at most 18), or the empty-state note
+	# whether the selected session is a lifting one
 	lifting_shown : Ui.Model -> Bool
 	lifting_shown = |model| match List.get(model.trace_ids, model.trace_sel) {
 		Ok(te) => strength_session(te.sport)
 		Err(_) => Bool.False
 	}
 
+	# the lines a lifting session's sets panel prints: the stored rows, at
+	# most 18, or the empty-state note
 	panel_lines : Ui.Model -> List(Str)
 	panel_lines = |model|
 		if (!lifting_shown(model)) []
@@ -205,116 +209,249 @@ Trace :: [].{
 	# where it found any, so the two can be compared by eye — which is the
 	# whole point: a table of segments cannot show you that a "work" block
 	# started thirty seconds before the effort did. The plotted channel varies
-	# per session; model.trace_unit names what the samples count.
-	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
-	draw! = |model, frame| {
-		win_w = model.win.w
-		win_h = model.win.h
-		pad_l = Theme.pad_l
-		lifting = lifting_shown(model)
-		set_lines = panel_lines(model)
-		pad_r = right_pad(model)
-		pad_t = Theme.pad_t
-		pad_b = Theme.pad_b
-		ink_muted = Theme.ink_muted
-		ink_faint = Theme.ink_faint
-		ctl_c = Theme.ctl_c
-		tsb_c = Theme.tsb_c
-		# The subtitle is built per frame rather than prepared once, because it
-		# describes THIS session: both the channel it plots and whether the
-		# detector found any blocks in it vary from one session to the next.
+	# per session; model.trace_unit names what the samples count. The shapes
+	# draw from geom and every string from scene, so the drawing, the label
+	# placer and the gate read one layout.
+	hint_text : Str
+	hint_text = "[ / ]  older/newer session      X  sport filter      shift+[ / shift+]  ghost older/newer      C  clear ghost      wheel zoom  drag pan  0 reset      TAB  plan"
+
+	# the keys every view shares, after the trace's own on the footer row
+	keys_text : Str
+	keys_text = "R  reload      S  screenshot      V  record      ESC quit"
+
+	# the plot on screen and the ceiling both traces are judged against: one
+	# scale, or the comparison lies
+	Geom : { left : F32, top : F32, pw : F32, ph : F32, hi : F32 }
+
+	geom : Ui.Model -> Geom
+	geom = |model| {
+		hi = F32.max(List.fold(model.trace, 1.0, |a, v| F32.max(a, v)), List.fold(model.ghost, 1.0, |a, v| F32.max(a, v))) * 1.1
+		{ left: Theme.pad_l, top: Theme.pad_t, pw: model.win.w - Theme.pad_l - right_pad(model), ph: model.win.h - Theme.pad_t - Theme.pad_b, hi }
+	}
+
+	y_at : Geom, F32 -> F32
+	y_at = |g, w| g.top + g.ph * (1.0 - w / g.hi)
+
+	# every x runs through the camera: the visible window is [pan, pan +
+	# 1/zoom] of the session, in session-fraction space
+	cam : Ui.Model, Geom, F32 -> F32
+	cam = |model, g, frac| g.left + g.pw * (frac - model.trace_pan) * model.trace_zoom
+
+	# The heading is built per frame rather than prepared once, because it
+	# describes THIS session: both the channel it plots and whether the
+	# detector found any blocks in it vary from one session to the next. A
+	# lifting session has no power or pace for the detector to read, so its
+	# heading names the channel only and the sets panel speaks for it.
+	heading : Ui.Model -> Str
+	heading = |model| {
 		nsegs = List.len(List.keep_if(model.segs, |sg| sg.kind == "work"))
 		what = if (model.trace_unit == "bpm") ("heart rate") else if (pace_axis(model.trace_unit)) ("pace") else "power"
-		# a lifting session has no power or pace for the detector to read, so
-		# its heading names the channel only and the sets panel speaks for it
 		blocks =
-			if (List.is_empty(model.trace) or lifting) ("")
+			if (List.is_empty(model.trace) or lifting_shown(model)) ("")
 			else if (nsegs == 0) (" - no intervals detected")
 			else if (nsegs == 1) (" - 1 detected block shaded behind it") else " - ${U64.to_str(nsegs)} detected blocks shaded behind it"
-		Text.from("${what} trace${blocks}", model.font).size(15).draw!(frame, { pos: { x: 36.0, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+		"${what} trace${blocks}"
+	}
+
+	# The y grid: a value at each step under the ceiling, so a level can be
+	# read off the plot instead of guessed. The axis starts at zero, the same
+	# origin the trace itself is scaled against. A pace gridline says the
+	# pace, not the raw m/s the samples are stored in.
+	y_grid : Ui.Model, Geom -> List({ v : F32, label : Str })
+	y_grid = |model, g| {
+		is_pace = pace_axis(model.trace_unit)
+		ystep = if (is_pace) (y_step_pace(g.hi)) else y_step(g.hi)
+		ycount = (F32.round_to_u64_try(F32.div_floor_by(g.hi, ystep))) ?? 0
+		# the step reaches F64 through a millimetre integer - exact for every
+		# step this file chooses, and the label math wants F64
+		ystep64 = (F32.round_to_u64_try(ystep * 1000.0) ?? 0).to_f64() / 1000.0
+		List.keep_oks(
+			List.map_with_index(List.repeat({}, ycount), |_u, k| k),
+			|k| {
+				gv = (U64.to_f32(k) + 1.0) * ystep
+				lbl = if (is_pace) (trace_pace(model.trace_unit, model.units, ((k).to_f64() + 1.0) * ystep64)) else (F32.round_to_u64_try(gv) ?? 0).to_str()
+				if (gv < g.hi) Ok({ v: gv, label: lbl }) else Err(Above)
+			},
+		)
+	}
+
+	# The x grid: elapsed time. Every tick runs through the same camera as
+	# the trace, so a panned or zoomed view stays labelled correctly; ticks
+	# the camera puts outside the plot are skipped rather than clamped, which
+	# would stack them on the edge.
+	x_grid : Ui.Model, Geom -> List({ x : F32, s : F32 })
+	x_grid = |model, g| {
+		xstep = x_step(model.trace_dur, model.trace_zoom)
+		xcount = (F32.round_to_u64_try(F32.div_floor_by(model.trace_dur, xstep))) ?? 0
+		List.keep_oks(
+			List.map_with_index(List.repeat({}, xcount + 1), |_u, k| U64.to_f32(k) * xstep),
+			|s| {
+				x = cam(model, g, s / model.trace_dur)
+				if (x >= g.left and x <= g.left + g.pw) Ok({ x, s }) else Err(Outside)
+			},
+		)
+	}
+
+	# the camera's zoom when it is anywhere but home
+	zoom_text : F32 -> Str
+	zoom_text = |zoom| {
+		zoom10 = (F32.round_to_u64_try(zoom * 10.0)) ?? 10
+		"zoom ${U64.to_str(zoom10 // 10)}.${U64.to_str(zoom10 % 10)}x   0 resets"
+	}
+
+	# ── every string the view writes, placed ───────────────────────────────
+	# Everything is fixed text but three labels. The channel's unit keeps:
+	# right-aligned above the value column, else from the plot's left edge.
+	# The camera's zoom note keeps: at the top of the right column, else
+	# inside the plot's top-left corner, since the sets and splits panels
+	# start just below it. The keys every view shares are free and drop
+	# when the footer row has no room for them.
+	scene : Ui.Model, Scene.Measure -> List(Labels.Placed(Scene.Item))
+	scene = |model, measure| Labels.place(texts(model, measure), obstacles(model, measure))
+
+	# the view's text and the chrome's, as the gate judges them
+	owned : Ui.Model, Scene.Measure -> List(Labels.Owned)
+	owned = |model, measure| List.concat(Scene.owned(Chrome.placed(model, measure)), Scene.owned(scene(model, measure)))
+
+	texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
+	texts = |model, measure| {
+		win_w = model.win.w
+		win_h = model.win.h
+		panel = Labels.panel(model.win)
+		ink_muted = Theme.ink_muted
+		ink_faint = Theme.ink_faint
+		right = win_w - 34.0
+		fix = |it, x, y, align| Scene.fixed(measure, it, { x, y, align }, panel)
+		head = [fix(Scene.data(heading(model), 15.0, ink_muted), 36.0, 70.0, Left)]
 		# Which session, said the way a human remembers one: its NAME first,
 		# then the date, sport and picker position, then the filter X is
 		# holding - a mode key with no visible mode reads as a dead key.
-		if (List.is_empty(model.trace_ids)) {} else {
-			n_ids = List.len(model.trace_ids)
-			sel = match List.get(model.trace_ids, model.trace_sel) {
-				Ok(te) => te
-				Err(_) => { id: 0, day: model.trace_day, name: "", sport: "", chan: "" }
+		picker =
+			if List.is_empty(model.trace_ids) {
+				[]
+			} else {
+				sel = (List.get(model.trace_ids, model.trace_sel)) ?? { id: 0, day: model.trace_day, name: "", sport: "", chan: "" }
+				filt = if (model.trace_sport == "") ("all sports") else "${model.trace_sport} only"
+				ghost =
+					if model.ghost_day != "" {
+						gname = List.fold(model.trace_ids, "", |acc, ge| if (ge.day == model.ghost_day) ge.name else acc)
+						[fix(Scene.data("ghost (purple): ${gname}  ${model.ghost_day}   C clears", 12.0, Theme.atl_c), right, 110.0, Right)]
+					} else {
+						[]
+					}
+				List.concat(
+					[
+						fix(Scene.data(sel.name, 13.0, Color.white), right, 70.0, Right),
+						fix(Scene.data("${sel.day}   ${sel.sport}   ${U64.to_str(model.trace_sel + 1)}/${U64.to_str(List.len(model.trace_ids))}   showing ${filt} (X cycles)", 12.0, ink_muted), right, 90.0, Right),
+					],
+					ghost,
+				)
 			}
-			Text.from(sel.name, model.font).size(13).draw!(frame, { pos: { x: model.win.w - 34.0, y: 70.0 }, color: Color.white, align: (Top, Right) })
-			filt = if (model.trace_sport == "") ("all sports") else "${model.trace_sport} only"
-			Text.from("${sel.day}   ${sel.sport}   ${U64.to_str(model.trace_sel + 1)}/${U64.to_str(n_ids)}   showing ${filt} (X cycles)", model.font).size(12).draw!(frame, { pos: { x: model.win.w - 34.0, y: 90.0 }, color: ink_muted, align: (Top, Right) })
-			if model.ghost_day != "" {
-				gname = List.fold(model.trace_ids, "", |acc, ge| if (ge.day == model.ghost_day) ge.name else acc)
-				Text.from("ghost (purple): ${gname}  ${model.ghost_day}   C clears", model.font).size(12).draw!(frame, { pos: { x: model.win.w - 34.0, y: 110.0 }, color: Theme.atl_c, align: (Top, Right) })
-			}
-		}
-		# ── the splits panel: the pace channel's companion, one row per pace
+		# the splits panel: the pace channel's companion, one row per pace
 		# unit's distance (100 m swimming, 500 m rowing, the athlete's
 		# kilometre or mile on foot), read on the trace's own axis. Capped to
 		# what fits beside the plot; the overflow line says how many rows it
 		# holds back rather than letting the session appear to end early.
-		if pace_axis(model.trace_unit) and !(List.is_empty(model.trace_splits)) {
-			Text.from(split_head(model.trace_unit, model.units), model.font).size(11).draw!(frame, { pos: { x: model.win.w - 34.0, y: 136.0 }, color: ink_muted, align: (Top, Right) })
-			shown = List.take_first(model.trace_splits, 14)
-			List.for_each!(List.map_with_index(shown, |r, i| { r, i }), |x|
-				Text.from("${I64.to_str(x.r.n)}  ${split_pace(model.trace_unit, model.units, x.r.distance_m, x.r.elapsed_s)}", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 34.0, y: 154.0 + U64.to_f32(x.i) * 16.0 }, color: ink_faint, align: (Top, Right) }))
-			extra = List.len(model.trace_splits) - List.len(shown)
-			if extra > 0 {
-				Text.from("+${U64.to_str(extra)} more", model.font).size(10).draw!(frame, { pos: { x: model.win.w - 34.0, y: 154.0 + 14.0 * 16.0 }, color: ink_faint, align: (Top, Right) })
+		splits =
+			if pace_axis(model.trace_unit) and !(List.is_empty(model.trace_splits)) {
+				shown = List.take_first(model.trace_splits, 14)
+				extra = List.len(model.trace_splits) - List.len(shown)
+				List.join([
+					[fix(Scene.data(split_head(model.trace_unit, model.units), 11.0, ink_muted), right, 136.0, Right)],
+					List.map_with_index(shown, |r, i| fix(Scene.data("${I64.to_str(r.n)}  ${split_pace(model.trace_unit, model.units, r.distance_m, r.elapsed_s)}", 11.0, ink_faint), right, 154.0 + U64.to_f32(i) * 16.0, Right)),
+					if (extra > 0) [fix(Scene.data("+${U64.to_str(extra)} more", 10.0, ink_faint), right, 154.0 + 14.0 * 16.0, Right)] else [],
+				])
+			} else {
+				[]
 			}
-		}
-		# ── the sets panel: a lifting session's stored sets in order, holds
+		# the sets panel: a lifting session's stored sets in order, holds
 		# included, capped to what fits beside the plot with an overflow line
-		if lifting {
-			Text.from("sets", model.font).size(11).draw!(frame, { pos: { x: model.win.w - 34.0, y: 136.0 }, color: ink_muted, align: (Top, Right) })
-			List.for_each!(List.map_with_index(set_lines, |l, i| { l, i }), |x|
-				Text.from(x.l, model.font).size(11).draw!(frame, { pos: { x: model.win.w - 34.0, y: 154.0 + U64.to_f32(x.i) * 16.0 }, color: ink_faint, align: (Top, Right) }))
-			if !(List.is_empty(model.trace_sets.rows)) {
-				extra = List.len(model.trace_sets.rows) - List.len(set_lines)
-				if extra > 0 {
-					Text.from("+${U64.to_str(extra)} more", model.font).size(10).draw!(frame, { pos: { x: model.win.w - 34.0, y: 154.0 + 18.0 * 16.0 }, color: ink_faint, align: (Top, Right) })
+		sets =
+			if lifting_shown(model) {
+				lines = panel_lines(model)
+				extra = if (List.is_empty(model.trace_sets.rows)) 0 else List.len(model.trace_sets.rows) - List.len(lines)
+				List.join([
+					[fix(Scene.data("sets", 11.0, ink_muted), right, 136.0, Right)],
+					List.map_with_index(lines, |l, i| fix(Scene.data(l, 11.0, ink_faint), right, 154.0 + U64.to_f32(i) * 16.0, Right)),
+					if (extra > 0) [fix(Scene.data("+${U64.to_str(extra)} more", 10.0, ink_faint), right, 154.0 + 18.0 * 16.0, Right)] else [],
+				])
+			} else {
+				[]
+			}
+		# The plot is blank for one of two reasons, and they must not read
+		# alike. A LOAD IN FLIGHT: only the boot-cached session is in memory,
+		# so switching to any other blanks the plot until its samples arrive
+		# off the main loop (trace_loading, latched from the fetch spawn) -
+		# saying "no samples" there is a lie the athlete reads as data loss.
+		# GENUINELY EMPTY: the session is loaded and its chosen channel holds
+		# nothing - the menu gates on the stream key being present, an empty
+		# array passes that, and the CASE prefers watts, so an empty watts
+		# array blanks the plot while a full heart-rate array sits beside it;
+		# a failed query blanks the same way. That blank says why. An empty
+		# picker stays quiet - there is no session for either message.
+		plot =
+			if List.is_empty(model.trace) {
+				if model.trace_loading {
+					[fix(Scene.data("loading trace...", 13.0, ink_muted), win_w / 2.0, win_h / 2.0, Center)]
+				} else if !(List.is_empty(model.trace_ids)) {
+					[fix(Scene.data("this session's stream holds no plottable samples", 13.0, ink_muted), win_w / 2.0, win_h / 2.0, Center)]
+				} else {
+					[]
 				}
+			} else {
+				g = geom(model)
+				# the unit names itself once, above the column of values it
+				# governs, rather than repeating on every rule: right-aligned
+				# to the column, or from the plot's left edge when a long unit
+				# would reach the XP rail
+				unit = Scene.kept(measure, Scene.data(model.trace_unit, 10.0, ink_muted), [{ x: g.left - 8.0, y: g.top - 15.0, align: Right }, { x: g.left, y: g.top - 15.0, align: Left }], 1, panel)
+				zoom =
+					if model.trace_zoom > 1.01 {
+						[Scene.kept(measure, Scene.data(zoom_text(model.trace_zoom), 11.0, ink_muted), [{ x: right, y: 130.0, align: Right }, { x: g.left + 8.0, y: g.top + 4.0, align: Left }], 2, panel)]
+					} else {
+						[]
+					}
+				List.join([
+					List.map(y_grid(model, g), |gr| fix(Scene.data(gr.label, 10.0, ink_faint), g.left - 8.0, y_at(g, gr.v) - 6.0, Right)),
+					[unit],
+					List.map(x_grid(model, g), |gx| fix(Scene.data(fmt_clock(gx.s), 10.0, ink_faint), gx.x, g.top + g.ph + 6.0, Center)),
+					zoom,
+				])
 			}
-		}
-		if List.is_empty(model.trace) {
-			# The plot is blank for one of two reasons, and they must not read
-			# alike. A LOAD IN FLIGHT: only the boot-cached session is in memory,
-			# so switching to any other blanks the plot until its samples arrive
-			# off the main loop (trace_loading, latched from the fetch spawn) -
-			# saying "no samples" there is a lie the athlete reads as data loss.
-			# GENUINELY EMPTY: the session is loaded and its chosen channel holds
-			# nothing - the menu gates on the stream key being present, an empty
-			# array passes that, and the CASE prefers watts, so an empty watts
-			# array blanks the plot while a full heart-rate array sits beside it;
-			# a failed query blanks the same way. That blank says why. An empty
-			# picker stays quiet - there is no session for either message.
-			if model.trace_loading {
-				Text.from("loading trace...", model.font).size(13).draw!(frame, { pos: { x: win_w / 2.0, y: win_h / 2.0 }, color: ink_muted, align: (Top, Center) })
-			} else if !(List.is_empty(model.trace_ids)) {
-				Text.from("this session's stream holds no plottable samples", model.font).size(13).draw!(frame, { pos: { x: win_w / 2.0, y: win_h / 2.0 }, color: ink_muted, align: (Top, Center) })
-			}
-			model.trace_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
-			Ok({})
-		} else {
-			pw = win_w - pad_l - pad_r
-			ph = win_h - pad_t - pad_b
-			# the shared scale: both traces judged against one ceiling,
-			# or the comparison lies
-			w_hi = F32.max(List.fold(model.trace, 1.0, |a, v| F32.max(a, v)), List.fold(model.ghost, 1.0, |a, v| F32.max(a, v))) * 1.1
+		# the footer: the trace's own keys, then the keys every view shares
+		# after one gap, dropped when the row has no room left for them; every
+		# other view's footer carries them
+		hint = [
+			fix(Scene.prepared(model.trace_hint, hint_text, 13.0, Prose, ink_faint), 36.0, win_h - 30.0, Left),
+			Scene.free(measure, Scene.prose(keys_text, 13.0, ink_faint), [{ x: 36.0 + measure("${hint_text}      ", 13.0, Prose), y: win_h - 30.0, align: Left }], 1, panel),
+		]
+		List.join([head, picker, splits, sets, plot, hint])
+	}
+
+	# what the unit, the zoom note and the shared keys keep off: the chrome
+	obstacles : Ui.Model, Scene.Measure -> Labels.Obstacles
+	obstacles = |model, measure| { boxes: Chrome.boxes(model, measure), segs: [] }
+
+	# the shapes no text may cover but its own: the pills
+	marks : Ui.Model -> List(Labels.Mark)
+	marks = |model| Chrome.marks(model)
+
+	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
+	draw! = |model, frame| {
+		measure = Scene.measure_of(model)
+		ink_faint = Theme.ink_faint
+		if !(List.is_empty(model.trace)) {
+			g = geom(model)
+			x_min = g.left
+			x_max = g.left + g.pw
+			total_s = model.trace_dur
 			nlast = List.len(model.trace) - 1
 			# Segments carry SECONDS while the trace is downsampled samples, so
 			# both map through the session's own duration rather than through
 			# each other's index.
-			total_s = model.trace_dur
-			# every x runs through the camera: the visible window is
-			# [pan, pan + 1/zoom] of the session, in session-fraction space
-			cam = |frac| pad_l + pw * (frac - model.trace_pan) * model.trace_zoom
-			sx = |sec| cam(sec / total_s)
-			tx = |i| if (nlast == 0) (pad_l) else cam(U64.to_f32(i) / U64.to_f32(nlast))
-			ty = |w| pad_t + ph * (1.0 - w / w_hi)
-			x_min = pad_l
-			x_max = pad_l + pw
+			sx = |sec| cam(model, g, sec / total_s)
+			tx = |i| if (nlast == 0) (g.left) else cam(model, g, U64.to_f32(i) / U64.to_f32(nlast))
+			ty = |w| y_at(g, w)
 			# clip a segment to the plot: fully outside skips, a straddler keeps
 			# its interpolated portion - ends clamp instead of vanishing
 			clip_seg! = |x0, y0, x1, y1, stk| {
@@ -327,107 +464,36 @@ Trace :: [].{
 			List.for_each!(
 				model.segs,
 				|sg| {
-					col = if (sg.kind == "work") (Color.with_alpha(tsb_c, 52)) else if (sg.kind == "recovery") (Color.with_alpha(ink_faint, 36)) else Color.with_alpha(ink_faint, 18)
+					col = if (sg.kind == "work") (Color.with_alpha(Theme.tsb_c, 52)) else if (sg.kind == "recovery") (Color.with_alpha(ink_faint, 36)) else Color.with_alpha(ink_faint, 18)
 					# blocks clamp to the plot edges; one fully outside draws nothing
 					x0 = F32.max(x_min, sx(I64.to_f32(sg.start_s)))
 					x1 = F32.min(x_max, sx(I64.to_f32(sg.start_s + sg.dur_s)))
 					if x1 > x0 {
-						frame.rectangle!({ x: x0, y: pad_t, width: F32.max(x1 - x0, 1.0), height: ph, style: Draw.filled(col) })
+						frame.rectangle!({ x: x0, y: g.top, width: F32.max(x1 - x0, 1.0), height: g.ph, style: Draw.filled(col) })
 					}
 				},
 			)
-			# The y grid: a faint rule and a value at each step, so a level can
-			# be read off the plot instead of guessed. The axis starts at zero
-			# — the same origin the trace itself is scaled against.
-			is_pace = pace_axis(model.trace_unit)
-			ystep = if (is_pace) (y_step_pace(w_hi)) else y_step(w_hi)
-			ycount = match F32.round_to_u64_try(F32.div_floor_by(w_hi, ystep)) {
-				Ok(yn) => yn
-				Err(_) => 0.U64
-			}
-			# the step reaches F64 through a millimetre integer - exact for
-			# every step this file chooses, and the label math wants F64
-			ystep64 = (
-				(
-					match F32.round_to_u64_try(ystep * 1000.0) {
-						Ok(u) => u
-						Err(_) => 0.U64
-					}
-				)
-			).to_f64() / 1000.0
-			List.for_each!(
-				List.map_with_index(List.repeat({}, ycount), |_u, k| k),
-				|k|
-					{
-						gv = (U64.to_f32(k) + 1.0) * ystep
-						if gv < w_hi {
-							frame.line!({ start: { x: x_min, y: ty(gv) }, end: { x: x_max, y: ty(gv) }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 36), 1) })
-							# a pace gridline says the pace, not the raw m/s the
-							# samples are stored in - the same last-moment rule
-							# every other surface follows
-							lbl = if (is_pace) (trace_pace(model.trace_unit, model.units, ((k).to_f64() + 1.0) * ystep64)) else (
-								match F32.round_to_u64_try(gv) {
-									Ok(gi) => U64.to_str(gi)
-									Err(_) => ""
-								}
-							)
-							Text.from(lbl, model.font).size(10).draw!(frame, { pos: { x: x_min - 8.0, y: ty(gv) - 6.0 }, color: ink_faint, align: (Top, Right) })
-						} else {}
-					},
-			)
-			# the unit names itself once, above the column of values it governs,
-			# rather than repeating on every rule
-			Text.from(model.trace_unit, model.font).size(10).draw!(frame, { pos: { x: x_min - 8.0, y: pad_t - 15.0 }, color: ink_muted, align: (Top, Right) })
-			# The x grid: elapsed time. Every tick runs through the same camera
-			# as the trace, so a panned or zoomed view stays labelled correctly;
-			# ticks the camera puts outside the plot are skipped rather than
-			# clamped, which would stack them on the edge.
-			xstep = x_step(total_s, model.trace_zoom)
-			xcount = match F32.round_to_u64_try(F32.div_floor_by(total_s, xstep)) {
-				Ok(xn) => xn
-				Err(_) => 0.U64
-			}
-			List.for_each!(
-				List.map_with_index(List.repeat({}, xcount + 1), |_u, k| U64.to_f32(k) * xstep),
-				|gs| {
-					gx9 = sx(gs)
-					if gx9 >= x_min and gx9 <= x_max {
-						frame.line!({ start: { x: gx9, y: pad_t }, end: { x: gx9, y: pad_t + ph }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 28), 1) })
-						Text.from(fmt_clock(gs), model.font).size(10).draw!(frame, { pos: { x: gx9, y: pad_t + ph + 6.0 }, color: ink_faint, align: (Top, Center) })
-					} else {}
-				},
-			)
+			List.for_each!(y_grid(model, g), |gr| frame.line!({ start: { x: x_min, y: ty(gr.v) }, end: { x: x_max, y: ty(gr.v) }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 36), 1) }))
+			List.for_each!(x_grid(model, g), |gx| frame.line!({ start: { x: gx.x, y: g.top }, end: { x: gx.x, y: g.top + g.ph }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 28), 1) }))
 			# pairing the samples with their own tail expresses "each sample
-			# and its successor" without index arithmetic
-			# the ghost rides the SAME seconds-per-pixel as the live trace, so a
-			# shorter session honestly ends early instead of stretching to fit
+			# and its successor" without index arithmetic. The ghost rides the
+			# SAME seconds-per-pixel as the live trace, so a shorter session
+			# honestly ends early instead of stretching to fit, and a longer
+			# one stops at the edge: segments starting past the live duration
+			# are skipped, the one straddling it keeps its clamped end.
 			_ = if List.len(model.ghost) > 1 {
 				gn = List.len(model.ghost) - 1
-				gx = |i| cam((model.ghost_dur * U64.to_f32(i) / U64.to_f32(gn)) / total_s)
-				gtail = List.take_last(model.ghost, gn)
-				gsegs = List.map2(model.ghost, gtail, |a, b| { a, b })
-				# a ghost longer than the live session stops at the edge rather
-				# than smearing its overrun into a vertical line there: segments
-				# starting past the live duration are skipped, the one straddling
-				# it keeps its clamped end
+				gx = |i| cam(model, g, (model.ghost_dur * U64.to_f32(i) / U64.to_f32(gn)) / total_s)
+				gsegs = List.map2(model.ghost, List.take_last(model.ghost, gn), |a, b| { a, b })
 				List.for_each!(List.map_with_index(gsegs, |pr, i| { pr, i }), |x|
 					clip_seg!(gx(x.i), ty(x.pr.a), gx(x.i + 1), ty(x.pr.b), Draw.stroke(Color.with_alpha(Theme.atl_c, 120), 1.0)))
 			}
-			tail = List.take_last(model.trace, List.len(model.trace) - 1)
-			segs2 = List.map2(model.trace, tail, |a, b| { a, b })
+			segs2 = List.map2(model.trace, List.take_last(model.trace, List.len(model.trace) - 1), |a, b| { a, b })
 			List.for_each!(List.map_with_index(segs2, |pr, i| { pr, i }), |x|
-				clip_seg!(tx(x.i), ty(x.pr.a), tx(x.i + 1), ty(x.pr.b), Draw.stroke(ctl_c, 1.0)))
-			# the camera says where it is when it is anywhere but home
-			if model.trace_zoom > 1.01 {
-				zoom10 = match F32.round_to_u64_try(model.trace_zoom * 10.0) {
-					Ok(z9) => z9
-					Err(_) => 10
-				}
-				Text.from("zoom ${U64.to_str(zoom10 // 10)}.${U64.to_str(zoom10 % 10)}x   0 resets", model.font).size(11).draw!(frame, { pos: { x: win_w - 34.0, y: 130.0 }, color: ink_muted, align: (Top, Right) })
-			}
-			model.trace_hint.draw!(frame, { pos: { x: 36.0, y: win_h - 30.0 }, color: ink_faint, align: (Top, Left) })
-			Ok({})
+				clip_seg!(tx(x.i), ty(x.pr.a), tx(x.i + 1), ty(x.pr.b), Draw.stroke(Theme.ctl_c, 1.0)))
 		}
+		Scene.draw!(frame, model, scene(model, measure))
+		Ok({})
 	}
 }
 

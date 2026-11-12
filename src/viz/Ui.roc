@@ -18,6 +18,9 @@ Ui :: [].{
 	CaptureWait : { id : I64, refused : Str, path : Str, name : Str, since : U64 }
 	PendingCapture : [NoCapture, ArmedShot(CaptureWait), AwaitingShot(CaptureWait), AwaitingStart(CaptureWait), AwaitingStop(CaptureWait)]
 	EndLabel : { p : Text.Prepared, sel : U8 }
+	# a copy the window prepared at load beside the string and size it was
+	# prepared from, for text no view can derive again from the model
+	Txt : { p : Text.Prepared, s : Str, size : F32 }
 
 	Model : {
 		title : Text.Prepared,
@@ -27,10 +30,10 @@ Ui :: [].{
 		leg_form : Text.Prepared,
 		ylabels : List(YLabel),
 		ends : List(EndLabel),
-		ev_label : Text.Prepared,
+		ev_label : Txt,
 		ev_found : Bool,
 		ev_idx : U64,
-		ev_warn : Text.Prepared,
+		ev_warn : Txt,
 		ev_warn_found : Bool,
 		stale : Text.Prepared,
 		stale_found : Bool,
@@ -48,12 +51,12 @@ Ui :: [].{
 		table_title : Text.Prepared,
 		table_head : List(Text.Prepared),
 		kpis : List({ v : Text.Prepared, cap : Text.Prepared, sel : U8 }),
-		ev_tile_name : List(Text.Prepared),
-		ev_tile_proj : List(Text.Prepared),
-		ev_tile_sub : Text.Prepared,
+		ev_tile_name : List(Txt),
+		ev_tile_proj : List(Txt),
+		ev_tile_sub : Txt,
 		zero_note : Text.Prepared,
 		ridden_found : Bool,
-		ridden_note : Text.Prepared,
+		ridden_note : Txt,
 		curve_empty : Text.Prepared,
 		trace : List(F32),
 		segs : List(Db.Seg),
@@ -83,9 +86,10 @@ Ui :: [].{
 		ghost_loading : Bool,
 		trace_day : Str,
 		# what the y axis is counting for the SELECTED session, which follows
-		# the stream it actually carries rather than its sport: watts where a
-		# power meter recorded them, heart rate otherwise. Strength work never
-		# has watts, and neither does a road ride without a meter.
+		# the stream it actually carries rather than its sport alone: watts
+		# where a power meter recorded them, pace on a pace family carrying
+		# distance and time, heart rate otherwise. Strength work never has
+		# watts, and neither does a road ride without a meter.
 		trace_unit : Str,
 		# the athlete's unit preference, read once at load; every surface
 		# converts at the last moment through core.Units, never in SQL
@@ -114,8 +118,9 @@ Ui :: [].{
 		lifts_off : U64,
 		week_off : U64,
 		trace_pan : F32,
-		# every pickable session, loaded once - switching and ghosts read this
-		# instead of a task round-trip per keypress
+		# the sessions whose samples are in memory, by picker index: the load
+		# caches the newest and a picker re-read empties it; a switch or ghost
+		# to a cached index answers without a fetch
 		trace_cache : List({ tr : List(F32), sg : List(Db.Seg), du : F32, un : Str, sp : List(Series.Split), st : Db.StrengthLog }),
 		curve_days : I64,
 		# the curve the power view draws, a Bus curve key: a family head for
@@ -165,7 +170,7 @@ Ui :: [].{
 		focus_cleared : Bool,
 		# the row of a capture ESC closed whose mark has not landed yet; -1 when none
 		quit_mark_pending : I64,
-		status : Text.Prepared,
+		status : Txt,
 		has_error : Bool,
 		# True from launch until the first background load lands: the window
 		# opens instantly and renders the splash instead of empty views

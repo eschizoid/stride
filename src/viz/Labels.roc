@@ -155,6 +155,26 @@ Labels :: [].{
 		)
 		List.concat(outside, overlaps)
 	}
+
+	# a shape the gate holds text off: a bar, a dot, a chip, a tile or a
+	# card, named for the failure message
+	Mark : { key : Str, box : Rect }
+
+	# what the gate reports for text over shapes: every text box that shares
+	# area with a mark, except a text written inside its own mark, the one
+	# that is its region (a chip's label, a tile's value, a card's line)
+	covers : List(Owned), List(Mark) -> List(Str)
+	covers = |texts, marks|
+		List.join(
+			List.map(
+				texts,
+				|t| List.keep_oks(marks, |m| if (intersects(t.box, m.box) and !(same(t.region, m.box))) Ok("${t.key} covers ${m.key}") else Err(Clear)),
+			),
+		)
+
+	# two boxes are one when every edge agrees to within slack
+	same : Rect, Rect -> Bool
+	same = |a, b| (a.x - b.x).abs() <= slack and (a.y - b.y).abs() <= slack and (a.w - b.w).abs() <= slack and (a.h - b.h).abs() <= slack
 }
 
 # overlap needs shared area: a box overlaps one it crosses into, and not one
@@ -227,5 +247,17 @@ expect {
 	b = { key: "b", box: { x: 10.0, y: 5.0, w: 20.0, h: 10.0 }, region: r }
 	c = { key: "c", box: { x: 95.0, y: 50.0, w: 20.0, h: 10.0 }, region: r }
 	Labels.check([a, b, c]) == ["c leaves its region", "a overlaps b"] and Labels.check([a, c]) == ["c leaves its region"] and Labels.check([a]) == []
+}
+# text over a shape is reported, a text inside the shape it belongs to is
+# not, and a text clear of every shape reports nothing
+expect {
+	chip = { x: 0.0, y: 0.0, w: 40.0, h: 20.0 }
+	bar = { x: 100.0, y: 0.0, w: 10.0, h: 50.0 }
+	panel = { x: 0.0, y: 0.0, w: 500.0, h: 500.0 }
+	marks = [{ key: "chip", box: chip }, { key: "bar", box: bar }]
+	label = { key: "'30d'", box: { x: 5.0, y: 5.0, w: 20.0, h: 10.0 }, region: chip }
+	caption = { key: "'fresh above'", box: { x: 90.0, y: 10.0, w: 30.0, h: 10.0 }, region: panel }
+	apart = { key: "'apart'", box: { x: 200.0, y: 10.0, w: 30.0, h: 10.0 }, region: panel }
+	Labels.covers([label, caption, apart], marks) == ["'fresh above' covers bar"]
 }
 expect Labels.left_of(100.0, 40.0, Left) == 100.0 and Labels.left_of(100.0, 40.0, Center) == 80.0 and Labels.left_of(100.0, 40.0, Right) == 60.0

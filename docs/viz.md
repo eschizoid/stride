@@ -57,8 +57,10 @@ blind;
 past the plan's last day a projection is only decay, so the board names the
 day it stops ("plan to 11-08") and says "at event" only when the plan reaches
 it. The subtitle always carries the as-of day, and the TSB zero rule is
-captioned "fresh above", at whichever end of the rule no line crosses the
-caption.
+captioned "fresh above" just over the rule: at its right end, else its left,
+else the first spot along it clear of every load bar, preferring one no line
+crosses; when bars cover the whole rule the caption rises to just above the
+tallest bar.
 
 ## The day tab: week, log and year
 
@@ -286,39 +288,53 @@ answers, the platform default font appears instead of a crash.
 
 ## Labels: one placer, and a gate
 
-Text on the power and career views goes through one label placer,
+Every string the window draws goes through one label placer,
 `src/viz/Labels.roc`. A label is its measured size, the spots it may take
 in order of preference, a priority and the region it must stay inside (the
 plot, a chip, a card, the panel). Obstacles are what the view draws before
-any text: chips, tiles, cards, dots and rings as boxes, the plotted lines
-as segments. The placer takes labels in priority order and gives each the
-first spot inside its region that clears every obstacle box and every label
-placed before it, preferring a spot no plotted line crosses. A label with
-no clear spot is dropped, unless it is kept, in which case it takes its
+any text: chips, tiles, cards, bars, dots and rings as boxes, the plotted
+lines as segments. The placer takes labels in priority order and gives each
+the first spot inside its region that clears every obstacle box and every
+label placed before it, preferring a spot no plotted line crosses. A label
+with no clear spot is dropped, unless it is kept, in which case it takes its
 first spot and the gate below decides whether that was clear.
 
 `src/viz/Scene.roc` is the layer a view writes its strings through. Fixed
-text (titles, chips, tile and card text, axis labels, legends, footers)
-keeps one spot and never drops. Essential text with somewhere else to go
-(the power view's threshold value; the career view's milestone values,
-the all-time-high cheer, test kinds and withheld dot values) keeps, trying
-its spots in order. Text that another surface also shows may drop: the
-power view's deltas, `pr` and `new record` marks, unpushed caption and
-zone names (the rung's hover card carries its values, record and push),
-its planned-ring labels (the ring's card), and the career view's year names
-and strip names (the strip's tooltip). The view's own placement rules are
-the candidate lists: a delta tries between its dots on the right, then the
-left, then above and below; a strip name tries under its segment, then
-beside the strip's end.
+text (titles, chips, tile and card text, axis labels, legends, table cells,
+footers) keeps one spot and never drops. Essential text with somewhere else
+to go keeps, trying its spots in order: the power view's threshold value;
+the career view's milestone values, the all-time-high cheer, test kinds and
+withheld dot values; the form board's line-end values, its event warning
+and the zero rule's "fresh above" caption; the session trace's unit label
+and zoom note; and the zones mode's note on which sports have their own
+heart-rate zones. Text that another surface also shows may drop: the power
+view's deltas, `pr` and `new record` marks, unpushed caption and zone names
+(the rung's hover card carries its values, record and push), its
+planned-ring labels (the ring's card), the career view's year names and
+strip names (the strip's tooltip), the form board's event marker name (the
+event tile), the trace footer's shared keys (every other view's footer
+carries them), and the top value of the weeks tab's scale (the focus line
+reads any week). The view's own placement rules are the candidate lists: a
+delta tries between its dots on the right, then the left, then above and
+below; a strip name tries under its segment, then beside the strip's end;
+the zero rule's caption tries the rule's right end, its left end, steps
+inward from the right, the column past the rule's end, and last the same
+row lifted to just above the tallest load bar.
+
+Hover cards and tooltips (the power view's rung and ring cards, the form
+board's day card, the year's day line, the XP rail's sheet) draw over
+everything through the same layer, as fixed text inside their card.
 
 The chrome every view shares (the wordmark, the scale chip, the nav pills,
 the recording badge, the form board's legend and the XP rail's level) is
 defined once in `src/viz/Chrome.roc`. `main.roc` draws it from those
-definitions, and each converted view registers it as fixed text, so a view
-label can neither land on it nor drift from where it is drawn. On the
-career view the level and streak chips share the header row with the
-subtitle and the kind chips and yield to them; the rail's hover sheet
-carries the level and the streak either way.
+definitions, and each view registers it as fixed text and its pills and the
+XP rail as obstacles, so a view label can neither land on it nor drift from
+where it is drawn. On the career view the level and streak chips share the
+header row with the subtitle and the kind chips and yield to them; the
+rail's hover sheet carries the level and the streak either way. The day tab's
+and the weeks tab's mode chips draw their shapes under the view, and each
+mode writes their labels as fixed text in its own scene.
 
 Text width comes from a measure passed in. The window measures with the
 fonts it draws with; the gate measures with headless fonts that carry the
@@ -326,19 +342,48 @@ shipped faces' advances as the window's 24 px atlas truncates them, so the
 gate needs no font file and measures what the window measures.
 
 **The gate** (`src/viz/Gate.roc`, run by `just viz-test` and so by CI's
-viz job) lays each converted view out headless over fixture athletes at the
-minimum window, the default window at 100%, and a wide display (the
-default window at the default scale is the minimum layout). The athletes
-come from the families in `core.Sports`: one per family, each pace family
-again in imperial units, and a mixed athlete with a single session of a
-strength-like sport no family holds. The power view runs every curve each
-athlete has, at 30, 60 and 90 days, with the short rungs folded and shown;
-the career view runs every spine. For each scene the gate asserts that no
-two text boxes overlap, the chrome's included, and that every box stays
-inside its region. `roc test` reports only that the expect failed;
-`Gate.failures` names each failure by fixture, size and the texts involved,
-so `dbg` it inside the expect to read them. The other views move onto the
-placer in #694.
+viz job) lays every view out headless over fixture athletes at the minimum
+window, the default window at 100%, and a wide display (the default window
+at the default scale is the minimum layout). The athletes come from the
+families in `core.Sports`: one per family, each pace family again in
+imperial units, and a mixed athlete with a single session of a strength-like
+sport no family holds. The fixtures per view:
+
+- power: every curve each athlete has, at 30, 60 and 90 days, with the short
+  rungs folded and shown;
+- career: every spine;
+- form board: every range, with an event ahead (a two-line name and a
+  projection) and with the event-day story (the event marked on the plot, a
+  ridden event and an unreadable event record), over a steady series whose
+  zero rule runs into the load rug and a building one, and the boards with a
+  load error and with no data;
+- session trace: every session in the athlete's picker, in its own channel
+  (power, pace in the family's unit with its splits, heart rate with a
+  lifting session's sets), at home and zoomed and panned with a ghost, and
+  the plot loading, empty and with no session;
+- week: a planned week of sessions done, skipped with and without a
+  substitute and two a day, a rest day, today's session open with a long
+  prescription, and the days ahead, at the top and scrolled with the quest
+  complete;
+- log: the full series with session names long enough to wrap, at the top,
+  scrolled with a day's detail open, and with a day loading;
+- year: more weeks than the widest window holds, with and without event days,
+  and with no history;
+- zones and load: twelve weeks with the biggest first and the newest still
+  running, with no week picked, on a picked week with per-sport zones, and
+  with no history;
+- lifts: more lifts than the widest window holds and the latest session's
+  sets, in kilograms and scrolled in pounds, for every athlete who lifts,
+  and the empty tab for every athlete who does not;
+- the boot splash at every dot count, slow and not, and the XP rail's sheet.
+
+For each scene the gate asserts that no two text boxes overlap, the
+chrome's included, and that every box stays inside its region; on every
+view but power and career it also asserts that no text covers a shape (a
+bar, a chip, a tile, a card, a pill, the XP rail) other than the one it is
+written inside. `roc test` reports only that the expect failed;
+`Gate.failures` names each failure by fixture, size and the texts and
+shapes involved, so `dbg` it inside the expect to read them.
 
 ## The coach's seat (ADR 0015's bus)
 
@@ -721,8 +766,7 @@ TRAINING — but it is the only way to see whether the drawing itself is right.
 Code can type-check and have every data path diffed against the engine and
 still overprint one label on another, render a glyph the font lacks as `?`,
 format a count as `3.0`, or describe a line in a comment it never draws. The
-label gate catches the overlaps on the views it covers; a capture is how the
-rest are seen.
+label gate catches the overlaps; a capture is how the rest is seen.
 
 ![app window](img/form-board.png)
 

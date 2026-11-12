@@ -1,8 +1,9 @@
 import rr.Color
 import rr.Draw
-import rr.Text
 import core.Fmt
 import Db
+import Labels
+import Scene
 import Theme
 import Ui
 
@@ -143,30 +144,50 @@ Weeks :: [].{
 		"${Db.grouped(h10 // 10)}.${I64.to_str(h10 % 10)} h"
 	}
 
+	chip_box : U64 -> Labels.Rect
+	chip_box = |i| { x: chip_x(i), y: chip_top, w: chip_w, h: chip_bottom - chip_top }
+
+	# the chips' shapes; their labels are fixed text in each mode's scene
 	draw_chips! : Ui.Model, Draw.Frame => {}
 	draw_chips! = |model, frame|
 		List.for_each!(
 			List.map_with_index(modes, |m, i| { m, i }),
 			|e| {
-				cx = chip_x(e.i)
+				b = chip_box(e.i)
 				on = e.m.v == model.view
-				hov = model.mouse_x >= cx and model.mouse_x <= cx + chip_w and model.mouse_y >= chip_top and model.mouse_y <= chip_bottom
+				hov = model.mouse_x >= b.x and model.mouse_x <= b.x + b.w and model.mouse_y >= b.y and model.mouse_y <= b.y + b.h
 				style = if (on) (Draw.filled(Color.with_alpha(Theme.ctl_c, 60))) else if (hov) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
-				frame.rounded_rectangle!({ x: cx, y: chip_top, width: chip_w, height: 22.0, radius: 6.0, segments: 6, style })
-				Text.from(e.m.label, model.font).size(12).draw!(frame, { pos: { x: cx + chip_w / 2.0, y: 68.0 }, color: if (on) Color.white else Theme.ink_muted, align: (Top, Center) })
+				frame.rounded_rectangle!({ x: b.x, y: b.y, width: b.w, height: b.h, radius: 6.0, segments: 6, style })
 			},
 		)
 
+	# each chip's label inside its chip, the one on screen lit
+	chip_texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
+	chip_texts = |model, measure| List.map_with_index(modes, |m, i| Scene.fixed(measure, Scene.data(m.label, 12.0, if (m.v == model.view) Color.white else Theme.ink_muted), { x: chip_x(i) + chip_w / 2.0, y: 68.0, align: Center }, chip_box(i)))
+
+	chip_marks : List(Labels.Mark)
+	chip_marks = List.map_with_index(modes, |m, i| { key: "the ${m.label} chip", box: chip_box(i) })
+
 	# the header row under the chips: the focused week, else the mode's key
-	draw_focus! : Ui.Model, Draw.Frame, Str => {}
-	draw_focus! = |model, frame, key| {
+	focus_text : Ui.Model, Scene.Measure, Str -> Labels.Label(Scene.Item)
+	focus_text = |model, measure, key| {
 		wk = focus_week(model)
-		if wk == "" {
-			Text.from(key, model.font).size(11).draw!(frame, { pos: { x: pad, y: 96.0 }, color: Theme.ink_faint, align: (Top, Left) })
-		} else {
-			Text.from(week_line(wk, model.zone_weeks, model.ramp_weeks), model.font).size(12).draw!(frame, { pos: { x: pad, y: 96.0 }, color: Color.white, align: (Top, Left) })
-		}
+		it = if (wk == "") Scene.data(key, 11.0, Theme.ink_faint) else Scene.data(week_line(wk, model.zone_weeks, model.ramp_weeks), 12.0, Color.white)
+		Scene.fixed(measure, it, { x: pad, y: 96.0, align: Left }, Labels.panel(model.win))
 	}
+
+	# the headline card at the header's right: where the newest week stands,
+	# in the form board's KPI card style
+	card_box : F32 -> Labels.Rect
+	card_box = |win_w| { x: win_w - pad - 260.0, y: 60.0, w: 260.0, h: 64.0 }
+
+	# a bar's cap or chip, 54 wide over its slot's centre, never above the band
+	cap_box : F32, F32 -> Labels.Rect
+	cap_box = |cx, top| { x: cx - 27.0, y: F32.max(bars_top - 30.0, top - 30.0), w: 54.0, h: 20.0 }
+
+	# the week a slot's date label names, every other slot
+	week_label : Str -> Str
+	week_label = |wk| Str.from_utf8_lossy(List.drop_first(Str.to_utf8(wk), 5))
 }
 
 expect Weeks.partial(6) and !Weeks.partial(7)
