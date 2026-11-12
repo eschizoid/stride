@@ -7995,13 +7995,14 @@ b_viz_caps! = |ctx| {
 	_ = sql!(ctx.db, "DELETE FROM viz_focus;")
 	check!("a cleared row - the window quit - reads as no focus", strjq!(ctx, ["viz"], ".data.focus.present | tostring") == "false")?
 	_ = sql!(ctx.db, "DROP TABLE viz_focus;")
-	# the NAMES the window publishes equal the directive columns the poll's
-	# winner query in core.Bus reads through COALESCE, in both directions.
-	# Not pinned here or anywhere: the accepts text (prose), and whether
-	# update!'s resolver acts on a field - refusals_for's expects judge a
-	# resolved selection, not the fold that resolves it. An empty extraction
-	# fails rather than matching empty against empty.
-	field_parity = Str.trim(sh!("pub=$(awk '/^caps_fields = \\[/{p=1} p{print} p&&/\\]/{exit}' src/viz/main.roc | grep -oE 'name: \"[a-z_]+\"' | sed 's/name: \"//; s/\"//' | LC_ALL=C sort -u | tr '\\n' ' '); q=$(grep -oE 'COALESCE\\((view|range|cursor_day|trace_day|ghost_day|trace_id|ghost_id|capture|family)' src/core/Bus.roc | grep -oE '[a-z_]+$' | LC_ALL=C sort -u | tr '\\n' ' '); if [ -n \"$pub\" ] && [ \"$pub\" = \"$q\" ]; then echo same; else echo \"pub=$pub q=$q\"; fi"))
+	# the NAMES the window publishes equal the directive columns the bus DDL
+	# creates (the CREATE TABLE and every ADD COLUMN in core.Bus), minus the
+	# row's own bookkeeping (id, created_at, consumed, status, error, applied_at,
+	# result), in both directions, so a column added to the DDL and not
+	# published fails here. Not pinned: the
+	# accepts text (prose), and whether update!'s resolver acts on a field. An
+	# empty extraction fails rather than matching empty against empty.
+	field_parity = Str.trim(sh!("pub=$(awk '/^caps_fields = \\[/{p=1} p{print} p&&/\\]/{exit}' src/viz/main.roc | grep -oE 'name: \"[a-z_]+\"' | sed 's/name: \"//; s/\"//' | LC_ALL=C sort -u | tr '\\n' ' '); q=$({ grep 'CREATE TABLE IF NOT EXISTS viz_directives (' src/core/Bus.roc | sed 's/.*viz_directives (//; s/)[^)]*$//' | tr ',' '\\n' | awk '{print $1}'; grep -oE 'ALTER TABLE viz_directives ADD COLUMN [a-z_]+' src/core/Bus.roc | awk '{print $NF}'; } | grep -vxE 'id|created_at|consumed|status|error|applied_at|result' | LC_ALL=C sort -u | tr '\\n' ' '); if [ -n \"$pub\" ] && [ \"$pub\" = \"$q\" ]; then echo same; else echo \"pub=$pub q=$q\"; fi"))
 	check!("the published field names equal the columns the poll reads (${field_parity})", field_parity == "same")?
 	# the accepts text of every field is prose the binary never reads, so each
 	# claim it makes that the code also makes is compared across the two
