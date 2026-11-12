@@ -220,6 +220,9 @@ Ui :: [].{
 		ramp_weeks : List(Db.RampWeek),
 		ramp_title : Text.Prepared,
 		ramp_hint : Text.Prepared,
+		# the week picked in the weeks tab, shared by its zones and load modes;
+		# empty when none is picked
+		week_cursor : Str,
 		prs : List(Db.PrRung),
 		rec_status : Capture.Status,
 		# a capture a directive asked for whose mark waits on the host: a PNG

@@ -5,11 +5,13 @@ import core.Fmt
 import Db
 import Theme
 import Ui
+import Weeks
 
 Ramp :: [].{
-	# Twelve Monday weeks of load as gradient bars, each wearing a chip with
-	# the CTL it gained: value as text, verdict as color, so the plot keeps
-	# one y-scale. Two scales on one plot cannot both be read honestly.
+	# The weeks tab's load mode: twelve Monday weeks of load as gradient
+	# bars, each wearing a chip with the CTL it gained: value as text, verdict
+	# as color, so the plot keeps one y-scale. Two scales on one plot cannot
+	# both be read honestly.
 	pad : F32
 	pad = 36.0
 	danger : F32
@@ -26,7 +28,7 @@ Ramp :: [].{
 		win_h = model.win.h
 		ink_muted = Theme.ink_muted
 		ink_faint = Theme.ink_faint
-		model.ramp_title.draw!(frame, { pos: { x: pad, y: 70.0 }, color: ink_muted, align: (Top, Left) })
+		model.ramp_title.draw!(frame, { pos: { x: Weeks.title_x, y: 70.0 }, color: ink_muted, align: (Top, Left) })
 		grand = List.fold(model.ramp_weeks, 0.I64, |a, w| a + w.tss)
 		if List.is_empty(model.ramp_weeks) or grand == 0 {
 			Text.from("no load history yet", model.font).size(14).draw!(frame, { pos: { x: pad, y: 130.0 }, color: ink_muted, align: (Top, Left) })
@@ -54,17 +56,8 @@ Ramp :: [].{
 			Text.from("${I64.to_str(peak)} tss", model.font).size(10).draw!(frame, { pos: { x: pad, y: bars_top - 14.0 }, color: ink_faint, align: (Top, Left) })
 			Text.from("0", model.font).size(10).draw!(frame, { pos: { x: pad, y: bars_bot - 12.0 }, color: ink_faint, align: (Top, Left) })
 			frame.line!({ start: { x: pad, y: bars_bot }, end: { x: win_w - pad, y: bars_bot }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 70), 1) })
-			hover_any = List.fold(
-				List.map_with_index(model.ramp_weeks, |w, i| { w, i }),
-				Bool.False,
-				|acc, x| {
-					cx9 = pad + (U64.to_f32(x.i) + 0.5) * slot
-					if (model.mouse_x >= cx9 - slot / 2.0 and model.mouse_x < cx9 + slot / 2.0 and model.mouse_y >= bars_top - 44.0 and model.mouse_y <= bars_bot) (Bool.True) else acc
-				},
-			)
-			if (hover_any) {} else {
-				Text.from("chips: the ctl each week gained     teal builds     red past +6/wk     grey holds or sheds", model.font).size(11).draw!(frame, { pos: { x: pad, y: 96.0 }, color: ink_faint, align: (Top, Left) })
-			}
+			focus = Weeks.focus_week(model)
+			Weeks.draw_focus!(model, frame, "chips: the ctl each week gained     teal builds     red past +6/wk     grey holds or sheds")
 			List.for_each!(
 				List.map_with_index(model.ramp_weeks, |w, i| { w, i }),
 				|x| {
@@ -72,7 +65,7 @@ Ramp :: [].{
 					x0 = cx - bw / 2.0
 					bh = I64.to_f32(x.w.tss) / I64.to_f32(peak) * bars_h
 					vc = verdict(I64.to_f32(x.w.ramp10) / 10.0)
-					hovered = model.mouse_x >= cx - slot / 2.0 and model.mouse_x < cx + slot / 2.0 and model.mouse_y >= bars_top - 44.0 and model.mouse_y <= bars_bot
+					hovered = x.w.wk == focus
 					body = if (hovered) (250.U8) else 220
 					top_y = bars_bot - bh
 					if bh > 3.0 {
@@ -88,9 +81,6 @@ Ramp :: [].{
 					Text.from(Fmt.tenths_signed(x.w.ramp10), model.font).size(11).draw!(frame, { pos: { x: cx, y: chip_y + 4.0 }, color: vc, align: (Top, Center) })
 					if x.i % 2 == 0 {
 						Text.from(Str.from_utf8_lossy(List.drop_first(Str.to_utf8(x.w.wk), 5)), model.font).size(10).draw!(frame, { pos: { x: cx, y: bars_bot + 10.0 }, color: ink_faint, align: (Top, Center) })
-					}
-					if hovered {
-						Text.from("wk of ${x.w.wk}   ${Db.num_unit(x.w.tss, "tss")}   ctl ${Fmt.tenths(x.w.ctl10)}   ramp ${Fmt.tenths_signed(x.w.ramp10)}/wk", model.font).size(12).draw!(frame, { pos: { x: pad, y: 96.0 }, color: Color.white, align: (Top, Left) })
 					}
 				},
 			)
