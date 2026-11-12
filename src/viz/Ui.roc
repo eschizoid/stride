@@ -145,8 +145,10 @@ Ui :: [].{
 		# the athlete's own directory, as the launcher declared it; "" when
 		# the window was started without one and has no database to read
 		stride_dir : Str,
-		# the directory the window was launched from, as the launcher passed
-		# it; "" when it did not, and a capture's path is then relative
+		# the window's working directory as `pwd -P` reports it at load, the
+		# root a capture's status row names its file under; the launch
+		# directory before that load or when `sh` fails, and "" when the
+		# launcher passed none, which leaves a capture's path relative
 		cwd : Str,
 		tick : U64,
 		# the tick of the last activity, the athlete's input or a directive from

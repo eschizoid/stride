@@ -62,9 +62,10 @@ program = { init!, update!, render! }
 # (the dev-run assets/fonts and img), and for the packaged launchers, which
 # change to the home directory before they exec, it is the athlete's home.
 # The engine is named exactly, and `sh` beside it for the one script that asks
-# `date` for the zone offset under the configured timezone. Captures
+# `date` for the zone offset under the configured timezone; the same `sh`
+# reports the working directory a capture's path is reported under. Captures
 # need no grant: the platform writes them beneath the configured output
-# directory, `output_dir_for` the launch directory.
+# directory, `capture_dir`, relative to the working directory.
 stride_dir_of : List(Str) -> Str
 stride_dir_of = |args| match List.get(args, 1) {
 	Ok(a) => a
@@ -72,10 +73,9 @@ stride_dir_of = |args| match List.get(args, 1) {
 }
 
 # the directory the window was launched from, as the launcher passed it
-# second, read in init! (the one place argv may be read) and kept in the model: a
-# capture's status row names its file by an absolute path under
-# it, which a reader can open without knowing where the window ran. "" when
-# the launcher passed none, and the path is then relative to that directory
+# second, read in init! (the one place argv may be read). It is the model's
+# cwd until load asks `pwd` for the real working directory, and stays the
+# cwd if that fails; "" when the launcher passed none
 launch_dir_of : List(Str) -> Str
 launch_dir_of = |args| match List.get(args, 2) {
 	Ok(a) => a
@@ -95,7 +95,7 @@ config_for_args = |args| {
 			# only a frame the window drives can spawn that write before it exits
 			.with_exit_key(NoExitKey)
 			.with_min_size({ width: DisplayScale.min_width, height: DisplayScale.min_height })
-			.with_output_dir(output_dir_for(launch_dir_of(args)))
+			.with_output_dir(capture_dir)
 			.with_permission(WorkingDirectory(ReadOnly))
 			.with_permission(Command("stride"))
 			.with_permission(Command("sh"))
@@ -117,14 +117,13 @@ expect {
 		and List.len(p) == 4 and List.len(config_for_args(["stride-viz"]).permissions()) == 3
 }
 
-# the platform's output directory and the path a capture reports name the
-# same place, with and without a launch directory
+# the path a capture reports is the working directory joined to the very
+# output dir the platform is configured with, so the two cannot name
+# different directories
 expect {
-	launched = ["stride-viz", "/h/.stride", "/h"]
-	bare = ["stride-viz"]
-	config_for_args(launched).output_dir() == "/h/captures"
-		and Str.concat(config_for_args(launched).output_dir(), "/form-board.png") == capture_path(launch_dir_of(launched), "form-board.png")
-		and Str.concat(config_for_args(bare).output_dir(), "/form-board.png") == capture_path(launch_dir_of(bare), "form-board.png")
+	out = config_for_args(["stride-viz", "/h/.stride", "/elsewhere"]).output_dir()
+	capture_path("/w", "form-board.png") == Str.concat("/w/", Str.concat(out, "/form-board.png"))
+		and capture_path("", "form-board.png") == Str.concat(out, "/form-board.png")
 }
 
 # the athlete's directory and the authority to reach it, together: every
@@ -464,7 +463,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		data: loaded.s.data,
 		days: loaded.s.days,
 		stride_dir: acc.dir,
-		cwd,
+		cwd: if (boot) cwd else Db.working_dir!(acc.io.commands(), cwd),
 		tick: 0,
 		last_active: 0,
 		view_anim: 0,
@@ -1281,17 +1280,21 @@ capture_is_pending = |p|
 		_ => Bool.True
 	}
 
-# where the platform writes captures, and the one place that names it: the
-# launch directory's captures/, absolute when the launcher passed one, and
-# ./captures relative to the working directory otherwise. The output dir in
-# config_for_args and the path a capture row reports both come from here, so
-# a reported path is always the file written, wherever the window runs from.
-output_dir_for : Str -> Str
-output_dir_for = |launch| if (launch == "") "captures" else Str.concat(launch, "/captures")
+# where the platform writes captures, relative to the window's working
+# directory: the platform refuses an absolute output dir, so the absolute path
+# a capture row reports is that working directory (resolved at load, see
+# load_model!) joined to this. The config and the report name the same
+# directory because both read it from here.
+capture_dir : Str
+capture_dir = "captures"
 
-# the file a capture of this name will be
+# the file a capture of this name will be, under the working directory
+# `here`; relative when the working directory is unknown
 capture_path : Str, Str -> Str
-capture_path = |launch, name| Str.concat(output_dir_for(launch), Str.concat("/", name))
+capture_path = |here, name| {
+	rel = Str.concat(capture_dir, Str.concat("/", name))
+	if (here == "") rel else Str.concat(here, Str.concat("/", rel))
+}
 
 # a host that has not answered a capture within ten seconds never will, and
 # the row closes rather than stays pending
@@ -1753,7 +1756,7 @@ caps_fields = [
 	{ name: "ghost_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions, or 'none' to dismiss; picks that day's newest session of the shown session's kind" },
 	{ name: "trace_id", kind: "integer", accepts: "an activity id among the trace picker's sessions; when both are given it takes precedence over trace_day" },
 	{ name: "ghost_id", kind: "integer", accepts: "an activity id among the trace picker's sessions, of the same kind as the session shown; takes precedence over ghost_day, and 'none' in ghost_day still dismisses" },
-	{ name: "capture", kind: "text", accepts: "'png' writes the view the directive lands on, once it has settled, to captures/<view>.png under the directory the window was launched from; 'webm_start' and 'webm_stop' begin and end a WebM recording of it; the row stays pending until the host answers, then result names the file by its absolute path" },
+	{ name: "capture", kind: "text", accepts: "'png' writes the view the directive lands on, once it has settled, to captures/<view>.png under the window's working directory; 'webm_start' and 'webm_stop' begin and end a WebM recording of it; the row stays pending until the host answers, then result names the file by its absolute path" },
 	{ name: "family", kind: "text", accepts: "a sport family's head ('Ride', 'Rowing', 'Run', ...) switches the power view to that family's power curve, record book and CP fit; 'pace:' and a sport type ('pace:Run', 'pace:Swim', 'pace:Rowing') switches it to that sport's pace curve and critical-speed fit; refused by name when the athlete has no such data; omitted leaves it unchanged" },
 	{ name: "short", kind: "integer", accepts: "1 shows the power or pace curve's short rungs (under 5 minutes), 0 folds them when none was pushed all-out; any other value is refused by name; omitted leaves it unchanged" },
 ]
