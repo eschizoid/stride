@@ -6141,6 +6141,13 @@ b_targets! = |ctx| {
 	zid = Str.trim(strjq!(ctx, ["week", "add", "2099-09-11", "endurance", "z2", "r", "1x90:00@Z2"], ".data.id"))
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9803,'zone probe','Ride','2099-09-11T10:00:00Z',3600,30000); INSERT INTO activity_metrics (activity_id,z1_s,z2_s,z3_s,z4_s,z5_s,hr_samples_total,metrics_rev) VALUES (9803,100,200,300,50,10,660,1);")
 	check!("completing a zone target splits time below, inside and above the zone", strjq!(ctx, ["complete", zid, "9803"], "[.data.exec_known, .data.target_zone, .data.zone_below_s, .data.zone_in_s, .data.zone_above_s] | map(tostring) | join(\",\")") == "true,2,100,200,360")?
+	# `rate` invalidates the activity's metrics and segments; the stored result
+	# must not be rebuilt from those emptied tables, only by the analyze that
+	# recomputes them
+	zone_result = Str.trim(sql!(ctx.db, "SELECT CAST(target_result AS TEXT) FROM planned_sessions WHERE id = ${zid};"))
+	_ = stride!(ctx.bin, ctx.home, ["rate", "9803", "5"])
+	check!("rating a completed activity leaves its stored target result for analyze to refresh (got ${zone_result})", Str.trim(sql!(ctx.db, "SELECT CAST(target_result AS TEXT) FROM planned_sessions WHERE id = ${zid};")) == zone_result and Str.starts_with(zone_result, "in zone"))?
+	_ = sql!(ctx.db, "DELETE FROM ratings WHERE activity_id = 9803; INSERT OR REPLACE INTO activity_metrics (activity_id,z1_s,z2_s,z3_s,z4_s,z5_s,hr_samples_total,metrics_rev) VALUES (9803,100,200,300,50,10,660,1);")
 	# pace: a run with no detected reps reads its whole moving portion (10 km in
 	# 2500 s is 4.0 m/s, 4:10/km). A hill-rep run is the other basis: the detector's
 	# segments carry GRADE-ADJUSTED speed (4.0 m/s, 4:10/km), while the distance
@@ -6169,7 +6176,8 @@ b_targets! = |ctx| {
 	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time) VALUES (9808,'lift','WeightTraining','2099-09-16T10:00:00Z',2700);")
 	check!("completing an RPE target before a rating names the gap", strjq!(ctx, ["complete", rid, "9808"], "[.data.exec_known, .data.exec_reason, .data.rpe_known, .data.rpe_actual] | map(tostring) | join(\",\")") == "false,no_rating,false,0")?
 	_ = stride!(ctx.bin, ctx.home, ["rate", "9808", "7"])
-	check!("rating the linked activity refreshes the session's stored result", Str.trim(sql!(ctx.db, "SELECT CAST(target_result AS TEXT) FROM planned_sessions WHERE id = ${rid};")) == "rated 7.0")?
+	_ = stride!(ctx.bin, ctx.home, ["analyze"])
+	check!("the analyze after a rating refreshes the session's stored result", Str.trim(sql!(ctx.db, "SELECT CAST(target_result AS TEXT) FROM planned_sessions WHERE id = ${rid};")) == "rated 7.0")?
 	check!("...and once rated, reports the stored rating", strjq!(ctx, ["complete", rid, "9808"], "[.data.exec_known, .data.rpe_known, .data.rpe_actual, .data.target_rpe] | map(tostring) | join(\",\")") == "true,true,7,6")?
 	check!("...and the human line states it", Str.contains(stride_human!(ctx.bin, ctx.home, ["complete", rid, "9808"]), "(target 1x45:00@RPE6; rated 7.0)"))?
 	check!("the complete payload conforms to its schema with an RPE target", validate_schema!(ctx, "complete ${rid} 9808", "complete") == "")?

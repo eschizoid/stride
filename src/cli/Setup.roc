@@ -2,6 +2,7 @@ import Db
 import Output
 import Strava
 import Analyze
+import Plan
 import ReportHealth
 import Config
 import pf.Stdin
@@ -364,7 +365,7 @@ Setup :: [].{
 		} else if next == "sync" {
 			Output.human_line!("First sync. A long history spans several runs: Strava limits reads per 15 minutes and per day, and each run says when to come back.")?
 			Strava.sync!(False)?
-			Analyze.analyze!({})?
+			Analyze.analyze!(Plan.refresh_all_target_results!)?
 			ReportHealth.doctor!({})
 		} else {
 			Ok({})
