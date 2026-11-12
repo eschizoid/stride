@@ -50,27 +50,39 @@ Strength :: [].{
 	# what the athlete typed, which is per hand unless they say otherwise
 	# with config `strength_log_weight` (Config.log_weight_values): `per_hand`
 	# (the default, and any unset or unrecognised value) stores logged
-	# weights as entered, `total` means they typed a dumbbell pair's combined
-	# weight, so a logged row is halved unless its exercise names an
-	# implement lifted as one piece (`whole_implements`: a barbell, machine or
-	# cable stack is its total either way). Only the `strava` source is
-	# touched: a description paste says /side itself.
+	# weights as entered. `total` means they typed a pair's combined weight,
+	# and a logged row is halved unless it is a one-piece lift:
+	#   - a name saying a pair (`pair_words`: dumbbell, double kettlebell)
+	#     is halved;
+	#   - otherwise a name saying a one-piece implement (`whole_implements`)
+	#     or a lift done with one (`whole_lifts`: deadlift, squat, leg press,
+	#     pulldown, hip thrust) is kept whole;
+	#   - any other name (Curl, Lateral Raise) is a pair move and is halved.
+	# Only the `strava` source is touched: a description paste says /side itself.
+	pair_words : List(Str)
+	pair_words = ["dumbbell", "double kettlebell"]
+
 	whole_implements : List(Str)
 	whole_implements = ["barbell", "machine", "cable", "smith", "ez bar", "ez-bar", "trap bar", "landmine", "sled", "plate", "kettlebell"]
+
+	whole_lifts : List(Str)
+	whole_lifts = ["deadlift", "squat", "leg press", "pulldown", "pull down", "hip thrust"]
 
 	per_hand : Str, Str, List(SetRow) -> List(SetRow)
 	per_hand = |convention, source, rows|
 		if convention != "total" or source != "strava" {
 			rows
 		} else {
-			List.map(
-				rows,
-				|r| {
-					name = Str.with_ascii_lowercased(r.exercise)
-					if (List.any(whole_implements, |w| Str.contains(name, w))) r else { ..r, weight_kg: r.weight_kg / 2.0 }
-				},
-			)
+			List.map(rows, |r| if (logged_whole(r.exercise)) r else { ..r, weight_kg: r.weight_kg / 2.0 })
 		}
+
+	# a logged exercise whose entered weight is the one implement it moves
+	logged_whole : Str -> Bool
+	logged_whole = |exercise| {
+		name = Str.with_ascii_lowercased(exercise)
+		names = |words| List.any(words, |w| Str.contains(name, w))
+		if (names(pair_words)) Bool.False else names(whole_implements) or names(whole_lifts)
+	}
 
 	tonnage_kg : List(SetRow) -> F64
 	tonnage_kg = |rows|
@@ -106,6 +118,10 @@ expect {
 		and Strength.per_hand("total", "peloton", rows) == rows
 		and Strength.per_hand("", "strava", rows) == rows
 }
+# under `total`, a one-piece lift keeps its weight whatever its name leaves
+# out, and a pair is halved even on a kettlebell
+expect Strength.logged_whole("Deadlift") and Strength.logged_whole("Back Squat") and Strength.logged_whole("Leg Press") and Strength.logged_whole("Lat Pulldown") and Strength.logged_whole("Hip Thrust")
+expect !(Strength.logged_whole("Double Kettlebell Front Squat")) and !(Strength.logged_whole("Dumbbell Bench Press")) and !(Strength.logged_whole("Lateral Raise"))
 
 # a hold adds no tonnage: its seconds are never read as reps
 expect {
