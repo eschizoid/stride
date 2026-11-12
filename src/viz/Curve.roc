@@ -309,7 +309,7 @@ Curve :: [].{
 								d_col = if (r.now_w > r.prev_w) tsb_c else Theme.alarm_c
 								d_w = model.font.measure({ text: d_txt, size: 10.0, spacing: Text.default_spacing }).width
 								prev_y = cy(I64.to_f32(r.prev_w))
-								spot = delta_spot({ x: cx(r.i), w: d_w, h: 10.0, mid: (prev_y + now_y) / 2.0 - 6.0, upper: F32.min(prev_y, now_y), lower: F32.max(prev_y, now_y), hi: pad_l + pw - label_inset }, segs)
+								spot = delta_spot({ x: cx(r.i), w: d_w, h: 10.0, mid: (prev_y + now_y) / 2.0 - 6.0, upper: F32.min(prev_y, now_y), lower: F32.max(prev_y, now_y), lo: pad_l, hi: pad_l + pw - label_inset }, segs)
 								Text.from(d_txt, model.font).size(10).draw!(frame, { pos: { x: spot.left, y: spot.top }, color: d_col, align: (Top, Left) })
 							}
 						}
@@ -1000,13 +1000,15 @@ Curve :: [].{
 
 	# where a delta sits: between its two dots, right of the rung and then
 	# left of it; failing both, above the upper dot or below the lower one,
-	# right side first. The first spot clear of every line wins. A right
-	# spot that would run past hi is never tried, and with no spot clear the
-	# delta takes delta_left_x's spot between the dots.
-	delta_spot : { x : F32, w : F32, h : F32, mid : F32, upper : F32, lower : F32, hi : F32 }, List(Seg) -> { left : F32, top : F32 }
+	# right side first. The first spot clear of every line wins. A side that
+	# would leave the plot is never tried: past hi on the right, where the CP
+	# label sits, or before lo on the left, where the axis labels sit. With no
+	# spot clear the delta takes delta_left_x's spot between the dots.
+	delta_spot : { x : F32, w : F32, h : F32, mid : F32, upper : F32, lower : F32, lo : F32, hi : F32 }, List(Seg) -> { left : F32, top : F32 }
 	delta_spot = |d, segs| {
 		right = d.x + 10.0
-		sides = if (right + d.w <= d.hi) [right, d.x - 10.0 - d.w] else [d.x - 10.0 - d.w]
+		left = d.x - 10.0 - d.w
+		sides = List.concat(if (right + d.w <= d.hi) [right] else [], if (left >= d.lo) [left] else [])
 		cands = List.concat(
 			List.map(sides, |l| { left: l, top: d.mid }),
 			List.join(List.map(sides, |l| [{ left: l, top: d.upper - d.h - 6.0 }, { left: l, top: d.lower + 6.0 }])),
@@ -1590,17 +1592,24 @@ expect {
 # a line through it sends it left, and lines on both sides send it above the
 # upper dot
 expect {
-	d = { x: 100.0, w: 20.0, h: 10.0, mid: 150.0, upper: 145.0, lower: 165.0, hi: 400.0 }
+	d = { x: 100.0, w: 20.0, h: 10.0, mid: 150.0, upper: 145.0, lower: 165.0, lo: 0.0, hi: 400.0 }
 	through_right = { x0: 100.0, y0: 155.0, x1: 200.0, y1: 155.0 }
 	through_left = { x0: 0.0, y0: 155.0, x1: 100.0, y1: 155.0 }
 	Curve.delta_spot(d, []) == { left: 110.0, top: 150.0 }
 		and Curve.delta_spot(d, [through_right]) == { left: 70.0, top: 150.0 }
 		and Curve.delta_spot(d, [through_right, through_left]) == { left: 110.0, top: 129.0 }
 }
+# a delta on the first rung never sits left of it, in the axis labels: with
+# the spot right of it crossed, it goes above the upper dot instead
+expect {
+	d = { x: 100.0, w: 20.0, h: 10.0, mid: 150.0, upper: 145.0, lower: 165.0, lo: 100.0, hi: 400.0 }
+	through_right = { x0: 100.0, y0: 155.0, x1: 200.0, y1: 155.0 }
+	Curve.delta_spot(d, [through_right]) == { left: 110.0, top: 129.0 }
+}
 # a delta that cannot fit right of the rung never tries the right side, and
 # with every spot crossed it falls back between the dots
 expect {
-	d = { x: 390.0, w: 20.0, h: 10.0, mid: 150.0, upper: 145.0, lower: 165.0, hi: 400.0 }
+	d = { x: 390.0, w: 20.0, h: 10.0, mid: 150.0, upper: 145.0, lower: 165.0, lo: 0.0, hi: 400.0 }
 	wall = { x0: 300.0, y0: 0.0, x1: 400.0, y1: 400.0 }
 	Curve.delta_spot(d, []) == { left: 360.0, top: 150.0 } and Curve.delta_spot({ ..d, x: 100.0, hi: 400.0 }, [{ x0: 0.0, y0: 0.0, x1: 200.0, y1: 400.0 }, { x0: 0.0, y0: 400.0, x1: 200.0, y1: 0.0 }, { x0: 0.0, y0: 130.0, x1: 200.0, y1: 130.0 }, { x0: 0.0, y0: 175.0, x1: 200.0, y1: 175.0 }]) == { left: 110.0, top: 150.0 } and !Curve.box_crosses(0.0, 1.0, 0.0, 1.0, [wall])
 }

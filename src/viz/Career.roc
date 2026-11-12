@@ -191,6 +191,24 @@ Career :: [].{
 		}
 	}
 
+	# the width a label beside the strip's end may take: the right margin
+	# (Theme.pad_r) less the 6 px gap after the strip, the panel's 16 px
+	# inset from the window edge and 10 px clear of the panel's border
+	beside_room : F32
+	beside_room = Theme.pad_r - 32.0
+
+	# where a strip segment's name draws. Under the segment when it fits
+	# inside the segment's width, so it never runs onto a neighbour. Failing
+	# that, the last segment names itself beside the strip's end, in the
+	# right margin, which holds nothing else at the strip's height; the
+	# families too small to label are the ones strip_segments puts last, so
+	# the smallest family is the one that gets this spot. Otherwise nowhere.
+	strip_label_at : { x0 : F32, seg : F32, lw : F32, last : Bool } -> [Under(F32), Beside(F32), Unlabeled]
+	strip_label_at = |s|
+		if (s.lw + 12.0 <= s.seg - 1.5) Under(s.x0 + 6.0)
+		else if (s.last and s.lw <= beside_room) Beside(s.x0 + s.seg + 6.0)
+		else Unlabeled
+
 	# a family's name on the strip: what the athlete does, not one of its
 	# Strava spellings. The strength family pools Workout and WeightTraining
 	# into one segment, and naming it after either reads as only that one.
@@ -749,10 +767,10 @@ Career :: [].{
 			# into `other` (strip_segments), and every segment is at least
 			# strip_min_w wide (strip_widths), so nothing draws as a hairline.
 			#
-			# A label draws under its segment only when it fits inside the
-			# segment's width, so no label runs past the strip's end or onto a
-			# neighbour. A segment without one keeps its meaning through the
-			# hover tooltip: its name, its count and its share.
+			# Each segment's name draws where strip_label_at puts it: under the
+			# segment, beside the strip's end, or nowhere. A segment without one
+			# keeps its meaning through the hover tooltip: its name, its count
+			# and its share.
 			comp_y = win_h - 66.0
 			comp_w = plot_r - 36.0
 			comp_fams = strip_segments(fold_families(model.career_sports))
@@ -779,8 +797,10 @@ Career :: [].{
 							frame.rounded_rectangle!({ x: x0, y: comp_y, width: (seg - 1.5).max(1.0), height: 12.0, radius: 3.0, segments: 3, style: Draw.filled(Color.with_alpha(col, 190)) })
 							lbl = "${family_name(y.s.sport)} ${Db.grouped(y.s.sessions)}"
 							lw = model.font.measure({ text: lbl, size: 10.0, spacing: Text.default_spacing }).width
-							if lw + 12.0 <= seg - 1.5 {
-								Text.from(lbl, model.font).size(10).draw!(frame, { pos: { x: x0 + 6.0, y: comp_y + 15.0 }, color: Color.with_alpha(col, 235), align: (Top, Left) })
+							match strip_label_at({ x0, seg, lw, last: y.i + 1 == List.len(comp_fams) }) {
+								Under(lx) => Text.from(lbl, model.font).size(10).draw!(frame, { pos: { x: lx, y: comp_y + 15.0 }, color: Color.with_alpha(col, 235), align: (Top, Left) })
+								Beside(lx) => Text.from(lbl, model.font).size(10).draw!(frame, { pos: { x: lx, y: comp_y + 1.0 }, color: Color.with_alpha(col, 235), align: (Top, Left) })
+								Unlabeled => {}
 							}
 						}
 						Ok({ x0: x0 + seg, hit: hit2 })
@@ -856,6 +876,16 @@ expect {
 	Career.spine_at(two, 0).fam == "Ride" and Career.spine_at(two, 1).fam == "Rowing" and Career.spine_at(two, 2).fam == "Ride" and Career.spine_at(two, 7).fam == "Rowing" and Career.spine_at([], 3).fam == ""
 }
 
+# a segment names itself under its own width when the label fits there;
+# the last segment, too narrow, names itself beside the strip's end; a
+# narrow segment that is not last, or a label wider than the margin, goes
+# unlabeled and keeps the hover tooltip
+expect {
+	Career.strip_label_at({ x0: 100.0, seg: 80.0, lw: 40.0, last: Bool.False }) == Under(106.0)
+		and Career.strip_label_at({ x0: 900.0, seg: 8.0, lw: 30.0, last: Bool.True }) == Beside(914.0)
+		and Career.strip_label_at({ x0: 800.0, seg: 8.0, lw: 30.0, last: Bool.False }) == Unlabeled
+		and Career.strip_label_at({ x0: 900.0, seg: 8.0, lw: Career.beside_room + 1.0, last: Bool.True }) == Unlabeled
+}
 # two or more families under the strip's minimum share fold into one `other`
 # segment at the end; the families above it keep their order
 expect {
