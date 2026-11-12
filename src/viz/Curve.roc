@@ -635,6 +635,12 @@ Curve :: [].{
 
 	# the rungs on screen and where the plot starts, shared by the drawing and
 	# every hover test so the two cannot disagree
+	# the focus row's curve_short: 1 when the short rungs are shown, 0 when
+	# they are folded away, -1 (NULL) when there is nothing to fold, so a coach
+	# never reads "folded" off a curve that has no short rungs to hide
+	focus_short : Bool, Bool -> I64
+	focus_short = |foldable, show| if (!(foldable)) -1 else if (show) 1 else 0
+
 	layout : Ui.Model -> { prs : List(Db.PrRung), left : F32, folded : Bool, foldable : Bool }
 	layout = |model| {
 		foldable = fold_short(List.map(model.prs, |pr| pr.secs), List.map(model.prs, |pr| window_w(model.curve, pr.secs)), List.map(model.prs, |pr| pr.w))
@@ -1464,3 +1470,15 @@ expect Curve.anchor_caption_for("Ride", Metric, { cp: 252.9, w_prime: 2980.0, r2
 expect Curve.anchor_caption_for("pace:Run", Metric, { cp: 4.0, w_prime: 2000.0, r2: 0.95, points: 3.0, ok: Bool.True }, { value: 4.0, kind: "5k", date: "2026-11-01" }, 3) == "threshold 4:10/km from a 5k test on 2026-11-01 - this window's CS fit is not usable"
 # with no test the caption is the fit's own, prompt included
 expect Curve.anchor_caption_for("Ride", Metric, { cp: 252.9, w_prime: 2980.0, r2: 0.84, points: 3.0, ok: Bool.True }, { value: 0.0, kind: "none", date: "none" }, 9) == Curve.fit_caption({ cp: 252.9, w_prime: 2980.0, r2: 0.84, points: 3.0, ok: Bool.True }, 9)
+
+expect Curve.focus_short(Bool.False, Bool.False) == -1 and Curve.focus_short(Bool.False, Bool.True) == -1
+expect Curve.focus_short(Bool.True, Bool.False) == 0 and Curve.focus_short(Bool.True, Bool.True) == 1
+
+# the longest title a pace curve takes, at the minimum width with three
+# curves on record: no chip starts inside the title's text
+expect {
+	keys = { power: [], pace: ["pace:OpenWaterSwim", "pace:Swim", "pace:Run"] }
+	title = Curve.title_text("pace:OpenWaterSwim", 90)
+	title == "open water swim pace - this 90d vs the 90d before it"
+		and List.all(Curve.chips_for(980.0, keys, "pace:OpenWaterSwim", 90), |c| c.x >= 36.0 + U64.to_f32(Str.count_utf8_bytes(title)) * Curve.title_char_w)
+}

@@ -101,7 +101,7 @@
         },
         "curve_short": {
           "type": "integer",
-          "description": "whether the power view shows the short rungs (under 5 minutes) it folds when none was pushed all-out: 1 shown, 0 folded, -1 when the window has not reported it"
+          "description": "whether the power view shows the short rungs (under 5 minutes) it folds when none was pushed all-out: 1 shown, 0 folded, -1 when there is nothing to fold or the window has not reported it"
         }
       }
     },

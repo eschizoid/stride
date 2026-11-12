@@ -531,7 +531,8 @@ When the window holds short rungs and none was pushed, they fold into a narrow
 width; one pushed short rung shows them all. The `short` chip, right of the
 range chips, shows them on demand, and appears only while there is something
 to fold. A directive's `short` field (1 shows, 0 folds) steers the same
-switch, and the focus row reports it as `curve_short` (1 shown, 0 folded).
+switch, and the focus row reports it as `curve_short`: 1 shown, 0 folded, and
+-1 (NULL in the row) when the curve on screen has nothing to fold.
 
 The ladder itself - which columns, which family, that zero and NULL both mean unrecorded - is
 the `activity_power_ladder` view's, shared with the record book and the

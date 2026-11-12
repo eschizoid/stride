@@ -2467,7 +2467,7 @@ update! = |model0, program_input, io| {
 			sport: want_sport2,
 			family: Career.spine_at(model.career_spines, spine_idx).fam,
 			curve_family: want_family,
-			curve_short: if (want_short) 1 else 0,
+			curve_short: Curve.focus_short(Curve.layout(model).foldable, want_short),
 		}
 		# written when what the human sees changed, at most twice a second,
 		# and on a heartbeat regardless: updated_at is the coach's liveness
