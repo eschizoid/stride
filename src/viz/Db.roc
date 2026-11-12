@@ -1077,12 +1077,13 @@ Db :: [].{
 				)
 		}
 
-	# the months a marked threshold test (ADR 0020) sets a family's spine from:
-	# power and pace tests only, since a heart-rate test moves no spine. An
-	# engine older than the tests table answers with an error, read as none.
-	load_test_months! : Sqlite.Db => List({ fam : Str, month : Str, kind : Str })
+	# the months a marked threshold test (ADR 0020) sets a family's spine from,
+	# with the threshold signal it sets (power or pace): power and pace tests
+	# only, since a heart-rate test moves no spine. An engine older than the
+	# tests table answers with an error, read as none.
+	load_test_months! : Sqlite.Db => List({ fam : Str, month : Str, kind : Str, signal : Str })
 	load_test_months! = |db|
-		match db.query!("SELECT CAST(a.sport_family AS TEXT) AS f, substr(CAST(a.start_local AS TEXT), 1, 7) AS m, CAST(t.kind AS TEXT) AS k FROM threshold_tests t JOIN activities a ON a.id = t.activity_id WHERE t.signal <> 'hr' ORDER BY a.start_local", []) {
+		match db.query!("SELECT CAST(a.sport_family AS TEXT) AS f, substr(CAST(a.start_local AS TEXT), 1, 7) AS m, CAST(t.kind AS TEXT) AS k, CAST(t.signal AS TEXT) AS sg FROM threshold_tests t JOIN activities a ON a.id = t.activity_id WHERE t.signal <> 'hr' ORDER BY a.start_local", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(
@@ -1091,7 +1092,8 @@ Db :: [].{
 						f = r.str("f") ? |_| "bad"
 						m = r.str("m") ? |_| "bad"
 						k = r.str("k") ? |_| "bad"
-						Ok({ fam: f, month: m, kind: k })
+						sg = r.str("sg") ? |_| "bad"
+						Ok({ fam: f, month: m, kind: k, signal: sg })
 					},
 				)
 		}

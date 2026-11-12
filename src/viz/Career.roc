@@ -268,6 +268,11 @@ Career :: [].{
 			Err(_) => Err(None)
 		}
 
+	# a test marks the spine of its own family AND threshold signal: a run's
+	# power test belongs on the run power spine, never on its pace spine
+	marks_spine : { fam : Str, month : Str, kind : Str, signal : Str }, Str, Str -> Bool
+	marks_spine = |t, fam, kind| t.fam == fam and t.signal == kind
+
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
 		win_w = model.win.w
@@ -703,7 +708,7 @@ Career :: [].{
 			List.for_each!(
 				model.career_tests,
 				|t|
-					if t.fam == sp.fam {
+					if marks_spine(t, sp.fam, sp.kind) {
 						match List.first(List.keep_if(idx, |x| x.m.month == t.month)) {
 							Ok(x) if x.m.ftp10 > 0 and xf(x.i) <= head_x => {
 								frame.circle!({ center: { x: xf(x.i), y: yf(x.m.ftp10) }, radius: 4.5, style: Draw.filled(Theme.gold_c) })
@@ -896,3 +901,6 @@ expect {
 		and Career.kind_chips_at([ride, run_pw, run_pc], 0, 400.0) == []
 		and Career.kind_chips_at([], 0, 400.0) == []
 }
+
+expect Career.marks_spine({ fam: "Run", month: "2026-11", kind: "ftp20", signal: "power" }, "Run", "power")
+expect !(Career.marks_spine({ fam: "Run", month: "2026-11", kind: "5k", signal: "pace" }, "Run", "power")) and !(Career.marks_spine({ fam: "Ride", month: "2026-11", kind: "ftp20", signal: "power" }, "Run", "power"))
