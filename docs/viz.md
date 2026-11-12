@@ -188,7 +188,7 @@ read as one, and the career view leaves the tonnage spine to this tab.
 | `←` / `→` | walk the day cursor (form board; ← older, → newer, past newest turns it off) |
 | `R` | reload everything from the database without reopening |
 | `G` | toggle the glow pass - the scene renders offscreen and its bright parts come back blurred and added on top; if the GPU refuses any of it, the app draws exactly as before the pass existed |
-| `V` | toggle a WebM recording of the screen into `./captures`, named for the view it started on; FixedStep timing, so the same data replays to the same file |
+| `V` | toggle a WebM recording of the screen into `captures/` under the window's working directory, named for the view it started on; FixedStep timing, so the same data replays to the same file |
 | nav pills (top right) | click any view directly; the active one is filled - each wears its vector mark, drawn from primitives (no sprite sheet, crisp at any DPI) |
 | `TAB` | cycle the nav left to right: form board / power view / session trace / the day tab / lifts / the weeks tab / career; from any day mode it steps on to lifts, and from either weeks mode to career |
 | `week` / `log` / `year` chips (day tab) | switch the day tab between the plan, the data table and the heatmap |
@@ -203,7 +203,7 @@ read as one, and the career view leaves the tonnage spine to this tab.
 | `←` / `→` (table view) | scroll the window through the whole series (rows fill the window height) |
 | click a date (table view) | open that day's detail panel: sessions, minutes, km, TSS, NP |
 | window edges | drag to resize; every view reflows live (980x600 floor) |
-| `S` | save a PNG of the current view into `./captures` |
+| `S` | save a PNG of the current view into `captures/` under the window's working directory |
 | mouse hover | crosshair + per-day dots + a top-right readout (form board) |
 | `ESC` | quit |
 
@@ -315,7 +315,7 @@ INSERT INTO viz_directives (trace_id, ghost_id) VALUES (20355183143, 20342052869
 -- a capture: 'png' writes the view the directive lands on, once it has
 -- settled (its arrival animation over - the career view's whole sweep,
 -- half a second elsewhere - and no trace fetch in flight), to
--- captures/<view>.png under the directory the window was launched from
+-- captures/<view>.png under the window's working directory
 -- (your home folder for the app bundle, the repo for `just viz`);
 -- 'webm_start' / 'webm_stop' begin and end a WebM recording of it. The row
 -- stays pending until the host answers - a PNG written, a recording
@@ -462,15 +462,16 @@ a reader who cares looks at focus, not at the losing row.
 - What the window may touch is declared in its own source, and a declaration
   is matched against the text of a path. The athlete's directory sits under a
   home known only at run time, so it cannot be written there: the launcher
-  resolves it and passes it as the first argument (and the launch directory as
-  the second, which a capture's status row names its file under), and the startup config is
-  built from argv. The window declares that directory read-write, the launch
-  directory read-only (the checkout for `just viz`; the athlete's home for the
-  packaged launchers, which change to it before they exec), and two programs:
-  `stride` for the CP fit and `sh` for the one script that asks `date` for the
-  zone offset under the configured timezone. Captures are allowed beneath
-  `./captures` without a declaration. Nothing else: no environment, no network,
-  no other program.
+  resolves it and passes it as the first argument (the launch directory is the
+  second), and the startup config is built from argv. The window declares that
+  directory read-write, its working directory read-only (the checkout for
+  `just viz`; the athlete's home for the packaged launchers, which change to it
+  before they exec), and two programs: `stride` for the CP fit and `sh`, which
+  asks `date` for the zone offset under the configured timezone and `pwd` for
+  the working directory. Captures need no declaration: the platform writes them
+  beneath `captures/`, relative to the working directory, and a capture's
+  status row names the file by that directory's absolute path. Nothing else:
+  no environment, no network, no other program.
   Launched with no argument, the window opens and says it has no database.
 - `has` is a reserved word; uppercase identifiers are types.
 
@@ -654,7 +655,7 @@ across the full width; on the reference activity the two differ by one second in
 
 ## Screenshots (S)
 
-`S` writes a PNG of the current view into `./captures`, named for the view.
+`S` writes a PNG of the current view into `captures/` under the window's working directory, named for the view.
 Reference captures of all three live in `docs/img/`.
 
 These are how the agent reviews its own rendering. Every value drawn derives from

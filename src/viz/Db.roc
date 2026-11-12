@@ -728,6 +728,18 @@ Db :: [].{
 	# tz db has the DST rules, and `date +%z` under TZ reports the offset in
 	# force. The zone name travels as a positional argument, so a hostile
 	# string cannot break out of the quoting.
+	# the window's working directory, the base the platform resolves its
+	# relative capture directory against; `fallback` when `sh` cannot say
+	working_dir! : Cmd.Runner, Str => Str
+	working_dir! = |runner, fallback|
+		match runner.run_utf8!(Cmd.with_args(Cmd.new("sh"), ["-c", "pwd -P"])) {
+			Ok(out) => {
+				here = Str.trim(out.stdout)
+				if (Str.starts_with(here, "/")) here else fallback
+			}
+			Err(_) => fallback
+		}
+
 	zone_offset_now! : Cmd.Runner, Str => Try(I64, [BadTz])
 	zone_offset_now! = |runner, tz| {
 		cmd = "if [ -f \"/usr/share/zoneinfo/$1\" ]; then TZ=\"$1\" date +%z; else echo INVALID; fi"
