@@ -223,26 +223,35 @@ Strength :: [].{
 	tight_pitch : F32
 	tight_pitch = 14.0
 
+	# the clearance between the card's last line and the weeks heading, and
+	# the height of the hint line a scrolled card writes under its lines
+	card_gap : F32
+	card_gap = 16.0
+
+	hint_h : F32
+	hint_h = 14.0
+
 	# The latest session card: its lines start under the session name (and
-	# under the unlogged note when it shows). The card holds seven lines at
-	# least, so a short session leaves the charts where they always were.
-	# A longer one grows the card down, taking height from the tonnage chart
-	# until that chart is down to ton_least: at the full pitch when every
-	# line fits that way, else at the tight pitch. Lines past that scroll,
-	# with one hint line under them.
+	# under the unlogged note when it shows). Seven lines or fewer place the
+	# weeks heading at `least`. A longer session grows the card down, taking
+	# height from the tonnage chart until that chart is down to ton_least: at
+	# the full pitch when every line fits that way, else at the tight pitch.
+	# Lines past that scroll, and the card gives one hint_h of its room to
+	# the hint line under them, so the hint keeps the card_gap clearance
+	# above the weeks heading that a last line does.
 	last_card : F32, U64, Bool -> { top : F32, pitch : F32, room : F32, scrolls : Bool, weeks_top : F32 }
 	last_card = |win_h, n, note| {
 		first_y = if (note) (lift_top + 52.0) else lift_top + 40.0
-		least = lift_top + 40.0 + 7.0 * last_pitch + 16.0
+		least = lift_top + 40.0 + 7.0 * last_pitch + card_gap
 		at0 = ton_span(win_h, 0.0)
 		most = (at0.bottom - ton_least - at0.top).max(least)
-		place = |pitch| (first_y + U64.to_f32(n) * pitch + 16.0).min(most).max(least)
-		fits = |pitch| U64.to_f32(n) * pitch <= place(pitch) - 16.0 - first_y
+		place = |pitch| (first_y + U64.to_f32(n) * pitch + card_gap).min(most).max(least)
+		fits = |pitch| U64.to_f32(n) * pitch <= place(pitch) - card_gap - first_y
 		pitch = if (fits(last_pitch)) last_pitch else tight_pitch
 		weeks_top = place(pitch)
-		fit = weeks_top - 16.0 - first_y
+		fit = weeks_top - card_gap - first_y
 		if (fits(pitch)) { top: first_y, pitch, room: fit, scrolls: Bool.False, weeks_top }
-		else { top: first_y, pitch, room: fit - 14.0, scrolls: Bool.True, weeks_top }
+		else { top: first_y, pitch, room: fit - hint_h, scrolls: Bool.True, weeks_top }
 	}
 
 	# the latest session's lines: one per logged exercise, or the one line
@@ -294,6 +303,12 @@ Strength :: [].{
 		card = last_card(model.win.h, total, unlogged_note(model.strength.unlogged) != "")
 		Scroll.last_offset(List.repeat(card.pitch, total), card.room)
 	}
+
+	# whether a wheel at a point scrolls the session card rather than the
+	# lifts list: only over the card, from its heading down to the weeks
+	# heading, and only when the card has lines to scroll
+	wheels_card : Ui.Model, F32, F32 -> Bool
+	wheels_card = |model, x, y| x >= right_x(model.win.w) and y >= lift_top and y < shown_last(model).weeks_top and last_last(model) > 0
 
 	# ── every string the view writes, placed ───────────────────────────────
 	# All of it is fixed: the title, each lift's name and values, the scroll

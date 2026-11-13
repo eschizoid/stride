@@ -2028,13 +2028,14 @@ update! = |model0, program_input, io| {
 			else if (d.key_pressed(KeyRight)) (if (model.cursor <= 0) (-1) else model.cursor - 1)
 			else model.cursor
 		# a wheel notch or an up/down arrow scrolls the lifts list or the plan's
-		# week ladder one row, clamped to the list's ends (Scroll); on the lifts
-		# view a wheel over the right column scrolls the session card instead.
+		# week ladder one row, clamped to the list's ends (Scroll). On the lifts
+		# view a wheel over a session card that has lines to scroll moves the
+		# card instead (Strength.wheels_card); anywhere else it moves the list.
 		# A resize or reload that shortens a list pulls its offset back in
 		notch = Mouse.wheel_delta(d.mouse)
 		wheel_by = if (notch.y < -0.1) 1 else if (notch.y > 0.1) (-1) else 0
 		scroll_by = if (wheel_by != 0) wheel_by else if (d.key_pressed(KeyDown)) 1 else if (d.key_pressed(KeyUp)) (-1) else 0
-		on_card = model.view == 9 and wheel_by != 0 and m0.x >= Strength.right_x(win.w)
+		on_card = model.view == 9 and wheel_by != 0 and Strength.wheels_card({ ..model, win }, m0.x, m0.y)
 		lifts_last = Strength.lifts_last(model)
 		last_last = Strength.last_last(model)
 		week_last = Plan.week_last(model)
