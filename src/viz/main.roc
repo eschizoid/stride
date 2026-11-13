@@ -196,20 +196,37 @@ brand_font! = |acc, name, size, fallback| {
 	}
 }
 
-# the mark, from the authored file: the repo's img/ in a dev checkout,
-# ~/.stride/img when launched as the app bundle (the launcher seeds it the
-# way it seeds fonts). Splash-only, so nothing loads it outside boot.
+# an authored PNG from img/: the repo's in a dev checkout, ~/.stride/img
+# when launched as the app bundle (the launcher seeds it the way it seeds
+# fonts). Err when neither place has it or it does not decode.
+img_texture! : Access, Str => Try(Texture.Texture, [NoImage])
+img_texture! = |acc, name| {
+	from_checkout = checkout_bytes!(acc, "img", name)
+	bytes = if (!List.is_empty(from_checkout)) from_checkout else stride_bytes!(acc, Str.concat("img/", name))
+	if (List.is_empty(bytes)) Err(NoImage)
+	else match Assets.texture_from_bytes!({ format: Png, bytes }) {
+		Ok(t) => Ok(t)
+		Err(_) => Err(NoImage)
+	}
+}
+
+# the mark is splash-only, so nothing loads it outside boot
 load_logo! : Access, Bool => [NoLogo, Logo(Texture.Texture)]
 load_logo! = |acc, boot|
 	if (!boot) NoLogo
-	else {
-		from_checkout = checkout_bytes!(acc, "img", "stride-icon.png")
-		bytes = if (!List.is_empty(from_checkout)) from_checkout else stride_bytes!(acc, "img/stride-icon.png")
-		if (List.is_empty(bytes)) NoLogo
-		else match Assets.texture_from_bytes!({ format: Png, bytes }) {
-			Ok(t) => Logo(t)
-			Err(_) => NoLogo
-		}
+	else match img_texture!(acc, "stride-icon.png") {
+		Ok(t) => Logo(t)
+		Err(_) => NoLogo
+	}
+
+# the flame loads once at boot; Reloaded carries the boot model's texture
+# forward, so a later load has nothing to read
+load_flame! : Access, Bool => [NoFlame, Flame(Texture.Texture)]
+load_flame! = |acc, boot|
+	if (!boot) NoFlame
+	else match img_texture!(acc, "flame.png") {
+		Ok(t) => Flame(t)
+		Err(_) => NoFlame
 	}
 
 # The empty shape every loader falls back to: the boot skeleton the splash
@@ -498,6 +515,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		# update! when a chip/R spawns the next load and cleared when it lands
 		reloading: Bool.False,
 		logo: load_logo!(acc, boot),
+		flame: load_flame!(acc, boot),
 		font: mono,
 		prose: head,
 		hint: mk!(Board.hint_text, 13)?,
@@ -1819,7 +1837,7 @@ update! = |model0, program_input, io| {
 							}
 					}
 				Reloaded(fresh) => {
-					merged = { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_active: acc.last_active, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending }
+					merged = { ..fresh, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_active: acc.last_active, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending, flame: acc.flame }
 					# R reads the curve it was pressed on, and it is the slow path.
 					# A chip clicked while it ran has since moved curve_days or
 					# curve_family and landed its own curve; when the two disagree

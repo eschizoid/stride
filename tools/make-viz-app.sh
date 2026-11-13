@@ -57,16 +57,17 @@ if [ -d "$res/fonts" ]; then
     echo "$(date): could not create $HOME/.stride/fonts - the window will use its fallback font" >> "$log" 2>/dev/null || true
   fi
 fi
-# the splash renders the authored mark from ~/.stride/img, seeded the same way
-if [ -f "$res/img/stride-icon.png" ]; then
-  if mkdir -p "$HOME/.stride/img" 2>/dev/null; then
-    src="$res/img/stride-icon.png"
-    dst="$HOME/.stride/img/stride-icon.png"
+# the splash's mark and the streak flame render from ~/.stride/img, seeded
+# the same way
+for img in stride-icon.png flame.png; do
+  if [ -f "$res/img/$img" ] && mkdir -p "$HOME/.stride/img" 2>/dev/null; then
+    src="$res/img/$img"
+    dst="$HOME/.stride/img/$img"
     if [ ! -e "$dst" ] || [ "$(wc -c < "$src")" != "$(wc -c < "$dst")" ]; then
       cp "$src" "$dst" 2>>"$log" || echo "$(date): could not write $dst" >> "$log"
     fi
   fi
-fi
+done
 cd "$HOME"
 exec "$here/stride-viz" "$HOME/.stride" "$HOME"
 SH
@@ -117,10 +118,11 @@ mkdir -p "$C/Resources/fonts"
 cp assets/fonts/*.ttf assets/fonts/OFL-*.txt "$C/Resources/fonts/" 2>/dev/null || true
 mkdir -p "$HOME/.stride/fonts"
 cp assets/fonts/*.ttf "$HOME/.stride/fonts/" 2>/dev/null || true
-# the splash's mark, carried and seeded exactly like the fonts
+# the splash's mark and the streak flame, carried and seeded exactly like
+# the fonts
 mkdir -p "$C/Resources/img" "$HOME/.stride/img"
-cp img/stride-icon.png "$C/Resources/img/" 2>/dev/null || true
-cp img/stride-icon.png "$HOME/.stride/img/" 2>/dev/null || true
+cp img/stride-icon.png img/flame.png "$C/Resources/img/" 2>/dev/null || true
+cp img/stride-icon.png img/flame.png "$HOME/.stride/img/" 2>/dev/null || true
 
 # Apple Silicon refuses to exec an unsigned arm64 Mach-O, quarantine cleared
 # or not. Ad-hoc needs no Developer ID; the launcher is a script and needs

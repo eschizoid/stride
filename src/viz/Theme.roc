@@ -40,7 +40,7 @@ Theme :: [].{
 	alarm_c : Color.Rgba
 	alarm_c = Color.from_hex_rgb(0xe0645b)
 	# the reward pair: gold for earned things (levels, records, a finished
-	# week), ember under the gold wherever a flame burns
+	# week), ember for the streak
 	gold_c : Color.Rgba
 	gold_c = Color.from_hex_rgb(0xffc857)
 	ember_c : Color.Rgba
