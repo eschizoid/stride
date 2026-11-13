@@ -184,6 +184,9 @@ Ui :: [].{
 		# the brand mark as the authored PNG, loaded for the splash only, so the
 		# splash shows the artwork itself rather than a drawing of it
 		logo : [NoLogo, Logo(Texture.Texture)],
+		# the streak chip's flame as an authored PNG, loaded with the logo at
+		# boot and carried across reloads; NoFlame leaves the chip text-only
+		flame : [NoFlame, Flame(Texture.Texture)],
 		# the data face (JetBrains Mono) every fresh view text draws in, and the
 		# prose face (Quicksand) the prepared titles, legends and hints use
 		font : Text.Font,

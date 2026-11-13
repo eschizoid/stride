@@ -397,6 +397,18 @@ Career :: [].{
 	streak_box : F32 -> Labels.Rect
 	streak_box = |win_w| { x: win_w - 36.0 - 196.0 - 110.0, y: 62.0, w: 100.0, h: 26.0 }
 
+	# where the streak text starts, right of the flame; the draw site and the
+	# expect that keeps the flame clear of the text both read it
+	streak_text_x : F32 -> F32
+	streak_text_x = |win_w| streak_box(win_w).x + 26.0
+
+	# the flame's square at the chip's left, ending before streak_text_x
+	flame_box : F32 -> Labels.Rect
+	flame_box = |win_w| {
+		sb = streak_box(win_w)
+		{ x: sb.x + 5.0, y: sb.y + 4.0, w: 18.0, h: 18.0 }
+	}
+
 	# where the header row's left part ends: the subtitle, or the last kind
 	# chip after it
 	head_end : Ui.Model, Scene.Measure -> F32
@@ -556,7 +568,13 @@ Career :: [].{
 			if shown.streak {
 				sb = streak_box(win_w)
 				frame.rounded_rectangle!({ x: sb.x, y: sb.y, width: sb.w, height: sb.h, radius: 7.0, segments: 6, style: Draw.filled(Theme.card) })
-				Hud.flame!(frame, sb.x + 14.0, 75.0)
+				match model.flame {
+					Flame(ft) => {
+						fb = flame_box(win_w)
+						frame.texture!({ texture: ft, source: { x: 0.0, y: 0.0, width: ft.width, height: ft.height }, dest: { x: fb.x, y: fb.y, width: fb.w, height: fb.h }, origin: { x: 0.0, y: 0.0 }, rotation: 0.0, tint: Color.white })
+					}
+					NoFlame => {}
+				}
 			}
 		}
 		g = geom(model)
@@ -910,7 +928,7 @@ Career :: [].{
 				sb = streak_box(win_w)
 				List.concat(
 					[fix(Scene.data("LVL ${I64.to_str(lvl)}", 13.0, Theme.gold_c), lb.x + 10.0, 68.0, Left, lb), fix(Scene.data(Hud.tier(lvl), 11.0, ink_muted), lb.x + 62.0, 70.0, Left, lb)],
-					if (shown.streak) [fix(Scene.data("${I64.to_str(Hud.streak_weeks(model.heat))} wk streak", 11.0, Theme.ember_c), sb.x + 26.0, 70.0, Left, sb)] else [],
+					if (shown.streak) [fix(Scene.data("${I64.to_str(Hud.streak_weeks(model.heat))} wk streak", 11.0, Theme.ember_c), streak_text_x(win_w), 70.0, Left, sb)] else [],
 				)
 			} else {
 				[]
@@ -1152,6 +1170,17 @@ Career :: [].{
 # tenths-of-kg, so 1197 kg carries to 1.2t
 expect Career.spine_label(Metric, 11970, "tonnage", "WeightTraining") == "1.2t"
 expect Career.spine_label(Metric, 8500, "tonnage", "WeightTraining") == "850kg"
+
+# the flame sits wholly inside the streak chip and ends before the streak
+# text starts
+expect {
+	sb = Career.streak_box(1400.0)
+	fb = Career.flame_box(1400.0)
+	fb.x >= sb.x
+		and fb.y >= sb.y
+		and fb.y + fb.h <= sb.y + sb.h
+		and fb.x + fb.w <= Career.streak_text_x(1400.0)
+}
 
 # members of one family merge and the segment carries the family head, so a
 # gravel ride and a road ride are one Ride rather than two neighbours wearing

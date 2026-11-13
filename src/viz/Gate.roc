@@ -411,6 +411,7 @@ Gate :: [].{
 			booting: Bool.False,
 			reloading: Bool.False,
 			logo: NoLogo,
+			flame: NoFlame,
 			font: data_font,
 			prose: prose_font,
 			hint: p,
