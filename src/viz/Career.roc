@@ -603,8 +603,7 @@ Career :: [].{
 				List.map_with_index(g.months, |m, i| { m, i }),
 				|x| {
 					bx = xf(g, x.i) - bw / 2.0
-					reached = g.head_x >= bx
-					rise = if (p >= 1.0) (1.0) else if (reached) ((((g.head_x - bx) / g.plot_w) * 5.0).min(1.0)) else 0.0
+					rise = bar_rise(g, bx)
 					bh = (I64.to_f32(x.m.load) / I64.to_f32(g.lmax)) * (g.bars_bot - g.bars_top) * rise
 					if bh > 0.5 {
 						frame.rectangle!({ x: bx, y: g.bars_bot - bh, width: bw, height: bh, style: Draw.filled(Color.with_alpha(Theme.ctl_c, (if (x.m.partial) 50 else 90))) })
@@ -1082,32 +1081,70 @@ Career :: [].{
 		List.join([card_texts, grid, legend, withheld, marks, cheer, tests, years, names])
 	}
 
-	# what the chart's labels keep off: the chrome, the chips and cards, the
-	# milestone, test and withheld dots, the legend's swatches and the
-	# strip; and the spine's stroke
+	# what the chart's labels keep off: the chrome, every shape the view
+	# draws (marks), the composition strip's whole length, and the spine's
+	# stroke
 	obstacles : Ui.Model, Scene.Measure -> Labels.Obstacles
 	obstacles = |model, measure| {
-		dot = |x, y, r| { x: x - r, y: y - r, w: 2.0 * r, h: 2.0 * r }
-		chrome = Chrome.boxes(model, measure)
-		chips = List.map(kind_chips(model), |kc| { x: kc.x, y: kind_chip_top, w: kind_chip_w, h: kind_chip_bottom - kind_chip_top })
-		shown = sheet(model, measure)
-		sheet_boxes = List.concat(if (shown.level) [level_box(model.win.w)] else [], if (shown.streak) [streak_box(model.win.w)] else [])
+		boxes = List.concat(Chrome.boxes(model, measure), List.map(marks(model, measure), |m| m.box))
 		g = geom(model)
 		if g.n < 2 {
-			{ boxes: List.join([chrome, chips, sheet_boxes]), segs: [] }
+			{ boxes, segs: [] }
 		} else {
-			ms = milestones(g)
-			at = |mi, mf| if (xf(g, mi) <= g.head_x and mf > 0) [dot(xf(g, mi), yf(g, mf), 4.0)] else []
-			marks = List.join([at(ms.valley.i, ms.valley.f), at(ms.peak.i, ms.peak.f), if (ms.last.i != ms.peak.i and ms.last.i != ms.valley.i) at(ms.last.i, ms.last.f) else []])
-			tests = List.map(test_marks(model, g), |t| dot(t.x, t.y, 4.5))
-			withheld = if (g.ready) [] else List.map(withheld_dots(g), |d| dot(d.x, d.y, 4.0))
-			ky = legend_y(g)
-			swatches = List.map(legend_rows(g, measure), |e| { x: e.x, y: ky + 1.0, w: 10.0, h: 10.0 })
-			cards = List.map([0, 1, 2, 3], |i| card_box(model.win.w, i))
-			comp = { x: 36.0, y: comp_y(model.win.h), w: g.plot_r - 36.0, h: 12.0 }
-			{ boxes: List.join([chrome, chips, sheet_boxes, cards, marks, tests, withheld, swatches, [comp]]), segs: spine_segs(g) }
+			{ boxes: List.append(boxes, { x: 36.0, y: comp_y(model.win.h), w: g.plot_r - 36.0, h: 12.0 }), segs: spine_segs(g) }
 		}
 	}
+
+	# the shapes no text may cover but its own: the pills and the XP rail,
+	# the kind chips, the level and streak chips, and with a history the
+	# cards, the milestone, test and withheld dots, the monthly load bars,
+	# the bars' legend swatches and the strip's segments. The peak's
+	# breathing halo is a glow text may sit over, so it is not one.
+	marks : Ui.Model, Scene.Measure -> List(Labels.Mark)
+	marks = |model, measure| {
+		dot = |key, x, y, r| { key, box: { x: x - r, y: y - r, w: 2.0 * r, h: 2.0 * r } }
+		chips = List.map(kind_chips(model), |kc| { key: "the ${kc.label} chip", box: { x: kc.x, y: kind_chip_top, w: kind_chip_w, h: kind_chip_bottom - kind_chip_top } })
+		shown = sheet(model, measure)
+		sheet_marks = List.concat(if (shown.level) [{ key: "the level chip", box: level_box(model.win.w) }] else [], if (shown.streak) [{ key: "the streak chip", box: streak_box(model.win.w) }] else [])
+		shapes = List.join([Chrome.marks(model), chips, sheet_marks])
+		g = geom(model)
+		if g.n < 2 {
+			shapes
+		} else {
+			ms = milestones(g)
+			at = |key, mi, mf| if (xf(g, mi) <= g.head_x and mf > 0) [dot(key, xf(g, mi), yf(g, mf), 4.0)] else []
+			spine_dots = List.join([at("the valley dot", ms.valley.i, ms.valley.f), at("the peak dot", ms.peak.i, ms.peak.f), if (ms.last.i != ms.peak.i and ms.last.i != ms.valley.i) at("the last month's dot", ms.last.i, ms.last.f) else []])
+			tests = List.map(test_marks(model, g), |t| dot("the ${t.kind} test dot", t.x, t.y, 4.5))
+			withheld = if (g.ready) [] else List.map(withheld_dots(g), |d| dot("the withheld dot at ${Db.fmt_i(d.x)}", d.x, d.y, 4.0))
+			ky = legend_y(g)
+			swatches = List.map(legend_rows(g, measure), |e| { key: "the ${e.k.label} swatch", box: { x: e.x, y: ky + 1.0, w: 10.0, h: 10.0 } })
+			cards = List.map([0, 1, 2, 3], |i| { key: "card ${I64.to_str(i + 1)}", box: card_box(model.win.w, i) })
+			cy = comp_y(model.win.h)
+			segments = List.keep_oks(strip(model, g), |s| if (s.seg > 1.0) Ok({ key: "the ${family_name(s.sport)} strip segment", box: { x: s.x0, y: cy, w: (s.seg - 1.5).max(1.0), h: 12.0 } }) else Err(Undrawn))
+			List.join([shapes, cards, spine_dots, tests, withheld, load_bars(g), swatches, segments])
+		}
+	}
+
+	# the monthly load bars as drawn: each month's ground bar from the
+	# baseline, risen with the sweep, when it is taller than half a pixel.
+	# The family's share fills from the same baseline inside it.
+	load_bars : Geom -> List(Labels.Mark)
+	load_bars = |g| {
+		bw = (g.plot_w / U64.to_f32(g.n) - 1.5).max(1.0)
+		List.keep_oks(
+			List.map_with_index(g.months, |m, i| { m, i }),
+			|x| {
+				bx = xf(g, x.i) - bw / 2.0
+				bh = (I64.to_f32(x.m.load) / I64.to_f32(g.lmax)) * (g.bars_bot - g.bars_top) * bar_rise(g, bx)
+				if (bh > 0.5) Ok({ key: "the load bar for ${x.m.month}", box: { x: bx, y: g.bars_bot - bh, w: bw, h: bh } }) else Err(Flat)
+			},
+		)
+	}
+
+	# how far a load bar whose left edge is bx has risen: whole once the
+	# sweep settles, rising from the moment the head reaches it before then
+	bar_rise : Geom, F32 -> F32
+	bar_rise = |g, bx| if (g.p >= 1.0) (1.0) else if (g.head_x >= bx) ((((g.head_x - bx) / g.plot_w) * 5.0).min(1.0)) else 0.0
 }
 
 # the tonnage label's two regimes and the boundary between them: whole kg

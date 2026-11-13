@@ -92,7 +92,7 @@ Curve :: [].{
 						frame.circle!({ center: { x, y: rec_y }, radius: 9.0 + ntri * 3.0, style: Draw.filled(Color.with_alpha(Theme.gold_c, halo_a)) })
 					}
 					if (r.pr.w == 0) {
-						# a rung with no effort on record keeps its label and rail, nothing else
+						# a rung with no effort on record keeps its name on the axis and draws no dot
 					} else if is_record(r) {
 						# the window best IS the record: one teal dot. Teal is the
 						# house "good" accent; the dot and its delta tell
@@ -152,8 +152,8 @@ Curve :: [].{
 	}
 
 	# ── the layout the drawing, the scene and the gate share ───────────────
-	# the rungs with values on record or in either window: eight zero rungs
-	# IS the no-records state, since the loader materializes every rung
+	# the rungs with values on record or in either window: every rung at
+	# zero IS the no-records state, since the loader materializes every rung
 	has_records : Ui.Model -> Bool
 	has_records = |model| !(List.is_empty(model.prs)) and List.fold(model.prs, 0.I64, |a, pr| a + pr.w) != 0
 
@@ -445,7 +445,18 @@ Curve :: [].{
 			grid_rows(model, g),
 			|gr| fix(Scene.data(axis_text(curve, units, F32.round_to_i64_try(gr.v) ?? 0), 10.0, ink_faint), Theme.pad_l - 8.0, gr.y - 6.0, Right, panel),
 		)
-		rung_names = List.map(g.rungs, |r| fix(Scene.data(r.pr.rung, 12.0, ink_faint), x_at(g, r.i), pad_t + g.ph - 18.0, Center, panel))
+		# a rung's name on the axis row under its column, or, when a dot or a
+		# ring near the axis floor reaches into that row, just above it
+		shapes = List.map(plot_marks(g), |m| m.box)
+		rung_names = List.map(
+			g.rungs,
+			|r| {
+				x = x_at(g, r.i)
+				w = measure(r.pr.rung, 12.0, Data)
+				row = { x: Labels.left_of(x, w, Center), y: pad_t + g.ph - 18.0, w, h: 12.0 }
+				fix(Scene.data(r.pr.rung, 12.0, ink_faint), x, (lift_clear(row, shapes)).y, Center, panel)
+			},
+		)
 		gutter =
 			if g.folded {
 				gx = Theme.pad_l + short_gutter / 2.0 - 14.0
@@ -556,38 +567,77 @@ Curve :: [].{
 		List.join([tiles, grid, rung_names, gutter, legend, cp, marks, rings, zones, caption])
 	}
 
-	# what the plot's labels keep off: the chrome, the chips and tiles, every
-	# dot and ring, the legend's swatches, and this and the previous window's
-	# lines. A fresh record's halo is a glow text may sit over, so it is not
-	# one.
+	# what the plot's labels keep off: the chrome, every shape the view
+	# draws (marks), and this and the previous window's lines
 	obstacles : Ui.Model, Scene.Measure -> Labels.Obstacles
 	obstacles = |model, measure| {
-		dot = |x, y, r| { x: x - r, y: y - r, w: 2.0 * r, h: 2.0 * r }
-		chips = List.concat(List.map(range_chips(model), |c| c.box), List.map(curve_chip_boxes(model), |c| c.box))
-		chrome = Chrome.boxes(model, measure)
+		boxes = List.concat(Chrome.boxes(model, measure), List.map(marks(model, measure), |m| m.box))
+		if (has_records(model)) { boxes, segs: (geom(model)).segs } else { boxes, segs: [] }
+	}
+
+	# the shapes no text may cover but its own: the pills and the XP rail,
+	# the range and curve chips, and with records on file the tiles, the
+	# plot's dots and rings and the legend's swatches
+	marks : Ui.Model, Scene.Measure -> List(Labels.Mark)
+	marks = |model, measure| {
+		chips = List.concat(
+			List.map(range_chips(model), |c| { key: "the ${c.label} chip", box: c.box }),
+			List.map(curve_chip_boxes(model), |c| { key: "the ${c.label} chip", box: c.box }),
+		)
+		shapes = List.concat(Chrome.marks(model), chips)
 		if has_records(model) {
 			g = geom(model)
-			dots = List.join(
-				List.map(
-					g.rungs,
-					|r| {
-						x = x_at(g, r.i)
-						rec_y = y_at(g, I64.to_f32(r.pr.w))
-						own =
-							if (r.pr.w == 0) []
-							else if (is_record(r)) [dot(x, rec_y, 5.0)]
-							else List.join([[dot(x, rec_y, 2.5)], if (r.prev_w > 0 and r.prev_w < r.pr.w) [dot(x, y_at(g, I64.to_f32(r.prev_w)), 3.5)] else [], if (r.now_w > 0) [dot(x, y_at(g, I64.to_f32(r.now_w)), 4.0)] else []])
-						own
-					},
-				),
-			)
-			rings = List.map(g.rings, |rg| dot(rg.x, rg.y, ring_r + 1.0))
-			swatches = List.map(legend_rows(g, measure), |e| { x: e.x, y: caption_top, w: 16.0, h: 12.0 })
-			{ boxes: List.join([chrome, chips, tile_boxes(model.win.w), dots, rings, swatches]), segs: g.segs }
+			tiles = List.map_with_index(tile_boxes(model.win.w), |b, i| { key: "tile ${U64.to_str(i + 1)}", box: b })
+			swatches = List.map(legend_rows(g, measure), |e| { key: "the ${e.it.label} swatch", box: { x: e.x, y: caption_top, w: 16.0, h: 12.0 } })
+			List.join([shapes, tiles, plot_marks(g), swatches])
 		} else {
-			{ boxes: List.concat(chrome, chips), segs: [] }
+			shapes
 		}
 	}
+
+	# the plot's dots and planned rings as drawn: a record rung's one dot, or
+	# its best-ever dot with the previous window's under the record and this
+	# window's; a rung with nothing on record draws none. A fresh record's
+	# halo is a glow text may sit over, so it is not one.
+	plot_marks : Geom -> List(Labels.Mark)
+	plot_marks = |g| {
+		dot = |key, x, y, r| { key, box: { x: x - r, y: y - r, w: 2.0 * r, h: 2.0 * r } }
+		dots = List.join(
+			List.map(
+				g.rungs,
+				|r| {
+					x = x_at(g, r.i)
+					rec_y = y_at(g, I64.to_f32(r.pr.w))
+					if (r.pr.w == 0) []
+					else if (is_record(r)) [dot("the ${r.pr.rung} record dot", x, rec_y, 5.0)]
+					else
+						List.join([
+							[dot("the ${r.pr.rung} best-ever dot", x, rec_y, 2.5)],
+							if (r.prev_w > 0 and r.prev_w < r.pr.w) [dot("the ${r.pr.rung} previous-window dot", x, y_at(g, I64.to_f32(r.prev_w)), 3.5)] else [],
+							if (r.now_w > 0) [dot("the ${r.pr.rung} this-window dot", x, y_at(g, I64.to_f32(r.now_w)), 4.0)] else [],
+						])
+				},
+			),
+		)
+		List.concat(dots, List.map(g.rings, |rg| dot("the planned ring at ${Db.fmt_i(rg.x)}", rg.x, rg.y, ring_r + 1.0)))
+	}
+
+	# a box lifted clear of the shapes: unchanged when it covers none, else
+	# moved to rung_name_gap above the highest shape it covers, and again
+	# from there until it covers none
+	lift_clear : Labels.Rect, List(Labels.Rect) -> Labels.Rect
+	lift_clear = |b, shapes| {
+		hits = List.keep_if(shapes, |s| Labels.intersects(b, s))
+		if List.is_empty(hits) {
+			b
+		} else {
+			lift_clear({ ..b, y: List.fold(hits, b.y + b.h, |a, s| F32.min(a, s.y)) - rung_name_gap - b.h }, shapes)
+		}
+	}
+
+	# the air between a lifted rung name and the shape under it
+	rung_name_gap : F32
+	rung_name_gap = 2.0
 
 	# the planned ring's radius
 	ring_r : F32
@@ -771,7 +821,7 @@ Curve :: [].{
 	# tile_top, and the caption row at caption_top carries the legend on the
 	# left and the unpushed caption or the loading note on the right, ending
 	# before the plot starts at plot_top. Click and hover tests in main.roc
-	# use the same 64..86 chip band.
+	# test the same chip band.
 	chip_top : F32
 	chip_top = 64.0
 
@@ -1167,13 +1217,13 @@ Curve :: [].{
 		}
 
 	# a label keeps this much plot between itself and the right edge, so it
-	# reads apart from the CP label drawn just beyond it
+	# reads apart from the zone names beyond it
 	label_inset : F32
 	label_inset = 8.0
 
 	# a label centred on a rung stays inside the plot: the last rung sits on
-	# the plot's right edge, where a centred label would run into the CP
-	# label beyond it, so the centre moves in by what overhangs. A label
+	# the plot's right edge, where a centred label would run into the zone
+	# names beyond it, so the centre moves in by what overhangs. A label
 	# wider than the plot centres on it
 	label_center_within : F32, F32, F32, F32 -> F32
 	label_center_within = |x, half_w, lo, hi|
@@ -1183,8 +1233,8 @@ Curve :: [].{
 	# where a delta may sit, top-left corners in order of preference: between
 	# its two dots, right of the rung and then left of it; then above the
 	# upper dot or below the lower one, right side first. A side that would
-	# leave the plot is never offered: past hi on the right, where the CP
-	# label sits, or before lo on the left, where the axis labels sit. The
+	# leave the plot is never offered: past hi on the right, where the zone
+	# names sit, or before lo on the left, where the axis labels sit. The
 	# placer takes the first spot clear of every line and label, and with
 	# every spot crossed by a line, the first clear of every label.
 	delta_spots : { x : F32, w : F32, h : F32, mid : F32, upper : F32, lower : F32, lo : F32, hi : F32 } -> List({ x : F32, y : F32 })
@@ -1488,7 +1538,8 @@ Curve :: [].{
 
 	# the title shares the chip row, so the chips start where its text ends:
 	# its left inset, its width at the title's size (title_char_w per
-	# character, an upper bound for the size-15 face) and a gap
+	# character, generous against the size-15 prose face's average advance)
+	# and a gap
 	title_char_w : F32
 	title_char_w = 9.0
 
@@ -1752,6 +1803,17 @@ expect Curve.cp_label_spots(130.0, 500.0, [300.0, 420.0]) == [{ x: 140.0, y: 484
 expect Curve.cp_label_spots(130.0, 500.0, [490.0]) == [{ x: 140.0, y: 504.0 }, { x: 140.0, y: 484.0 }]
 expect List.first(Curve.cp_label_spots(130.0, 500.0, [490.0, 510.0])) == Ok({ x: 140.0, y: 484.0 })
 expect Curve.fit_tag("pace:Run", Metric, { cp: 4.0, w_prime: 200.0, r2: 0.95, points: 3.0, ok: Bool.True }) == "CS 4:10/km" and Curve.fit_tag("Ride", Metric, { cp: 247.3, w_prime: 9000.0, r2: 0.95, points: 3.0, ok: Bool.True }) == "CP 247.3W"
+# a rung name clear of every shape keeps the axis row; one on a dot rises
+# to just above it, and again over a dot that then sits in its way
+expect {
+	row = { x: 100.0, y: 500.0, w: 30.0, h: 12.0 }
+	low = { x: 110.0, y: 505.0, w: 8.0, h: 8.0 }
+	above = { x: 112.0, y: 485.0, w: 8.0, h: 8.0 }
+	beside = { x: 200.0, y: 500.0, w: 8.0, h: 8.0 }
+	Curve.lift_clear(row, [beside]) == row
+		and Curve.lift_clear(row, [low, beside]) == { ..row, y: 505.0 - Curve.rung_name_gap - 12.0 }
+		and Curve.lift_clear(row, [low, above]) == { ..row, y: 485.0 - Curve.rung_name_gap - 12.0 }
+}
 # two targets at the same duration a few watts apart share one ring; targets
 # at different durations, or the same duration far apart in watts, keep their
 # own; clusters come out left to right with input indices
