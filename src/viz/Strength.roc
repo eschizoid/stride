@@ -232,8 +232,9 @@ Strength :: [].{
 	hint_h = 14.0
 
 	# The latest session card: its lines start under the session name (and
-	# under the unlogged note when it shows). Seven lines or fewer place the
-	# weeks heading at `least`. A longer session grows the card down, taking
+	# under the unlogged note when it shows). Seven lines or fewer, with no
+	# unlogged note, place the weeks heading at `least`; the note pushes it
+	# down by its own height. A longer session grows the card down, taking
 	# height from the tonnage chart until that chart is down to ton_least: at
 	# the full pitch when every line fits that way, else at the tight pitch.
 	# Lines past that scroll, and the card gives one hint_h of its room to
