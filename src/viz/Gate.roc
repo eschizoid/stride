@@ -25,13 +25,14 @@ Gate :: [].{
 	# A headless layout pass of every view over fixture athletes at the
 	# minimum, default and wide window sizes. Every scene's placed text, the
 	# chrome's included, must hold no two overlapping boxes and no box
-	# outside its region (Labels.check), and on the views that list their
-	# shapes no text may cover a shape but the one it is written inside
-	# (Labels.covers). The athletes come from the sport families in
-	# core.Sports, one per family plus a mixed one carrying a single session
-	# of a sport no family holds, and every pace family is also drawn in
-	# imperial units. Text is measured with headless fonts carrying the
-	# shipped faces' advances, so the gate needs no font file.
+	# outside its region (Labels.check), and on every view no text may cover
+	# a shape but the one it is written inside (Labels.covers); the boot
+	# splash and the XP rail's sheet run the first check alone. The athletes
+	# come from the sport families in core.Sports, one per family plus a
+	# mixed one carrying a single session of a sport no family holds, and
+	# every pace family is also drawn in imperial units. Text is measured
+	# with headless fonts carrying the shipped faces' advances, so the gate
+	# needs no font file.
 
 	# the data face's metrics as the window loads them: JetBrains Mono's
 	# advance is 600 of 1320 units of line height, and the 24 px atlas
@@ -461,7 +462,7 @@ Gate :: [].{
 
 	# every fixture's failures under a view's judge, each named by its
 	# fixture: empty is a clean gate. roc test reports only that an expect
-	# failed, so `dbg` this list inside the expect to read what overlapped.
+	# failed, so `dbg` this list inside the expect to read what failed.
 	failures : (Ui.Model -> List(Str)), List({ name : Str, model : Ui.Model }) -> List(Str)
 	failures = |judge, fixtures| List.join(List.map(fixtures, |f| List.map(judge(f.model), |e| "${f.name}: ${e}")))
 
@@ -1006,12 +1007,13 @@ expect List.len(Gate.athletes) == List.len(Sports.families) + List.len(Sports.pa
 expect !(List.contains(List.join(List.map(Sports.families, |f| f.sports)), Gate.rare))
 
 # the power view's gate: every curve, range and short-rung choice of every
-# athlete at every size places its text with no overlap and inside its
-# regions
-expect Gate.failures(|m| Labels.check(Curve.owned(m, Gate.measure)), Gate.curve_models) == []
+# athlete at every size; no text over a chip, a tile, a dot, a planned ring
+# or a legend swatch
+expect Gate.failures(|m| Gate.judge(Curve.owned(m, Gate.measure), Curve.marks(m, Gate.measure)), Gate.curve_models) == []
 
-# the career view's gate: every spine of every athlete at every size
-expect Gate.failures(|m| Labels.check(Career.owned(m, Gate.measure)), Gate.career_models) == []
+# the career view's gate: every spine of every athlete at every size; no
+# text over a chip, a card, a dot, a load bar, a legend swatch or the strip
+expect Gate.failures(|m| Gate.judge(Career.owned(m, Gate.measure), Career.marks(m, Gate.measure)), Gate.career_models) == []
 
 # the form board's gate: every athlete's board at every range, with an
 # event ahead and with the event-day story, at every size, and the two

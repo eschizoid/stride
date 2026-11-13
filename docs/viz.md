@@ -378,10 +378,13 @@ sport no family holds. The fixtures per view:
 - the boot splash at every dot count, slow and not, and the XP rail's sheet.
 
 For each scene the gate asserts that no two text boxes overlap, the
-chrome's included, and that every box stays inside its region; on every
-view but power and career it also asserts that no text covers a shape (a
-bar, a chip, a tile, a card, a pill, the XP rail) other than the one it is
-written inside. `roc test` reports only that the expect failed;
+chrome's included, that every box stays inside its region, and that no text
+covers a shape other than the one it is written inside. Each view lists the
+shapes it draws in its `marks`: the nav pills and the XP rail on every view,
+the bars, chips, tiles and cards of the views that draw them, the power
+view's dots, planned rings and legend swatches, and the career view's spine
+dots, load bars, legend swatches and composition strip. The boot splash and the XP rail's sheet run
+the first two checks alone. `roc test` reports only that the expect failed;
 `Gate.failures` names each failure by fixture, size and the texts and
 shapes involved, so `dbg` it inside the expect to read them.
 
@@ -604,9 +607,12 @@ dots, and a legend on the row above the plot names each line on the chart.
 The value axis spans what is drawn on screen (all three lines, the planned
 targets and the threshold line; folded short rungs do not count) with a
 small margin (5% on a power curve, out to round watts; 3% under and 2% over
-on a pace curve), so the gaps between the lines get the height. Behind the lines, faint bands mark the athlete's power zones from the
-FTP (Coggan's seven, the same table `stride zones` prints), alternate ones
-shaded and each named at the window's right edge where it is tall enough.
+on a pace curve), so the gaps between the lines get the height. Each rung's
+name sits on the axis row under its column; when a dot or a planned ring near
+the axis floor reaches into that row, the name rises to just above it. Behind
+the lines, faint bands mark the athlete's power zones from the FTP (Coggan's
+seven, the same table `stride zones` prints), alternate ones shaded and each
+named at the window's right edge where it is tall enough.
 A pace curve draws no bands, since Stride has no pace zones.
 
 The signed change at each rung is printed in watts beside it: teal going up,
