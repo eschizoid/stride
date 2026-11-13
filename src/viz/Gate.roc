@@ -381,6 +381,7 @@ Gate :: [].{
 			ghost_day: "",
 			trace_zoom: 1.0,
 			lifts_off: 0,
+			last_off: 0,
 			week_off: 0,
 			trace_pan: 0.0,
 			trace_cache: [],
@@ -948,7 +949,7 @@ Gate :: [].{
 							if List.any(athlete_heads(a), |h| Sports.class(h) == StrengthLike) {
 								[
 									{ name: "${a.name} lifts at ${size_name(sz)}", model: { ..base, strength: strength_of(Metric) } },
-									{ name: "${a.name} lifts in pounds, scrolled at ${size_name(sz)}", model: { ..base, strength: strength_of(Imperial), lifts_off: 10 } },
+									{ name: "${a.name} lifts in pounds, scrolled at ${size_name(sz)}", model: { ..base, strength: strength_of(Imperial), lifts_off: 10, last_off: 4 } },
 								]
 							} else {
 								[{ name: "${a.name} lifts with no lifting at ${size_name(sz)}", model: base }]
@@ -958,6 +959,24 @@ Gate :: [].{
 				),
 			),
 		)
+
+	# the default window at the default scale, in logical units
+	default_size : { w : F32, h : F32 }
+	default_size = {
+		l = DisplayScale.layout(DisplayScale.default_percent, { w: I32.to_f32(Theme.win_w), h: I32.to_f32(Theme.win_h) })
+		{ w: l.w, h: l.h }
+	}
+
+	# the lifts view for a lifter whose latest session logs the first `n`
+	# of set_rows, with no unlogged session above it
+	session_model : U64, { w : F32, h : F32 } -> Ui.Model
+	session_model = |n, sz| {
+		lifter = { name: "lifter", units: Imperial, sports: [{ sport: "WeightTraining", sessions: 140 }] }
+		sv = strength_of(Imperial)
+		last = { ..sv.last, log: { rows: List.take_first(set_rows, n), pasted: Bool.False } }
+		{ ..athlete_model(lifter, sz), view: 9, strength: { ..sv, last, unlogged: [] } }
+	}
+
 	# ── the boot splash's fixtures: its words at every size, at each dot
 	# count, with and without the note a slow load earns ─────────────────
 	splash_models : List({ name : Str, model : Ui.Model, slow : Str })
@@ -1038,9 +1057,74 @@ expect Gate.failures(|m| Gate.judge(Heat.owned(m, Gate.measure), Heat.marks(m)),
 expect Gate.failures(|m| Gate.judge(Zones.owned(m, Gate.measure), Zones.marks(m)), Gate.weeks_models(6)) == []
 expect Gate.failures(|m| Gate.judge(Ramp.owned(m, Gate.measure), Ramp.marks(m)), Gate.weeks_models(7)) == []
 
-# the lifts tab's gate: every athlete who lifts, in kilograms and scrolled
-# in pounds, and every athlete who does not, at every size
+# the lifts tab's gate: every athlete who lifts, in kilograms, and in pounds
+# with the lifts list and the session card both asked to scroll, each
+# clamped to what its size lets it scroll; and every athlete who does not;
+# all at every size
 expect Gate.failures(|m| Gate.judge(Strength.owned(m, Gate.measure), Strength.marks(m)), Gate.lifts_models) == []
+
+# the default window at the default scale lays out at the minimum size,
+# and its session card shows every exercise of an eight- or eleven-exercise
+# session unscrolled; twelve scroll there, the hint under them counting
+# the rest, and a full-scale window shows all twelve
+expect {
+	full = { w: I32.to_f32(Theme.win_w), h: I32.to_f32(Theme.win_h) }
+	eight = Strength.shown_last(Gate.session_model(8, Gate.default_size))
+	eleven = Strength.shown_last(Gate.session_model(11, Gate.default_size))
+	twelve = Strength.shown_last(Gate.session_model(12, Gate.default_size))
+	roomy = Strength.shown_last(Gate.session_model(12, full))
+	List.len(eight.rows) == 8
+		and List.len(eleven.rows) == 11
+		and List.len(twelve.rows) < 12
+		and twelve.hint == "${U64.to_str(12 - List.len(twelve.rows))} more below"
+		and List.len(roomy.rows) == 12
+}
+
+# at the default window a scrolled session card starts at its offset, at
+# the card's top, and its hint counts what it cut on both sides; the rows
+# it shows and the hint line under them stay card_gap above the weeks
+# heading
+expect {
+	long = Gate.session_model(20, Gate.default_size)
+	lines = Strength.last_lines(long)
+	at4 = Strength.shown_last({ ..long, last_off: 4 })
+	card = Strength.last_card(long.win.h, at4.total, Bool.False)
+	first = (List.first(at4.rows)).ok_or({ s: "", y: 0.0 })
+	at4.off == 4
+		and first.s == (List.get(lines, 4)).ok_or("absent")
+		and first.y == at4.at.top
+		and at4.n_shown + 4 < at4.total
+		and at4.hint == "4 more above, ${U64.to_str(at4.total - 4 - at4.n_shown)} more below"
+		and card.top + U64.to_f32(at4.n_shown) * card.pitch + Strength.hint_h + Strength.card_gap <= at4.weeks_top
+}
+
+# an offset past the card's end clamps to its last offset, which cuts
+# nothing below
+expect {
+	long = Gate.session_model(20, Gate.default_size)
+	last = Strength.last_last(long)
+	at99 = Strength.shown_last({ ..long, last_off: 99 })
+	last > 0
+		and at99.off == last
+		and at99.hint == "${U64.to_str(last)} more above"
+}
+
+# a wheel over a session card that scrolls moves the card; over a card
+# with nothing to scroll, over the weeks and tonnage charts below the card,
+# and over the lifts list it moves the lifts list
+expect {
+	long = Gate.session_model(20, Gate.default_size)
+	short = Gate.session_model(8, Gate.default_size)
+	sl = Strength.shown_last(long)
+	rx = Strength.right_x(long.win.w)
+	ton = Strength.ton_span(long.win.h, sl.weeks_top)
+	card_y = sl.at.top + 5.0
+	Strength.wheels_card(long, rx + 10.0, card_y)
+		and !(Strength.wheels_card(short, rx + 10.0, card_y))
+		and !(Strength.wheels_card(long, rx + 10.0, Strength.bars_top(sl.weeks_top) + 10.0))
+		and !(Strength.wheels_card(long, rx + 10.0, ton.top + 5.0))
+		and !(Strength.wheels_card(long, 50.0, card_y))
+}
 
 # the boot splash's gate: its words at every size and dot count, slow or not
 expect List.join(List.map(Gate.splash_models, |f| List.map(Labels.check(Scene.owned(Chrome.splash(f.model, Gate.measure, f.slow))), |e| "${f.name}: ${e}"))) == []
