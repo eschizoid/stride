@@ -381,6 +381,7 @@ Gate :: [].{
 			ghost_day: "",
 			trace_zoom: 1.0,
 			lifts_off: 0,
+			last_off: 0,
 			week_off: 0,
 			trace_pan: 0.0,
 			trace_cache: [],
@@ -948,7 +949,7 @@ Gate :: [].{
 							if List.any(athlete_heads(a), |h| Sports.class(h) == StrengthLike) {
 								[
 									{ name: "${a.name} lifts at ${size_name(sz)}", model: { ..base, strength: strength_of(Metric) } },
-									{ name: "${a.name} lifts in pounds, scrolled at ${size_name(sz)}", model: { ..base, strength: strength_of(Imperial), lifts_off: 10 } },
+									{ name: "${a.name} lifts in pounds, scrolled at ${size_name(sz)}", model: { ..base, strength: strength_of(Imperial), lifts_off: 10, last_off: 4 } },
 								]
 							} else {
 								[{ name: "${a.name} lifts with no lifting at ${size_name(sz)}", model: base }]
@@ -1039,8 +1040,34 @@ expect Gate.failures(|m| Gate.judge(Zones.owned(m, Gate.measure), Zones.marks(m)
 expect Gate.failures(|m| Gate.judge(Ramp.owned(m, Gate.measure), Ramp.marks(m)), Gate.weeks_models(7)) == []
 
 # the lifts tab's gate: every athlete who lifts, in kilograms and scrolled
-# in pounds, and every athlete who does not, at every size
+# in pounds with the session card scrolled too, and every athlete who does
+# not, at every size
 expect Gate.failures(|m| Gate.judge(Strength.owned(m, Gate.measure), Strength.marks(m)), Gate.lifts_models) == []
+
+# the default window at the default scale lays out at the minimum size,
+# and its session card shows every exercise of an eight- or eleven-exercise
+# session unscrolled; twelve scroll there, the hint under them counting
+# the rest, and a full-scale window shows all twelve
+expect {
+	lifter = { name: "lifter", units: Imperial, sports: [{ sport: "WeightTraining", sessions: 140 }] }
+	sv = Gate.strength_of(Imperial)
+	with_rows = |n, sz| {
+		last = { ..sv.last, log: { rows: List.take_first(Gate.set_rows, n), pasted: Bool.False } }
+		{ ..Gate.athlete_model(lifter, sz), view: 9, strength: { ..sv, last, unlogged: [] } }
+	}
+	full = { w: I32.to_f32(Theme.win_w), h: I32.to_f32(Theme.win_h) }
+	l = DisplayScale.layout(DisplayScale.default_percent, full)
+	default = { w: l.w, h: l.h }
+	eight = Strength.shown_last(with_rows(8, default))
+	eleven = Strength.shown_last(with_rows(11, default))
+	twelve = Strength.shown_last(with_rows(12, default))
+	roomy = Strength.shown_last(with_rows(12, full))
+	List.len(eight.rows) == 8
+		and List.len(eleven.rows) == 11
+		and List.len(twelve.rows) < 12
+		and twelve.hint == "${U64.to_str(12 - List.len(twelve.rows))} more below"
+		and List.len(roomy.rows) == 12
+}
 
 # the boot splash's gate: its words at every size and dot count, slow or not
 expect List.join(List.map(Gate.splash_models, |f| List.map(Labels.check(Scene.owned(Chrome.splash(f.model, Gate.measure, f.slow))), |e| "${f.name}: ${e}"))) == []

@@ -193,25 +193,106 @@ Strength :: [].{
 	right_w : F32 -> F32
 	right_w = |win_w| win_w - right_x(win_w) - 40.0
 
-	weeks_top : F32
-	weeks_top = lift_top + 40.0 + 7.0 * 17.0 + 16.0
-
-	bars_top : F32
-	bars_top = weeks_top + 22.0
+	# Below the latest session card sit the weeks chart and then tonnage, each
+	# placed from the top of the weeks heading, which the card decides
+	bars_top : F32 -> F32
+	bars_top = |weeks_top| weeks_top + 22.0
 
 	bars_h : F32
 	bars_h = 56.0
 
-	ton_top : F32
-	ton_top = bars_top + bars_h + 34.0
+	ton_top : F32 -> F32
+	ton_top = |weeks_top| bars_top(weeks_top) + bars_h + 34.0
 
 	# the tonnage chart's top and bottom, and whether the window leaves it
-	# room to draw
-	ton_span : F32 -> { top : F32, bottom : F32, drawn : Bool }
-	ton_span = |win_h| {
-		top = ton_top + 22.0
+	# the least height it draws in
+	ton_span : F32, F32 -> { top : F32, bottom : F32, drawn : Bool }
+	ton_span = |win_h, weeks_top| {
+		top = ton_top(weeks_top) + 22.0
 		bottom = win_h - 84.0 - 22.0
-		{ top, bottom, drawn: bottom - top >= 30.0 }
+		{ top, bottom, drawn: bottom - top >= ton_least }
+	}
+
+	ton_least : F32
+	ton_least = 30.0
+
+	# a session line's pitch, and the tighter one a long session falls back to
+	last_pitch : F32
+	last_pitch = 17.0
+
+	tight_pitch : F32
+	tight_pitch = 14.0
+
+	# The latest session card: its lines start under the session name (and
+	# under the unlogged note when it shows). The card holds seven lines at
+	# least, so a short session leaves the charts where they always were.
+	# A longer one grows the card down, taking height from the tonnage chart
+	# until that chart is down to ton_least: at the full pitch when every
+	# line fits that way, else at the tight pitch. Lines past that scroll,
+	# with one hint line under them.
+	last_card : F32, U64, Bool -> { top : F32, pitch : F32, room : F32, scrolls : Bool, weeks_top : F32 }
+	last_card = |win_h, n, note| {
+		first_y = if (note) (lift_top + 52.0) else lift_top + 40.0
+		least = lift_top + 40.0 + 7.0 * last_pitch + 16.0
+		at0 = ton_span(win_h, 0.0)
+		most = (at0.bottom - ton_least - at0.top).max(least)
+		place = |pitch| (first_y + U64.to_f32(n) * pitch + 16.0).min(most).max(least)
+		fits = |pitch| U64.to_f32(n) * pitch <= place(pitch) - 16.0 - first_y
+		pitch = if (fits(last_pitch)) last_pitch else tight_pitch
+		weeks_top = place(pitch)
+		fit = weeks_top - 16.0 - first_y
+		if (fits(pitch)) { top: first_y, pitch, room: fit, scrolls: Bool.False, weeks_top }
+		else { top: first_y, pitch, room: fit - 14.0, scrolls: Bool.True, weeks_top }
+	}
+
+	# the latest session's lines: one per logged exercise, or the one line
+	# that says why there are none; empty when there is no session
+	last_lines : Ui.Model -> List(Str)
+	last_lines = |model| {
+		sv = model.strength
+		if (sv.last.id < 0) []
+		else if (List.is_empty(sv.last.log.rows)) [Trace.no_sets_note(sv.last.log.pasted)]
+		else List.map(sv.last.log.rows, |r| (List.first(Wrap.fit(set_text(sv.mass, r), 46, 1))).ok_or(""))
+	}
+
+	# what a scrolled card has cut, on the one hint line under its lines
+	card_hint : U64, U64, U64 -> Str
+	card_hint = |off, n_shown, total| {
+		h = Scroll.hidden(off, n_shown, total)
+		above = if (h.above > 0) ["${U64.to_str(h.above)} more above"] else []
+		below = if (h.below > 0) ["${U64.to_str(h.below)} more below"] else []
+		Str.join_with(List.concat(above, below), ", ")
+	}
+
+	# the session lines on screen from the card's scroll offset, each with
+	# its top, where the card's scrollbar sits, the hint under the lines,
+	# and the weeks heading's top under the card
+	shown_last : Ui.Model -> { rows : List({ s : Str, y : F32 }), off : U64, n_shown : U64, total : U64, at : { x : F32, top : F32, bottom : F32, hint_x : F32 }, hint : Str, weeks_top : F32 }
+	shown_last = |model| {
+		lines = last_lines(model)
+		total = List.len(lines)
+		card = last_card(model.win.h, total, unlogged_note(model.strength.unlogged) != "")
+		heights = List.repeat(card.pitch, total)
+		off = model.last_off.min(Scroll.last_offset(heights, card.room))
+		n_shown = Scroll.shown(heights, off, card.room)
+		rx = right_x(model.win.w)
+		{
+			rows: List.map_with_index(List.take_first(List.drop_first(lines, off), n_shown), |s, i| { s, y: card.top + U64.to_f32(i) * card.pitch }),
+			off,
+			n_shown,
+			total,
+			at: { x: rx + right_w(model.win.w) + 8.0, top: card.top, bottom: card.top + card.room, hint_x: rx },
+			hint: card_hint(off, n_shown, total),
+			weeks_top: card.weeks_top,
+		}
+	}
+
+	# the last offset the session card may scroll to
+	last_last : Ui.Model -> U64
+	last_last = |model| {
+		total = List.len(last_lines(model))
+		card = last_card(model.win.h, total, unlogged_note(model.strength.unlogged) != "")
+		Scroll.last_offset(List.repeat(card.pitch, total), card.room)
 	}
 
 	# ── every string the view writes, placed ───────────────────────────────
@@ -250,18 +331,19 @@ Strength :: [].{
 			}
 		rx = right_x(win_w)
 		rw = right_w(win_w)
+		sl = shown_last(model)
+		weeks_top = sl.weeks_top
 		last =
 			if sv.last.id < 0 {
 				[txt("no strength session yet", 13.0, rx, lift_top, ink_muted)]
 			} else {
 				head = if (List.is_empty(sv.last.log.rows)) "last session - ${sv.last.day}" else "last logged session - ${sv.last.day}"
 				note = unlogged_note(sv.unlogged)
-				first_y = if (note == "") (lift_top + 40.0) else lift_top + 52.0
-				lines = if (List.is_empty(sv.last.log.rows)) [Trace.no_sets_note(sv.last.log.pasted)] else List.map(List.take_first(sv.last.log.rows, 6), |r| (List.first(Wrap.fit(set_text(units, r), 46, 1))).ok_or(""))
 				List.join([
 					[txt(head, 13.0, rx, lift_top, Color.white), txt((List.first(Wrap.fit(sv.last.name, 46, 1))).ok_or(""), 12.0, rx, lift_top + 18.0, ink_faint)],
 					if (note == "") [] else [txt((List.first(Wrap.fit(note, 46, 1))).ok_or(""), 11.0, rx, lift_top + 34.0, ink_faint)],
-					List.map_with_index(lines, |l, i| txt(l, 12.0, rx, first_y + U64.to_f32(i) * 17.0, ink_muted)),
+					List.map(sl.rows, |r| txt(r.s, 12.0, rx, r.y, ink_muted)),
+					if (sl.hint == "") [] else [Scene.fixed(measure, Scene.data(sl.hint, 10.0, ink_faint), { x: rx, y: sl.at.bottom + 2.0, align: Left }, panel)],
 				])
 			}
 		weeks =
@@ -269,8 +351,8 @@ Strength :: [].{
 				[]
 			} else {
 				[
-					txt("12 weeks ago", 11.0, rx, bars_top + bars_h + 6.0, ink_faint),
-					Scene.fixed(measure, Scene.data("this week so far", 11.0, ink_faint), { x: rx + rw, y: bars_top + bars_h + 6.0, align: Right }, panel),
+					txt("12 weeks ago", 11.0, rx, bars_top(weeks_top) + bars_h + 6.0, ink_faint),
+					Scene.fixed(measure, Scene.data("this week so far", 11.0, ink_faint), { x: rx + rw, y: bars_top(weeks_top) + bars_h + 6.0, align: Right }, panel),
 				]
 			}
 		ton_bottom = win_h - 84.0
@@ -280,26 +362,29 @@ Strength :: [].{
 			last,
 			[txt("sessions a week: with sets, without", 12.0, rx, weeks_top, ink_muted)],
 			weeks,
-			[txt("tonnage - volume, not strength", 12.0, rx, ton_top, ink_muted)],
+			[txt("tonnage - volume, not strength", 12.0, rx, ton_top(weeks_top), ink_muted)],
 			List.map_with_index(tonnage_caption(units, sv.tonnage), |l, i| txt(l, 11.0, rx, ton_bottom - 10.0 + U64.to_f32(i) * 15.0, ink_faint)),
 			[txt(hint_text, 13.0, 36.0, win_h - 30.0, ink_faint)],
 		])
 	}
 
 	# the shapes no text may cover: the pills, each lift's sparkline and
-	# direction mark, the scrollbar, the weeks chart and the tonnage chart
+	# direction mark, both scrollbars, the weeks chart and the tonnage chart
 	marks : Ui.Model -> List(Labels.Mark)
 	marks = |model| {
 		s = shown_lifts(model)
 		h = Scroll.hidden(s.off, s.n_shown, List.len(model.strength.lifts))
+		sl = shown_last(model)
+		hl = Scroll.hidden(sl.off, sl.n_shown, sl.total)
 		rx = right_x(model.win.w)
 		rw = right_w(model.win.w)
-		ton = ton_span(model.win.h)
+		ton = ton_span(model.win.h, sl.weeks_top)
 		List.join([
 			Chrome.marks(model),
 			List.join(List.map(s.rows, |r| [{ key: "the ${r.l.exercise} sparkline", box: spark_box(r.y) }, { key: "the ${r.l.exercise} direction", box: arrow_box(r.y) }])),
 			if (h.above == 0 and h.below == 0) [] else [{ key: "the scrollbar", box: { x: s.at.x, y: s.at.top, w: 3.0, h: s.at.bottom - s.at.top } }],
-			if (List.is_empty(model.strength.weeks)) [] else [{ key: "the weeks chart", box: { x: rx, y: bars_top, w: rw, h: bars_h + 1.0 } }],
+			if (hl.above == 0 and hl.below == 0) [] else [{ key: "the session card's scrollbar", box: { x: sl.at.x, y: sl.at.top, w: 3.0, h: sl.at.bottom - sl.at.top } }],
+			if (List.is_empty(model.strength.weeks)) [] else [{ key: "the weeks chart", box: { x: rx, y: bars_top(sl.weeks_top), w: rw, h: bars_h + 1.0 } }],
 			if (List.is_empty(model.strength.tonnage) or !(ton.drawn)) [] else [{ key: "the tonnage chart", box: { x: rx - 3.5, y: ton.top - 3.5, w: rw + 7.0, h: ton.bottom - ton.top + 7.0 } }],
 		])
 	}
@@ -352,6 +437,8 @@ Strength :: [].{
 		}
 		rx = right_x(win_w)
 		rw = right_w(win_w)
+		sl = shown_last(model)
+		Scroll.draw!(frame, sl.at, sl.off, sl.n_shown, sl.total)
 		n_w = List.len(sv.weeks)
 		if n_w > 0 {
 			gap = 4.0
@@ -365,7 +452,7 @@ Strength :: [].{
 					a = if (x.i == n_w - 1) 110 else 255
 					with_h = I64.to_f32(x.w.with_sets) * unit_h
 					without_h = I64.to_f32(x.w.total - x.w.with_sets) * unit_h
-					base = bars_top + bars_h
+					base = bars_top(sl.weeks_top) + bars_h
 					frame.rectangle!({ x: bx, y: base - with_h, width: bw, height: with_h, style: Draw.filled(Color.with_alpha(strength_c, a)) })
 					frame.rectangle!({ x: bx, y: base - with_h - without_h, width: bw, height: without_h, style: Draw.filled(Color.with_alpha(ink_faint, a)) })
 					frame.rectangle!({ x: bx, y: base, width: bw, height: 1.0, style: Draw.filled(Color.with_alpha(ink_faint, 120)) })
@@ -376,7 +463,7 @@ Strength :: [].{
 		# hollow point, the month in progress joined dashed and muted
 		ms = sv.tonnage
 		n_m = List.len(ms)
-		ton = ton_span(model.win.h)
+		ton = ton_span(model.win.h, sl.weeks_top)
 		if n_m > 0 and ton.drawn {
 			hi = List.fold(ms, 1.0, |a, m| F64.max(a, m.kg))
 			mx = |i| rx + (if (n_m <= 1) (rw / 2.0) else U64.to_f32(i) * rw / U64.to_f32(n_m - 1))
@@ -435,5 +522,41 @@ expect Strength.set_text(Imperial, { exercise: "Curl", sets: 3, reps: 0, kg: 9.0
 # the newer unlogged sessions are named on one muted line
 expect Strength.unlogged_note([]) == "" and Strength.unlogged_note([{ day: "2026-11-07", name: "a" }]) == "newer, no sets logged: 2026-11-07"
 expect Strength.unlogged_note([{ day: "2026-11-07", name: "a" }, { day: "2026-11-04", name: "b" }]) == "newer, no sets logged: 2026-11-07, 2026-11-04"
+# at the minimum layout (the default window at the default scale) a short
+# session leaves the charts where seven lines put them, and eight lines
+# still fit at the full pitch, moving the charts down by one line
+expect {
+	six = Strength.last_card(600.0, 6, Bool.False)
+	seven = Strength.last_card(600.0, 7, Bool.False)
+	eight = Strength.last_card(600.0, 8, Bool.False)
+	six.weeks_top == seven.weeks_top
+		and !(eight.scrolls)
+		and eight.pitch == Strength.last_pitch
+		and eight.weeks_top == seven.weeks_top + Strength.last_pitch
+}
+# ten and eleven lines fit there at the tight pitch, the eleven even under
+# the unlogged note, whose line pushes the card's lines down
+expect {
+	ten = Strength.last_card(600.0, 10, Bool.False)
+	eleven = Strength.last_card(600.0, 11, Bool.True)
+	!(ten.scrolls)
+		and ten.pitch == Strength.tight_pitch
+		and !(eleven.scrolls)
+		and eleven.top > ten.top
+}
+# twelve lines scroll there, after the tonnage chart has given all but its
+# least height; a taller window holds them at the full pitch
+expect {
+	twelve = Strength.last_card(600.0, 12, Bool.False)
+	ton = Strength.ton_span(600.0, twelve.weeks_top)
+	tall = Strength.last_card(900.0, 12, Bool.False)
+	twelve.scrolls
+		and (ton.bottom - ton.top - Strength.ton_least).abs() < 0.01
+		and ton.drawn
+		and !(tall.scrolls)
+		and tall.pitch == Strength.last_pitch
+}
+# the hint names what the scroll has cut on each side
+expect Strength.card_hint(0, 9, 12) == "3 more below" and Strength.card_hint(2, 9, 12) == "2 more above, 1 more below" and Strength.card_hint(3, 9, 12) == "3 more above" and Strength.card_hint(0, 8, 8) == ""
 # a rounding difference between sources draws flat; a real step keeps its size
 expect Strength.spark_span(11.3, 11.3398) > 1.6 and Strength.spark_span(9.0, 13.6) == 4.6

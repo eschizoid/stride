@@ -114,8 +114,10 @@ Ui :: [].{
 		ghost_day : Str,
 		# the trace camera: zoom >= 1 windows [pan, pan + 1/zoom] of the session
 		trace_zoom : F32,
-		# the first row drawn in the lifts list and in the plan's week ladder (Scroll)
+		# the first row drawn in the lifts list, in the lifts view's session card
+		# and in the plan's week ladder (Scroll)
 		lifts_off : U64,
+		last_off : U64,
 		week_off : U64,
 		trace_pan : F32,
 		# the sessions whose samples are in memory, by picker index: the load
