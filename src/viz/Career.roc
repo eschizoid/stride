@@ -397,8 +397,12 @@ Career :: [].{
 	streak_box : F32 -> Labels.Rect
 	streak_box = |win_w| { x: win_w - 36.0 - 196.0 - 110.0, y: 62.0, w: 100.0, h: 26.0 }
 
-	# the flame's square at the chip's left, clear of the streak text, which
-	# starts 26 in
+	# where the streak text starts, right of the flame; the draw site and the
+	# expect that keeps the flame clear of the text both read it
+	streak_text_x : F32 -> F32
+	streak_text_x = |win_w| streak_box(win_w).x + 26.0
+
+	# the flame's square at the chip's left, ending before streak_text_x
 	flame_box : F32 -> Labels.Rect
 	flame_box = |win_w| {
 		sb = streak_box(win_w)
@@ -924,7 +928,7 @@ Career :: [].{
 				sb = streak_box(win_w)
 				List.concat(
 					[fix(Scene.data("LVL ${I64.to_str(lvl)}", 13.0, Theme.gold_c), lb.x + 10.0, 68.0, Left, lb), fix(Scene.data(Hud.tier(lvl), 11.0, ink_muted), lb.x + 62.0, 70.0, Left, lb)],
-					if (shown.streak) [fix(Scene.data("${I64.to_str(Hud.streak_weeks(model.heat))} wk streak", 11.0, Theme.ember_c), sb.x + 26.0, 70.0, Left, sb)] else [],
+					if (shown.streak) [fix(Scene.data("${I64.to_str(Hud.streak_weeks(model.heat))} wk streak", 11.0, Theme.ember_c), streak_text_x(win_w), 70.0, Left, sb)] else [],
 				)
 			} else {
 				[]
@@ -1168,14 +1172,14 @@ expect Career.spine_label(Metric, 11970, "tonnage", "WeightTraining") == "1.2t"
 expect Career.spine_label(Metric, 8500, "tonnage", "WeightTraining") == "850kg"
 
 # the flame sits wholly inside the streak chip and ends before the streak
-# text, which starts 26 in from the chip's left edge
+# text starts
 expect {
 	sb = Career.streak_box(1400.0)
 	fb = Career.flame_box(1400.0)
 	fb.x >= sb.x
 		and fb.y >= sb.y
 		and fb.y + fb.h <= sb.y + sb.h
-		and fb.x + fb.w <= sb.x + 26.0
+		and fb.x + fb.w <= Career.streak_text_x(1400.0)
 }
 
 # members of one family merge and the segment carries the family head, so a
