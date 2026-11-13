@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.23.0](https://github.com/eschizoid/stride/compare/v0.22.0...v0.23.0) (2026-11-13)
+
+
+### Features
+
+* **viz:** every view places its labels through the placer, and the gate covers them all ([#697](https://github.com/eschizoid/stride/issues/697)) ([85dd0c9](https://github.com/eschizoid/stride/commit/85dd0c984df46380b16a3baa2efea77a0e7016ae))
+* **viz:** one label placer for every view, and a gate that fails on overlapping labels ([#695](https://github.com/eschizoid/stride/issues/695)) ([5832e90](https://github.com/eschizoid/stride/commit/5832e908ecedec5f402b75d5d08d1b05e0c34cca))
+* **viz:** the streak chip wears the flame emoji ([#701](https://github.com/eschizoid/stride/issues/701)) ([82b64b0](https://github.com/eschizoid/stride/commit/82b64b0b43901aed9f74806653f5ca95a3e1e7d6))
+
+
+### Bug Fixes
+
+* **viz:** the lifts view's session card shows every exercise ([#703](https://github.com/eschizoid/stride/issues/703)) ([2c20b77](https://github.com/eschizoid/stride/commit/2c20b77a17ff9245d33598ee14a44062dbc9336d))
+* **viz:** the overlap gate checks power and career text against their shapes ([#699](https://github.com/eschizoid/stride/issues/699)) ([b62506c](https://github.com/eschizoid/stride/commit/b62506c8a8be16bb9ff0576987cdb87a33beee91))
+
 ## [0.22.0](https://github.com/eschizoid/stride/compare/v0.21.0...v0.22.0) (2026-11-12)
 
 
