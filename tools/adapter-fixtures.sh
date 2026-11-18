@@ -6,7 +6,8 @@
 # Three checks, each a property the adapter pack states in prose and nothing
 # else holds:
 #   1. the table's ORDER is pinned — it is the disambiguation rule (the first
-#      adapter to yield rows wins), so a reorder is a deliberate edit here;
+#      adapter to recognize the text, by rows or unread pieces, wins), so a
+#      reorder is a deliberate edit here;
 #   2. every table row names a module in the package and every parser module
 #      is a table row — a row with no module fails to compile, but a module
 #      with no row compiles fine and reads as coverage it never gives; and a

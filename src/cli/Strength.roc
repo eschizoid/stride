@@ -138,10 +138,11 @@ expect {
 	List.len(p.rows) == 2 and (Strength.tonnage_kg(p.rows) - 300.0).abs() < 0.001
 }
 
-# the dispatcher: the first adapter to yield rows names the provenance, and
-# unrecognized text is "" with no rows — the honest-gap contract at the pack
-# level, not just per adapter. A share summary falls past the strava adapter
-# to peloton; a workout object stops at strava.
+# the dispatcher: the first adapter to recognize the text, by rows or
+# unread pieces, names the provenance, and unrecognized text is "" with no
+# rows — the honest-gap contract at the pack level, not just per adapter. A
+# share summary falls past the strava adapter to peloton; a workout object
+# stops at strava.
 expect {
 	p = Strength.parse("A\n3 × 8 • 30 lbs")
 	p.source == "peloton" and List.len(p.rows) == 1

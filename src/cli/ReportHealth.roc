@@ -399,7 +399,7 @@ ReportHealth :: [].{
 						[]
 				unread_hint =
 					if (p.strength_unread_lines > 0)
-						["", "  → ${(p.strength_unread_lines).to_str()} set lines in the last ${(Report.strength_missing_window_days).to_str()} days could not be read, so their sets are missing from tonnage: ${Str.join_with(List.map(p.strength_unread_ids, |i| i.to_str()), ", ")} — fix the line in the description, then `stride sync` and `stride analyze`"]
+						["", "  → ${(p.strength_unread_lines).to_str()} pieces of strength text in the last ${(Report.strength_missing_window_days).to_str()} days could not be read, so their sets are missing from tonnage: ${Str.join_with(List.map(p.strength_unread_ids, |i| i.to_str()), ", ")} — fix a pasted line in the description, then `stride sync` and `stride analyze`; for a logged session, re-run `stride strength import` with a corrected log"]
 					else
 						[]
 				# a list of zero or one lines, like `hint` above, so `""` keeps meaning

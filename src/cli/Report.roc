@@ -253,10 +253,11 @@ Report :: [].{
 	}
 
 	# Strength-family activities from the same window whose stored text holds
-	# set lines its adapter could not read, newest first, each with those
-	# lines (Analyze.strength_unread_all!). Their sets are missing from
-	# tonnage; editing the description and re-syncing, or a parser that
-	# reads the shape, brings them in at the next analyze.
+	# pieces its adapter could not read, newest first, each with those pieces
+	# (Analyze.strength_unread_all!). Their sets are missing from tonnage. A
+	# pasted line comes in at the next analyze once the description is fixed
+	# and synced; a logged set, once the log is imported again, since a stored
+	# log wins over the description (Analyze.strength_texts!).
 	strength_unread! : Str => Try(List({ id : I64, lines : List(Str) }), _)
 	strength_unread! = |path| {
 		cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - strength_missing_window_days)

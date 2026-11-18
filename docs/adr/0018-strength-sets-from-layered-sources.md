@@ -59,15 +59,16 @@ Second, description adapters. When an activity has no stored log, its
 description is tried against an ordered table of parsers in
 `src/cli/Strength.roc`. The parsers themselves live in the `src/strength`
 package, one module per source, so a new format is a new file rather than a
-longer one. `Adapter.roc` states the contract every module keeps: pure
-`Str -> List(SetRow)`, tolerant of junk, silent on formats it does not
-recognize, and shipping a real sample of its source's text as a top-level
-`sample` that its own expects parse. The stored log is read by the same
-table: `StravaLog.roc` parses a workout object and sits first, because JSON is
-the narrower grammar, and `Peloton.roc` parses Peloton's share summary below
-it. Each table row holds a name and a parse function, the same shape as
-`Sports.families`, so registering a module is one row. The first adapter that
-matches wins, so the table's order is part of the decision.
+longer one. `Adapter.roc` states the contract every module keeps: a pure
+`parse : Str -> List(SetRow)`, tolerant of junk, silent on formats it does not
+recognize, an `unread` beside it (below), and a real sample of its source's
+text as a top-level `sample` that its own expects parse. The stored log is
+read by the same table: `StravaLog.roc` parses a workout object and sits
+first, because JSON is the narrower grammar, and `Peloton.roc` parses
+Peloton's share summary below it. Each table row holds a name, a parse
+function and an unread function, the same shape as `Sports.families`, so
+registering a module is one row. The first adapter that recognizes the text
+wins, so the table's order is part of the decision.
 
 Beside `parse`, each adapter keeps an `unread` function: the pieces of text
 in its own format that it saw and could not turn into a row. For the Peloton

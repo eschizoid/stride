@@ -165,7 +165,7 @@
     },
     "strength_unread_ids": {
       "type": "array",
-      "description": "The activity ids whose text holds the pieces counted by strength_unread_lines, newest first. Editing the description, then `stride sync` and `stride analyze`, brings a fixed line in.",
+      "description": "The activity ids whose text holds the pieces counted by strength_unread_lines, newest first. A pasted line comes in once the description is fixed and `stride sync` and `stride analyze` run; a logged set, once `stride strength import` runs again with a corrected log, since a stored log wins over the description.",
       "items": {
         "type": "integer"
       }

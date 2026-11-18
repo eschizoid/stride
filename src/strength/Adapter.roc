@@ -8,9 +8,10 @@ Adapter :: [].{
 	# sources write different grammars, so parsing is an ADAPTER PACK: one
 	# module per source in this package, each a pure function from that text
 	# to set rows, registered in `src/cli/Strength.roc`'s `adapters` table
-	# and tried in order; the first to yield rows names the row's
-	# provenance. One text comes from ONE source, so first-non-empty is
-	# format detection, not a merge.
+	# and tried in order; the first to recognize the text, by reading rows
+	# from it or reporting unread pieces of it, names the row's provenance.
+	# One text comes from ONE source, so first-recognized is format
+	# detection, not a merge.
 	#
 	# Every adapter keeps this contract: a pure `parse : Str -> List(SetRow)`;
 	# TOLERANT (junk yields no rows, never an error, since the source is a
