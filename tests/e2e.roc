@@ -364,7 +364,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1432)?
+	checks_ran_exactly!(1437)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7592,6 +7592,23 @@ b_strength_import! = |ctx| {
 	_ = sh!("printf '%s' '${curl_log("9783")}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - >/dev/null")
 	check!("an imported log takes its session off the list", strjq!(ctx, ["doctor"], ".data.strength_without_sets_ids | ${mine}") == "9784")?
 	_ = sql!(ctx.db, "DELETE FROM strength_sets WHERE activity_id BETWEEN 9781 AND 9786; DELETE FROM strength_logs WHERE activity_id BETWEEN 9781 AND 9786; DELETE FROM strength_notes WHERE activity_id BETWEEN 9781 AND 9786; DELETE FROM activity_metrics WHERE activity_id BETWEEN 9781 AND 9786; DELETE FROM activities WHERE id BETWEEN 9781 AND 9786;")
+	# set lines a paste holds but no adapter can read are reported, not lost: a
+	# recent lift (9771) whose paste carries the app's no-load block, read at
+	# 0 kg, beside a line in a unit no grammar knows; an older lift (9772) with
+	# the same unreadable line falls outside the window
+	unread_before = I64.from_str(strjq!(ctx, ["doctor"], ".data.strength_unread_lines")) ?? -1
+	unread_paste = "Block 3\nCircuit • 3 rounds\nAssisted Pull Up\n3 × 6 • 0 lbs\nCurl\n3 × 12 • 15 stone"
+	_ = sql!(ctx.db, "INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance) VALUES (9771, 'unread recent lift', 'WeightTraining', ${day("2")}, 3600, 0), (9772, 'unread old lift', 'WeightTraining', ${day("40")}, 3600, 0); INSERT OR REPLACE INTO strength_notes (activity_id, description) VALUES (9771, '${unread_paste}'), (9772, 'Curl\n3 × 12 • 15 stone');")
+	unread_mine = "[.[] | select(. >= 9771 and . <= 9772)] | map(tostring) | join(\",\")"
+	check!("doctor names the recent session holding an unreadable set line, and not the older one", strjq!(ctx, ["doctor"], ".data.strength_unread_ids | ${unread_mine}") == "9771")?
+	check!("...and counts its one unreadable line", unread_before >= 0 and strjq!(ctx, ["doctor"], ".data.strength_unread_lines") == (unread_before + 1).to_str())?
+	check!("doctor conforms to its schema with the unread list populated", validate_schema!(ctx, "doctor", "doctor") == "")?
+	check!("...the doctor screen names the session to fix", Str.contains(stride_human!(ctx.bin, ctx.home, ["doctor"]), "could not be read") and Str.contains(stride_human!(ctx.bin, ctx.home, ["doctor"]), "9771"))?
+	# an import rebuilds every session's sets, as analyze does, without
+	# moving the load series later scenarios read
+	_ = sh!("printf '%s' '${curl_log("9772")}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - >/dev/null")
+	check!("the rebuild stores the no-load move at 0 kg and leaves the unreadable line out", Str.trim(sql!(ctx.db, "SELECT group_concat(exercise || ':' || sets || 'x' || reps || '@' || CAST(weight_kg AS INTEGER), ',') FROM strength_sets WHERE activity_id = 9771;")) == "Assisted Pull Up:3x6@0")?
+	_ = sql!(ctx.db, "DELETE FROM strength_sets WHERE activity_id IN (9771, 9772); DELETE FROM strength_logs WHERE activity_id IN (9771, 9772); DELETE FROM strength_notes WHERE activity_id IN (9771, 9772); DELETE FROM activity_metrics WHERE activity_id IN (9771, 9772); DELETE FROM activities WHERE id IN (9771, 9772);")
 	# one weight convention across sources: the same 25 lb dumbbells pasted as
 	# `25 lbs/side` (9791) and logged per hand as `25 lb` (9792) store the same
 	# per-hand weight, so the exercise's top_kg series is flat. Under

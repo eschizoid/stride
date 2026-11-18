@@ -251,6 +251,38 @@ Report :: [].{
 			rows: Sql.i64("id"),
 		})
 	}
+
+	# Strength-family activities from the same window whose stored text holds
+	# set lines its adapter could not read, newest first, each with those
+	# lines (Analyze.strength_unread_all!). Their sets are missing from
+	# tonnage; editing the description and re-syncing, or a parser that
+	# reads the shape, brings them in at the next analyze.
+	strength_unread! : Str => Try(List({ id : I64, lines : List(Str) }), _)
+	strength_unread! = |path| {
+		cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - strength_missing_window_days)
+		fam = (List.first(Sports.family("strength"))).ok_or("")
+		recent = Sql.query_many!({
+			path: Path.utf8(path),
+			query: \\SELECT a.id AS id FROM activities a
+				\\WHERE a.sport_family = :fam
+				\\  AND a.start_local >= :cutoff
+				\\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Desc)}, a.id DESC
+			,
+			bindings: [{ name: ":fam", value: String(fam) }, { name: ":cutoff", value: String(cutoff) }],
+			rows: Sql.i64("id"),
+		})?
+		unread = Analyze.strength_unread_all!(path)?
+		Ok(
+			List.keep_oks(
+				recent,
+				|id|
+					match List.find_first(unread, |u| u.aid == id) {
+						Ok(u) => Ok({ id, lines: u.unread })
+						Err(_) => Err(NothingUnread)
+					},
+			),
+		)
+	}
 	# The daily_load.day guard. BOTH halves — canonical and parseable — because the
 	# non-canonical day is the dangerous one: `ORDER BY day DESC` is a string sort,
 	# so "2026-3-05" beats every "2026-08-xx" and becomes `latest`.

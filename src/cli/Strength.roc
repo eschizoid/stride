@@ -12,36 +12,45 @@ Strength :: [].{
 
 	SetRow : Adapter.SetRow
 
-	# what one text parses to: the rows, and the NAME of the adapter that
-	# read them — stored per row (strength_sets.source) so a career of mixed
+	# what one text parses to: the rows, the NAME of the adapter that read
+	# them — stored per row (strength_sets.source) so a career of mixed
 	# sources stays distinguishable, the load_coverage discipline applied to
-	# sets. "" with no rows means no adapter recognized the text.
-	Parsed : { source : Str, rows : List(SetRow) }
+	# sets — and the pieces of that adapter's own format it could not read
+	# (Adapter's `unread`). "" with no rows and nothing unread means no
+	# adapter recognized the text.
+	Parsed : { source : Str, rows : List(SetRow), unread : List(Str) }
+
+	Row : { name : Str, parse : Str -> List(SetRow), unread : Str -> List(Str) }
 
 	# ORDERED, and the order IS the disambiguation rule: adapters are tried
-	# top to bottom and the first to yield rows wins, so a narrower grammar
-	# goes ABOVE a broader one, and a new adapter's author owns the check
-	# that their format does not claim text an existing adapter already
-	# reads. A Strava workout object is JSON, the narrower grammar, so it
-	# sits above the Peloton share summary. `tools/adapter-fixtures.sh` pins
-	# this order and holds every row to a module in the package (and every
-	# module to a row), so a reorder or an unregistered parser is a
+	# top to bottom and the first to recognize the text wins, so a narrower
+	# grammar goes ABOVE a broader one, and a new adapter's author owns the
+	# check that their format does not claim text an existing adapter
+	# already reads. A Strava workout object is JSON, the narrower grammar,
+	# so it sits above the Peloton share summary. `tools/adapter-fixtures.sh`
+	# pins this order and holds every row to a module in the package (and
+	# every module to a row), so a reorder or an unregistered parser is a
 	# deliberate edit to the pin, never a silent one.
-	adapters : List({ name : Str, parse : Str -> List(SetRow) })
-	adapters = [{ name: "strava", parse: StravaLog.parse }, { name: "peloton", parse: Peloton.parse }]
+	adapters : List(Row)
+	adapters = [{ name: "strava", parse: StravaLog.parse, unread: StravaLog.unread }, { name: "peloton", parse: Peloton.parse, unread: Peloton.unread }]
 
 	parse : Str -> Parsed
 	parse = |text| first_recognized(adapters, text)
 
-	first_recognized : List({ name : Str, parse : Str -> List(SetRow) }), Str -> Parsed
+	# an adapter recognizes a text when it reads rows from it or reports
+	# pieces of its own format it could not read, so a paste whose every set
+	# line is unreadable is still that adapter's, and its lines are reported
+	# rather than handed to the next adapter
+	first_recognized : List(Row), Str -> Parsed
 	first_recognized = |ads, text|
 		match ads {
-			[] => { source: "", rows: [] }
+			[] => { source: "", rows: [], unread: [] }
 			[a, .. as rest] => {
 				# parenthesized: `a.parse(text)` is method-call syntax for `parse(a, text)`
 				# in this compiler
 				rows = (a.parse)(text)
-				if (List.is_empty(rows)) first_recognized(rest, text) else { source: a.name, rows }
+				unread = (a.unread)(text)
+				if (List.is_empty(rows) and List.is_empty(unread)) first_recognized(rest, text) else { source: a.name, rows, unread }
 			}
 		}
 
@@ -145,3 +154,13 @@ expect {
 	p = Strength.parse("a ride description no adapter recognizes")
 	p.source == "" and List.is_empty(p.rows)
 }
+
+# a paste whose every set line is unreadable is still the adapter's: no
+# rows, its lines reported, and no later adapter asked
+expect {
+	p = Strength.parse("Curl\n3 × 12 • 15 stone")
+	p.source == "peloton" and List.is_empty(p.rows) and p.unread == ["3 × 12 • 15 stone"]
+}
+
+# text no adapter recognizes leaves nothing unread
+expect List.is_empty(Strength.parse("a ride description no adapter recognizes").unread)

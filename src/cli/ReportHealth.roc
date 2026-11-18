@@ -226,6 +226,7 @@ ReportHealth :: [].{
 		strength_unrated = List.len(List.keep_if(sports, |r| Sports.class(r.sport) == StrengthLike and r.rated == 0))
 		rated_total = List.len(List.keep_if(sports, |r| r.rated == 1))
 		missing_sets = Report.strength_without_sets_ids!(path)?
+		unread_sets = Report.strength_unread!(path)?
 		# ── data-quality watchdog: streaks and counts the engine already knows ──
 		# Anchored to the LOCAL day like every other window, not SQLite's `now`, so a user
 		# west of UTC does not get a window that ends tomorrow.
@@ -346,6 +347,8 @@ ReportHealth :: [].{
 			strength_unrated: strength_unrated.to_i64_wrap(),
 			strength_without_sets: (List.len(missing_sets)).to_i64_wrap(),
 			strength_without_sets_ids: missing_sets,
+			strength_unread_lines: List.fold(unread_sets, 0, |n, u| n + List.len(u.lines).to_i64_wrap()),
+			strength_unread_ids: List.map(unread_sets, |u| u.id),
 			scored_by: models,
 			conf_high: conf.hi,
 			conf_medium: conf.med,
@@ -392,6 +395,11 @@ ReportHealth :: [].{
 				missing_sets_hint =
 					if (p.strength_without_sets > 0)
 						["", "  → ${(p.strength_without_sets).to_str()} strength sessions in the last ${(Report.strength_missing_window_days).to_str()} days have no sets: ${Str.join_with(List.map(p.strength_without_sets_ids, |i| i.to_str()), ", ")} — paste the share summary into the description, or `stride strength import` the Strava log"]
+					else
+						[]
+				unread_hint =
+					if (p.strength_unread_lines > 0)
+						["", "  → ${(p.strength_unread_lines).to_str()} set lines in the last ${(Report.strength_missing_window_days).to_str()} days could not be read, so their sets are missing from tonnage: ${Str.join_with(List.map(p.strength_unread_ids, |i| i.to_str()), ", ")} — fix the line in the description, then `stride sync` and `stride analyze`"]
 					else
 						[]
 				# a list of zero or one lines, like `hint` above, so `""` keeps meaning
@@ -471,6 +479,7 @@ ReportHealth :: [].{
 						],
 						hint,
 						missing_sets_hint,
+						unread_hint,
 					]),
 					"\n",
 				)

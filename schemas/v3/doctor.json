@@ -24,6 +24,8 @@
     "sport_zone_overrides",
     "streams_retry_capped",
     "strength_unrated",
+    "strength_unread_ids",
+    "strength_unread_lines",
     "strength_without_sets",
     "strength_without_sets_ids",
     "time",
@@ -156,6 +158,17 @@
     },
     "zones_set": {
       "type": "boolean"
+    },
+    "strength_unread_lines": {
+      "type": "integer",
+      "description": "How many pieces of stored strength text, across the strength-family activities of the last 30 local days, are in their adapter's own format but could not be read into a set row: a pasted line that opens like a set line (`3 × 8 • ...`) but does not parse, or a logged set the Strava adapter left out. Those sets are missing from tonnage. 0 when every set was read."
+    },
+    "strength_unread_ids": {
+      "type": "array",
+      "description": "The activity ids whose text holds the pieces counted by strength_unread_lines, newest first. Editing the description, then `stride sync` and `stride analyze`, brings a fixed line in.",
+      "items": {
+        "type": "integer"
+      }
     },
     "strength_without_sets": {
       "type": "integer",

@@ -78,11 +78,13 @@ A NEW MODULE needs a row in `tools/layer-check.sh`'s table before CI will take i
 nothing else reminds you of.
 
 A NEW STRENGTH-SET ADAPTER is a module in the `src/strength` package (one file
-per source; `Adapter.roc` states the contract), a row in `src/cli/Strength.roc`'s
-ordered table, and a real `sample` of the source's text pinned by the module's own
-expect — `tools/adapter-fixtures.sh` refuses any of the three without the others
-(ADR 0018). A package's header file is `package.roc`; the app header that declares
-the package names it by path, so nothing about that name is compiler-imposed.
+per source; `Adapter.roc` states the contract, a `parse` and an `unread` beside
+it), a row in `src/cli/Strength.roc`'s ordered table naming both, and a real
+`sample` of the source's text pinned by the module's own expect —
+`tools/adapter-fixtures.sh` refuses any of the three without the others, and a
+row whose `parse` and `unread` come from different modules (ADR 0018). A
+package's header file is `package.roc`; the app header that declares the
+package names it by path, so nothing about that name is compiler-imposed.
 
 Prerequisites for everything above: `just`, `jq`, `sqlite3`, `gh`, and the Roc
 nightly: the one pin is the default in `.github/actions/setup-roc/action.yml`, both
