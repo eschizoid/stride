@@ -194,6 +194,7 @@ ReportHealth :: [].{
 			},
 		})?
 		pending = Strava.pending_streams!(path)?
+		pending_r = Strava.pending_routes!(path)?
 		capped = Strava.capped_streams!(path)?
 		cfg = Sql.query!({
 			path: Path.utf8(path),
@@ -355,6 +356,7 @@ ReportHealth :: [].{
 			conf_low: conf.lo,
 			conf_none: conf.non,
 			pending_streams: pending,
+			pending_routes: pending_r,
 			streams_retry_capped: capped,
 			# What `analyze` would recompute right now, beside `unanalyzed` (rows never scored):
 			# after a changed FTP or metrics_rev every row is due while `unanalyzed` stays 0.
@@ -467,6 +469,7 @@ ReportHealth :: [].{
 								"  would be recomputed by analyze: unknown — ${p.config_error}"
 							},
 							"  streams still pending: ${(p.pending_streams).to_str()} — run `stride sync` to keep draining them",
+							"  GPS routes still pending: ${(p.pending_routes).to_str()} — `stride sync` fetches them after the streams",
 						],
 						# fault counts, printed only when non-zero: a zero here is the healthy case
 						# and a row of zeros on every run trains the eye to skip it

@@ -94,6 +94,48 @@ Streams :: [].{
 			}
 			_ => { time: [], dist: [], alt: [] }
 		}
+
+	# one GPS sample: degrees, and seconds since the activity started
+	RoutePoint : { lat : F64, lng : F64, t : I64 }
+
+	# the route request's answer: `latlng` is a list of [lat, lng] pairs aligned
+	# index for index with `time`. Strava sends a `distance` stream with every
+	# streams answer; it is not read here.
+	RouteResp : { latlng : Try({ data : List(List(F64)) }, [Missing]), time : Try(StreamSeq, [Missing]) }
+
+	# what a route body says. `Points` holds every sample that is a real
+	# coordinate with a real time; `NoGps` is a body with no usable coordinates,
+	# which is what Strava sends for an indoor session; `Unreadable` is a body
+	# that is not a streams answer at all. The null sentinel is the one
+	# decode_streams uses, so a null time drops its sample.
+	decode_route : Str -> [Points(List(RoutePoint)), NoGps, Unreadable]
+	decode_route = |text| {
+		decoded : Try(RouteResp, [InvalidJson(Str), MissingRequiredField(Str)])
+		decoded = Json.parse(Str.replace_each(text, "null", "-99999"))
+		match decoded {
+			Err(_) => Unreadable
+			Ok(r) =>
+				match (r.latlng, r.time) {
+					(Ok(ll), Ok(ts)) => {
+						pts = List.keep_oks(List.map2(ll.data, ts.data, |pair, t| route_point(pair, t)), |p| p)
+						if (List.is_empty(pts)) NoGps else Points(pts)
+					}
+					_ => NoGps
+				}
+		}
+	}
+
+	route_point : List(F64), F64 -> Try(RoutePoint, [NotACoordinate])
+	route_point = |pair, t|
+		match pair {
+			[lat, lng] =>
+				if lat >= -90.0 and lat <= 90.0 and lng >= -180.0 and lng <= 180.0 and t > -99998.0 {
+					Ok({ lat, lng, t: t.round_to_i64_try().ok_or(0) })
+				} else {
+					Err(NotACoordinate)
+				}
+			_ => Err(NotACoordinate)
+		}
 }
 
 # the {} 404-marker decodes cleanly to "no streams", NOT a failure
@@ -217,3 +259,33 @@ expect {
 	near = |xs, ys| List.len(xs) == List.len(ys) and List.all(List.map2(xs, ys, |a, b| (a - b).abs() < 0.001), |ok| ok)
 	near(t.time, [0.0, 2.0]) and near(t.dist, [0.0, 3.0]) and near(t.alt, [0.0, 0.0])
 }
+
+# a route answer pairs each coordinate with its time, in order
+expect {
+	r = Streams.decode_route("{\"latlng\":{\"data\":[[41.88,-87.63],[41.89,-87.64]]},\"time\":{\"data\":[0,5]},\"distance\":{\"data\":[0,120]}}")
+	match r {
+		Points([a, b]) => a.lat == 41.88 and a.lng == -87.63 and a.t == 0 and b.lat == 41.89 and b.t == 5
+		_ => False
+	}
+}
+
+# an indoor session's answer has no latlng key at all: no GPS, not unreadable
+expect Streams.decode_route("{\"time\":{\"data\":[0,1]},\"distance\":{\"data\":[0,0]}}") == NoGps
+
+# the {} marker is no GPS
+expect Streams.decode_route("{}") == NoGps
+
+# a body that is not a streams answer is unreadable
+expect Streams.decode_route("not json at all") == Unreadable
+
+# a sample with a null time, or a pair outside the globe, is dropped and the rest kept
+expect {
+	r = Streams.decode_route("{\"latlng\":{\"data\":[[41.88,-87.63],[41.89,-87.64],[95.0,-87.65]]},\"time\":{\"data\":[0,null,9]}}")
+	match r {
+		Points([only]) => only.t == 0
+		_ => False
+	}
+}
+
+# coordinates with no usable sample at all are no GPS
+expect Streams.decode_route("{\"latlng\":{\"data\":[[0.5]]},\"time\":{\"data\":[0]}}") == NoGps

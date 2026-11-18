@@ -19,6 +19,7 @@
     "junk_filtered_pct_30d",
     "junk_worst_session_pct_30d",
     "pending_streams",
+    "pending_routes",
     "rated",
     "scored_by",
     "sport_zone_overrides",
@@ -92,6 +93,10 @@
     },
     "pending_streams": {
       "type": "integer"
+    },
+    "pending_routes": {
+      "type": "integer",
+      "description": "activities a plain `sync` still owes a GPS route fetch: moving time and distance, outside the Virtual* sports, and no routes row yet"
     },
     "rated": {
       "type": "integer"

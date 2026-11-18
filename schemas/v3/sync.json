@@ -14,6 +14,9 @@
     "notes_fetched",
     "notes_skipped",
     "pending_notes",
+    "routes_fetched",
+    "routes_skipped",
+    "pending_routes",
     "stopped",
     "resumable"
   ],
@@ -54,6 +57,18 @@
       "description": "strength-family activities whose description has not been asked for yet. Non-zero with `stopped` not `complete` usually means the stream drain spent the budget first; the notes wait their turn on the next run",
       "type": "integer"
     },
+    "routes_fetched": {
+      "description": "activities whose GPS route was asked for and stored this run: the `latlng` and `time` streams as Strava sent them, or an empty marker when the activity has no GPS (an indoor session), which retires it permanently. The routes drain runs only after the description queue empties, on the same read budget",
+      "type": "integer"
+    },
+    "routes_skipped": {
+      "description": "route reads whose body was not UTF-8 or not a streams answer. Nothing was stored, so these stay pending and are asked again next run",
+      "type": "integer"
+    },
+    "pending_routes": {
+      "description": "activities a plain `sync` still owes a route fetch: those with moving time and distance, outside the Virtual* sports, and no routes row yet",
+      "type": "integer"
+    },
     "stopped": {
       "type": "string",
       "enum": [
@@ -68,7 +83,7 @@
     },
     "resumable": {
       "type": "boolean",
-      "description": "Whether anything is still missing, so the run should be repeated. Usually `pending_streams > 0 or pending_notes > 0`, re-measured from the database in every arm. It is also true when `stopped` is `list_rate_limited` or `list_daily_cap_reached` even with an empty queue, because what was left undone there is the LISTING, not the stream backlog — a run refused on page one has nothing pending and absolutely must be repeated. And true for `daily_cap_reached` reached through the pre-flight refusal, where no request was made at all: an empty queue there describes a run that never looked, not a queue that is genuinely drained. One scope caveat: under `--all` the description re-read covers the WHOLE history, and a run that stops on the read budget leaves the un-re-read remainder for the next `--all`, not the next plain sync — the plain queue is windowed, so `resumable: false` there means no work is owed, not that every old description was re-read."
+      "description": "Whether anything is still missing, so the run should be repeated. Usually `pending_streams > 0 or pending_notes > 0 or pending_routes > 0`, re-measured from the database in every arm. It is also true when `stopped` is `list_rate_limited` or `list_daily_cap_reached` even with an empty queue, because what was left undone there is the LISTING, not the stream backlog — a run refused on page one has nothing pending and absolutely must be repeated. And true for `daily_cap_reached` reached through the pre-flight refusal, where no request was made at all: an empty queue there describes a run that never looked, not a queue that is genuinely drained. One scope caveat: under `--all` the description re-read covers the WHOLE history, and a run that stops on the read budget leaves the un-re-read remainder for the next `--all`, not the next plain sync — the plain queue is windowed, so `resumable: false` there means no work is owed, not that every old description was re-read."
     }
   }
 }

@@ -312,7 +312,7 @@ Db :: [].{
 	# bump when the schema changes; ensure_schema! re-runs migrations when the db's
 	# PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 	# that post-date the original CREATE statements in Schema.roc.)
-	schema_version = 46
+	schema_version = 47
 
 	run_migrations! : Str => Try({}, _)
 	run_migrations! = |path| {
@@ -336,6 +336,8 @@ Db :: [].{
 		Sql.execute!({ path: Path.utf8(path), query: Schema.seed_stream_retries, bindings: [] })?
 		# v34: strength notes (mirror) + parsed set rows (computed) —
 		# created before the views below, which read strength_sets
+		# v47: GPS routes (mirror), drained after the notes
+		Sql.execute!({ path: Path.utf8(path), query: Schema.routes, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.strength_notes, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.strength_sets, bindings: [] })?
 		# v41: a hold's seconds; the next analyze rebuilds every row with it

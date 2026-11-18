@@ -119,6 +119,22 @@ Schema :: [].{
 		\\  value TEXT
 		\\)
 
+	# mirror tier, the streams pattern: one row per activity whose route sync
+	# has asked Strava for. raw_json is the streams answer for `latlng` and
+	# `time` as Strava sent it, or '{}' when the activity has no GPS (an
+	# indoor session, a 404); either retires the id from the routes queue for
+	# good. A NULL raw_json is a fetch whose body would not decode, and
+	# `attempts` counts those, so the queue can stop asking after the stream
+	# attempt cap the way it does for streams. Absent means not yet asked.
+	# Kept apart from `streams` so a route arriving never touches the scored
+	# analysis streams.
+	routes =
+		\\CREATE TABLE IF NOT EXISTS routes (
+		\\  activity_id INTEGER PRIMARY KEY REFERENCES activities(id),
+		\\  raw_json    TEXT,
+		\\  attempts    INTEGER NOT NULL DEFAULT 0
+		\\)
+
 	# mirror tier, the streams pattern: one row per strength-family activity
 	# whose DESCRIPTION sync has fetched. Row presence retires the id from the
 	# notes drain queue, so an activity with no description stores '' the way

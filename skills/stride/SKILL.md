@@ -58,13 +58,13 @@ reason `--json` and still answers in JSON).
 
 1. **Sync** with `stride sync --json`, the only command that talks to Strava. It
    re-lists a rolling 30-day window (so recent edits heal), then drains every activity
-   still missing streams, then strength descriptions, paced against Strava's read
+   still missing streams, then strength descriptions, then GPS routes, paced against Strava's read
    limits. Progress narrates on stderr; stdout is the envelope
-   `{synced, new_activities, updated_activities, pruned, streams_fetched, streams_skipped, pending_streams, notes_fetched, notes_skipped, pending_notes, stopped, resumable}`.
+   `{synced, new_activities, updated_activities, pruned, streams_fetched, streams_skipped, pending_streams, notes_fetched, notes_skipped, pending_notes, routes_fetched, routes_skipped, pending_routes, stopped, resumable}`.
    - `resumable: true` means work is still owed: a queue is pending, a `list_*` stop cut
      the listing short, or a pre-flight refusal on a spent day made no request at all
      (`daily_cap_reached` with empty queues).
-   - `stopped` and its remedy: `complete` (both queues walked); `budget_reached`,
+   - `stopped` and its remedy: `complete` (every queue walked); `budget_reached`,
      `rate_limited`, `list_rate_limited` clear when Strava's 15-minute window rolls
      over, so tell the athlete ~15 minutes; `daily_cap_reached`, `list_daily_cap_reached`
      clear at UTC midnight, so tell them tomorrow. The two `list_*` values mean the
@@ -76,7 +76,7 @@ reason `--json` and still answers in JSON).
      not decode: stop and report it. The next scheduled sync still makes progress,
      because the queue puts every activity not yet tried ahead of a body that has
      failed. `stopped: complete` with `resumable: true` means only bodies that would not
-     decode remain (`streams_skipped`/`notes_skipped`); the next sync asks for them
+     decode remain (`streams_skipped`/`notes_skipped`/`routes_skipped`); the next sync asks for them
      again, so stop and report rather than re-running now. Do not count
      `notes_fetched` as progress: it includes the routine re-reads of descriptions
      inside the window.
@@ -88,6 +88,11 @@ reason `--json` and still answers in JSON).
      asks again. A 404 (Strava has no streams) stores an empty marker and retires the
      activity. A stream that decodes is stored for good, so a large first sync spans
      several runs and possibly days.
+   - A GPS route (the `latlng` and `time` streams) is asked for once per activity with
+     moving time and distance, outside the Virtual* sports. An activity with no GPS (an
+     indoor row, a trainer ride) stores an empty marker and is never asked again; the
+     first backfill spends one read on each such activity. Routes feed
+     the app's map; nothing scored reads them.
    - Stride counts its own daily reads in config rows `strava_reads_today` and
      `strava_reads_day` (a UTC day number; a stale stamp is the reset). Do not touch
      them unless Stride itself names `stride config set strava_reads_today 0` as the
@@ -363,7 +368,7 @@ Pick by question: `season` for the shape of a year, `compare` for this week or m
 | `stride tte <watts>` | time to exhaustion at one power from a Ride-family CP fit over 90 days: `{watts, seconds, known, status, cp, w_prime, fit_points, fit_r2, window_days, sport_family, demonstrated_s, demonstrated_w, demonstrated_known, contradicts_model}`. Weigh the fit first: `fit_r2` below ~0.9 is noise, and `fit_points` (max 3) cannot detect a bad fit. `status`: `in_model` (2-20 min), `outside_model` (a direction, not a number), `below_cp` (the model says indefinitely; bodies do not). `contradicts_model: true` = the athlete already held this power longer than predicted, so the number is unusable; `false` is not reassurance. The fit excludes today. Errors: `bad_watts`, `no_cp_fit` |
 | `stride reps [date]` | the anchor session's work reps beside same-shaped reps of earlier sessions: `{anchor_date, anchor_activity_id, shape, sport_family, matched_total, sessions}`. `shape` `{rep_count, mean_dur_s, band_lo_s, band_hi_s, signal}` is the comparability rule: same sport family, same rep count, mean rep duration inside the band, same signal (watts never beside m/s), never later than the anchor. Sessions (at most 12; `matched_total` counts every match) carry per-rep `avg_signal`/`avg_hr`, `mean_signal`, `fade_signal` (last minus first), `hr_rise_bpm` + `hr_rise_known`, and `min_dur_s`/`max_dur_s`/`uniformity` so you can judge uneven sessions. Errors: `no_detected_intervals`, `no_intervals_on_date`, `irregular_anchor` (the anchor's own reps vary too much in duration to be one repeated shape) |
 | `stride progress [date] [asc\|desc]` | `{anchor_date, anchor_scored, groups}`, each group `{name, grouped_by, lens, sessions, hidden, hidden_lens, hidden_scope}`. `lens` is `ef`, `speed_hr` or `rpe`; each session has a `score`. `grouped_by: structure` (same detected workout shape, names ignored) beats `name` when both could answer. `anchor_scored: false` = the asked-about session is not in the trend. `sessions` is the whole history only when `hidden` is 0. `hidden_scope` rows belong to another distance bucket (more than 10% away) and are not fixable. `hidden_lens` rows lacked what the lens needs (EF: normalized power and HR; speed/HR: distance and HR; RPE: a rating), usually fixable with a power meter, a strap or a rating, except when the stored reading itself is broken (see the heart-rate rule below). The counts carry no ids: find the rows with `stride activities --json`. Errors: `no_workout_on_date`, `unscorable`, `no_scorable_workouts` |
-| `stride doctor` | dataset health: coverage counts, `timezone_known` (as in `summary`), `scored_by` per load model, `strength_unrated`, `strength_without_sets` and its `strength_without_sets_ids` (strength sessions of the last 30 days with no stored sets), `strength_unread_lines` and its `strength_unread_ids` (pieces of recent strength sessions' text that stride could not read, so their sets are missing from tonnage; a fixed pasted line comes in after `stride sync` and `stride analyze`, a logged set after `stride strength import` runs again with a corrected log), the time anchor in use, `undateable_activities` (`date_known: false` rows) and `unrankable_activities` (`rankable: false`, a superset), each repaired by `stride sync --all` when Strava still lists the activity; `pending_streams` (what a plain sync still owes) and `streams_retry_capped` (streams that failed 3 or more fetches, which only `stride sync --all` asks for again). `unanalyzed` = never scored; `awaiting_metrics` = what `analyze` would recompute now (the one to act on); `awaiting_metrics_known: false` means it could not be computed and `config_error` says why |
+| `stride doctor` | dataset health: coverage counts, `timezone_known` (as in `summary`), `scored_by` per load model, `strength_unrated`, `strength_without_sets` and its `strength_without_sets_ids` (strength sessions of the last 30 days with no stored sets), `strength_unread_lines` and its `strength_unread_ids` (pieces of recent strength sessions' text that stride could not read, so their sets are missing from tonnage; a fixed pasted line comes in after `stride sync` and `stride analyze`, a logged set after `stride strength import` runs again with a corrected log), the time anchor in use, `undateable_activities` (`date_known: false` rows) and `unrankable_activities` (`rankable: false`, a superset), each repaired by `stride sync --all` when Strava still lists the activity; `pending_streams` and `pending_routes` (what a plain sync still owes) and `streams_retry_capped` (streams that failed 3 or more fetches, which only `stride sync --all` asks for again). `unanalyzed` = never scored; `awaiting_metrics` = what `analyze` would recompute now (the one to act on); `awaiting_metrics_known: false` means it could not be computed and `config_error` says why |
 | `stride viz` | the desktop window's published capabilities and focus: `{ protocol, published_at, staleness_seconds, focus_staleness_seconds, focus, views, fields, history, captures }`; see the next section |
 
 ## Reading the numbers
