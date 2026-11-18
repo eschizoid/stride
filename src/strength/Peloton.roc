@@ -15,7 +15,10 @@ Peloton :: [].{
 	# between groups. R may also be written `R/side`, or as a clock `m:ss`
 	# for a hold. W may be `0 lbs` or the word `bodyweight` on a move with no
 	# load, both read as 0 kg. A set line is read in its normal form
-	# (`normal_form`), so spacing a paste loses or gains does not hide it. An
+	# (`normal_form`): spacing lost or gained around `×` and the bullet, a
+	# closed-up `3x8`, other bullet glyphs and no-break spaces do not hide
+	# it. An ASCII `x` spaced on one side only (`3 x8`) is not set apart,
+	# since a name like `2x Burpees • finisher` would then be reported unread. An
 	# empty or absent description parses to no rows — a set-less strength
 	# session counts for load and streak but not tonnage, an honest gap
 	# rather than a failure.
