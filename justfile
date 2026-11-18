@@ -454,7 +454,7 @@ e2e:
 # ROC_VIZ at that nightly, or leave it and hope the PATH roc is close enough.
 # defaults to the pinned viz nightly when installed (tools/make-viz-app.sh and
 # the docs both point there); ROC_VIZ still overrides, PATH roc is the last resort
-viz_pin := `sh -c 'P="$HOME/.local/share/roc/nightly-2026-11-11-7679cc5/roc"; [ -x "$P" ] && echo "$P" || echo roc'`
+viz_pin := `sh -c 'P="$HOME/.local/share/roc/nightly-2026-11-15-f25da45/roc"; [ -x "$P" ] && echo "$P" || echo roc'`
 roc_viz := env("ROC_VIZ", viz_pin)
 # open the app window (ESC quits). The two arguments are the athlete's directory,
 # the window's read-write grant (a home resolved at launch cannot be written into

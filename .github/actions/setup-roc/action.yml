@@ -8,7 +8,7 @@ inputs:
   nightly-tag:
     description: The roc-lang/nightlies tag to install. Defaults to the repo-wide pin.
     required: false
-    default: nightly-2026-11-11-7679cc5
+    default: nightly-2026-11-15-f25da45
 
 runs:
   using: composite
