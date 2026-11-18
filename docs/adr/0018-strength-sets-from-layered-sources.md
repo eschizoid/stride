@@ -7,6 +7,8 @@ a minimum, and the fixture gate the consequences promised now exists.
 Amended: 2026-10-21 — the structured layer arrives through `stride strength
 import` and the `strength_logs` table, read by a `strava` adapter at the top of
 the table, because Strava's public API does not return a workout's sets.
+Amended: 2026-11-18 — every adapter reports the pieces of its own format it
+could not read (`unread`), and `stride doctor` counts them for recent sessions.
 
 ## Context
 
@@ -57,15 +59,31 @@ Second, description adapters. When an activity has no stored log, its
 description is tried against an ordered table of parsers in
 `src/cli/Strength.roc`. The parsers themselves live in the `src/strength`
 package, one module per source, so a new format is a new file rather than a
-longer one. `Adapter.roc` states the contract every module keeps: pure
-`Str -> List(SetRow)`, tolerant of junk, silent on formats it does not
-recognize, and shipping a real sample of its source's text as a top-level
-`sample` that its own expects parse. The stored log is read by the same
-table: `StravaLog.roc` parses a workout object and sits first, because JSON is
-the narrower grammar, and `Peloton.roc` parses Peloton's share summary below
-it. Each table row holds a name and a parse function, the same shape as
-`Sports.families`, so registering a module is one row. The first adapter that
-matches wins, so the table's order is part of the decision.
+longer one. `Adapter.roc` states the contract every module keeps: a pure
+`parse : Str -> List(SetRow)`, tolerant of junk, silent on formats it does not
+recognize, an `unread` beside it (below), and a real sample of its source's
+text as a top-level `sample` that its own expects parse. The stored log is
+read by the same table: `StravaLog.roc` parses a workout object and sits
+first, because JSON is the narrower grammar, and `Peloton.roc` parses
+Peloton's share summary below it. Each table row holds a name, a parse
+function and an unread function: a table of records, like `Sports.families`,
+so registering a module is one row. The first adapter that recognizes the text
+wins, so the table's order is part of the decision.
+
+Beside `parse`, each adapter keeps an `unread` function: the pieces of text
+in its own format that it saw and could not turn into a row. For the Peloton
+summary that is a line that opens like a set line (`3 × 8 • ...`) but does not
+parse, or one with no exercise name above it; for the Strava log it is a set
+the decoder left out, with its reason. It is empty on text of any other
+format, so the silence the table relies on holds, and an adapter recognizes a
+text when it reads rows from it or reports unread pieces of it, so a paste
+whose every set line is unreadable is still reported against its own source.
+An unread piece never fails a sync or an analyze. `stride doctor` counts the
+unread pieces in the strength sessions of the last 30 days and names those
+sessions, so a set the grammar cannot read is a visible gap rather than a
+silent one: the honest-absence rule below, applied to a single line. It is a
+second function rather than a richer return type from `parse`, so `parse`
+keeps the contract every caller and expect already relies on.
 
 Third, honest absence. A strength session with no structured sets and no
 parseable description stays a session. It counts for load and for the streak,
@@ -89,7 +107,8 @@ of being flattened into equality with device-recorded rows.
 A new app's paste format costs one module in `src/strength`, one table row,
 and the sample its expects pin. `tools/adapter-fixtures.sh` holds the three to
 each other in CI: the table's order is pinned, every row names a module and
-every module has a row, and every module carries its sample and an expect that
+every module has a row, a row's `parse` and `unread` come from the same
+module, and every module carries its sample and an expect that
 parses it. An adapter that arrives without its sample does not land.
 
 The description parser is a fallback by construction. An activity with a

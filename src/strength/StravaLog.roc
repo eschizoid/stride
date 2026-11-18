@@ -131,6 +131,15 @@ StravaLog :: [].{
 			Err(_) => []
 		}
 
+	# the sets `read` left out, one piece each in the form
+	# `set 2 (Curl): bad_reps`; empty for text that is not a workout object
+	unread : Str -> List(Str)
+	unread = |text|
+		match decode_workout(text) {
+			Ok(w) => List.map(read(w).dropped, |d| "set ${d.set.to_str()} (${d.exercise}): ${d.reason}")
+			Err(_) => []
+		}
+
 	decode_workout : Str -> Try(Workout, [Undecodable])
 	decode_workout = |text| {
 		clean = strip_nulls(Str.trim(text))
@@ -605,6 +614,13 @@ expect {
 		}
 		Err(_) => False
 	}
+}
+
+# unread names each left-out set by position, exercise and reason; the
+# shipped sample and text that is no workout object leave nothing unread
+expect {
+	text = "{\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"20 kg\"},\"reps\":{\"value\":\"10\"}},{\"exercise_name\":\"Curl\",\"reps\":{\"value\":\"8-10\"}}]}"
+	StravaLog.unread(text) == ["set 2 (Curl): bad_reps"] and List.is_empty(StravaLog.unread(StravaLog.sample)) and List.is_empty(StravaLog.unread("Curl\n3 × 8 • 30 lbs"))
 }
 
 # a JSON null reads as absent: a null weight is 0.0 kg, a null reps leaves

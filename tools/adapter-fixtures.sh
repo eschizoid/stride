@@ -6,10 +6,13 @@
 # Three checks, each a property the adapter pack states in prose and nothing
 # else holds:
 #   1. the table's ORDER is pinned — it is the disambiguation rule (the first
-#      adapter to yield rows wins), so a reorder is a deliberate edit here;
+#      adapter to recognize the text, by rows or unread pieces, wins), so a
+#      reorder is a deliberate edit here;
 #   2. every table row names a module in the package and every parser module
 #      is a table row — a row with no module fails to compile, but a module
-#      with no row compiles fine and reads as coverage it never gives;
+#      with no row compiles fine and reads as coverage it never gives; and a
+#      row takes its `parse` and its `unread` from that one module, since a
+#      mix would report one source's unread lines against another's rows;
 #   3. every parser module carries a top-level `sample : Str` and an expect
 #      that parses it — the fixture the contract requires, so the grammar is
 #      pinned to text the app actually wrote rather than to the author's
@@ -30,7 +33,8 @@ EXPECT_ORDER="${EXPECT_ORDER:-strava peloton}"
 table=src/cli/Strength.roc
 pkg=src/strength
 
-# the rows in table order: `{ name: "peloton", parse: Peloton.parse }`, taken
+# the rows in table order:
+# `{ name: "peloton", parse: Peloton.parse, unread: Peloton.unread }`, taken
 # from the literal's own lines (its opening line through the first `]`, which
 # is the same line when the list fits on one) with comments removed
 # comments are stripped BEFORE the range scan, not after: the terminator is a
@@ -40,7 +44,7 @@ pkg=src/strength
 # enforces the format), so a single [[:blank:]] anchors both scans below to
 # top-level definitions and keeps a nested `adapters`/`sample` from matching.
 block=$(sed 's/#.*//' "$table" | awk '/^[[:blank:]]adapters = \[/{p=1} p{print} p && /\]/{exit}')
-rows=$(printf '%s\n' "$block" | grep -oE '\{ name: "[a-z0-9_]+", parse: [A-Z][A-Za-z0-9]*\.parse \}') || true
+rows=$(printf '%s\n' "$block" | grep -oE '\{ name: "[a-z0-9_]+", parse: [A-Z][A-Za-z0-9]*\.parse, unread: [A-Z][A-Za-z0-9]*\.unread \}') || true
 if [ -z "$rows" ]; then
   echo "adapter-fixtures: no adapter rows found in $table — the extractor matched nothing, refusing to pass blind" >&2
   exit 1
@@ -60,6 +64,11 @@ if [ "$row_mods" != "$pkg_mods" ]; then
   echo "adapter-fixtures: the table's rows and the package's modules disagree" >&2
   echo "  rows name:   $(printf '%s\n' "$row_mods" | paste -s -d ' ' -)" >&2
   echo "  package has: $(printf '%s\n' "$pkg_mods" | paste -s -d ' ' -)" >&2
+  fail=1
+fi
+mixed=$(printf '%s\n' "$rows" | sed -E 's/.*parse: ([A-Za-z0-9]+)\.parse, unread: ([A-Za-z0-9]+)\.unread.*/\1 \2/' | awk '$1 != $2')
+if [ -n "$mixed" ]; then
+  echo "adapter-fixtures: a row takes parse and unread from different modules: $mixed" >&2
   fail=1
 fi
 for m in $pkg_mods; do

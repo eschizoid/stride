@@ -8,17 +8,23 @@ Adapter :: [].{
 	# sources write different grammars, so parsing is an ADAPTER PACK: one
 	# module per source in this package, each a pure function from that text
 	# to set rows, registered in `src/cli/Strength.roc`'s `adapters` table
-	# and tried in order; the first to yield rows names the row's
-	# provenance. One text comes from ONE source, so first-non-empty is
-	# format detection, not a merge.
+	# and tried in order; the first to recognize the text, by reading rows
+	# from it or reporting unread pieces of it, names the row's provenance.
+	# One text comes from ONE source, so first-recognized is format
+	# detection, not a merge.
 	#
-	# Every adapter keeps this contract: pure `Str -> List(SetRow)`; TOLERANT
-	# (junk yields no rows, never an error, since the source is a human paste
-	# or an upstream payload stride does not control); SILENT on formats it
-	# does not recognize (the empty list is what lets the next adapter
-	# speak); and it ships with a real sample of its source's text as a
-	# top-level `sample : Str`, pinned by its own expects, which
-	# `tools/adapter-fixtures.sh` requires.
+	# Every adapter keeps this contract: a pure `parse : Str -> List(SetRow)`;
+	# TOLERANT (junk yields no rows, never an error, since the source is a
+	# human paste or an upstream payload stride does not control); SILENT on
+	# formats it does not recognize (the empty list is what lets the next
+	# adapter speak); and it ships with a real sample of its source's text as
+	# a top-level `sample : Str`, pinned by its own expects, which
+	# `tools/adapter-fixtures.sh` requires. Beside `parse` it keeps a pure
+	# `unread : Str -> List(Str)`: the pieces of text in ITS OWN format that
+	# it saw and could not turn into a row, so a dropped set is reported
+	# rather than lost. It is empty on text of any other format, which keeps
+	# the silence the table relies on, and it never fails anything: an
+	# unread piece is a count a reader sees, not an error.
 	#
 	# A SetRow's weight_kg is PER HAND: the weight of one implement, the way
 	# an athlete enters it (one dumbbell of a pair, a kettlebell, a barbell's

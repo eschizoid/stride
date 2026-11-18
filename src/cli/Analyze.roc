@@ -1202,23 +1202,10 @@ Analyze :: [].{
 		}
 
 	# ── the tonnage spine's computed half ─────────────────────────────
-	# Parse every activity's stored strength text into set rows: its
-	# strength_logs payload when it has one, else its strength_notes
-	# description. A log wins outright, even over a description that would
-	# parse: both describe the same session, so feeding both would count its
-	# sets twice, and the log is structured data where the description is a
-	# human paste. The UNION's second arm carries logs for activities whose
-	# description the drain has not fetched (or never will), so an import is
-	# never waiting on a sync. Logged weights then pass through
-	# Strength.per_hand under config `strength_log_weight`, so every stored
-	# row is per hand whichever source wrote it.
-	#
-	# Both arms read only rows whose activity exists and is in the strength
-	# family, through activity_family_month: strength_sets.activity_id
-	# references activities, so a row for a missing activity would fail the
-	# insert and the whole analyze with it, and strength_coverage counts that
-	# family alone, so sets on any other activity would be tonnage no
-	# coverage figure accounts for.
+	# Parse every activity's stored strength text (strength_texts!) into set
+	# rows. Logged weights then pass through Strength.per_hand under config
+	# `strength_log_weight`, so every stored row is per hand whichever
+	# source wrote it.
 	#
 	# Full replace on every analyze: strength_sets is computed tier, the
 	# corpus is one short text per strength session, and a parser or
@@ -1231,7 +1218,41 @@ Analyze :: [].{
 	# reads this table) never sees it half rebuilt.
 	rebuild_strength_sets! : Str => Try({}, _)
 	rebuild_strength_sets! = |path| {
-		notes = Sql.query_many!({
+		notes = strength_texts!(path)?
+		convention =
+			match Db.config_opt!(path, "strength_log_weight")? {
+				Found(v) => v
+				NotFound => "per_hand"
+			}
+		Sql.transaction!(
+			Path.utf8(path),
+			|run!| {
+				_ = run!("DELETE FROM strength_sets", [])?
+				insert_note_sets!(run!, convention, notes)
+			},
+		)
+	}
+
+	# The text each strength-family activity's sets are parsed from, one per
+	# activity: its strength_logs payload when it has one, else its
+	# strength_notes description. A log wins outright, even over a
+	# description that would parse: both describe the same session, so
+	# feeding both would count its sets twice, and the log is structured
+	# data where the description is a human paste. The UNION's second arm
+	# carries logs for activities whose description the drain has not
+	# fetched (or never will), so an import is never waiting on a sync.
+	#
+	# Both arms read only rows whose activity exists and is in the strength
+	# family, through activity_family_month: strength_sets.activity_id
+	# references activities, so a row for a missing activity would fail the
+	# insert and the whole analyze with it, and strength_coverage counts
+	# that family alone, so sets on any other activity would be tonnage no
+	# coverage figure accounts for. The set rebuild and the unread report
+	# both read this query, so a session is reported against exactly the
+	# text its rows came from.
+	strength_texts! : Str => Try(List({ aid : I64, d : Str }), _)
+	strength_texts! = |path|
+		Sql.query_many!({
 			path: Path.utf8(path),
 			query: \\SELECT n.activity_id AS aid, COALESCE(CAST(l.payload AS TEXT), CAST(n.description AS TEXT), '') AS d
 				\\FROM strength_notes n
@@ -1249,19 +1270,15 @@ Analyze :: [].{
 				d = Sql.str("d")(cols)(stmt)?
 				Ok({ aid, d })
 			},
-		})?
-		convention =
-			match Db.config_opt!(path, "strength_log_weight")? {
-				Found(v) => v
-				NotFound => "per_hand"
-			}
-		Sql.transaction!(
-			Path.utf8(path),
-			|run!| {
-				_ = run!("DELETE FROM strength_sets", [])?
-				insert_note_sets!(run!, convention, notes)
-			},
-		)
+		})
+
+	# every strength-family activity whose text holds pieces its adapter
+	# could not read (Adapter's `unread`), with those pieces; activities with
+	# nothing unread are left out
+	strength_unread_all! : Str => Try(List({ aid : I64, unread : List(Str) }), _)
+	strength_unread_all! = |path| {
+		texts = strength_texts!(path)?
+		Ok(List.keep_if(List.map(texts, |t| { aid: t.aid, unread: Strength.parse(t.d).unread }), |x| !(List.is_empty(x.unread))))
 	}
 	# `run!` is the statement runner of the caller's transaction
 	insert_note_sets! = |run!, convention, notes|

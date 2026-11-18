@@ -12,17 +12,30 @@ Peloton :: [].{
 	#
 	# An exercise NAME line is followed by a SET line `S × R • W <unit>`, with
 	# `reps/side` and `<unit>/side` variants and `Block N` section headers
-	# between groups. Any line that is not a well-formed set line is skipped,
-	# a set line with no preceding exercise name is skipped, and an empty or
-	# absent description parses to no rows — a set-less strength session
-	# counts for load and streak but not tonnage, an honest gap rather than
-	# a failure.
+	# between groups. R may also be written `R/side`, or as a clock `m:ss`
+	# for a hold. W may be `0 lbs` or the word `bodyweight` on a move with no
+	# load, both read as 0 kg. A set line is read in its normal form
+	# (`normal_form`): spacing lost or gained around `×` and the bullet, a
+	# closed-up `3x8`, other bullet glyphs and no-break spaces do not hide
+	# it. An ASCII `x` spaced on one side only (`3 x8`) is not set apart,
+	# since a name like `2x Burpees • finisher` would then be reported unread. An
+	# empty or absent description parses to no rows — a set-less strength
+	# session counts for load and streak but not tonnage, an honest gap
+	# rather than a failure.
+	#
+	# A line that OPENS like a set line (`opens_like_set`: a bullet, and
+	# before it a set count `S × ...`) but yields no row is UNREAD: a set
+	# line this grammar cannot read, or one with no exercise name above it.
+	# `unread` returns those lines so the caller can report them, and such a
+	# line never becomes a name. A blank line, a `Block` header or a bare set
+	# count is skipped; any other line names the exercise the set lines
+	# below it belong to.
 	#
 	# Weights are stored per hand (Adapter's convention): `W lbs/side` is one
 	# implement of W, whether both hands lift at once or alternate, so the
 	# same dumbbells read the same here as in a Strava log. Side semantics
 	# then decide only the rep count:
-	#   reps/side         → single-side work (alternating): R per side, so
+	#   reps/side, R/side → single-side work (alternating): R per side, so
 	#                       the rep count doubles.
 	#   total reps        → the stated count.
 	#   no /side weight   → the stated weight (a barbell or machine total).
@@ -31,17 +44,17 @@ Peloton :: [].{
 	# kg as-is.
 	#
 	# A bodyweight exercise (`Adapter.is_bodyweight`) keeps its sets and
-	# reps, or its hold, at 0 kg when its set line names a weight, which can
-	# be the athlete's own mass. A set line with no weight carries no
-	# bullet, so it yields no row.
+	# reps, or its hold, at 0 kg whatever weight its set line names, which
+	# can be the athlete's own mass. A set count with no bullet names no
+	# weight and yields no row.
 	#
 	# A TIMED set line (`3 × 30 sec • 20 lbs`, R followed by one of
-	# `time_units`) is a HOLD: S holds of R seconds or minutes at the
-	# weight, stored as a row with 0 reps and the held seconds in `hold_s`,
-	# so it adds no tonnage and its duration is never read as reps. A hold
-	# follows the rep rule with the hold standing in for the rep: time/side
-	# is each side held in turn, so the set count doubles; the weight is per
-	# hand either way.
+	# `time_units`, or `3 × 0:20/side • 55 lbs/side`) is a HOLD: S holds of
+	# R at the weight, stored as a row with 0 reps and the held seconds in
+	# `hold_s`, so it adds no tonnage and its duration is never read as reps.
+	# A hold follows the rep rule with the hold standing in for the rep:
+	# time/side is each side held in turn, so the set count doubles; the
+	# weight is per hand either way.
 	#
 	# A line that is only a set count (`S × R`, optionally followed by one
 	# word from `count_units`, with or without a refused weight) is never an
@@ -56,21 +69,37 @@ Peloton :: [].{
 	sample = "Block 1\nDumbbell Crush Press\n3 × 8 • 30 lbs/side\nDumbbell Snatch Push Press\n3 × 8 reps/side • 25 lbs/side"
 
 	parse : Str -> List(Adapter.SetRow)
-	parse = |text| {
+	parse = |text| read(text).rows
+
+	# the lines that open like a set line (`opens_like_set`) but yielded no
+	# row: a set line this grammar cannot read, or one with no exercise name
+	# above it. Empty for text that is not a share summary at all.
+	unread : Str -> List(Str)
+	unread = |text| read(text).unread
+
+	read : Str -> { rows : List(Adapter.SetRow), unread : List(Str) }
+	read = |text| {
 		lines = List.map(Str.split_on(text, "\n"), |l| Str.trim(l))
 		walk = List.fold(
 			lines,
-			{ exercise: "", rows: [] },
+			{ exercise: "", rows: [], unread: [] },
 			|acc, line| {
-				match parse_set_line(line) {
+				# the set grammar reads the line in its normal form; a name keeps
+				# the text as written
+				set_line = normal_form(line)
+				match parse_set_line(set_line) {
 					Ok(s) =>
 						if acc.exercise == "" {
-							acc
+							{ ..acc, unread: List.append(acc.unread, line) }
 						} else {
-							{ exercise: acc.exercise, rows: List.append(acc.rows, { exercise: acc.exercise, sets: s.sets, reps: s.reps, hold_s: s.hold_s, weight_kg: if (Adapter.is_bodyweight(acc.exercise)) 0.0 else s.weight_kg }) }
+							{ ..acc, rows: List.append(acc.rows, { exercise: acc.exercise, sets: s.sets, reps: s.reps, hold_s: s.hold_s, weight_kg: if (Adapter.is_bodyweight(acc.exercise)) 0.0 else s.weight_kg }) }
 						}
 					Err(_) =>
-						if line == "" or Str.starts_with(line, "Block ") or is_set_shaped(line) {
+						if opens_like_set(set_line) {
+							# a set line this grammar cannot read is never a name, so the
+							# exercise above it stays current
+							{ ..acc, unread: List.append(acc.unread, line) }
+						} else if line == "" or Str.starts_with(line, "Block ") or is_set_shaped(set_line) {
 							# a blank line, a section header or a set count that is not a
 							# whole set line ends nothing — the next set line still belongs
 							# to the last named exercise, matching how the share format
@@ -82,7 +111,56 @@ Peloton :: [].{
 				}
 			},
 		)
-		walk.rows
+		{ rows: walk.rows, unread: walk.unread }
+	}
+
+	# A line with the spacing a paste or a re-typed line can lose or gain put
+	# back the way the app writes it: a no-break space or a tab is a space,
+	# the multiplication sign, the bullet, and an ASCII `x` or `X` between two
+	# digits stand apart from their neighbours, `·`, `∙` and `●` are the
+	# bullet, a spaced ` / ` closes up, and runs of spaces are one.
+	normal_form : Str -> Str
+	normal_form = |line| {
+		swaps = [("\u(00A0)", " "), ("\t", " "), ("·", "•"), ("∙", "•"), ("●", "•"), ("×", " × "), ("•", " • ")]
+		spaced = space_digit_x(List.fold(swaps, line, |acc, (from, to)| Str.replace_each(acc, from, to)))
+		single = Str.join_with(List.keep_if(Str.split_on(spaced, " "), |t| t != ""), " ")
+		Str.replace_each(single, " / ", "/")
+	}
+
+	# `3x8` as `3 x 8`: an `x` or `X` with a digit on each side gets a space on
+	# each side; one beside a letter or a space (`2x Burpees`) is left alone
+	space_digit_x : Str -> Str
+	space_digit_x = |s| {
+		bytes = Str.to_utf8(s)
+		digit_at = |i|
+			match List.get(bytes, i) {
+				Ok(b) => b >= 48 and b <= 57
+				Err(_) => False
+			}
+		pieces = List.map_with_index(bytes, |b, i| if ((b == 120 or b == 88) and i > 0 and digit_at(i - 1) and digit_at(i + 1)) [32, b, 32] else [b])
+		Str.from_utf8(List.join(pieces)).ok_or(s)
+	}
+
+	# a line, in its normal form, that carries a bullet and, before it, opens
+	# with `S × R`: whole digits, the multiplication sign or an ASCII `x` or
+	# `X`, and any figure. A bullet alone does not make a set line (`Circuit
+	# • 3 rounds`); a set count before it does, so this is what an unreadable
+	# set line is known by.
+	opens_like_set : Str -> Bool
+	opens_like_set = |line|
+		match Str.split_on(line, " • ") {
+			[left, _, ..] =>
+				match List.keep_if(Str.split_on(Str.trim(left), " "), |t| t != "") {
+					[s, mark, _, ..] => all_digits(s) and (mark == "×" or mark == "x" or mark == "X")
+					_ => False
+				}
+			_ => False
+		}
+
+	all_digits : Str -> Bool
+	all_digits = |s| {
+		bytes = Str.to_utf8(s)
+		!(List.is_empty(bytes)) and List.all(bytes, |b| b >= 48 and b <= 57)
 	}
 
 	# the text before any bullet is exactly `S × R`, or `S × R` and one word
@@ -108,21 +186,20 @@ Peloton :: [].{
 	count_units : List(Str)
 	count_units = List.concat(["reps"], time_units)
 
-	# a unit word lowercased and without a trailing `/side`, so `Reps/Side`
-	# and `sec/side` look up as `reps` and `sec`
+	# a unit word lowercased and without a trailing `/side`, or a cut-short
+	# start of it (`side_cut`), so `Reps/Side`, `sec/side` and `sec/sid` look
+	# up as `reps`, `sec` and `sec`
 	unit_word : Str -> Str
-	unit_word = |w| {
-		lower = Str.with_ascii_lowercased(w)
-		if (Str.ends_with(lower, "/side")) Str.from_utf8(List.drop_last(Str.to_utf8(lower), 5)).ok_or(lower) else lower
-	}
+	unit_word = |w| side_cut(Str.with_ascii_lowercased(w)).base
 
 	# the words that make R a duration rather than a rep count
 	time_units : List(Str)
 	time_units = ["s", "sec", "secs", "seconds", "min", "mins", "minutes"]
 
-	# one set line, or Err for anything else. The bullet is the discriminator:
-	# no prose line in the share format carries ` • `. A timed line is a hold:
-	# 0 reps and the held seconds in `hold_s`.
+	# one set line in its normal form (`normal_form`), or Err for anything
+	# else: a set part, ` • `, and a weight part, each of which must read. A
+	# bullet alone does not make a set line (`Circuit • 3 rounds`). A timed
+	# line is a hold: 0 reps and the held seconds in `hold_s`.
 	parse_set_line : Str -> Try({ sets : I64, reps : I64, hold_s : I64, weight_kg : F64 }, [NotASetLine])
 	parse_set_line = |line|
 		match Str.split_on(line, " • ") {
@@ -143,65 +220,115 @@ Peloton :: [].{
 			}
 			_ => Err(NotASetLine)
 		}
-
-	# `3 × 8`, `3 × 8 reps`, `3 × 8 reps/side`, `3 × 30 sec` — ASCII `x`
-	# tolerated, since a re-typed paste is one keyboard away from the
-	# multiplication sign. `timed` says the word after R is one of
-	# `time_units` (through `unit_word`, so in any case and with or without
-	# `/side`), so R counts seconds or minutes, not reps; `unit` is that word
-	# without its `/side`, "" on a line that is not timed.
+	# `3 × 8`, `3 × 8 reps`, `3 × 8 reps/side`, `3 × 8/side`, `3 × 30 sec`,
+	# `3 × 0:20/side` — an ASCII `x` or `X` tolerated, since a re-typed paste
+	# is one keyboard away from the multiplication sign. `per_side` says a
+	# token of R's part has one slash, followed by `side` or a cut-short start
+	# of it (`side_cut`). `timed` says R is a clock `m:ss`, or the word after
+	# it is one of `time_units` (through `unit_word`, so in any case and with
+	# or without `/side`), so R counts seconds or minutes, not reps; `unit` is
+	# that word without its `/side`, `sec` for a clock, "" on a line that is
+	# not timed.
 	parse_sets_reps : Str -> Try({ sets : I64, reps : I64, per_side : Bool, timed : Bool, unit : Str }, [NotASetLine])
 	parse_sets_reps = |left| {
 		parts =
-			match Str.split_on(left, " × ") {
-				[a, b] => Ok((a, b))
-				_ =>
-					match Str.split_on(left, " x ") {
-						[a, b] => Ok((a, b))
-						_ => Err(NotASetLine)
-					}
+			match List.keep_oks([" × ", " x ", " X "], |mark| split_once(left, mark)) {
+				[pair, ..] => Ok(pair)
+				[] => Err(NotASetLine)
 			}
 		(sets_s, reps_part) = parts?
 		sets = I64.from_str(Str.trim(sets_s)).map_err(|_| NotASetLine)?
-		reps_tokens = Str.split_on(Str.trim(reps_part), " ")
-		reps_tok = List.first(reps_tokens).map_err(|_| NotASetLine)?
-		reps = I64.from_str(reps_tok).map_err(|_| NotASetLine)?
+		reps_tokens = List.keep_if(Str.split_on(Str.trim(reps_part), " "), |t| t != "")
+		# the figure may carry its own `/side` (`8/side`, `0:20/side`), and the
+		# side may sit on the figure or on the word after it, whole or cut short
+		reps_tok = unit_word(List.first(reps_tokens).map_err(|_| NotASetLine)?)
+		per_side = List.any(reps_tokens, |t| side_cut(Str.with_ascii_lowercased(t)).per_side)
+		clock = clock_seconds(reps_tok)
+		reps =
+			match clock {
+				Ok(secs) => secs
+				Err(_) => I64.from_str(reps_tok).map_err(|_| NotASetLine)?
+			}
 		if sets <= 0 or reps <= 0 {
 			Err(NotASetLine)
 		} else {
 			unit =
-				match List.keep_if(reps_tokens, |t| t != "") {
-					[_, word, ..] => if (List.contains(time_units, unit_word(word))) unit_word(word) else ""
-					_ => ""
+				match clock {
+					Ok(_) => "sec"
+					Err(_) =>
+						match reps_tokens {
+							[_, word, ..] => if (List.contains(time_units, unit_word(word))) unit_word(word) else ""
+							_ => ""
+						}
 				}
-			Ok({ sets, reps, per_side: Str.contains(Str.with_ascii_lowercased(reps_part), "/side"), timed: unit != "", unit })
+			Ok({ sets, reps, per_side, timed: unit != "", unit })
 		}
 	}
 
-	# `30 lbs/side`, `25 lbs`, `12.5 kg`, in any case — a right side with no
-	# recognised unit, or a weight of zero or less, is not a set line
+	# the two sides of the one `mark` in `text`; Err when it holds none or
+	# several
+	split_once : Str, Str -> Try((Str, Str), [NoMark])
+	split_once = |text, mark|
+		match Str.split_on(text, mark) {
+			[a, b] => Ok((a, b))
+			_ => Err(NoMark)
+		}
+
+	# a clock figure `m:ss` (`0:20`, `1:30`) as seconds: whole minutes, then
+	# two-digit seconds under 60; Err for anything else
+	clock_seconds : Str -> Try(I64, [NotAClock])
+	clock_seconds = |tok|
+		match Str.split_on(tok, ":") {
+			[m_s, s_s] =>
+				if all_digits(m_s) and all_digits(s_s) and List.len(Str.to_utf8(s_s)) == 2 {
+					m = I64.from_str(m_s).map_err(|_| NotAClock)?
+					s = I64.from_str(s_s).map_err(|_| NotAClock)?
+					if (s < 60) Ok(m * 60 + s) else Err(NotAClock)
+				} else {
+					Err(NotAClock)
+				}
+			_ => Err(NotAClock)
+		}
+
+	# `30 lbs/side`, `25 lbs`, `12.5 kg`, `0 lbs`, `bodyweight`, in any case.
+	# The app writes `0 lbs` and `bodyweight` on moves with no load, both
+	# read as 0 kg. A `/side` cut short at the end of a pasted note (`/s`,
+	# `/si`, `/sid`) reads as `/side`, since nothing else follows a unit. A
+	# right side with no recognised unit, or a negative weight, is not a set
+	# line.
 	parse_weight : Str -> Try({ kg : F64, per_side : Bool }, [NotASetLine])
 	parse_weight = |right| {
-		tokens = Str.split_on(Str.trim(right), " ")
+		tokens = List.keep_if(Str.split_on(Str.trim(right), " "), |t| t != "")
 		match tokens {
+			[word] => if (Str.with_ascii_lowercased(word) == "bodyweight") Ok({ kg: 0.0, per_side: Bool.False }) else Err(NotASetLine)
 			[num_s, unit, ..] => {
 				n = F64.from_str(num_s).map_err(|_| NotASetLine)?
-				base = Str.replace_each(Str.with_ascii_lowercased(unit), "/side", "")
+				u = side_cut(Str.with_ascii_lowercased(unit))
 				kg =
-					match base {
+					match u.base {
 						"lbs" | "lb" => Ok(n * Units.lb_kg)
 						"kg" => Ok(n)
 						_ => Err(NotASetLine)
 					}?
-				if n <= 0.0 {
+				if n < 0.0 {
 					Err(NotASetLine)
 				} else {
-					Ok({ kg, per_side: Str.contains(Str.with_ascii_lowercased(right), "/side") })
+					Ok({ kg, per_side: u.per_side })
 				}
 			}
 			_ => Err(NotASetLine)
 		}
 	}
+
+	# a lowercased unit split at its slash: the unit before it, and whether
+	# what follows is `side` or a cut-short start of it. A unit with any
+	# other tail keeps the whole word as its base, which no unit matches.
+	side_cut : Str -> { base : Str, per_side : Bool }
+	side_cut = |unit|
+		match Str.split_on(unit, "/") {
+			[base, tail] => if (tail != "" and Str.starts_with("side", tail)) { base, per_side: Bool.True } else { base: unit, per_side: Bool.False }
+			_ => { base: unit, per_side: Bool.False }
+		}
 }
 
 # the shipped sample parses to exactly what the app's grammar says it should
@@ -265,13 +392,14 @@ expect {
 expect List.is_empty(Peloton.parse(""))
 expect List.is_empty(Peloton.parse("a ride description with no sets at all"))
 
-# zero and negative magnitudes are refused, not stored: a row claiming 0 sets
-# or a negative weight is paste damage, and tonnage built on it would be a
-# confident wrong number
+# a zero set count and a negative weight are refused, not stored: a row
+# claiming either is paste damage, and tonnage built on it would be a
+# confident wrong number. A zero WEIGHT is a set line (see below).
 expect List.is_empty(Peloton.parse("Curl\n0 × 12 • 15 lbs"))
 expect List.is_empty(Peloton.parse("Curl\n3 × 12 • -15 lbs"))
 
-# an unrecognised unit is not a set line — prose with a bullet stays prose
+# an unrecognised unit is not a set line: it yields no row, and `unread`
+# reports it (below)
 expect List.is_empty(Peloton.parse("Curl\n3 × 12 • 15 stone"))
 
 # a bodyweight line that names a weight keeps its sets and reps at 0 kg,
@@ -290,13 +418,76 @@ expect {
 # a line that opens with `S × R` but is not a whole set line never becomes
 # an exercise name: the next set line still belongs to the name above it
 expect {
-	zero = Peloton.parse("Chin Up\n3 × 6 • 0 lbs\n3 × 6 • 175 lbs")
+	refused = Peloton.parse("Chin Up\n3 × 6 • 15 stone\n3 × 6 • 175 lbs")
 	bare = Peloton.parse("Push Up\n3 × 15\n3 × 10 • 40 lbs")
-	match (zero, bare) {
+	match (refused, bare) {
 		([a], [b]) => a.exercise == "Chin Up" and a.weight_kg == 0.0 and b.exercise == "Push Up" and b.sets == 3 and b.reps == 10
 		_ => False
 	}
 }
+
+# the app's own block of moves with no load, verbatim: `0 lbs` is a set
+# line at 0 kg, on a listed bodyweight move and an unlisted one alike, and
+# the circuit's header is prose
+expect {
+	text = "Block 3\nCircuit • 3 rounds\nAssisted Tuck Ups\n3 × 8 • 0 lbs\nAssisted Pull Up\n3 × 6 • 0 lbs\nDumbbell Iso Wide Grip Row\n3 × 12 reps/side • 30 lbs/side"
+	match Peloton.parse(text) {
+		[a, b, c] =>
+			a.exercise == "Assisted Tuck Ups" and a.sets == 3 and a.reps == 8 and a.weight_kg == 0.0
+				and b.exercise == "Assisted Pull Up" and b.sets == 3 and b.reps == 6 and b.weight_kg == 0.0
+				and c.exercise == "Dumbbell Iso Wide Grip Row" and c.reps == 24 and (c.weight_kg - 13.6077711).abs() < 0.001
+				and List.is_empty(Peloton.unread(text))
+		_ => False
+	}
+}
+
+# per-side reps written `R/side` double like `R reps/side`
+expect {
+	match Peloton.parse("Renegade Row\n3 × 8/side • 25 lb/side") {
+		[a] => a.sets == 3 and a.reps == 16 and (a.weight_kg - 11.3398093).abs() < 0.001
+		_ => False
+	}
+}
+
+# `bodyweight` in the weight's place is a set line at 0 kg
+expect {
+	match Peloton.parse("Negative Pull Up\n3 × 6 • bodyweight") {
+		[a] => a.exercise == "Negative Pull Up" and a.sets == 3 and a.reps == 6 and a.weight_kg == 0.0
+		_ => False
+	}
+}
+
+# a clock hold per side: three holds of 20 s on each side, at the weight
+# per hand, with no reps
+expect {
+	match Peloton.parse("Dumbbell Farmer Carry\n3 × 0:20/side • 55 lbs/side") {
+		[a] => a.sets == 6 and a.reps == 0 and a.hold_s == 20 and (a.weight_kg - 24.9475804).abs() < 0.001
+		_ => False
+	}
+}
+
+# a `/side` cut short at the end of the note still reads as per side
+expect {
+	match Peloton.parse("Dumbbell Skull Crusher\n3 × 12 • 12.5 lbs/sid") {
+		[a] => a.sets == 3 and a.reps == 12 and (a.weight_kg - 5.6699046).abs() < 0.001
+		_ => False
+	}
+}
+
+# a clock with seconds of 60 or more, or not two digits, is not a figure
+expect List.is_empty(Peloton.parse("Plank\n3 × 0:75 • 10 lbs")) and List.is_empty(Peloton.parse("Plank\n3 × 1:5 • 10 lbs"))
+
+# unread: a line that opens like a set line but yields no row is returned,
+# whether the grammar refused it or no exercise name stood above it; the
+# exercise around it still parses
+expect {
+	text = "3 × 8 • 30 lbs\nCurl\n3 × 12 • 15 stone\nRow\n3 × 10 • 40 lbs"
+	Peloton.unread(text) == ["3 × 8 • 30 lbs", "3 × 12 • 15 stone"] and List.len(Peloton.parse(text)) == 1
+}
+
+# prose with a bullet, a name that starts like a count, the shipped sample
+# and text that is no share summary at all leave nothing unread
+expect List.is_empty(Peloton.unread("Circuit • 3 rounds\n5 x 5 Back Squat\n5 × 5 • 225 lbs")) and List.is_empty(Peloton.unread(Peloton.sample)) and List.is_empty(Peloton.unread("a ride description with no sets at all"))
 
 # a name that merely starts like a set count is still a name: its sets are
 # its own, loaded, and not filed under the bodyweight move above it
@@ -369,6 +560,45 @@ expect {
 	rows = Peloton.parse("Curl\n3 × 8 Reps/Side • 20 LBS/Side\nRow\n3 × 8 • 20 LBS/Side")
 	match rows {
 		[a, b] => a.reps == 16 and (a.weight_kg - 9.0718474).abs() < 0.001 and b.reps == 8 and (b.weight_kg - 9.0718474).abs() < 0.001
+		_ => False
+	}
+}
+
+# spacing a paste loses or gains does not hide a set line: a no-break
+# space, a closed-up `3×8`, `3x8` or `•30`, a tab, another bullet glyph and an
+# upper-case `X` all read as the line the app writes
+expect {
+	nb = "\u(00A0)"
+	text = "Curl\n3${nb}×${nb}8 • 30 lbs\n3×8 •30 lbs\n3 × 8\t• 30 lbs\n3 × 8 · 30 lbs\n3 X 8 • 30 lbs\n3x8 • 30 lbs"
+	rows = Peloton.parse(text)
+	List.len(rows) == 6 and List.all(rows, |r| r.exercise == "Curl" and r.sets == 3 and r.reps == 8 and (r.weight_kg - 13.6077711).abs() < 0.001) and List.is_empty(Peloton.unread(text))
+}
+
+# a set line with a figure the grammar cannot read is unread, never a name:
+# the set line after it still belongs to the move above, bodyweight rule
+# included
+expect {
+	text = "Pull Up\n3 × AMRAP • bodyweight\n3 × 8 • 20 lbs"
+	match Peloton.parse(text) {
+		[a] => a.exercise == "Pull Up" and a.reps == 8 and a.weight_kg == 0.0 and Peloton.unread(text) == ["3 × AMRAP • bodyweight"]
+		_ => False
+	}
+}
+
+# a `/side` cut short on a hold's unit, and a spaced `reps / side`, read
+# per side like their whole forms
+expect {
+	match (Peloton.parse("Plank\n3 × 30 sec/sid • 10 lbs"), Peloton.parse("Curl\n3 × 8 reps / side • 30 lbs")) {
+		([h], [c]) => h.sets == 6 and h.reps == 0 and h.hold_s == 30 and c.reps == 16
+		_ => False
+	}
+}
+
+# a name keeps the text as written, though its set lines are read in
+# their normal form
+expect {
+	match Peloton.parse("3×3 Ladder\n3 × 3 • 50 lbs") {
+		[a] => a.exercise == "3×3 Ladder" and a.sets == 3 and a.reps == 3
 		_ => False
 	}
 }
