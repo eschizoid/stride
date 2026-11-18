@@ -113,10 +113,10 @@ Metrics :: [].{
 				Err(NoWindow),
 				|acc, i|
 					if contiguous(pairs, i, window) {
-						mean = (get_or_zero(prefix, i + window) - get_or_zero(prefix, i)) / window.to_f64()
+						window_mean = (get_or_zero(prefix, i + window) - get_or_zero(prefix, i)) / window.to_f64()
 						match acc {
-							Err(_) => Ok(mean)
-							Ok(b) => Ok(b.max(mean))
+							Err(_) => Ok(window_mean)
+							Ok(b) => Ok(b.max(window_mean))
 						}
 					} else {
 						acc
@@ -723,7 +723,7 @@ Metrics :: [].{
 		# can never be published as a stored measurement beside an honest tss.
 		-> { tss : F64, np : Try(F64, [NoPower]), model : Str, power_if : Try(F64, [NoPowerIf]) }
 	tss_ladder = |input| {
-		np_like =
+		power_rung =
 			if (!input.device_watts)
 				Err(NoPower)
 			else
@@ -814,7 +814,7 @@ Metrics :: [].{
 				_ => fallback
 			}
 		scored =
-			match np_like {
+			match power_rung {
 				# power scores ONLY with a usable FTP and a plausible intensity. Without an
 				# FTP (no stream to derive it — CSV imports, pre-backfill syncs), power would
 				# compute TSS 0 and, by winning the ladder, BLOCK the rest — silently scoring
@@ -828,7 +828,7 @@ Metrics :: [].{
 						{ t: pace_or_fallback.t, m: pace_or_fallback.m, pif: Err(NoPowerIf) }
 				Err(_) => { t: pace_or_fallback.t, m: pace_or_fallback.m, pif: Err(NoPowerIf) }
 			}
-		{ tss: scored.t, np: Try.map_ok(np_like, |p| p.w), model: scored.m, power_if: scored.pif }
+		{ tss: scored.t, np: Try.map_ok(power_rung, |p| p.w), model: scored.m, power_if: scored.pif }
 	}
 
 	all_seconds_in_zone : I64, U8 -> ZoneSeconds
@@ -2402,7 +2402,6 @@ Metrics :: [].{
 	# a duration in the literal's own spelling: `m:ss`, or `h:mm:ss` from an hour
 	rep_dur_str : I64 -> Str
 	rep_dur_str = |secs| {
-		pad2 = |n| if (n < 10) "0${I64.to_str(n)}" else I64.to_str(n)
 		if secs >= 3600 {
 			"${I64.to_str(secs // 3600)}:${pad2((secs % 3600) // 60)}:${pad2(secs % 60)}"
 		} else {

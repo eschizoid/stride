@@ -466,7 +466,7 @@ Gate :: [].{
 	# fixture: empty is a clean gate. roc test reports only that an expect
 	# failed, so `dbg` this list inside the expect to read what failed.
 	failures : (Ui.Model -> List(Str)), List({ name : Str, model : Ui.Model }) -> List(Str)
-	failures = |judge, fixtures| List.join(List.map(fixtures, |f| List.map(judge(f.model), |e| "${f.name}: ${e}")))
+	failures = |rule, fixtures| List.join(List.map(fixtures, |f| List.map(rule(f.model), |e| "${f.name}: ${e}")))
 
 	# one scene's failures: two texts that overlap, a text outside its
 	# region, and a text over a shape it must keep off

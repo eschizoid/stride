@@ -224,13 +224,13 @@ Curve :: [].{
 		# targets whose rings would overlap share one ring with their labels
 		# stacked under it, in date order, the order the targets load in
 		rung_secs = List.map(rungs, |r| r.pr.secs)
-		marks = List.map(plan_marks, |t| { x: col_x(g0, rung_pos(rung_secs, t.dur_s)), y: y_at(g0, I64.to_f32(t.val)) })
+		ring_pts = List.map(plan_marks, |t| { x: col_x(g0, rung_pos(rung_secs, t.dur_s)), y: y_at(g0, I64.to_f32(t.val)) })
 		grouped = List.map(
-			cluster_marks(marks, ring_merge),
+			cluster_marks(ring_pts, ring_merge),
 			|idxs| {
 				in_order = List.sort_with(idxs, |a, b| if (a < b) Before else if (a > b) After else Same)
 				ts = List.keep_oks(in_order, |i| List.get(plan_marks, i))
-				ps = List.keep_oks(in_order, |i| List.get(marks, i))
+				ps = List.keep_oks(in_order, |i| List.get(ring_pts, i))
 				n = F32.max(1.0, U64.to_f32(List.len(ps)))
 				{ ts, x: List.fold(ps, 0.0, |a, p| a + p.x) / n, y: List.fold(ps, 0.0, |a, p| a + p.y) / n }
 			},
@@ -484,7 +484,7 @@ Curve :: [].{
 			Err(_) => []
 		}
 		centred = |x, text, size| label_center_within(x, measure(text, size, Data) / 2.0, g.left, g.left + g.pw - label_inset)
-		marks = List.join(
+		rung_labels = List.join(
 			List.map(
 				g.rungs,
 				|r| {
@@ -564,7 +564,7 @@ Curve :: [].{
 			} else {
 				[]
 			}
-		List.join([tiles, grid, rung_names, gutter, legend, cp, marks, rings, zones, caption])
+		List.join([tiles, grid, rung_names, gutter, legend, cp, rung_labels, rings, zones, caption])
 	}
 
 	# what the plot's labels keep off: the chrome, every shape the view
