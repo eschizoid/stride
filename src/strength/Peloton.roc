@@ -113,15 +113,29 @@ Peloton :: [].{
 
 	# A line with the spacing a paste or a re-typed line can lose or gain put
 	# back the way the app writes it: a no-break space or a tab is a space,
-	# the multiplication sign and the bullet stand apart from their
-	# neighbours, `·`, `∙` and `●` are the bullet, a spaced ` / ` closes up,
-	# and runs of spaces are one.
+	# the multiplication sign, the bullet, and an ASCII `x` or `X` between two
+	# digits stand apart from their neighbours, `·`, `∙` and `●` are the
+	# bullet, a spaced ` / ` closes up, and runs of spaces are one.
 	normal_form : Str -> Str
 	normal_form = |line| {
 		swaps = [("\u(00A0)", " "), ("\t", " "), ("·", "•"), ("∙", "•"), ("●", "•"), ("×", " × "), ("•", " • ")]
-		spaced = List.fold(swaps, line, |acc, (from, to)| Str.replace_each(acc, from, to))
+		spaced = space_digit_x(List.fold(swaps, line, |acc, (from, to)| Str.replace_each(acc, from, to)))
 		single = Str.join_with(List.keep_if(Str.split_on(spaced, " "), |t| t != ""), " ")
 		Str.replace_each(single, " / ", "/")
+	}
+
+	# `3x8` as `3 x 8`: an `x` or `X` with a digit on each side gets a space on
+	# each side; one beside a letter or a space (`2x Burpees`) is left alone
+	space_digit_x : Str -> Str
+	space_digit_x = |s| {
+		bytes = Str.to_utf8(s)
+		digit_at = |i|
+			match List.get(bytes, i) {
+				Ok(b) => b >= 48 and b <= 57
+				Err(_) => False
+			}
+		pieces = List.map_with_index(bytes, |b, i| if ((b == 120 or b == 88) and i > 0 and digit_at(i - 1) and digit_at(i + 1)) [32, b, 32] else [b])
+		Str.from_utf8(List.join(pieces)).ok_or(s)
 	}
 
 	# a line, in its normal form, that carries a bullet and, before it, opens
@@ -203,15 +217,15 @@ Peloton :: [].{
 			}
 			_ => Err(NotASetLine)
 		}
-
 	# `3 × 8`, `3 × 8 reps`, `3 × 8 reps/side`, `3 × 8/side`, `3 × 30 sec`,
 	# `3 × 0:20/side` — an ASCII `x` or `X` tolerated, since a re-typed paste
 	# is one keyboard away from the multiplication sign. `per_side` says a
-	# token of R's part ends in `/side` or a cut-short start of it. `timed`
-	# says R is a clock `m:ss`, or the word after it is one of `time_units`
-	# (through `unit_word`, so in any case and with or without `/side`), so R
-	# counts seconds or minutes, not reps; `unit` is that word without its
-	# `/side`, `sec` for a clock, "" on a line that is not timed.
+	# token of R's part has one slash, followed by `side` or a cut-short start
+	# of it (`side_cut`). `timed` says R is a clock `m:ss`, or the word after
+	# it is one of `time_units` (through `unit_word`, so in any case and with
+	# or without `/side`), so R counts seconds or minutes, not reps; `unit` is
+	# that word without its `/side`, `sec` for a clock, "" on a line that is
+	# not timed.
 	parse_sets_reps : Str -> Try({ sets : I64, reps : I64, per_side : Bool, timed : Bool, unit : Str }, [NotASetLine])
 	parse_sets_reps = |left| {
 		parts =
@@ -548,13 +562,13 @@ expect {
 }
 
 # spacing a paste loses or gains does not hide a set line: a no-break
-# space, a closed-up `3×8` or `•30`, a tab, another bullet glyph and an
+# space, a closed-up `3×8`, `3x8` or `•30`, a tab, another bullet glyph and an
 # upper-case `X` all read as the line the app writes
 expect {
 	nb = "\u(00A0)"
-	text = "Curl\n3${nb}×${nb}8 • 30 lbs\n3×8 •30 lbs\n3 × 8\t• 30 lbs\n3 × 8 · 30 lbs\n3 X 8 • 30 lbs"
+	text = "Curl\n3${nb}×${nb}8 • 30 lbs\n3×8 •30 lbs\n3 × 8\t• 30 lbs\n3 × 8 · 30 lbs\n3 X 8 • 30 lbs\n3x8 • 30 lbs"
 	rows = Peloton.parse(text)
-	List.len(rows) == 5 and List.all(rows, |r| r.exercise == "Curl" and r.sets == 3 and r.reps == 8 and (r.weight_kg - 13.6077711).abs() < 0.001) and List.is_empty(Peloton.unread(text))
+	List.len(rows) == 6 and List.all(rows, |r| r.exercise == "Curl" and r.sets == 3 and r.reps == 8 and (r.weight_kg - 13.6077711).abs() < 0.001) and List.is_empty(Peloton.unread(text))
 }
 
 # a set line with a figure the grammar cannot read is unread, never a name:

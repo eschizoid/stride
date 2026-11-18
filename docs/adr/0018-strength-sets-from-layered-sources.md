@@ -66,8 +66,8 @@ text as a top-level `sample` that its own expects parse. The stored log is
 read by the same table: `StravaLog.roc` parses a workout object and sits
 first, because JSON is the narrower grammar, and `Peloton.roc` parses
 Peloton's share summary below it. Each table row holds a name, a parse
-function and an unread function, the same shape as `Sports.families`, so
-registering a module is one row. The first adapter that recognizes the text
+function and an unread function: a table of records, like `Sports.families`,
+so registering a module is one row. The first adapter that recognizes the text
 wins, so the table's order is part of the decision.
 
 Beside `parse`, each adapter keeps an `unread` function: the pieces of text
