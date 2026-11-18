@@ -7,7 +7,7 @@
 ##
 ## The header names no compiler, and neither does roc-ray: the window builds on
 ## the repo's one nightly pin, the same compiler the engine builds on.
-app [Model, program] { core: "../core/package.roc", rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.11.1/4NWnSt7bKCyVx4xDFH89pV11ekYbiGQ43kdjfZ9NBJQn.tar.zst" }
+app [Model, program] { core: "../core/package.roc", rr: platform "https://github.com/lukewilliamboswell/roc-ray/releases/download/0.12.2/A8Dt5CorYsEtHFh8h7SfMtpzSy73UWbaB5Twy9JoYS1U.tar.zst" }
 
 import rr.App
 import rr.Assets

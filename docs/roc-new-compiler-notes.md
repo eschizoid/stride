@@ -4,16 +4,21 @@ Working reference for the new (Zig) compiler + basic-cli, learned empirically
 against the compiler and roc-lang/roc source during the migration (completed
 2026-08-02). The migration's progress log is gone — this is the part worth keeping.
 
-## Toolchain pin: `nightly-2026-10-26-3c0fffe`
+## Toolchain pin: `nightly-2026-11-11-7679cc5`
 
-**Bumped 2026-10-29**, from `nightly-2026-09-27-a3ce7f1`, alongside basic-cli
-0.26.0, roc-ray 0.11.1 and basic-webserver 0.19.0. basic-cli 0.26.0 sets a floor
-of `nightly-2026-10-12-2664a27`, and roc-ray 0.11 names no compiler at all, so
-the viz app header carries no `roc:` field and the `setup-roc` default is the
-only pin. The ceiling is the e2e harness: basic-webserver 0.19.0's own
-`Sqlite.roc` stops type-checking on `nightly-2026-10-27-de79a0f` (a
-`MalformedRow` tag its annotations do not list), so 10-26 is the newest nightly
-on which all three platforms compile.
+**Bumped 2026-11-18**, from `nightly-2026-10-26-3c0fffe`, alongside basic-cli
+0.28.0, roc-ray 0.12.2 and basic-webserver 0.21.0. The three moved together
+because none of them crosses the old pin: roc-ray 0.12.2 does not type-check on
+`nightly-2026-10-26-3c0fffe`, and basic-cli 0.26.0 does not type-check on this
+one (its streams pass `Unknown` where `Stream.custom` now takes `Err(Unknown)`,
+after `size_hint` was renamed `len_if_known`). basic-cli 0.27 and later and
+basic-webserver 0.21.0 set a floor of `nightly-2026-11-06-34f137a`; roc-ray
+0.12.2 was built and tested on this nightly, whose boxed-callable layout its
+host ABI follows. roc-ray names no compiler at all, so the viz app header
+carries no `roc:` field and the `setup-roc` default is the only pin.
+
+The previous pin's notes follow; the SQLite API they describe is unchanged in
+basic-cli 0.28.
 
 **basic-cli 0.26 replaced the SQLite API.** `Sqlite.open!` returns a `Db`
 connection, parameters are `${…}` interpolations or `?` markers, and rows decode

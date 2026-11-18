@@ -45,9 +45,9 @@ just install   # build + symlink to ~/.local/bin/stride
 just fmt       # roc fmt over src/ and tests/; CI fails any .roc file not in this form
 ```
 
-`tests/e2e.roc` rides basic-webserver 0.19.0, which builds at zero warnings on the
+`tests/e2e.roc` rides basic-webserver 0.21.0, which builds at zero warnings on the
 pinned nightly, so `just e2e`, `just test` and `just e2e-sync` pass;
-docs/roc-new-compiler-notes.md says why the pin is the newest nightly it compiles on.
+docs/roc-new-compiler-notes.md says which floor each platform sets on the pin.
 
 CI runs more than `just test`, and a green `just test` is not a green build. These are the
 rest of it, all runnable locally — run them before pushing. Every one is network-free
@@ -96,7 +96,7 @@ to it and refuses a per-job override.
 - A failed build leaves a stale binary that e2e would happily "pass" against; `just
   test` orders steps to prevent this. Don't run `just e2e` after a failed build.
 - Toolchain: the new (Zig) compiler, pinned by exact nightly tag (engine and viz
-  pins: see *Compiler pins* under Code conventions) · basic-cli **0.23** · builtin
+  pins: see *Compiler pins* under Code conventions) · basic-cli **0.28** · builtin
   JSON. `~/.local/bin/roc` is a SYMLINK to the engine nightly; a bare `roc` in the
   justfile rides it — pin the explicit path in anything that must not depend on that
   link.
@@ -319,7 +319,7 @@ These are measured toolchain behaviors, not style opinions.
 
 ### Platform APIs
 
-- **Verify against the docs before writing** (basic-cli 0.26 docs, or package source in
+- **Verify against the docs before writing** (basic-cli 0.28 docs, or package source in
   `~/.cache/roc/packages/`) — alpha APIs drift.
 - **The engine reaches SQLite only through `src/cli/Sql.roc`.** Each call opens its own
   connection, so statements that must share one (BEGIN … COMMIT) go through

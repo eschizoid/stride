@@ -454,16 +454,17 @@ e2e:
 # ROC_VIZ at that nightly, or leave it and hope the PATH roc is close enough.
 # defaults to the pinned viz nightly when installed (tools/make-viz-app.sh and
 # the docs both point there); ROC_VIZ still overrides, PATH roc is the last resort
-viz_pin := `sh -c 'P="$HOME/.local/share/roc/nightly-2026-10-26-3c0fffe/roc"; [ -x "$P" ] && echo "$P" || echo roc'`
+viz_pin := `sh -c 'P="$HOME/.local/share/roc/nightly-2026-11-11-7679cc5/roc"; [ -x "$P" ] && echo "$P" || echo roc'`
 roc_viz := env("ROC_VIZ", viz_pin)
-
 # open the app window (ESC quits). The two arguments are the athlete's directory,
 # the window's read-write grant (a home resolved at launch cannot be written into
 # the source the grant lives in), and the directory it was launched from, which a
 # capture's status row names its file under. Without them the window still opens
-# and says it has no database.
+# and says it has no database. roc hands everything after the file to the app
+# exactly as written, so no `--` separates them: one would arrive as the first
+# argument and be taken for the athlete's directory.
 viz:
-    {{roc_viz}} src/viz/main.roc -- "$HOME/.stride" "$PWD"
+    {{roc_viz}} src/viz/main.roc "$HOME/.stride" "$PWD"
 
 # The wrapper forgives nothing — it is the one place the assertion-count pins
 # live, and `check` passes roc's own exit code straight through.
