@@ -466,8 +466,9 @@ roc_viz := env("ROC_VIZ", viz_pin)
 viz:
     {{roc_viz}} src/viz/main.roc "$HOME/.stride" "$PWD"
 
-# The wrapper forgives nothing — it is the one place the assertion-count pins
-# live, and `check` passes roc's own exit code straight through.
+# The wrapper is the one place the assertion-count pins live, and it forgives
+# only the warnings its header names, those inside the pinned roc-ray package;
+# otherwise `check` passes roc's own exit code straight through.
 # type-check the viz without opening a window
 viz-check:
     ROC="{{roc_viz}}" sh tools/roc-viz.sh check src/viz/main.roc

@@ -3,14 +3,40 @@
 # the window's coverage is pinned at. Every other subcommand is a pass-through
 # carrying roc's own exit code.
 #
-# Nothing here forgives a warning. roc-ray names no compiler, so a viz build
-# has no version-skew notice to tolerate, and roc exits non-zero on any
-# warning that does appear.
+# One class of warning is forgiven: a warning located inside the roc-ray
+# package named by `ray_pkg`, which stride cannot edit. roc exits 2 when a run
+# has warnings and no errors, and the run counts as clean only when all of
+# these hold: roc exited 2, no error header (`── ✗`) appears, at least one
+# warning header (`── ●`) appears and every one of them points into that
+# package, and the `N errors and M warnings` summary reads `0 errors and M
+# warnings` with M equal to the header count. `check` and `build` print that
+# summary; `test` prints none, so a test run may lack it, and the pinned
+# all-passed summary below is still required of it. A warning in stride's own
+# source fails the run as before. The exception applies only while
+# src/viz/main.roc names that package, so moving to another roc-ray release
+# ends it, and a release that still warns fails until `ray_pkg` names it on
+# purpose. Delete the exception once the pinned roc-ray checks clean on the
+# pinned nightly.
 set -eu
+
+ray_pkg=A8Dt5CorYsEtHFh8h7SfMtpzSy73UWbaB5Twy9JoYS1U
 
 rc=0
 out=$("${ROC:-roc}" "$@" 2>&1) || rc=$?
 printf '%s\n' "$out"
+
+if [ "$rc" = "2" ] && grep -q "/$ray_pkg\.tar\.zst" src/viz/main.roc; then
+  warned=$(printf '%s\n' "$out" | grep -c '^── ● ' || true)
+  outside=$(printf '%s\n' "$out" | grep '^── ● ' | grep -vc "packages[/\\\\]$ray_pkg[/\\\\]" || true)
+  failed=$(printf '%s\n' "$out" | grep -c '^── ✗ ' || true)
+  summary=$(printf '%s\n' "$out" | grep -o '[0-9]* errors and [0-9]* warnings' | head -1)
+  if [ "$warned" -gt 0 ] && [ "$outside" = "0" ] && [ "$failed" = "0" ] &&
+     { [ "$summary" = "0 errors and $warned warnings" ] ||
+       { [ -z "$summary" ] && [ "${1:-}" = "test" ]; }; }; then
+    echo "roc-viz: forgave $warned warnings inside the roc-ray package $ray_pkg"
+    rc=0
+  fi
+fi
 
 # A test run gets two gates, and both run on the clean path, so the pins
 # execute whether roc succeeded or not.

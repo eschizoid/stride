@@ -4,18 +4,25 @@ Working reference for the new (Zig) compiler + basic-cli, learned empirically
 against the compiler and roc-lang/roc source during the migration (completed
 2026-08-02). The migration's progress log is gone — this is the part worth keeping.
 
-## Toolchain pin: `nightly-2026-11-11-7679cc5`
+## Toolchain pin: `nightly-2026-11-15-f25da45`
 
 **Bumped 2026-11-18**, from `nightly-2026-10-26-3c0fffe`, alongside basic-cli
-0.28.0, roc-ray 0.12.2 and basic-webserver 0.21.0. The three moved together
-because none of them crosses the old pin: roc-ray 0.12.2 does not type-check on
-`nightly-2026-10-26-3c0fffe`, and basic-cli 0.26.0 does not type-check on this
-one (its streams pass `Unknown` where `Stream.custom` now takes `Err(Unknown)`,
-after `size_hint` was renamed `len_if_known`). basic-cli 0.27 and later and
-basic-webserver 0.21.0 set a floor of `nightly-2026-11-06-34f137a`; roc-ray
-0.12.2 was built and tested on this nightly, whose boxed-callable layout its
-host ABI follows. roc-ray names no compiler at all, so the viz app header
-carries no `roc:` field and the `setup-roc` default is the only pin.
+0.28.1, roc-ray 0.12.2 and basic-webserver 0.22.0. They move together because
+none of the platforms crosses the old pin: roc-ray 0.12.2 does not type-check
+on `nightly-2026-10-26-3c0fffe`, and basic-cli 0.26.0 does not type-check on
+this one (its streams pass `Unknown` where `Stream.custom` now takes
+`Err(Unknown)`, after `size_hint` was renamed `len_if_known`).
+
+Two nightly boundaries fix where the pin can sit. Before
+`nightly-2026-11-13-03dce41`, compile-time evaluation on Windows overflows its
+stack on plain literals such as `locale = "en-US"` (roc#12996 fixes it), so no
+earlier nightly builds on Windows; basic-cli 0.28.1 sets its floor there. From
+`nightly-2026-11-12-ce942d6` on, a local or parameter that shadows a definition
+in an enclosing scope is a `duplicate definition` warning. Stride's source has
+none. roc-ray 0.12.2's own source has many, and `tools/roc-viz.sh` forgives
+exactly those, under the rule its header states, until a roc-ray release checks
+clean. roc-ray names no compiler at all, so the viz app header carries no
+`roc:` field and the `setup-roc` default is the only pin.
 
 The previous pin's notes follow; the SQLite API they describe is unchanged in
 basic-cli 0.28.

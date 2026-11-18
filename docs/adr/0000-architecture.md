@@ -466,4 +466,4 @@ window reads the same database and the coach still reads JSON rather than pixels
 
 ## Update, 2026-11-18
 
-The platforms are now basic-cli 0.28, basic-webserver 0.21 and roc-ray 0.12, on `nightly-2026-11-11-7679cc5`. None of them crosses the previous pin in either direction, so they move with the compiler as one change; the compiler notes record why. `src/cli/Sql.roc` needed no change: the SQLite calls it makes kept their signatures.
+The platforms are now basic-cli 0.28, basic-webserver 0.22 and roc-ray 0.12, on `nightly-2026-11-15-f25da45`. None of them crosses the previous pin in either direction, so they move with the compiler as one change; the compiler notes record why. `src/cli/Sql.roc` needed no change: the SQLite calls it makes kept their signatures.

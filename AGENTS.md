@@ -45,7 +45,7 @@ just install   # build + symlink to ~/.local/bin/stride
 just fmt       # roc fmt over src/ and tests/; CI fails any .roc file not in this form
 ```
 
-`tests/e2e.roc` rides basic-webserver 0.21.0, which builds at zero warnings on the
+`tests/e2e.roc` rides basic-webserver 0.22.0, which builds at zero warnings on the
 pinned nightly, so `just e2e`, `just test` and `just e2e-sync` pass;
 docs/roc-new-compiler-notes.md says which floor each platform sets on the pin.
 
