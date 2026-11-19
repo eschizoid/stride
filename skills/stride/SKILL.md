@@ -96,8 +96,8 @@ reason `--json` and still answers in JSON).
      asked again; the first backfill spends one read on each such activity. A route
      body that does not decode follows the stream rule: counted, asked again up to 3
      failed fetches, then left to `stride sync --all` and counted by `stride doctor` in
-     `routes_retry_capped`. Routes are stored for the planned map view; nothing in
-     stride reads them yet, and nothing scored ever will.
+     `routes_retry_capped`. Routes are stored for the planned map view; no command
+     reads them yet, and nothing scored ever will.
    - Stride counts its own daily reads in config rows `strava_reads_today` and
      `strava_reads_day` (a UTC day number; a stale stamp is the reset). Do not touch
      them unless Stride itself names `stride config set strava_reads_today 0` as the
