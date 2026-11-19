@@ -226,8 +226,8 @@ Mvt :: [].{
 	water_fill : U8
 	water_fill = 1
 
-	# the line kinds, coded in drawing order as the base map's ways are
-	# (Db.way_kinds, which Map holds equal to this list)
+	# the line kinds, each coded by its place here, in the order the map
+	# draws them, bottom first (Map.style draws each code)
 	line_kinds : List(Str)
 	line_kinds = ["water", "street", "cycleway", "arterial", "motorway"]
 

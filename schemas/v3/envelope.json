@@ -65,8 +65,6 @@
             "no_workout_on_date",
             "not_authenticated",
             "not_set",
-            "overpass_busy",
-            "overpass_error",
             "rate_limited",
             "session_done",
             "session_not_found",

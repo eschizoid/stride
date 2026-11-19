@@ -17,8 +17,7 @@ Map :: [].{
 	# returns to the opening view (Geo.opening). The street map is
 	# OpenFreeMap's vector tiles of OpenStreetMap's data in the OpenMapTiles
 	# schema, fetched as the view needs them and cached (Tiles). The view
-	# shows no attribution of them. The ways `stride basemap` stored draw
-	# instead only while no tile is there to draw.
+	# shows no attribution of them.
 
 	# The tab's three modes share its pill and switch by chips in the
 	# header, as the day tab's do: routes (view 10) draws every route in the
@@ -148,7 +147,7 @@ Map :: [].{
 	cam : Ui.Model -> Geo.Cam
 	cam = |model| if (model.map_moved) model.map_cam else Geo.opening(model.map.fit, model.map.focus, rect(model.win))
 
-	# how each kind draws, by Db.way_kinds' codes: its colour and opacity,
+	# how each kind draws, by Mvt.line_kinds' codes: its colour and opacity,
 	# its width in logical pixels, and the zooms, in metres per pixel, where
 	# it starts to show and where it is fully drawn. Streets and cycleways
 	# fade in only once the view is close enough that the grid stops being a
@@ -204,9 +203,9 @@ Map :: [].{
 	cells = |model, c| (Tiles.view(c, rect(model.win), model.map.origin)).cells
 
 	# whether the map has anything to show, and so any tile to fetch: a
-	# route, or a stored way when no route has GPS
+	# route with GPS
 	has_data : Ui.Model -> Bool
-	has_data = |model| !(List.is_empty(model.map.routes) and List.is_empty(model.map.ways))
+	has_data = |model| !(List.is_empty(model.map.routes))
 
 	# whether any tile of the view, its own or an ancestor's, is drawn
 	tiles_shown : Ui.Model, Geo.Cam -> Bool
@@ -241,11 +240,11 @@ Map :: [].{
 
 	# what the map says of its street map when none of it is on screen:
 	# that it is on its way, or, once nothing more is coming, that there is
-	# none here yet; nothing while any tile or stored way draws, or in
-	# playback, whose clock holds that corner
+	# none here yet; nothing while any tile draws, or in playback, whose
+	# clock holds that corner
 	base_note : Ui.Model -> Str
 	base_note = |model|
-		if model.view == 12 or !(List.is_empty(model.map.ways)) or tiles_shown(model, cam(model)) {
+		if model.view == 12 or tiles_shown(model, cam(model)) {
 			""
 		} else if fetching(model) {
 			fetching_text
@@ -289,14 +288,14 @@ Map :: [].{
 	}
 
 	# Every cell of the view draws its own tile or, until that lands, its
-	# nearest drawn ancestor's scaled up (Tiles.shown), and answers whether
-	# any tile drew. When `squared`, as in the picture, each is cut to its
-	# cell's square, so a coarse stand-in never spills over a neighbour
-	# already sharp and the buffer every tile carries past its edge never
-	# draws twice. Otherwise the view is drawing straight to the frame
-	# inside the map's own scissor, which a second scissor would replace
-	# rather than narrow, so each tile shown draws once, whole.
-	paint_tiles! : Ui.Model, Geo.Cam, Bool, Draw.Frame => Bool
+	# nearest drawn ancestor's scaled up (Tiles.shown). When `squared`, as
+	# in the picture, each is cut to its cell's square, so a coarse stand-in
+	# never spills over a neighbour already sharp and the buffer every tile
+	# carries past its edge never draws twice. Otherwise the view is drawing
+	# straight to the frame inside the map's own scissor, which a second
+	# scissor would replace rather than narrow, so each tile shown draws
+	# once, whole.
+	paint_tiles! : Ui.Model, Geo.Cam, Bool, Draw.Frame => {}
 	paint_tiles! = |model, c, squared, frame| {
 		r = rect(model.win)
 		o = model.map.origin
@@ -323,35 +322,17 @@ Map :: [].{
 			once = List.fold(shown, [], |acc, e| if (List.any(acc, |x| x.z == e.s.z and x.col == e.s.col and x.row == e.s.row)) acc else List.append(acc, e.s))
 			List.for_each!(once, |s| draw_tile!(frame, s.tile, Tiles.place(c, r, o, s.z, s.col, s.row), c.mpp))
 		}
-		!(List.is_empty(shown))
 	}
 
 	# what each mode paints into the cached picture. The street map goes
-	# first: the view's tiles, or, while none of them is there to draw, the
-	# stored ways, a line wholly outside the rectangle or faded out skipped
-	# and a point closer than a pixel to the last one drawn adding nothing,
-	# in the kind order the load sorted them into. Routes mode draws the
-	# routes over it in the accent; play draws them in runs of their speed
-	# bands; heat draws none here, its passes being summed into a texture of
-	# their own (paint_heat!), unless the window could not build that
-	# texture, when it draws them as routes mode does.
+	# first, the view's tiles. Routes mode draws the routes over it in the
+	# accent; play draws them in runs of their speed bands; heat draws none
+	# here, its passes being summed into a texture of their own
+	# (paint_heat!), unless the window could not build that texture, when it
+	# draws them as routes mode does.
 	paint! : Ui.Model, Geo.Cam, Bool, Draw.Frame => {}
 	paint! = |model, c, squared, frame| {
-		r = rect(model.win)
-		drew = paint_tiles!(model, c, squared, frame)
-		if !drew {
-			List.for_each!(
-				model.map.ways,
-				|l| {
-					s = style(l.kind)
-					k = fade(s, c.mpp)
-					if k > 0.0 and Geo.visible(c, r, l.box) {
-						a = (F32.round_to_u64_try(s.alpha * k)) ?? 0
-						frame.line_strip!({ points: Geo.strip(c, r, if (c.mpp > far_mpp) l.far else l.pts, 1.0), stroke: Draw.stroke(Color.with_alpha(s.color, U64.to_u8_wrap(a)), s.width) })
-					}
-				},
-			)
-		}
+		paint_tiles!(model, c, squared, frame)
 		if model.view == 12 {
 			paint_speed!(model, c, frame)
 		} else if model.view != 11 or !(heat_ready(model)) {
@@ -565,10 +546,6 @@ expect Map.title_text(11) != Map.title_text(10) and Map.title_text(12) != Map.ti
 
 # playback's title states the speed-up the clock runs at
 expect Str.contains(Map.title_text(12), "an hour in ${U64.to_str((F32.round_to_u64_try(3600.0 / Motion.speedup)) ?? 0)} seconds") and Str.contains(Map.title_text(12), "an hour in 30 seconds")
-
-# the tiles' line kinds are the stored ways' kinds, code for code, so one
-# style serves both
-expect Mvt.line_kinds == Db.way_kinds
 
 # water and parks fill opaque, each nearer its hue than the ground is
 expect {
