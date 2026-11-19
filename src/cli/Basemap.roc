@@ -53,7 +53,7 @@ Basemap :: [].{
 	# what an error leaves behind: blocks fetched before it stay stored
 	kept : I64 -> Str
 	kept = |fetched|
-		if (fetched > 0) " — the ${fetched.to_str()} blocks fetched before it are kept, and the next run asks only for the rest" else ""
+		if (fetched == 1) " — the block fetched before it is kept, and the next run asks only for the rest" else if (fetched > 1) " — the ${fetched.to_str()} blocks fetched before it are kept, and the next run asks only for the rest" else ""
 
 	# the servers to ask, in order: Overpass.servers, or STRIDE_OVERPASS_BASE,
 	# a comma-separated list that lets the e2e point basemap at a local mock.
@@ -69,10 +69,11 @@ Basemap :: [].{
 	}
 
 	# A block walks the servers in order (Overpass.try_plan): a busy answer,
-	# an answer Overpass cut short, or a server that cannot be reached sends
-	# the block to the next server, and a full round of refusals waits longer
-	# before the next round. After Overpass.max_tries the run stops as busy,
-	# or as unreachable when a whole round reached no server.
+	# an answer carrying a remark, or a server that cannot be reached sends the
+	# block to the next server, and each new round waits longer. As many tries
+	# in a row as there are servers, none of which connected, end the run at
+	# once as network_unreachable; otherwise, after Overpass.max_tries tries,
+	# the run stops as busy.
 	fetch_blocks! = |path, bases, pending, st, k, down|
 		match pending {
 			[] => Ok(st)
@@ -117,7 +118,7 @@ Basemap :: [].{
 			_ => Str.inspect(e)
 		}
 
-	# the wait added per busy try, on top of the one-second spacing.
+	# the wait added per round of retries, on top of the one-second spacing.
 	# STRIDE_OVERPASS_BACKOFF_MS can only shorten it, so the e2e suite waits
 	# only the spacing; humans never set it.
 	backoff_ms! : {} => U64
@@ -168,9 +169,10 @@ Basemap :: [].{
 	# shifted positive first. The ring stops at the poles and wraps at the
 	# antimeridian, so every block names a real box. A body that is not JSON,
 	# and an element that is not a [lat, lng] pair of numbers on the globe,
-	# add no block rather than failing the query: SQLite may evaluate a SELECT
-	# expression before the WHERE that would have excluded its row, so every
-	# extraction sits behind its own type test.
+	# add no block rather than failing the query: json_each hands a string
+	# element over as bare text, and any JSON function given bare text fails
+	# with malformed JSON, so each step tests `j.type` or `json_type(pair,
+	# path)` before it extracts.
 	pending_blocks! : Str => Try(List(Overpass.Block), _)
 	pending_blocks! = |path|
 		Sql.query_many!({

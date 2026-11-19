@@ -100,10 +100,10 @@ Overpass :: [].{
 
 	# the ways in an Overpass answer, each with the kind the map draws it as. A
 	# way with a tag the map does not draw, or fewer than two coordinates, is
-	# left out. Overpass reports a query that ran out of time or memory as a
-	# 200 whose `remark` names the error, with the elements it had gathered so
-	# far: that answer is Incomplete, never a block's ways. Unreadable when the
-	# text is not an Overpass JSON answer.
+	# left out. Any answer carrying a `remark` is Incomplete, never a block's
+	# ways: Overpass reports a query that ran out of time or memory as a 200
+	# with a remark and the elements it had gathered so far. Unreadable when
+	# the text is not an Overpass JSON answer.
 	decode_ways : Str -> Try(List(Way), [Unreadable, Incomplete(Str)])
 	decode_ways = |text| {
 		decoded : Try(Answer, [InvalidJson(Str), MissingRequiredField(Str)])
