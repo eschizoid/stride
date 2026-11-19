@@ -17,8 +17,10 @@ The Windows build sets the floor. On Windows, nightlies from
 `nightly-2026-11-11-7679cc5` until `nightly-2026-11-13-03dce41` report a
 compile-time stack overflow on plain literals such as `locale = "en-US"`
 (basic-cli#555; roc#12996 fixes it), and basic-cli 0.28.1 sets its floor at
-11-13. From `nightly-2026-11-12-ce942d6` on, a local or parameter that shadows
-a definition in an enclosing scope is a `duplicate definition` warning.
+11-13. The pin sits at 11-15 because basic-webserver 0.22.0, which the e2e
+suite rides, is built for `nightly-2026-11-15-f25da45`. From
+`nightly-2026-11-12-ce942d6` on, a local or parameter that shadows a
+definition in an enclosing scope is a `duplicate definition` warning.
 Stride's source has none. roc-ray 0.12.2's own source has many, and
 `tools/roc-viz.sh` forgives any warning located inside that package, under the
 rule its header states; another roc-ray release gets no such pass until the

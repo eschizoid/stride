@@ -14,9 +14,9 @@
 # `test` prints none, so a test run may lack it, and the pinned all-passed
 # summary below is still required of it. A warning in stride's own source
 # fails the run and is listed after roc's output. Another roc-ray release
-# unpacks under another hash, so its warnings fail the run until `ray_pkg`
-# names it on purpose. Delete the exception once the pinned roc-ray checks
-# clean on the pinned nightly.
+# unpacks under another hash: while src/viz/main.roc names a package other
+# than `ray_pkg`, nothing is forgiven, and a run with warnings says so. Delete
+# the exception once the pinned roc-ray checks clean on the pinned nightly.
 set -eu
 
 ray_pkg=A8Dt5CorYsEtHFh8h7SfMtpzSy73UWbaB5Twy9JoYS1U
@@ -26,7 +26,9 @@ rc=0
 out=$("${ROC:-roc}" "$@" 2>&1) || rc=$?
 printf '%s\n' "$out"
 
-if [ "$rc" = "2" ] && grep -q "/$ray_pkg\.tar\.zst" src/viz/main.roc; then
+if [ "$rc" = "2" ] && ! grep -q "/$ray_pkg\.tar\.zst" src/viz/main.roc; then
+  echo "roc-viz: nothing forgiven - src/viz/main.roc does not name the roc-ray package $ray_pkg; point ray_pkg at the new release only if the warnings above are all inside it" >&2
+elif [ "$rc" = "2" ]; then
   warned=$(printf '%s\n' "$out" | grep -c '^── ● ' || true)
   outside=$(printf '%s\n' "$out" | grep '^── ● ' | grep -vc "$in_pkg" || true)
   failed=$(printf '%s\n' "$out" | grep -c '^── ✗ ' || true)
