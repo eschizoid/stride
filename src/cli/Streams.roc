@@ -104,9 +104,12 @@ Streams :: [].{
 	RouteResp : { latlng : Try({ data : List(List(F64)) }, [Missing]), time : Try(StreamSeq, [Missing]) }
 
 	# what a route body says. `Points` holds every sample that is a real
-	# coordinate with a real time; `NoGps` is a body with no usable coordinates,
-	# which is what Strava sends for an indoor session; `Unreadable` is a body
-	# that is not a streams answer at all. The null sentinel is the one
+	# coordinate with a real time. `NoGps` is a body with no coordinates to
+	# keep: no `latlng` stream at all, which is what Strava sends for an indoor
+	# session, or coordinates of which none is a real position. `Unreadable` is
+	# a body that is not a streams answer, or one that carries coordinates with
+	# no usable time to place them by, since storing the no-GPS marker for it
+	# would retire a route that exists. The null sentinel is the one
 	# decode_streams uses, so a null time drops its sample.
 	decode_route : Str -> [Points(List(RoutePoint)), NoGps, Unreadable]
 	decode_route = |text| {
@@ -118,9 +121,17 @@ Streams :: [].{
 				match (r.latlng, r.time) {
 					(Ok(ll), Ok(ts)) => {
 						pts = List.keep_oks(List.map2(ll.data, ts.data, |pair, t| route_point(pair, t)), |p| p)
-						if (List.is_empty(pts)) NoGps else Points(pts)
+						timed = List.any(ts.data, |t| t > -99998.0)
+						if !(List.is_empty(pts)) {
+							Points(pts)
+						} else if !(List.is_empty(ll.data)) and !timed {
+							Unreadable
+						} else {
+							NoGps
+						}
 					}
-					_ => NoGps
+					(Ok(ll), Err(Missing)) => if (List.is_empty(ll.data)) NoGps else Unreadable
+					(Err(Missing), _) => NoGps
 				}
 		}
 	}
@@ -289,3 +300,23 @@ expect {
 
 # coordinates with no usable sample at all are no GPS
 expect Streams.decode_route("{\"latlng\":{\"data\":[[0.5]]},\"time\":{\"data\":[0]}}") == NoGps
+
+# coordinates with no usable time are unreadable, never the no-GPS marker: a
+# missing time stream, an empty one, and one of nothing but nulls
+expect Streams.decode_route("{\"latlng\":{\"data\":[[41.88,-87.63]]}}") == Unreadable
+expect Streams.decode_route("{\"latlng\":{\"data\":[[41.88,-87.63]]},\"time\":{\"data\":[]}}") == Unreadable
+expect Streams.decode_route("{\"latlng\":{\"data\":[[41.88,-87.63],[41.89,-87.64]]},\"time\":{\"data\":[null,null]}}") == Unreadable
+
+# an empty latlng stream is no GPS whatever the time stream says
+expect Streams.decode_route("{\"latlng\":{\"data\":[]}}") == NoGps
+
+# timed coordinates of which none is on the globe are no GPS, and a longitude
+# past 180 drops its sample like a latitude past 90
+expect Streams.decode_route("{\"latlng\":{\"data\":[[95.0,0.0]]},\"time\":{\"data\":[0]}}") == NoGps
+expect {
+	r = Streams.decode_route("{\"latlng\":{\"data\":[[41.88,181.0],[41.88,-87.63]]},\"time\":{\"data\":[0,1]}}")
+	match r {
+		Points([only]) => only.t == 1
+		_ => False
+	}
+}

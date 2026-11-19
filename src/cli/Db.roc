@@ -336,10 +336,10 @@ Db :: [].{
 		Sql.execute!({ path: Path.utf8(path), query: Schema.seed_stream_retries, bindings: [] })?
 		# v34: strength notes (mirror) + parsed set rows (computed) —
 		# created before the views below, which read strength_sets
-		# v47: GPS routes (mirror), drained after the notes
-		Sql.execute!({ path: Path.utf8(path), query: Schema.routes, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.strength_notes, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.strength_sets, bindings: [] })?
+		# v47: GPS routes (mirror), drained after the notes
+		Sql.execute!({ path: Path.utf8(path), query: Schema.routes, bindings: [] })?
 		# v41: a hold's seconds; the next analyze rebuilds every row with it
 		alter_add_column!(path, "ALTER TABLE strength_sets ADD COLUMN hold_s INTEGER NOT NULL DEFAULT 0")?
 		# v38: structured strength logs imported from Strava's connector (mirror)
