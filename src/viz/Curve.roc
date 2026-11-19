@@ -222,7 +222,8 @@ Curve :: [].{
 		span = axis_span(curve, List.join(List.map(rungs, |r| [r.pr.w, r.now_w, r.prev_w])), List.map(plan_marks, |t| t.val), model.fit_cp)
 		g0 = { left: pad_l, pw, ph, lo: span.lo, hi: span.hi, folded: lay.folded, full, rungs, rings: [], now_pts: List.map(rungs, |r| { secs: r.pr.secs, w: r.now_w }), segs: [] }
 		# targets whose rings would overlap share one ring with their labels
-		# stacked under it, in date order, the order the targets load in
+		# stacked under it, in date order, the order the targets load in; the
+		# same target on several days is one label
 		rung_secs = List.map(rungs, |r| r.pr.secs)
 		ring_pts = List.map(plan_marks, |t| { x: col_x(g0, rung_pos(rung_secs, t.dur_s)), y: y_at(g0, I64.to_f32(t.val)) })
 		grouped = List.map(
@@ -235,7 +236,7 @@ Curve :: [].{
 				{ ts, x: List.fold(ps, 0.0, |a, p| a + p.x) / n, y: List.fold(ps, 0.0, |a, p| a + p.y) / n }
 			},
 		)
-		rings = List.map2(grouped, label_rows(List.map(grouped, |rg| { x: rg.x, lines: List.len(rg.ts) }), ring_label_w), |rg, base| { ts: rg.ts, x: rg.x, y: rg.y, base })
+		rings = List.map2(grouped, label_rows(List.map(grouped, |rg| { x: rg.x, lines: List.len(ring_labels(rg.ts, |_| 0.0)) }), ring_label_w), |rg, base| { ts: rg.ts, x: rg.x, y: rg.y, base })
 		# this and the previous window's lines as segments, for labels to
 		# keep clear of
 		seg_list = |ys| List.keep_oks(
@@ -519,18 +520,19 @@ Curve :: [].{
 				},
 			),
 		)
-		# a planned ring's labels: the day and the share of this window's best
-		# at that duration, stacked under the ring from its label row, else
-		# over it, else beside it on the right or the left
+		# a planned ring's labels, one per distinct target (ring_labels): its
+		# days and the share of this window's best at that duration, stacked
+		# under the ring from its label row, else over it, else beside it on the
+		# right or the left
 		rings = List.join(
 			List.map(
 				g.rings,
 				|rg| {
-					n = List.len(rg.ts)
+					lbls = ring_labels(rg.ts, |t| best_at(g.now_pts, t.dur_s))
+					n = List.len(lbls)
 					List.map_with_index(
-						rg.ts,
-						|t, k| {
-							lbl = target_label(t, best_at(g.now_pts, t.dur_s))
+						lbls,
+						|lbl, k| {
 							x = centred(rg.x, lbl, 10.0)
 							under = rg.y + 10.0 + (rg.base + U64.to_f32(k)) * 12.0
 							over = rg.y - 20.0 - U64.to_f32(n - 1 - k) * 12.0
@@ -762,9 +764,10 @@ Curve :: [].{
 	}
 
 	# a target label's width at the 10px label size, generous for the
-	# widest form, a pace label such as "planned MM-DD M:SS/100m NNN%"
+	# widest form, a pace target planned on more than two days such as
+	# "planned MM-DD, MM-DD +NN M:SS/100m NNN%"
 	ring_label_w : F32
-	ring_label_w = 170.0
+	ring_label_w = 210.0
 
 	# the first label row of each ring, left to right: a ring closer than a
 	# label's width to the one before it starts below that ring's labels, and
@@ -791,10 +794,37 @@ Curve :: [].{
 	# little slower than the window's best. The "planned" prefix and the
 	# dashed ring keep a prescription from reading as a measured best.
 	target_label : Mark, F32 -> Str
-	target_label = |t, best| {
-		mmdd = Str.from_utf8_lossy(List.drop_first(Str.to_utf8(t.day), 5))
+	target_label = |t, best| days_label(t, [t.day], best)
+
+	# the same label for one target planned on several days: the first two
+	# days in the order given, joined by a comma, and a count of the rest, so
+	# the label stays one ring_label_w wide however often the target repeats
+	days_label : Mark, List(Str), F32 -> Str
+	days_label = |t, days, best| {
+		shown = Str.join_with(List.map(List.take_first(days, 2), |d| Str.from_utf8_lossy(List.drop_first(Str.to_utf8(d), 5))), ", ")
+		more = if (List.len(days) > 2) " +${(List.len(days) - 2).to_str()}" else ""
+		mmdd = "${shown}${more}"
 		pct = if (best <= 0.0) "" else " ${Db.fmt_i(I64.to_f32(t.val) / best * 100.0)}%"
 		"planned ${mmdd} ${t.val_txt}${pct}"
+	}
+
+	# the labels a ring prints: one per distinct target, a target being its
+	# rep duration, value and printed value (a pace in another unit prints
+	# differently for the same speed), so a workout planned on several days
+	# reads once. Targets keep the order they arrive in, date order.
+	ring_labels : List(Mark), (Mark -> F32) -> List(Str)
+	ring_labels = |ts, best_of| {
+		same = |a, b| a.val == b.val and a.dur_s == b.dur_s and a.val_txt == b.val_txt
+		groups = List.fold(
+			ts,
+			[],
+			|acc, t|
+				if (List.any(acc, |g| same(g.t, t)))
+					List.map(acc, |g| if (same(g.t, t)) { ..g, days: List.append(g.days, t.day) } else g)
+				else
+					List.append(acc, { t, days: [t.day] }),
+		)
+		List.map(groups, |g| days_label(g.t, g.days, best_of(g.t)))
 	}
 
 	# a target ring drawn as dashes, the way a planned point differs from the
@@ -1982,3 +2012,22 @@ expect {
 # the hover columns start at plot_top, under the tiles: a pointer on the
 # tile row hovers no rung
 expect Curve.rung_at(400.0, Curve.plot_top - 1.0, 980.0, 600.0, 4, Theme.pad_l) == Err(NoRung) and Curve.rung_at(400.0, Curve.plot_top + 1.0, 980.0, 600.0, 4, Theme.pad_l) != Err(NoRung)
+# the same workout planned on two days is one label carrying both days;
+# a different value at the same duration keeps its own label, in the order
+# the targets arrive
+expect {
+	vo2 = { day: "2026-11-25", typ: "vo2max", dur_s: 180, val: 275, val_txt: "275W", rep_txt: "6x3:00" }
+	Curve.ring_labels([vo2, { ..vo2, day: "2026-12-09" }], |_| 267.0) == ["planned 11-25, 12-09 275W 103%"]
+		and Curve.ring_labels([vo2, { ..vo2, day: "2026-12-09", val: 280, val_txt: "280W" }], |_| 0.0) == ["planned 11-25 275W", "planned 12-09 280W"]
+		and Curve.ring_labels([vo2, { ..vo2, day: "2026-12-02", dur_s: 900 }, { ..vo2, day: "2026-12-09" }], |_| 0.0) == ["planned 11-25, 12-09 275W", "planned 12-02 275W"]
+}
+# more than two days print the first two and a count of the rest, so a long
+# repeat keeps a label of one width; the same speed printed in another unit
+# keeps its own label
+expect {
+	vo2 = { day: "2026-11-01", typ: "vo2max", dur_s: 300, val: 270, val_txt: "270W", rep_txt: "6x5:00" }
+	days = List.map(["2026-11-01", "2026-11-08", "2026-11-15", "2026-11-22", "2026-11-29"], |d| { ..vo2, day: d })
+	pace = { day: "2026-11-25", typ: "threshold", dur_s: 600, val: 3984, val_txt: "6:44/mi", rep_txt: "3x10:00" }
+	Curve.ring_labels(days, |_| 0.0) == ["planned 11-01, 11-08 +3 270W"]
+		and Curve.ring_labels([pace, { ..pace, day: "2026-12-02", val_txt: "2:05/500m" }], |_| 0.0) == ["planned 11-25 6:44/mi", "planned 12-02 2:05/500m"]
+}
