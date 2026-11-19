@@ -645,9 +645,6 @@ ghost_task! = |acc, ids, gsel, gen|
 		}
 	}
 
-# Same task lane, the live session: re-reads one session's trace, segments
-# and duration and reports back as a message. Any failure keeps the session
-# the window already had.
 # Every route and base-map way, read off the main loop: a full backfill is
 # hundreds of megabytes of stored answers to decode, which would hold every
 # view behind the splash. A database the task cannot open answers with
@@ -660,6 +657,9 @@ map_task! = |acc, gen|
 		Err(Unreachable) => MapLoaded({ map: { ..Db.no_map, err: "cannot open ${acc.dir}/db.sqlite" }, gen })
 	}
 
+# Same task lane, the live session: re-reads one session's trace, segments
+# and duration and reports back as a message. Any failure keeps the session
+# the window already had.
 trace_task! : Access, [Metric, Imperial], List(TraceId), U64, U64 => Msg
 trace_task! = |acc, units, ids, sel, gen|
 	if (acc.dir == "") TraceSwitchFailed(gen)
@@ -1918,9 +1918,9 @@ update! = |model0, program_input, io| {
 				# that switches, and a picker re-read may have moved the session
 				# since the fetch read its index; the samples are still that
 				# session's, so they land under whatever index it holds now.
+				TraceSwitched(sw) => if (sw.gen != acc.trace_gen) acc else { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_day: sw.day, trace_unit: sw.un, trace_splits: sw.sp, trace_sets: sw.st, trace_loading: Bool.False }
 				# the map lands only from the newest load; a fresh map is repainted
 				MapLoaded(ml) => if (ml.gen != acc.map_gen) acc else { ..acc, map: ml.map, map_load: Loaded, map_painted: Map.unpainted }
-				TraceSwitched(sw) => if (sw.gen != acc.trace_gen) acc else { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_day: sw.day, trace_unit: sw.un, trace_splits: sw.sp, trace_sets: sw.st, trace_loading: Bool.False }
 			},
 	)
 	# the coach's word arrives beside the human's input and steers only what

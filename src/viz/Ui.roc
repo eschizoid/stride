@@ -264,12 +264,13 @@ Ui :: [].{
 		# the map view: every route and base-map way
 		map : Db.MapData,
 		# Unloaded until a load task is spawned, Loading while it runs, and
-		# Loaded once its map has landed; R sets it back to Unloaded
+		# Loaded once its map has landed; a finished reload (R) sets it back to
+		# Unloaded
 		map_load : [Unloaded, Loading, Loaded],
 		# the identity of the newest map load, stamped on the task it spawns
 		map_gen : U64,
 		# the camera the athlete moved the map to; until map_moved says they
-		# have, the view fits the routes
+		# have, the view fits the routes, or the street map when no route has GPS
 		map_cam : Geo.Cam,
 		map_moved : Bool,
 		# the cursor's last position while the left button holds a drag that

@@ -1964,8 +1964,8 @@ Db :: [].{
 	# ── the map view's data ────────────────────────────────────────────────
 	# one line the map draws: a base-map way of one kind, or one session's
 	# route, in metres from the map's origin, with its extent for culling.
-	# `pts` keeps a point every couple of metres, `far` one every forty for
-	# the zooms where forty metres is a few pixels: a full backfill holds
+	# `pts` keeps no two points closer than two metres, `far` none closer
+	# than forty, for the zooms where forty metres is a few pixels: a full backfill holds
 	# millions of points, and every repaint walks the list it draws.
 	MapLine : { kind : U8, pts : List(Geo.Pt), far : List(Geo.Pt), box : Geo.Bounds }
 
@@ -2028,8 +2028,8 @@ Db :: [].{
 			MultipleStatements => "could not read ${what}"
 		}
 
-	# The window's SQLite binding refuses a query whose text passes a fixed
-	# byte budget rather than truncating it, and one stored route answer
+	# The window's SQLite binding refuses a query whose result passes a byte
+	# budget rather than returning part of it, and one stored route answer
 	# runs to hundreds of kilobytes, so routes and ways are read in pages
 	# keyed by id. A page of routes is decoded by the engine's own rule
 	# (core.Route) as it lands, keeping only the coordinates.

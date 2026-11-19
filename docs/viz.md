@@ -204,9 +204,10 @@ zooms, since a full backfill holds millions of points and every repaint
 walks the list it draws.
 
 The map loads in a task beside the other views, which open without waiting
-for it; the tab says the map is being read until it lands, and names a read
-that failed. The window's SQLite binding refuses a query whose text passes a
-fixed byte budget, so routes and ways are read in pages. The credit, ©
+for it; on the first load the map says it is being read until it lands, and it
+names a read that failed. The window's SQLite binding refuses a query whose
+result passes a byte budget rather than returning part of it, so routes and
+ways are read in pages. The credit, ©
 OpenStreetMap contributors, sits on the title row over the map's right edge;
 the street data is OpenStreetMap's, under the ODbL.
 

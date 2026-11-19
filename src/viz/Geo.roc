@@ -84,7 +84,8 @@ Geo :: [].{
 	to_world = |cam, r, sx, sy| { x: cam.cx + (sx - r.x - r.w / 2.0) * cam.mpp, y: cam.cy - (sy - r.y - r.h / 2.0) * cam.mpp }
 
 	# the closest and farthest the camera goes: a quarter metre per pixel
-	# shows a street's lanes, two kilometres per pixel a continent
+	# shows a street's lanes, two kilometres per pixel a region a thousand or
+	# more kilometres across
 	min_mpp : F32
 	min_mpp = 0.25
 
@@ -184,11 +185,11 @@ Geo :: [].{
 
 	# a point 0.0009 degrees of latitude north of the origin lands due north
 	# of it, in metres stretched by one over the cosine of the latitude, as
-	# every Mercator distance is: 134.3 of them at 41.88N
+	# every Mercator distance is: about 134.56 of them at 41.88N
 	expect {
 		o = merc(41.88, -87.63)
 		p = rel(o, 41.8809, -87.63)
-		near32(p.x, 0.0, 0.001) and near32(p.y, 134.3, 0.5)
+		near32(p.x, 0.0, 0.001) and near32(p.y, 134.56, 0.01)
 	}
 
 	# screen and world invert each other, north up

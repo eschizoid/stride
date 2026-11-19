@@ -9,9 +9,10 @@ import Theme
 import Ui
 
 Map :: [].{
-	# The routes view: every GPS session drawn over the street map the
+	# The map view: every GPS session drawn over the street map the
 	# engine fetched, in Web Mercator, north up. Drag pans, the wheel zooms
-	# at the cursor, and `0` fits the routes again. The streets come from
+	# at the cursor, and `0` fits the routes again (the street map when no route
+	# has GPS). The streets come from
 	# OpenStreetMap, and the view credits it on the map itself.
 
 	title_text : Str
