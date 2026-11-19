@@ -235,7 +235,7 @@ schema-check: build
             # catch-all and are loud at rc=1 rather than skipped.) What to watch: `progress`
             # or `reps` making its date required would derive the table's example, answer
             # `no_workout_on_date`, and silently skip.
-            no_activities|no_data|no_power_data|no_cp_fit|missing_config|no_scorable_workouts|no_workout_on_date|no_detected_intervals|no_intervals_on_date|unscorable|irregular_anchor|no_viz_capabilities)
+            no_activities|no_data|no_power_data|no_cp_fit|no_cs_fit|missing_config|no_scorable_workouts|no_workout_on_date|no_detected_intervals|no_intervals_on_date|unscorable|irregular_anchor|no_viz_capabilities)
                 echo "$inv: skipped ($code)"; checked=$((checked + 1)); continue ;;
             # DATA FAULTS — true statements about the DATABASE, not about the invocation,
             # so they must not get the rejection message below, which says the opposite and
@@ -260,7 +260,7 @@ schema-check: build
                 rc=1; rejected=$((rejected + 1)); continue ;;
             # REJECTED INVOCATIONS, enumerated. This is the recipe's own bug: it derived an
             # argument the command would not take.
-            usage|unknown_command|bad_count|bad_metric|bad_period|bad_value|bad_watts|derived_key|unknown_key|not_set)
+            usage|unknown_command|bad_count|bad_metric|bad_pace|bad_period|bad_value|bad_watts|derived_key|unknown_key|not_set)
                 echo "$inv: FAILED ($code) — the derived invocation was rejected, not the database"; rc=1; rejected=$((rejected + 1)); continue ;;
             # ...and the TRUE catch-all, which knows nothing and says so. `*)` used to do
             # two jobs — "genuinely a rejected invocation" and "nobody has classified this

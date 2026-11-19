@@ -104,7 +104,10 @@ help_text =
 	\\    doctor                      dataset health: coverage + how each activity was scored
 	\\
 	\\AM I IMPROVING?
-	\\    tte <watts>                 how long the CP model says you could hold a power
+	\\    tte <watts> [sport]         how long the CP model says you could hold a power;
+	\\                                the sport's family fit (default the ride family)
+	\\    tte pace <pace> <sport>     the same from the critical-speed fit, at a pace
+	\\                                like 4:10/km, 6:45/mi, 1:40/100m or 1:55/500m
 	\\    reps [date]                 the same workout shape across sessions, rep by rep
 	\\    progress [date] [asc|desc]  trend on a repeated workout, sport-aware lens
 	\\                                (power→EF, distance→speed/HR, rated→RPE);
@@ -434,7 +437,8 @@ dispatch! = |cmd|
 		Command.Test(id, kind, apply_zones) => ThresholdTest.mark!(id, kind, apply_zones)
 		Command.TestRemove(id) => ThresholdTest.remove!(id)
 		Command.Progress(name, sort) => ReportSessions.progress!(name, sort)
-		Command.Tte(watts) => ReportHealth.tte!(watts)
+		Command.Tte(watts, sport) => ReportHealth.tte!(watts, sport)
+		Command.TtePace(pace, sport) => ReportHealth.tte_pace!(pace, sport)
 		Command.Reps(date) => ReportSessions.reps!(date)
 		Command.Activity(id_str) => ReportSessions.activity!(id_str)
 		Command.Load(days) => Report.load_series!(days)

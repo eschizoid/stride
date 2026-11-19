@@ -109,6 +109,7 @@ test.json	z1_max,z2_max,z3_max,z4_max	z1_max,z2_max,z3_max,z4_max	-	properties.z
 test_remove.json	activity_id,removed	activity_id,removed	doc	$
 top.json	avg_hr,date,date_known,distance_m,hr_known,id,intensity,intensity_known,moving_time,name,np_w,output_kj,power_known,rankable,sport,tss	avg_hr,date,date_known,distance_m,hr_known,id,intensity,intensity_known,moving_time,name,np_w,output_kj,power_known,rankable,sport,tss	-	items
 tte.json	contradicts_model,cp,demonstrated_known,demonstrated_s,demonstrated_w,fit_points,fit_r2,known,seconds,sport_family,status,w_prime,watts,window_days	contradicts_model,cp,demonstrated_known,demonstrated_s,demonstrated_w,fit_points,fit_r2,known,seconds,sport_family,status,w_prime,watts,window_days	doc	$
+tte_pace.json	contradicts_model,cs,cs_pace_s,d_prime,demonstrated_known,demonstrated_s,demonstrated_speed,fit_points,fit_r2,known,pace_s,pace_unit,seconds,speed,sport,status,window_days	contradicts_model,cs,cs_pace_s,d_prime,demonstrated_known,demonstrated_s,demonstrated_speed,fit_points,fit_r2,known,pace_s,pace_unit,seconds,speed,sport,status,window_days	doc	$
 version.json	version	version	-	$
 viz-tick.json	acked,capture,cursor_day,error,family,found,ghost_day,ghost_id,id,range,short,status,trace_day,trace_id,view	acked,capture,cursor_day,error,family,found,ghost_day,ghost_id,id,range,short,status,trace_day,trace_id,view	-	$
 viz.json	accepts,kind,name	accepts,kind,name	doc	properties.fields.items

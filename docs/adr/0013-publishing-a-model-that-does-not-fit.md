@@ -132,7 +132,7 @@ refutation, quoted verbatim below from `tte 265` on this database.
 
 ```
 at 265W against CP 254 (Ride fit, W' 6.4 kJ from 3 of the 5/10/20-min bests over 90d, r2 0.72)
-  ~9:56 · on record: 271W for 10:00 in this window — LONGER than the model predicts, so the fit understates this rider
+  ~9:56 · on record: 271W for 10:00 in this window — LONGER than the model predicts, so the fit understates this athlete
 ```
 
 The screen tells a coach strictly more than `no_cp_fit` would. It does not report the

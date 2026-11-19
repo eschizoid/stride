@@ -407,7 +407,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1451)?
+	checks_ran_exactly!(1478)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -463,6 +463,7 @@ run_scenarios! = |ctx| {
 	b_events!(ctx)?
 	b_strength_import!(ctx)?
 	b_review!(ctx)?
+	b_tte_families!(ctx)?
 	b_concurrency!(ctx)?
 	b_migration!(ctx)?
 	Ok({})
@@ -1890,7 +1891,7 @@ b_init_config! = |ctx| {
 	_ = sh!("rm -rf '${help_dir}' && mkdir -p '${help_dir}' && ${spec_names} > '${help_dir}/spec' && ${human_help} > '${help_dir}/human'")
 	# Fail-closed: an empty extraction on either side would make the loop below vacuous.
 	help_sizes = Str.trim(sh!("wc -l < '${help_dir}/spec' | tr -d ' '"))
-	check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "48")?
+	check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "49")?
 	missing_from_help = Str.trim(sh!("while IFS= read -r c; do grep -qw -- \"\$c\" '${help_dir}/human' || printf '%s ' \"\$c\"; done < '${help_dir}/spec'"))
 	check!("every command in the table is named in `stride --help` (missing: ${missing_from_help})", missing_from_help == "")?
 	_ = sh!("rm -rf '${help_dir}'")
@@ -5010,13 +5011,14 @@ b_command_schemas! = |ctx| {
 	check!("every form's payload conforms to the schema the TABLE names for it (bad: ${schema_mismatch})", schema_mismatch == "")?
 	# ...and that loop validated a real number of forms rather than skipping them
 	# all: `validated != "0"` cannot see 15 selected vs 13 validated, and the
-	# `|| continue` drops any erroring form, so its schema goes unverified. THREE
+	# `|| continue` drops any erroring form, so its schema goes unverified. FOUR
 	# legitimate skips, pinned by NAME rather than absorbed into a count: `viz`
 	# (its payload exists only after a window publish, and b_viz_caps! drops its
 	# seeded tables so this driver stays in the window-never-ran state), `reps`
-	# (no detected intervals here) and `tte 300` (no CP fit).
+	# (no detected intervals here), `tte 300` (no CP fit) and `tte pace 4:10/km
+	# Run` (no CS fit). Both tte forms are validated with a fit by b_tte_families!.
 	schema_skipped = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '.data.commands[] | select(.schema != \"\") | select(.mutates == false) | select(.network == false) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0) | ([.name] + [.args[] | select(.required) | .example] | join(\" \"))' | while read -r n; do HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' $n 2>/dev/null | jq -e '.data' >/dev/null 2>&1 || printf '%s ' \"$n\"; done"))
-	check!("...and the only forms with no payload to validate are the three that legitimately have none (got: ${schema_skipped})", schema_skipped == "viz tte 300 reps")?
+	check!("...and the only forms with no payload to validate are the four that legitimately have none (got: ${schema_skipped})", schema_skipped == "viz tte 300 tte pace 4:10/km Run reps")?
 
 	# ── args arity, both bounds — the only dimension of the six with no
 	# derivation check. Both probes run against a THROWAWAY COPY (`week add`
@@ -7572,6 +7574,66 @@ b_progress_structure! = |ctx| {
 # ── import: Strava account export ────────────────────────────────────
 validate_schema! : Ctx, Str, Str => Str
 validate_schema! = |ctx, cmd, schema| Str.trim(sh!("out=$(HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' ${cmd} 2>/dev/null); if [ -z \"$out\" ]; then echo \"no output from '${cmd}' — nothing was validated\"; else printf '%s' \"$out\" | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v3/${schema}.json -f tools/validate.jq 2>&1; fi"))
+
+# ── time to exhaustion for every family: the power form's sport word, and the
+# pace form against critical speed. Each family gets bests no other fixture
+# session reaches, dated inside the 90-day window and before today, so each
+# fit below is exactly the one its own rows define:
+#   Ride     2200/2100/2050 W at 5/10/20 min: CP 2000 W, W' 60 kJ, on the line
+#   Rowing   240/220/215 W: CP 205 W, W' 10285.7 J, OFF the line, so the 20-min
+#            best outlasts the prediction at 215 W and refutes the fit
+#   Kayaking 180/165/157.5 W: CP 150 W, W' 9 kJ, on the line, a sport outside
+#            every family, stored in Strava's case
+#   Run      4.8/4.4/4.2 m/s: CS 4.0 m/s, D' 240 m, on the line
+# The rowing row is spelled VirtualRow, so naming the family by a word, by its
+# head and by that member spelling all have to land on the same fit.
+b_tte_families! : Ctx => Try({}, _)
+b_tte_families! = |ctx| {
+	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9741,'TTE Ride','Ride','${ctx.d1}T06:00:00Z',3600,30000),(9742,'TTE Row','VirtualRow','${ctx.d1}T07:00:00Z',3600,12000),(9743,'TTE Run','Run','${ctx.d1}T08:00:00Z',3600,12000),(9744,'TTE Kayak','Kayaking','${ctx.d1}T09:00:00Z',3600,8000);")
+	_ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,metrics_rev,best_300s_w,best_600s_w,best_20min_w) VALUES (9741,100.0,1,2200.0,2100.0,2050.0),(9742,80.0,1,240.0,220.0,215.0),(9744,50.0,1,180.0,165.0,157.5);")
+	_ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,metrics_rev,best_300s_speed,best_600s_speed,best_20min_speed) VALUES (9743,60.0,1,4.8,4.4,4.2);")
+	fit_of = "[.data.sport_family, (.data.cp | round), (.data.w_prime | round), .data.fit_points] | map(tostring) | join(\",\")"
+	# the power form, ride family by default and by name
+	check!("tte with no sport fits the ride family", strjq!(ctx, ["tte", "2150"], fit_of) == "Ride,2000,60000,3")?
+	check!("...and 2150 W against it lasts 60000/150 = 400 s, in the model's band", strjq!(ctx, ["tte", "2150"], "[(.data.seconds | round), .data.status, .data.known] | map(tostring) | join(\",\")") == "400,in_model,true")?
+	check!("...with the 5-minute 2200 W best as the longest held at or above it, which the prediction outlasts", strjq!(ctx, ["tte", "2150"], "[.data.demonstrated_s, .data.demonstrated_w, .data.demonstrated_known, .data.contradicts_model] | map(tostring) | join(\",\")") == "300,2200,true,false")?
+	check!("naming the ride family answers exactly what the default does", strjq!(ctx, ["tte", "2150", "bike"], ".data") == strjq!(ctx, ["tte", "2150"], ".data") and strjq!(ctx, ["tte", "2150", "Ride"], ".data") == strjq!(ctx, ["tte", "2150"], ".data"))?
+	check!("tte with no sport conforms to its schema", validate_schema!(ctx, "tte 2150", "tte") == "")?
+	# the power form on the rowing family, from its own bests only
+	check!("a rowing word fits the rowing family alone", strjq!(ctx, ["tte", "230", "rowing"], fit_of) == "Rowing,205,10286,3")?
+	check!("...and the family's head and a member spelling name the same fit", strjq!(ctx, ["tte", "230", "Rowing"], ".data") == strjq!(ctx, ["tte", "230", "rowing"], ".data") and strjq!(ctx, ["tte", "230", "virtualrow"], ".data") == strjq!(ctx, ["tte", "230", "row"], ".data") and strjq!(ctx, ["tte", "230", "row"], ".data") == strjq!(ctx, ["tte", "230", "rowing"], ".data"))?
+	check!("...230 W lasts 10285.7/25 = 411 s, against the row's own 240 W 5-minute best", strjq!(ctx, ["tte", "230", "row"], "[(.data.seconds | round), .data.status, .data.demonstrated_s, .data.demonstrated_w, .data.contradicts_model] | map(tostring) | join(\",\")") == "411,in_model,300,240,false")?
+	check!("...and at 215 W the row's 20-minute best outlasts the 1029 s prediction, so the fit is refuted", strjq!(ctx, ["tte", "215", "rowing"], "[(.data.seconds | round), .data.demonstrated_s, .data.demonstrated_w, .data.contradicts_model] | map(tostring) | join(\",\")") == "1029,1200,215,true")?
+	check!("...which the human screen says beside the number, for the family it fit", Str.contains(stride_human!(ctx.bin, ctx.home, ["tte", "215", "rowing"]), "(Rowing fit") and Str.contains(stride_human!(ctx.bin, ctx.home, ["tte", "215", "rowing"]), "on record: 215W for 20:00 in this window — LONGER than the model predicts"))?
+	check!("the rowing answer conforms to the tte schema", validate_schema!(ctx, "tte 215 rowing", "tte") == "")?
+	# a family with no power bests refuses by name rather than borrowing the ride fit
+	swim_cp = stride!(ctx.bin, ctx.home, ["tte", "300", "swim"])
+	check!("a family with no CP fit is refused with no_cp_fit, naming that family", Str.contains(swim_cp, "\"no_cp_fit\"") and Str.contains(swim_cp, "for the Swim family") and stride_status!(ctx.bin, ctx.home, ["tte", "300", "swim"]) == 1)?
+	# a sport outside every family matches its stored spelling in any case,
+	# as power-curve's sport filter does
+	check!("a sport outside every family fits its own sessions, typed in Strava's case or lower case", strjq!(ctx, ["tte", "160", "kayaking"], fit_of) == "Kayaking,150,9000,3" and strjq!(ctx, ["tte", "160", "Kayaking"], fit_of) == "Kayaking,150,9000,3" and strjq!(ctx, ["tte", "160", "KAYAKING"], fit_of) == "Kayaking,150,9000,3")?
+	check!("...and 160 W lasts 9000/10 = 900 s against it", strjq!(ctx, ["tte", "160", "kayaking"], "[(.data.seconds | round), .data.status] | map(tostring) | join(\",\")") == "900,in_model")?
+	# a word no stored family carries is refused as that, not as a fit that failed
+	bogus = stride!(ctx.bin, ctx.home, ["tte", "300", "bogus"])
+	check!("a word naming no stored family is refused with no_cp_fit saying nothing is on record under it", Str.contains(bogus, "\"no_cp_fit\"") and Str.contains(bogus, "no session on record belongs to a family named 'bogus'"))?
+	# the pace form, on one exact sport's critical speed
+	pace_of! = |args| strjq!(ctx, args, "[(.data.cs * 1000 | round), (.data.d_prime | round), (.data.cs_pace_s | round), (.data.seconds | round), .data.status, .data.known, .data.sport, .data.pace_unit] | map(tostring) | join(\",\")")
+	check!("tte pace fits the run's CS 4.0 m/s and D' 240 m, and 3:45/km lasts 240/0.444 = 540 s", pace_of!(["tte", "pace", "3:45/km", "Run"]) == "4000,240,250,540,in_model,true,Run,/km")?
+	check!("...the CS it spends is the one pace-curve prints for the sport over the same 90 days", strjq!(ctx, ["tte", "pace", "3:45/km", "Run"], ".data | [.cs, .d_prime, .fit_r2, .fit_points]") == strjq!(ctx, ["pace-curve", "90", "Run"], ".data | [.cs, .d_prime, .fit_r2, .fit_points]"))?
+	check!("...with the 5-minute 4.8 m/s best as the longest at or faster than the pace", strjq!(ctx, ["tte", "pace", "3:45/km", "Run"], "[.data.demonstrated_s, .data.demonstrated_speed, .data.demonstrated_known, .data.contradicts_model] | map(tostring) | join(\",\")") == "300,4.8,true,false")?
+	check!("4:00/km lasts 1440 s, labelled outside the band, and the sport matches regardless of case", pace_of!(["tte", "pace", "4:00/km", "run"]) == "4000,240,250,1440,outside_model,true,run,/km")?
+	check!("5:00/km is slower than CS: no limit, the arithmetic flagged as not run", pace_of!(["tte", "pace", "5:00/km", "Run"]) == "4000,240,250,0,below_cs,false,Run,/km")?
+	check!("a mile pace is read in miles, and CS comes back in the caller's unit", strjq!(ctx, ["tte", "pace", "6:00/mi", "Run"], "[(.data.pace_s | round), (.data.speed * 1000 | round), (.data.cs_pace_s | round)] | map(tostring) | join(\",\")") == "360,4470,402")?
+	check!("the pace answer conforms to its schema, in and below the band", validate_schema!(ctx, "tte pace 3:45/km Run", "tte_pace") == "" and validate_schema!(ctx, "tte pace 5:00/km Run", "tte_pace") == "")?
+	check!("...and the human screen reads every pace in the caller's unit", Str.contains(stride_human!(ctx.bin, ctx.home, ["tte", "pace", "3:45/km", "Run"]), "at 3:45/km against CS 4:10/km (Run fit, D′ 240 m from 3 of the 5/10/20-min speed bests over 90d"))?
+	swim_cs = stride!(ctx.bin, ctx.home, ["tte", "pace", "1:40/100m", "Swim"])
+	check!("a sport with no CS fit is refused with no_cs_fit, naming that sport", Str.contains(swim_cs, "\"no_cs_fit\"") and Str.contains(swim_cs, "for Swim") and stride_status!(ctx.bin, ctx.home, ["tte", "pace", "1:40/100m", "Swim"]) == 1)?
+	check!("...and the pace fit does not pool a family: TrailRun has no speed bests of its own", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "pace", "3:45/km", "TrailRun"]), "\"no_cs_fit\""))?
+	check!("a pace without a unit is refused with bad_pace", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "pace", "3:45", "Run"]), "\"bad_pace\"") and stride_status!(ctx.bin, ctx.home, ["tte", "pace", "3:45", "Run"]) == 1)?
+	_ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (9741, 9742, 9743, 9744); DELETE FROM activities WHERE id IN (9741, 9742, 9743, 9744);")
+	check!("...and the scenario leaves no tte fixture behind", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE id IN (9741, 9742, 9743, 9744);")) == "0" and Str.contains(stride!(ctx.bin, ctx.home, ["tte", "230", "rowing"]), "\"no_cp_fit\""))?
+	Ok({})
+}
 
 b_import! : Ctx => Try({}, _)
 b_import! = |ctx| {

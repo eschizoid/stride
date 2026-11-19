@@ -83,6 +83,27 @@ Sports :: [].{
 			Err(_) => sport
 		}
 
+	# The family head a word the ATHLETE typed scores against: a family word
+	# (`bike`, `rowing`) or any member's Strava spelling, case folded, names
+	# its family's head, which is the value activities.sport_family stores.
+	# Anything else passes through as typed. Only the database knows how Strava
+	# spells a sport outside every family, so matching such a word to a stored
+	# family regardless of case is the caller's job.
+	family_head : Str -> Str
+	family_head = |word| {
+		low = Str.with_ascii_lowercased(word)
+		named = List.keep_if(families, |f| List.contains(f.words, low) or List.any(f.sports, |s| Str.with_ascii_lowercased(s) == low))
+		match List.first(named) {
+			Ok(f) => (List.first(f.sports)).ok_or(word)
+			Err(_) => word
+		}
+	}
+
+	expect Sports.family_head("rowing") == "Rowing" and Sports.family_head("ROW") == "Rowing"
+	expect Sports.family_head("virtualrow") == "Rowing" and Sports.family_head("GravelRide") == "Ride"
+	expect Sports.family_head("Ride") == "Ride" and Sports.family_head("swim") == "Swim"
+	expect Sports.family_head("Kayaking") == "Kayaking"
+
 	# every sport_type in the family a sport_type belongs to, the sport itself
 	# first-class when it belongs to none: the population a per-sport setting has
 	# to cover so it reaches the family's indoor and trail variants too

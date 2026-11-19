@@ -58,10 +58,13 @@ Command := [
 	TestRemove(Str),
 	Progress(Str, [Asc, Desc]),
 
-	## time to exhaustion at a power the CALLER names (#187). ADR 0010: the
-	## caller states the input and stride does the arithmetic — choosing a
-	## target power for the athlete would be prescription.
-	Tte(Str),
+	## time to exhaustion at a power the CALLER names (#187), against the CP
+	## fit of the family a sport word names ("" is the ride family), and its
+	## pace twin against the critical-speed fit of one exact sport. ADR 0010:
+	## the caller states the input and stride does the arithmetic — choosing a
+	## target for the athlete would be prescription.
+	Tte(Str, Str),
+	TtePace(Str, Str),
 
 	## rep-level comparison: the anchor session's detected blocks against the
 	## same-shaped blocks of earlier comparable sessions (#149)
@@ -187,8 +190,11 @@ Command := [
 			["test", id, kind, "--apply-zones"] => Ok(Test(id, kind, Bool.True))
 			["test", ..] => Err(Usage("test <activity_id> <ftp20|ramp|cp3-12|tt30|css|5k|3k> [--apply-zones] — mark a session as a threshold test"))
 			["doctor"] => Ok(Doctor)
-			["tte", watts] => Ok(Tte(watts))
-			["tte", ..] => Err(Usage("tte <watts> — time to exhaustion at a power you name"))
+			["tte", "pace", pace, sport] if !(Str.is_empty(Str.trim(sport))) => Ok(TtePace(pace, sport))
+			["tte", "pace", ..] => Err(Usage("tte pace <pace> <sport> — time to exhaustion at a pace you name, e.g. `tte pace 4:10/km Run`"))
+			["tte", watts] => Ok(Tte(watts, ""))
+			["tte", watts, sport] => Ok(Tte(watts, sport))
+			["tte", ..] => Err(Usage("tte <watts> [sport] — time to exhaustion at a power you name, or `tte pace <pace> <sport>`"))
 			["reps"] => Ok(Reps(""))
 			["reps", date] =>
 				if Metrics.is_canonical_date(date) {
@@ -588,7 +594,14 @@ Command := [
 		## `substr(start_local, 1, 10) = :date` and answers `no_workout_on_date`, and
 		## this table is the one an agent reads.
 		errs(reads("progress", [opt("<YYYY-MM-DD>"), opt("<asc|desc>")], "progress.json"), ["no_scorable_workouts", "no_workout_on_date", "unreadable_activity_date", "unscorable"]),
-		errs(reads("tte", [req_ex("<watts>", "300")], "tte.json"), ["bad_watts", "no_cp_fit"]),
+
+		## the power form takes a sport word and fits that word's whole family:
+		## a family word as `power-curve` widens one, and a Strava spelling too,
+		## which `power-curve` filters to that spelling alone. The pace form names
+		## one exact sport, as `pace-curve` does, and a pace in a unit a pace
+		## target is written in.
+		errs(reads("tte", [req_ex("<watts>", "300"), opt_ex("<sport>", "Ride")], "tte.json"), ["bad_watts", "no_cp_fit"]),
+		errs(reads("tte pace", [req_ex("<pace>", "4:10/km"), req_ex("<sport>", "Run")], "tte_pace.json"), ["bad_pace", "no_cs_fit"]),
 		errs(reads("reps", [opt("<YYYY-MM-DD>")], "reps.json"), ["irregular_anchor", "no_detected_intervals", "no_intervals_on_date", "unreadable_activity_date"]),
 		errs(reads("season", [], "season.json"), ["no_activities", "unreadable_activity_date", "unreadable_daily_load_day"]),
 
@@ -1166,7 +1179,35 @@ expect match Command.parse(["config", "get", "ftp"]) {
 	_ => False
 }
 expect match Command.parse(["tte", "250"]) {
-	Ok(Tte("250")) => True
+	Ok(Tte("250", "")) => True
+	_ => False
+}
+expect match Command.parse(["tte", "250", "rowing"]) {
+	Ok(Tte("250", "rowing")) => True
+	_ => False
+}
+expect match Command.parse(["tte", "250", "rowing", "x"]) {
+	Err(Usage(_)) => True
+	_ => False
+}
+expect match Command.parse(["tte", "pace", "4:10/km", "Run"]) {
+	Ok(TtePace("4:10/km", "Run")) => True
+	_ => False
+}
+# the pace form's arms sit above the power form's: below them, `tte pace
+# 4:10/km` reads as a power named `pace` with a sport named `4:10/km`, and a
+# bare `tte pace` as a power named `pace`
+expect match Command.parse(["tte", "pace", "4:10/km"]) {
+	Err(Usage(_)) => True
+	_ => False
+}
+expect match Command.parse(["tte", "pace"]) {
+	Err(Usage(_)) => True
+	_ => False
+}
+# an empty sport would fit one curve through every sport's speeds
+expect match Command.parse(["tte", "pace", "4:10/km", ""]) {
+	Err(Usage(_)) => True
 	_ => False
 }
 expect match Command.parse(["reps"]) {
