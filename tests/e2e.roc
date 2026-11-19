@@ -8785,15 +8785,15 @@ b_migration! = |ctx| {
 	_ = stride!(ctx.bin, v46home, ["config", "get", "timezone"])
 	check!("migrating a v46 database creates the routes table and owes its ride a route", Str.trim(sql!(v46db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'routes';")) == "1" and Str.trim(sh!("HOME='${v46home}' STRIDE_FORMAT=json '${ctx.bin}' doctor 2>/dev/null | jq -r '.data.pending_routes'")) == "1")?
 	_ = sh!("rm -rf '${v46home}'")
-	# v48 adds the base map's tables. A v47 database has neither, so the
+	# v49 adds the base map's tables. A v48 database has neither, so the
 	# migration creates both.
-	v47home = Str.trim(sh!("mktemp -d"))
-	v47db = "${v47home}/.stride/db.sqlite"
-	_ = stride!(ctx.bin, v47home, ["init"])
-	_ = sql!(v47db, "DROP TABLE map_ways; DROP TABLE map_blocks; PRAGMA user_version = 47;")
-	_ = stride!(ctx.bin, v47home, ["config", "get", "timezone"])
-	check!("migrating a v47 database creates the base map's two tables", Str.trim(sql!(v47db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('map_ways', 'map_blocks');")) == "2" and Str.trim(sql!(v47db, "PRAGMA user_version;")) == "48")?
-	_ = sh!("rm -rf '${v47home}'")
+	v48home = Str.trim(sh!("mktemp -d"))
+	v48db = "${v48home}/.stride/db.sqlite"
+	_ = stride!(ctx.bin, v48home, ["init"])
+	_ = sql!(v48db, "DROP TABLE map_ways; DROP TABLE map_blocks; PRAGMA user_version = 48;")
+	_ = stride!(ctx.bin, v48home, ["config", "get", "timezone"])
+	check!("migrating a v48 database creates the base map's two tables", Str.trim(sql!(v48db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('map_ways', 'map_blocks');")) == "2" and Str.trim(sql!(v48db, "PRAGMA user_version;")) == "49")?
+	_ = sh!("rm -rf '${v48home}'")
 	Ok({})
 }
 
