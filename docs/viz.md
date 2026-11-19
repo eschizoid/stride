@@ -194,20 +194,26 @@ draw in the accent over the street map.
 The street map is OpenStreetMap's data as OpenFreeMap serves it: vector tiles
 in the OpenMapTiles schema, which the window fetches itself as the view needs
 them. Water and parks (parks, nature reserves, grass and wood, but not
-private gardens) are filled, opaque, in muted tones of the window's palette;
-rivers, streets, cycleways, arterials and motorways are dim lines. Water,
-arterials and motorways draw at every zoom; streets and cycleways fade in as
-the view closes in on street level, where the grid stops reading as a grey
-wash. The view asks for the tiles that cover it at the zoom its scale needs,
-each drawn 256 to 512 logical pixels across, down to zoom 14, where the
-tiles' detail stops and a closer view draws zoom 14 larger; and for the one
-tile three zooms coarser over each, so a pan into new ground shows coarse
-detail at once. A tile not yet drawn shows its nearest drawn coarser tile,
-scaled up and cut to its square, so the view never shows an empty patch
-where a coarser tile is held; each tile that lands repaints the picture, and
-the view sharpens until every tile on screen is its own. At most four tiles
-are read at once. Decoding (`Pbf`, `Mvt`, `Earcut`) and the tile maths and
-cache policy (`Tiles`) are pure modules with expects.
+private gardens) are filled, opaque: water in the window's blue and parks in
+a muted green of their own, each laid faintly over the map's ground. Rivers,
+streets, cycleways, arterials and motorways are dim lines. Water, arterials
+and motorways draw at every zoom; streets and cycleways fade in as the view
+closes in on street level, where the grid stops reading as a grey wash. The
+view asks for the tiles that cover it at the zoom its scale needs, each drawn
+256 to 512 logical pixels across, one zoom closer than a map styled for
+512-pixel tiles, for more detail. It goes up to zoom 14, where the tiles'
+detail stops and a closer view draws zoom 14 larger; a view that would need
+more than 48 tiles is drawn a zoom coarser, its tiles larger too. It also
+asks for the one tile three zooms coarser over each, so a pan into new
+ground shows coarse detail at once. A tile not yet drawn shows its nearest
+drawn coarser tile, scaled up and cut to its square, so the view never shows
+an empty patch where a coarser tile is held; each tile that lands repaints
+the picture, and the view sharpens until every tile on screen is its own. At
+most four tiles are read at once. Decoding (`Pbf`, `Mvt`, `Earcut`) and the
+tile maths and cache policy (`Tiles`) are pure modules with expects. A task
+waits for the cache and the network off the frame loop, but tasks run on
+the frame thread, so decoding a tile holds the frames while it runs, longest
+for the widest zooms.
 
 Every fetched tile is kept raw in the `map_tiles` table, keyed by zoom,
 column and row alone, with the planet build it came from and when it was
@@ -216,8 +222,10 @@ fetched. OpenFreeMap rebuilds the planet about weekly, and its TileJSON
 the window reads it once a tile needs the network, never before. A cached
 tile is drawn as it is until it is ninety days old, and is then fetched again
 by the build of the day, the old copy drawn meanwhile and kept when the
-network does not answer. So panning back over ground already seen is
-instant, and works offline. The window creates the table, is its only reader
+network does not answer. So panning back over ground already seen needs no
+network, and works offline; the window holds the last 64 tiles it was asked
+for decoded, and one dropped from those is read and decoded again from the
+cache. The window creates the table, is its only reader
 and writer, and fetches nothing but these tiles and that document, from the
 one origin it declares. While no tile of the view can be drawn, the ways
 `stride basemap` stored in `map_ways` draw instead, if there are any; with

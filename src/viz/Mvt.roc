@@ -247,10 +247,10 @@ Mvt :: [].{
 			Err(NotDrawn)
 		}
 
-	# A line feature's kind, by the classes the street map has always drawn:
-	# rivers, canals and streams; motorways and trunk roads; primary and
-	# secondary roads as arterials; tertiary and minor roads as streets; and
-	# paths that are cycleways.
+	# A line feature's kind, by the classes the street map draws: rivers,
+	# canals and streams; motorways and trunk roads; primary and secondary
+	# roads as arterials; tertiary and minor roads as streets; and paths that
+	# are cycleways.
 	line_of : Str, Str, Str -> Try(U8, [NotDrawn])
 	line_of = |layer_name, class, subclass|
 		if layer_name == "waterway" {

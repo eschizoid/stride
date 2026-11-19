@@ -2188,8 +2188,8 @@ Db :: [].{
 	tile_bindings : Tiles.Key -> List({ name : Str, value : Sqlite.Value })
 	tile_bindings = |k| [{ name: ":z", value: Integer(U64.to_i64_wrap(k.z)) }, { name: ":x", value: Integer(U64.to_i64_wrap(k.x)) }, { name: ":y", value: Integer(U64.to_i64_wrap(k.y)) }]
 
-	# a cached tile's bytes and its age in seconds; an empty tile, one with
-	# nothing drawn in it, is stored as no bytes
+	# a cached tile's bytes and its age in seconds; a tile stored with no
+	# bytes, as a 204 answer is, reads back as no bytes
 	read_tile! : Sqlite.Db, Tiles.Key => Try({ data : List(U8), age : I64 }, [Absent])
 	read_tile! = |db, k|
 		match db.query!(tile_read_sql, tile_bindings(k)) {

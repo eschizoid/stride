@@ -32,10 +32,10 @@ Tiles :: [].{
 	max_zoom : U64
 	max_zoom = 14
 
-	# a tile is drawn 256 to 512 logical pixels across: one zoom closer
-	# than a map styled for 512-pixel tiles draws, so each scale shows the
-	# road classes the stored ways drew there, secondary roads from zoom 9
-	# and the street grid from zoom 12
+	# a tile is drawn 256 to 512 logical pixels across at the zoom its view's
+	# scale needs, and larger past zoom 14 or when a view that would need
+	# more than max_cells tiles is drawn a zoom coarser; 256 is one zoom
+	# closer than a map styled for 512-pixel tiles draws, for more detail
 	tile_px : F64
 	tile_px = 256.0
 
@@ -632,3 +632,8 @@ expect {
 	p = Tiles.plan(List.concat(running, [slot(k1, Waiting), slot(k2, Waiting)]), [k1, k2], Known("t"), 10, 600)
 	p.start == [k1] and Tiles.running(p.slots) == 4
 }
+
+# the limits docs/viz.md states: a view of at most 48 tiles, 64 held, four
+# read at once, a coarse tile three zooms up, and a cached copy good for
+# ninety days
+expect Tiles.max_cells == 48 and Tiles.max_slots == 64 and Tiles.max_running == 4 and Tiles.coarse_up == 3 and Tiles.max_age_secs == 90 * 86400 and Tiles.tile_px == 256.0 and Tiles.max_zoom == 14

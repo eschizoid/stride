@@ -186,11 +186,12 @@ Map :: [].{
 	far_mpp : F32
 	far_mpp = 8.0
 
-	# the fills' colours: the theme's blue for water and a muted green for
-	# parks, each laid over the map's ground at a fixed strength and opaque,
-	# so where the squares of neighbouring tiles meet nothing shows doubled
+	# the fills' colours: the theme's blue for water and, for parks, a green
+	# of the map's own, apart from every sport's and zone's colour, each laid
+	# over the map's ground at a fixed strength and opaque, so where
+	# neighbouring tiles meet nothing shows doubled
 	park_hue : Color.Rgba
-	park_hue = Color.from_hex_rgb(0x54c98a)
+	park_hue = Color.from_hex_rgb(0x6abf69)
 
 	over : Color.Rgba, Color.Rgba, F32 -> Color.Rgba
 	over = |ground, hue, t| {
@@ -606,3 +607,6 @@ expect {
 		Err(_) => Bool.False
 	}
 }
+
+# the parks' green is the map's own: no sport and no zone wears it
+expect !(List.contains(Theme.sport_palette, Map.park_hue)) and !(List.contains(Theme.zone_ramp, Map.park_hue))

@@ -742,12 +742,14 @@ map_task! = |acc, gen|
 		Err(Unreachable) => MapLoaded({ map: { ..Db.no_map, err: "cannot open ${acc.dir}/db.sqlite" }, gen })
 	}
 
-# One street-map tile, read off the main loop: from the cache when the copy
-# there is younger than Tiles.max_age_secs, else from OpenFreeMap by the
-# template the source named, stored, and decoded; a stale copy stands in
-# when the network does not answer, and is drawn as it is when no template
-# is known yet, the answer saying so. The database is closed before the
-# fetch, so a slow network never holds one of the window's connections.
+# One street-map tile, as a task: from the cache when the copy there is
+# younger than Tiles.max_age_secs, else from OpenFreeMap by the template the
+# source named, stored, and decoded; a stale copy stands in when the network
+# does not answer, and is drawn as it is when no template is known yet, the
+# answer saying so. Its reads and its fetch are parked off the frame loop,
+# but tasks run on the frame thread, so its decode still holds the frames
+# while it runs. The database is closed before the fetch, so a slow network
+# never holds one of the window's connections.
 tile_task! : Access, Tiles.Key, Str => Msg
 tile_task! = |acc, k, template| {
 	cached = match open_db!(acc) {
