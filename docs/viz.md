@@ -182,8 +182,11 @@ read as one, and the career view leaves the tonnage spine to this tab.
 
 ## The map view
 
-The `map` pill (view 10, captured as `map.png`) draws every stored GPS route
-over a street map, in Web Mercator with north up. The routes are the answers
+The `map` pill opens the map tab, which draws every stored GPS route over a
+street map, in Web Mercator with north up. Like the day tab it has modes,
+switched by chips in its header, each its own view so a directive or a
+capture names it: routes (view 10, captured as `map.png`), heat (11,
+`map-heat.png`) and play (12, `map-play.png`). The routes are the answers
 `stride sync` stores, one per outdoor session, each decoded by `core.Route`,
 the rule the engine uses to tell a route from the no-GPS marker. The street
 map is the `map_ways` table `stride basemap` fills from OpenStreetMap: water,
@@ -220,6 +223,28 @@ budget rather than returning part of it, so routes and ways are read in
 pages. The credit, © OpenStreetMap contributors, sits on the title row over
 the map's right edge; the street data is OpenStreetMap's, under the ODbL.
 
+Heat sums what was drawn. Every route is drawn once into a texture of its
+own with added colours, each segment adding one to every pixel it covers,
+so a pixel's count is the segments drawn over it: a road ridden out and
+back counts twice, and the overlapping ends of a line's segments add a
+little more. A shader tone-maps the count on a log scale through the
+window's blue, the accent teal and gold to white, a single segment faint and
+the busiest roads white-hot (`Motion.heat_level`, saturating at
+`Motion.heat_top`; the shader's ramp, alpha and saturation come from the
+same definitions). The texture is summed again only when the picture is
+repainted, so heat costs nothing while the map sits still. A GPU that
+refuses the texture or the shader gets the routes drawn as routes mode draws
+them.
+
+Play runs every route at once, each on its own clock from its own start, an
+hour of session in thirty seconds of play (`Motion.speedup`), so a faster
+session's marker outruns a slower one's. Each route is coloured by its speed
+against its own moving speed, slowest blue through the accent to ember, so a
+run and a ride share one ramp; the cycle starts over a little after the
+longest route ends. The coloured routes are the cached picture, and only the
+markers are drawn each frame, so playback never repaints the map; `P` pauses
+and resumes, and the clock starts over each time the mode opens.
+
 ## Controls
 
 | key / gesture | effect |
@@ -236,6 +261,8 @@ the map's right edge; the street data is OpenStreetMap's, under the ODbL.
 | `week` / `log` / `year` chips (day tab) | switch the day tab between the plan, the data table and the heatmap |
 | `zones` / `load` chips (weeks tab) | switch the weeks tab between time in zone and weekly load |
 | click a week (weeks tab) | keep that week in focus in both modes; click it again to drop it |
+| `routes` / `heat` / `play` chips (map tab) | switch the map tab between the routes in the accent, the summed segments as heat, and playback |
+| `P` (map playback) | pause and resume playback |
 | `1` / `2` / `3` or the chips (power view) | re-window the blue ladder and CP fit to 30/60/90 days |
 | `shift+[` / `shift+]` (trace view) | summon / walk the ghost overlay through sessions of the live one's KIND - same sport, same unit; the walk skips the live session itself, and stepping past the last compatible one dismisses it |
 | `C` (trace view) | clear the ghost in one press, from any state |
@@ -486,9 +513,10 @@ INSERT INTO viz_directives (view, family) VALUES (1, 'pace:Run');
 -- gutter when none was pushed all-out: 1 shows them, 0 folds them again; any
 -- other value is refused by name
 INSERT INTO viz_directives (view, short) VALUES (1, 1);
--- view 0..10 (form/power/trace/table/plan/heat/zones/ramp/career/lifts/map;
+-- view 0..12 (form/power/trace/table/plan/heat/zones/ramp/career/lifts/map/map-heat/map-play;
 -- 3, 4 and 5 are the day tab's log, week and year modes; 6 and 7 are the
--- weeks tab's zones and load modes) - but read
+-- weeks tab's zones and load modes; 10, 11 and 12 are the map tab's
+-- routes, heat and play modes) - but read
 -- the list from `stride viz --json`, which the running binary publishes,
 -- rather than from this comment. A directive naming a view outside the
 -- published range leaves the VIEW unchanged; its other fields still land,

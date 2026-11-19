@@ -4,6 +4,7 @@ import Chrome
 import Db
 import Geo
 import Labels
+import Motion
 import Scene
 import Theme
 import Ui
@@ -14,11 +15,98 @@ Map :: [].{
 	# cursor, and `0` returns to the opening view (Geo.opening). The streets
 	# come from OpenStreetMap, and the view credits it on the map itself.
 
-	title_text : Str
-	title_text = "routes - every GPS session on the street map"
+	# The tab's three modes share its pill and switch by chips in the
+	# header, as the day tab's do: routes (view 10) draws every route in the
+	# accent, heat (11) the passes summed and tone-mapped so the roads used
+	# most glow hottest, and play (12) every route coloured by its speed with
+	# a marker riding each at its own pace. The view ids stay distinct, so a
+	# directive or a capture names the mode.
+	modes : List({ v : U8, label : Str })
+	modes = [{ v: 10, label: "routes" }, { v: 11, label: "heat" }, { v: 12, label: "play" }]
 
-	hint_text : Str
-	hint_text = "drag  pan      wheel  zoom      0  fit      TAB  form      R  reload      S  screenshot      ESC quit"
+	is_map : U8 -> Bool
+	is_map = |v| v == 10 or v == 11 or v == 12
+
+	# the pill a view lights: every mode lights the map pill
+	group : U8 -> U8
+	group = |v| if (is_map(v)) 10 else v
+
+	# a click on the map's pill keeps the mode on screen; from any other view
+	# it opens the routes
+	from_pill : U8, U8 -> U8
+	from_pill = |pill, current| if (pill == 10 and is_map(current)) current else pill
+
+	chip_w : F32
+	chip_w = 46.0
+
+	chip_x : U64 -> F32
+	chip_x = |i| 36.0 + U64.to_f32(i) * 54.0
+
+	chip_top : F32
+	chip_top = 64.0
+
+	chip_bottom : F32
+	chip_bottom = 86.0
+
+	chip_box : U64 -> Labels.Rect
+	chip_box = |i| { x: chip_x(i), y: chip_top, w: chip_w, h: chip_bottom - chip_top }
+
+	# the mode a click at (x, y) picks, or -1 when it misses every chip
+	mode_at : F32, F32 -> I64
+	mode_at = |x, y|
+		if y < chip_top or y > chip_bottom {
+			-1
+		} else {
+			List.fold(
+				List.map_with_index(modes, |m, i| { m, i }),
+				-1,
+				|acc, e| if (x >= chip_x(e.i) and x <= chip_x(e.i) + chip_w) (U8.to_i64(e.m.v)) else acc,
+			)
+		}
+
+	# each mode's title starts right of the chips, on the same row
+	title_x : F32
+	title_x = chip_x(List.len(modes)) + 12.0
+
+	draw_chips! : Ui.Model, Draw.Frame => {}
+	draw_chips! = |model, frame|
+		List.for_each!(
+			List.map_with_index(modes, |m, i| { m, i }),
+			|e| {
+				b = chip_box(e.i)
+				on = e.m.v == model.view
+				hov = model.mouse_x >= b.x and model.mouse_x <= b.x + b.w and model.mouse_y >= b.y and model.mouse_y <= b.y + b.h
+				look = if (on) (Draw.filled(Color.with_alpha(Theme.ctl_c, 60))) else if (hov) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
+				frame.rounded_rectangle!({ x: b.x, y: b.y, width: b.w, height: b.h, radius: 6.0, segments: 6, style: look })
+			},
+		)
+
+	chip_texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
+	chip_texts = |model, measure| List.map_with_index(modes, |m, i| Scene.fixed(measure, Scene.data(m.label, 12.0, if (m.v == model.view) Color.white else Theme.ink_muted), { x: chip_x(i) + chip_w / 2.0, y: 68.0, align: Center }, chip_box(i)))
+
+	chip_marks : List(Labels.Mark)
+	chip_marks = List.map_with_index(modes, |m, i| { key: "the ${m.label} chip", box: chip_box(i) })
+
+	title_text : U8 -> Str
+	title_text = |v|
+		if (v == 11) "heat - the roads used most glow hottest"
+		else if (v == 12) "playback - every session at once, an hour in ${U64.to_str((F32.round_to_u64_try(3600.0 / Motion.speedup)) ?? 0)} seconds"
+		else "routes - every GPS session on the street map"
+
+	hint_text : U8 -> Str
+	hint_text = |v|
+		if (v == 12) "P  pause      drag  pan      wheel  zoom      0  home      TAB  form      S  screenshot      ESC quit"
+		else "drag  pan      wheel  zoom      0  home      TAB  form      R  reload      S  screenshot      ESC quit"
+
+	# playback's clock as the route time every marker shows: hours and
+	# minutes into each session
+	clock_text : F32 -> Str
+	clock_text = |secs| {
+		m = (F32.round_to_u64_try(F32.div_floor_by(secs, 60.0))) ?? 0
+		mm = m % 60
+		pad = if (mm < 10) Str.concat("0", U64.to_str(mm)) else U64.to_str(mm)
+		"${U64.to_str(m // 60)}:${pad} into each session"
+	}
 
 	credit_text : Str
 	credit_text = "OpenStreetMap contributors"
@@ -90,21 +178,108 @@ Map :: [].{
 	far_mpp : F32
 	far_mpp = 8.0
 
-	# every line the camera shows, base map first in the kind order the
-	# load sorted it into, then the routes over it; a line wholly outside
+	# what each mode paints into the cached picture. A line wholly outside
 	# the rectangle or faded out is skipped, and a point closer than a pixel
-	# to the last one drawn adds nothing
+	# to the last one drawn adds nothing. The base map goes first, in the kind
+	# order the load sorted it into. Routes mode draws the routes over it in
+	# the accent; play draws them in runs of their speed bands; heat draws
+	# none here, its passes being summed into a texture of their own
+	# (paint_heat!), unless the window could not build that texture, when it
+	# draws them as routes mode does.
 	paint! : Ui.Model, Geo.Cam, Draw.Frame => {}
 	paint! = |model, c, frame| {
 		r = rect(model.win)
 		List.for_each!(
-			List.concat(model.map.ways, model.map.routes),
+			model.map.ways,
 			|l| {
 				s = style(l.kind)
 				k = fade(s, c.mpp)
 				if k > 0.0 and Geo.visible(c, r, l.box) {
 					a = (F32.round_to_u64_try(s.alpha * k)) ?? 0
 					frame.line_strip!({ points: Geo.strip(c, r, if (c.mpp > far_mpp) l.far else l.pts, 1.0), stroke: Draw.stroke(Color.with_alpha(s.color, U64.to_u8_wrap(a)), s.width) })
+				}
+			},
+		)
+		if model.view == 12 {
+			paint_speed!(model, c, frame)
+		} else if model.view != 11 or !(heat_ready(model)) {
+			s = style(Db.route_kind)
+			paint_routes!(model, c, Color.with_alpha(s.color, 190), s.width, frame)
+		}
+	}
+
+	# every route the camera shows in one colour and width
+	paint_routes! : Ui.Model, Geo.Cam, Color.Rgba, F32, Draw.Frame => {}
+	paint_routes! = |model, c, color, width, frame| {
+		r = rect(model.win)
+		List.for_each!(
+			model.map.routes,
+			|l|
+				if Geo.visible(c, r, l.box) {
+					frame.line_strip!({ points: Geo.strip(c, r, if (c.mpp > far_mpp) l.far else l.pts, 1.0), stroke: Draw.stroke(color, width) })
+				},
+		)
+	}
+
+	# every route the camera shows, in the speed runs the map load worked
+	# out for the list this zoom draws
+	paint_speed! : Ui.Model, Geo.Cam, Draw.Frame => {}
+	paint_speed! = |model, c, frame| {
+		r = rect(model.win)
+		List.for_each!(
+			model.map.routes,
+			|l|
+				if Geo.visible(c, r, l.box) {
+					wide = c.mpp > far_mpp
+					runs = if (wide) l.fruns else l.runs
+					List.for_each!(runs, |run| frame.line_strip!({ points: Geo.strip(c, r, run.pts, 1.0), stroke: Draw.stroke(Color.with_alpha(Motion.band_colour(run.band), 220), 2.0) }))
+				},
+		)
+	}
+
+	# a route's ink in the heat texture: one 255th of white, so each segment
+	# drawn with added colours adds one count to every pixel it covers
+	heat_ink : Color.Rgba
+	heat_ink = Color.rgba(1, 1, 1, 255)
+
+	heat_width : F32
+	heat_width = 2.0
+
+	# the heat texture's passes, to be drawn with added colours into a
+	# cleared texture
+	paint_heat! : Ui.Model, Geo.Cam, Draw.Frame => {}
+	paint_heat! = |model, c, frame| paint_routes!(model, c, heat_ink, heat_width, frame)
+
+	heat_ready : Ui.Model -> Bool
+	heat_ready = |model|
+		match model.map_heat {
+			Ready(_) => Bool.True
+			_ => Bool.False
+		}
+
+	# the route seconds the longest route lasts, the length of a playback
+	# cycle before its rest
+	longest : Ui.Model -> F32
+	longest = |model| List.fold(model.map.routes, 0.0, |m, l| F32.max(m, (List.last(l.ts)) ?? 0.0))
+
+	# One marker per route at the playback time, drawn every frame over the
+	# cached picture, which playback never repaints: a route still under way
+	# in white with a halo, one already finished dimmed at its end.
+	draw_markers! : Ui.Model, Geo.Cam, Draw.Frame => {}
+	draw_markers! = |model, c, frame| {
+		r = rect(model.win)
+		t = Motion.play_time(model.map_play.secs, longest(model))
+		List.for_each!(
+			model.map.routes,
+			|l| {
+				s = Geo.to_screen(c, r, Motion.at_time(l.pts, l.ts, t))
+				if s.x >= r.x and s.x <= r.x + r.w and s.y >= r.y and s.y <= r.y + r.h {
+					if t < ((List.last(l.ts)) ?? 0.0) {
+						frame.circle!({ center: s, radius: 5.0, style: Draw.filled(Color.with_alpha(Theme.tsb_c, 70)) })
+						frame.circle!({ center: s, radius: 2.4, style: Draw.filled(Color.white) })
+					} else {
+						frame.circle!({ center: s, radius: 2.0, style: Draw.filled(Color.with_alpha(Theme.ink_faint, 150)) })
+					}
 				}
 			},
 		)
@@ -147,52 +322,74 @@ Map :: [].{
 				[fix(Scene.prose(loading_text, 13.0, Theme.ink_muted), r.x + 14.0, r.y + 14.0, Left, r)]
 			} else if List.is_empty(model.map.routes) {
 				[fix(Scene.prose(no_routes_text, 13.0, Theme.ink_muted), r.x + 14.0, r.y + 14.0, Left, r)]
-			} else if List.is_empty(model.map.ways) {
+			} else if List.is_empty(model.map.ways) and model.view != 12 {
 				[fix(Scene.prose(no_base_text, 13.0, Theme.ink_muted), r.x + 14.0, r.y + 14.0, Left, r)]
 			} else {
 				[]
 			}
 		List.join([
 			[
-				fix(Scene.prose(title_text, 15.0, Theme.ink_muted), 36.0, 70.0, Left, panel),
+				fix(Scene.prose(title_text(model.view), 15.0, Theme.ink_muted), title_x, 70.0, Left, panel),
 				fix(Scene.prose(credit_text, 11.0, Theme.ink_faint), r.x + r.w, credit_y, Right, panel),
 				fix(Scene.data("c", 9.0, Theme.ink_faint), ring.x + ring.w / 2.0, ring.y + 2.0, Center, ring),
-				fix(Scene.prose(hint_text, 13.0, Theme.ink_faint), 36.0, model.win.h - 30.0, Left, panel),
+				fix(Scene.prose(hint_text(model.view), 13.0, Theme.ink_faint), 36.0, model.win.h - 30.0, Left, panel),
 			],
 			note,
+			if (model.view == 12 and List.is_empty(note)) [fix(Scene.data(clock_text(Motion.play_time(model.map_play.secs, longest(model))), 12.0, Theme.ink_muted), r.x + 14.0, r.y + 14.0, Left, r)] else [],
+			chip_texts(model, measure),
 		])
 	}
 
-	# the shapes no text may cover but its own: the pills, the map and the
-	# copyright ring
+	# the shapes no text may cover but its own: the pills, the mode chips,
+	# the map and the copyright ring
 	marks : Ui.Model, Scene.Measure -> List(Labels.Mark)
 	marks = |model, measure| {
 		r = rect(model.win)
-		List.join([Chrome.marks(model), [{ key: "the map", box: r }, { key: "the copyright ring", box: credit_ring(model.win, measure) }]])
+		List.join([Chrome.marks(model), chip_marks, [{ key: "the map", box: r }, { key: "the copyright ring", box: credit_ring(model.win, measure) }]])
 	}
 
 	# The cached picture when the window holds one, shifted by however far
 	# the camera has moved since it was painted, else every line drawn
-	# straight to the frame. Either way the scissor keeps the lines inside
-	# the map's rectangle; it takes screen pixels, so the logical rectangle
-	# is scaled by the UI size.
+	# straight to the frame. In heat mode the summed passes follow, through
+	# the tone-mapping shader, with the same shift; in play the markers
+	# follow, placed this frame. The scissor keeps all of it inside the
+	# map's rectangle; it takes screen pixels, so the logical rectangle is
+	# scaled by the UI size.
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
 		r = rect(model.win)
 		c = cam(model)
 		measure = Scene.measure_of(model)
+		draw_chips!(model, frame)
 		frame.rounded_rectangle!({ x: r.x, y: r.y, width: r.w, height: r.h, radius: 10.0, segments: 8, style: Draw.filled(Theme.card) })
 		sc = model.ui_scale
 		px = { x: r.x * sc, y: r.y * sc, width: r.w * sc, height: r.h * sc }
+		off = Geo.to_screen(c, r, Geo.to_world(model.map_painted, r, r.x, r.y))
+		dest = { x: off.x - r.x, y: off.y - r.y, width: model.win.w, height: model.win.h }
 		_ = frame.with_scissor!(
 			px,
 			|f| {
 				match model.map_rt {
-					Target(t) => {
-						off = Geo.to_screen(c, r, Geo.to_world(model.map_painted, r, r.x, r.y))
-						f.texture!({ texture: t.rt.texture(), source: t.rt.source(), dest: { x: off.x - r.x, y: off.y - r.y, width: model.win.w, height: model.win.h }, origin: { x: 0.0, y: 0.0 }, rotation: 0.0, tint: Color.white })
-					}
+					Target(t) => f.texture!({ texture: t.rt.texture(), source: t.rt.source(), dest, origin: { x: 0.0, y: 0.0 }, rotation: 0.0, tint: Color.white })
 					_ => paint!(model, c, f)
+				}
+				if model.view == 11 {
+					match model.map_heat {
+						Ready(h) => {
+							_ = f.with_shader!(
+								h.shader,
+								|f2| {
+									f2.texture!({ texture: h.rt.texture(), source: h.rt.source(), dest, origin: { x: 0.0, y: 0.0 }, rotation: 0.0, tint: Color.white })
+									Ok({})
+								},
+							)
+							{}
+						}
+						_ => {}
+					}
+				}
+				if model.view == 12 {
+					draw_markers!(model, c, f)
 				}
 				Ok({})
 			},
@@ -216,3 +413,19 @@ expect List.all([1, 2], |k| Map.fade(Map.style(k), 30.0) == 0.0 and Map.fade(Map
 
 # water, the arterials, the motorways and the routes draw at every zoom
 expect List.all([0, 3, 4, Db.route_kind], |k| Map.fade(Map.style(k), Geo.max_mpp) == 1.0 and Map.fade(Map.style(k), Geo.min_mpp) == 1.0)
+
+# the three modes are the map, light its pill, and a click on that pill keeps
+# the mode on screen while from elsewhere it opens the routes
+expect List.all([10, 11, 12], Map.is_map) and !(Map.is_map(9)) and !(Map.is_map(13)) and Map.group(12) == 10 and Map.group(8) == 8 and Map.from_pill(10, 11) == 11 and Map.from_pill(10, 4) == 10 and Map.from_pill(6, 12) == 6
+
+# a click on a chip picks its mode, and one beside the chips or off their row picks none
+expect Map.mode_at(Map.chip_x(1) + 10.0, 70.0) == 11 and Map.mode_at(Map.chip_x(2) + 1.0, 80.0) == 12 and Map.mode_at(Map.chip_x(0) + Map.chip_w + 2.0, 70.0) == -1 and Map.mode_at(Map.chip_x(0) + 10.0, 90.0) == -1
+
+# the clock reads hours and minutes into each session
+expect Map.clock_text(0.0) == "0:00 into each session" and Map.clock_text(3725.0) == "1:02 into each session" and Map.clock_text(599.0) == "0:09 into each session"
+
+# each mode titles itself, and only playback offers P
+expect Map.title_text(11) != Map.title_text(10) and Map.title_text(12) != Map.title_text(10) and Str.starts_with(Map.hint_text(12), "P  pause") and !(Str.contains(Map.hint_text(10), "P  pause"))
+
+# playback's title states the speed-up the clock runs at
+expect Str.contains(Map.title_text(12), "an hour in ${U64.to_str((F32.round_to_u64_try(3600.0 / Motion.speedup)) ?? 0)} seconds") and Str.contains(Map.title_text(12), "an hour in 30 seconds")

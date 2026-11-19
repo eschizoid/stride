@@ -288,5 +288,15 @@ Ui :: [].{
 		# picture holds once it has
 		map_paint : Bool,
 		map_painted : Geo.Cam,
+		# the mode the picture was painted for, since each mode paints its own
+		map_painted_view : U8,
+		# the heat mode's texture of summed passes and the shader that
+		# tone-maps it, built the first time heat shows and sized to the
+		# window's pixels like the picture; Unavailable remembers the size the
+		# GPU refused at, and heat mode then draws the routes as routes mode does
+		map_heat : [Unbuilt, Unavailable({ w : F32, h : F32 }), Ready({ rt : Draw.RenderTexture, shader : Shader({ top : F32 }), w : F32, h : F32 })],
+		# playback's clock in seconds of play, which runs only while the play
+		# mode shows and is not paused, and starts over each time it opens
+		map_play : { secs : F32, paused : Bool },
 	}
 }

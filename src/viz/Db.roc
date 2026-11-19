@@ -7,6 +7,7 @@ import core.Units
 import rr.Sqlite
 import rr.Cmd
 import Geo
+import Motion
 
 Db :: [].{
 	CurvePt : { dur_s : I64, watts : F32, aid : I64, name : Str, day : Str, ago : I64 }
@@ -936,7 +937,7 @@ Db :: [].{
 						Ok(x) => x
 						Err(_) => ""
 					}
-					vn = if (v == 0) "form" else if (v == 1) "power" else if (v == 2) "trace" else if (v == 3) "table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else if (v == 8) "career" else if (v == 9) "lifts" else if (v == 10) "map" else if (v >= 0) "view ${I64.to_str(v)} (ignored)" else ""
+					vn = if (v == 0) "form" else if (v == 1) "power" else if (v == 2) "trace" else if (v == 3) "table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else if (v == 8) "career" else if (v == 9) "lifts" else if (v == 10) "map" else if (v == 11) "map heat" else if (v == 12) "map play" else if (v >= 0) "view ${I64.to_str(v)} (ignored)" else ""
 					rgp = if (rg > 0) "${I64.to_str(rg)}d" else ""
 					joined = Str.join_with(List.keep_if([vn, rgp], |s2| s2 != ""), " / ")
 					parts = if (joined == "") "steer" else joined
@@ -1967,8 +1968,12 @@ Db :: [].{
 	# `pts` keeps no two points closer than two metres, `far` none closer
 	# than forty, for the zooms where forty metres is a few pixels: a full
 	# backfill holds millions of points, and every repaint walks the list it
-	# draws.
-	MapLine : { kind : U8, pts : List(Geo.Pt), far : List(Geo.Pt), box : Geo.Bounds }
+	# draws. A route keeps each kept point's seconds since its start in `ts`
+	# and `fts`, aligned with `pts` and `far`, for playback, and both lists
+	# split into runs of one speed band in `runs` and `fruns` (Motion.runs),
+	# worked out once when the map loads so a playback repaint only draws; a
+	# way keeps none of these.
+	MapLine : { kind : U8, pts : List(Geo.Pt), ts : List(F32), far : List(Geo.Pt), fts : List(F32), runs : List(Motion.Run), fruns : List(Motion.Run), box : Geo.Bounds }
 
 	# every route and base-map way, all relative to one origin; the extent
 	# of everything the map opens on, the routes' or, when no route has GPS,
@@ -2010,15 +2015,21 @@ Db :: [].{
 	far_step : F32
 	far_step = 40.0
 
-	# the projected line of a list of coordinates; fewer than two points
-	# draw nothing, so they make no line
-	map_line : { x : F64, y : F64 }, U8, List({ lat : F64, lng : F64 }) -> Try(MapLine, [TooShort])
-	map_line = |origin, kind, coords|
+	# the projected line of a list of coordinates, with each one's seconds
+	# since the start when it is a route's and none when it is a way's;
+	# fewer than two points draw nothing, so they make no line
+	map_line : { x : F64, y : F64 }, U8, List({ lat : F64, lng : F64 }), List(F32) -> Try(MapLine, [TooShort])
+	map_line = |origin, kind, coords, times|
 		if List.len(coords) < 2 {
 			Err(TooShort)
-		} else {
+		} else if List.is_empty(times) {
 			pts = Geo.thin(List.map(coords, |c| Geo.rel(origin, c.lat, c.lng)), near_step)
-			Ok({ kind, pts, far: Geo.thin(pts, far_step), box: Geo.box_of(pts) })
+			Ok({ kind, pts, ts: [], far: Geo.thin(pts, far_step), fts: [], runs: [], fruns: [], box: Geo.box_of(pts) })
+		} else {
+			near = Geo.thin_timed(List.map(coords, |c| Geo.rel(origin, c.lat, c.lng)), times, near_step)
+			far = Geo.thin_timed(near.pts, near.ts, far_step)
+			ref = Motion.moving_speed(far.pts, far.ts)
+			Ok({ kind, pts: near.pts, ts: near.ts, far: far.pts, fts: far.ts, runs: Motion.runs(near.pts, Motion.bands_of(near.pts, near.ts, ref)), fruns: Motion.runs(far.pts, Motion.bands_of(far.pts, far.ts, ref)), box: Geo.box_of(near.pts) })
 		}
 
 	# a failed read, named for the athlete
@@ -2034,14 +2045,14 @@ Db :: [].{
 	# budget rather than returning part of it, and one stored route answer
 	# runs to hundreds of kilobytes, so routes and ways are read in pages
 	# keyed by id. A page of routes is decoded by the engine's own rule
-	# (core.Route) as it lands, keeping only the coordinates.
+	# (core.Route) as it lands, keeping the coordinates and their times.
 	route_page_size : I64
 	route_page_size = 16
 
 	way_page_size : I64
 	way_page_size = 4000
 
-	route_pages! : Sqlite.Db, I64, List(List({ lat : F64, lng : F64 })) => Try(List(List({ lat : F64, lng : F64 })), Str)
+	route_pages! : Sqlite.Db, I64, List({ coords : List({ lat : F64, lng : F64 }), times : List(F32) }) => Try(List({ coords : List({ lat : F64, lng : F64 }), times : List(F32) }), Str)
 	route_pages! = |db, after, acc|
 		match db.query!("SELECT activity_id AS id, CAST(raw_json AS TEXT) AS j FROM routes WHERE raw_json IS NOT NULL AND raw_json <> '{}' AND activity_id > :a ORDER BY activity_id LIMIT :n", [{ name: ":a", value: Integer(after) }, { name: ":n", value: Integer(route_page_size) }]) {
 			Err(e) => Err(query_err("the routes", e))
@@ -2054,7 +2065,7 @@ Db :: [].{
 							|r| {
 								b = r.str("j") ? |_| BadBody
 								match Route.decode_route(b) {
-									Points(ps) => Ok(List.map(ps, |p| { lat: p.lat, lng: p.lng }))
+									Points(ps) => Ok({ coords: List.map(ps, |p| { lat: p.lat, lng: p.lng }), times: List.map(ps, |p| I64.to_f32(p.t)) })
 									_ => Err(NoGps)
 								}
 							},
@@ -2112,14 +2123,14 @@ Db :: [].{
 			}
 		tracks = if (has_table!("routes")) route_pages!(db, -9223372036854775807, []) else Ok([])
 		raw_ways = if (has_table!("map_ways")) way_pages!(db, -9223372036854775807, []) else Ok([])
-		ts = List.map(tracks ?? [], Geo.unwrap)
+		ts = List.map(tracks ?? [], |tr| { ..tr, coords: Geo.unwrap(tr.coords) })
 		ws = raw_ways ?? []
 		first_of = |lists|
 			match List.first(lists) {
 				Ok(l) => List.first(l)
 				Err(_) => Err(ListWasEmpty)
 			}
-		origin = match first_of(ts) {
+		origin = match first_of(List.map(ts, |tr| tr.coords)) {
 			Ok(c) => Geo.merc(c.lat, c.lng)
 			Err(_) =>
 				match first_of(List.map(ws, |w| w.coords)) {
@@ -2127,14 +2138,14 @@ Db :: [].{
 					Err(_) => { x: 0.0, y: 0.0 }
 				}
 		}
-		routes = List.keep_oks(ts, |t| map_line(origin, route_kind, t))
+		routes = List.keep_oks(ts, |tr| map_line(origin, route_kind, tr.coords, tr.times))
 		# drawn bottom first, so each kind's lines lie together, in kind order
 		ways = List.join(
 			List.map_with_index(
 				way_kinds,
 				|_, i| {
 					k = U64.to_u8_wrap(i)
-					List.keep_oks(ws, |w| if (w.code == k) map_line(origin, w.code, w.coords) else Err(OtherKind))
+					List.keep_oks(ws, |w| if (w.code == k) map_line(origin, w.code, w.coords, []) else Err(OtherKind))
 				},
 			),
 		)
@@ -2255,12 +2266,25 @@ expect Db.kind_code("water") == Ok(0) and Db.kind_code("motorway") == Ok(4) and 
 expect {
 	o = Geo.merc(41.88, -87.63)
 	coords = List.map_with_index(List.repeat(0, 50), |_, i| { lat: 41.88 + U64.to_f64(i) * 0.0001, lng: -87.63 })
-	short = match Db.map_line(o, 1, [{ lat: 41.88, lng: -87.63 }]) {
+	short = match Db.map_line(o, 1, [{ lat: 41.88, lng: -87.63 }], []) {
 		Ok(_) => Bool.False
 		Err(TooShort) => Bool.True
 	}
-	match Db.map_line(o, 1, coords) {
+	match Db.map_line(o, 1, coords, []) {
 		Ok(l) => short and List.len(l.pts) == 50 and List.len(l.far) == 18 and l.box.y1 > 700.0 and l.box.y0.abs() < 0.001
 		Err(_) => Bool.False
+	}
+}
+
+# a route's line keeps each kept point's time beside it and its speed runs,
+# in both lists (a steady route is one run at its own speed), and a way's
+# keeps neither
+expect {
+	o = Geo.merc(41.88, -87.63)
+	coords = List.map_with_index(List.repeat(0, 50), |_, i| { lat: 41.88 + U64.to_f64(i) * 0.0001, lng: -87.63 })
+	times = List.map_with_index(coords, |_, i| U64.to_f32(i) * 3.0)
+	match (Db.map_line(o, Db.route_kind, coords, times), Db.map_line(o, 1, coords, [])) {
+		(Ok(r), Ok(w)) => r.ts == times and List.len(r.fts) == List.len(r.far) and List.first(r.fts) == Ok(0.0) and List.last(r.fts) == Ok(147.0) and List.get(r.fts, 1) == Ok(9.0) and List.map(r.runs, |x| x.band) == [2] and List.map(r.runs, |x| x.pts) == [r.pts] and List.map(r.fruns, |x| x.pts) == [r.far] and List.is_empty(w.ts) and List.is_empty(w.fts) and List.is_empty(w.runs) and List.is_empty(w.fruns)
+		_ => Bool.False
 	}
 }
