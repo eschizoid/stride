@@ -23,8 +23,9 @@ Days :: [].{
 	group = |v| if (is_day(v)) 4 else v
 
 	# TAB walks the nav left to right: form, power, trace, the day tab,
-	# lifts, the weeks tab, career, and back to form. Any day mode steps on to
-	# lifts, and either weeks mode (zones 6, load 7) steps on to career.
+	# lifts, the weeks tab, career, the map, and back to form. Any day mode
+	# steps on to lifts, and either weeks mode (zones 6, load 7) steps on to
+	# career.
 	next_view : U8 -> U8
 	next_view = |v|
 		if (v == 0) 1
@@ -33,6 +34,7 @@ Days :: [].{
 		else if (is_day(v)) 9
 		else if (v == 9) 6
 		else if (v == 6 or v == 7) 8
+		else if (v == 8) 10
 		else 0
 
 	# a click on the day tab's pill keeps the mode on screen; from any other
@@ -97,8 +99,8 @@ Days :: [].{
 expect Days.group(3) == 4 and Days.group(4) == 4 and Days.group(5) == 4 and Days.group(9) == 9
 # TAB visits every pill once, in nav order, and comes back to form
 expect {
-	walk = List.fold([0, 1, 2, 3, 4, 5, 6], [0.U8], |acc, _| List.append(acc, Days.next_view((List.last(acc)).ok_or(0))))
-	walk == [0, 1, 2, 4, 9, 6, 8, 0]
+	walk = List.fold([0, 1, 2, 3, 4, 5, 6, 7], [0.U8], |acc, _| List.append(acc, Days.next_view((List.last(acc)).ok_or(0))))
+	walk == [0, 1, 2, 4, 9, 6, 8, 10, 0]
 }
 expect Days.next_view(3) == 9 and Days.next_view(5) == 9 and Days.next_view(7) == 8
 expect Days.from_pill(4, 5) == 5 and Days.from_pill(4, 1) == 4 and Days.from_pill(6, 5) == 6

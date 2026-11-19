@@ -2,9 +2,11 @@ import core.Bus
 import core.Fmt
 import core.Series
 import core.Sports
+import core.Route
 import core.Units
 import rr.Sqlite
 import rr.Cmd
+import Geo
 
 Db :: [].{
 	CurvePt : { dur_s : I64, watts : F32, aid : I64, name : Str, day : Str, ago : I64 }
@@ -934,7 +936,7 @@ Db :: [].{
 						Ok(x) => x
 						Err(_) => ""
 					}
-					vn = if (v == 0) "form" else if (v == 1) "power" else if (v == 2) "trace" else if (v == 3) "table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else if (v == 8) "career" else if (v == 9) "lifts" else if (v >= 0) "view ${I64.to_str(v)} (ignored)" else ""
+					vn = if (v == 0) "form" else if (v == 1) "power" else if (v == 2) "trace" else if (v == 3) "table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else if (v == 8) "career" else if (v == 9) "lifts" else if (v == 10) "map" else if (v >= 0) "view ${I64.to_str(v)} (ignored)" else ""
 					rgp = if (rg > 0) "${I64.to_str(rg)}d" else ""
 					joined = Str.join_with(List.keep_if([vn, rgp], |s2| s2 != ""), " / ")
 					parts = if (joined == "") "steer" else joined
@@ -1958,6 +1960,198 @@ Db :: [].{
 			{ found: Bool.False, idx: 0.U64 },
 			|acc, x| if (x.day == target) ({ found: Bool.True, idx: x.index }) else acc,
 		)
+
+	# ── the map view's data ────────────────────────────────────────────────
+	# one line the map draws: a base-map way of one kind, or one session's
+	# route, in metres from the map's origin, with its extent for culling.
+	# `pts` keeps no two points closer than two metres, `far` none closer
+	# than forty, for the zooms where forty metres is a few pixels: a full
+	# backfill holds millions of points, and every repaint walks the list it
+	# draws.
+	MapLine : { kind : U8, pts : List(Geo.Pt), far : List(Geo.Pt), box : Geo.Bounds }
+
+	# every route and base-map way, all relative to one origin; the extent
+	# of everything the map opens on, the routes' or, when no route has GPS,
+	# the base map's; where the routes gather, for when that extent is too
+	# wide to show (Geo.opening); and why a read failed, empty when none did
+	MapData : { routes : List(MapLine), ways : List(MapLine), fit : Geo.Bounds, focus : Geo.Focus, err : Str }
+
+	no_map : MapData
+	no_map = { routes: [], ways: [], fit: Geo.no_box, focus: { box: Geo.no_box, anchor: { x: 0.0, y: 0.0 } }, err: "" }
+
+	# the base map's kinds as the engine stores them, in the order the view
+	# draws them, bottom first; a kind outside the list is not drawn
+	way_kinds : List(Str)
+	way_kinds = ["water", "street", "cycleway", "arterial", "motorway"]
+
+	kind_code : Str -> Try(U8, [UnknownKind])
+	kind_code = |k|
+		match List.find_first_index(way_kinds, |w| w == k) {
+			Ok(i) => Ok(U64.to_u8_wrap(i))
+			Err(_) => Err(UnknownKind)
+		}
+
+	route_kind : U8
+	route_kind = 9
+
+	# a stored points column, [lat0, lng0, lat1, lng1, ...], as pairs; an
+	# odd trailing number has no partner and is dropped
+	flat_pairs : List(F64) -> List({ lat : F64, lng : F64 })
+	flat_pairs = |xs| {
+		lats = List.keep_oks(List.map_with_index(xs, |x, i| if (i % 2 == 0) Ok(x) else Err(Odd)), |v| v)
+		lngs = List.keep_oks(List.map_with_index(xs, |x, i| if (i % 2 == 1) Ok(x) else Err(Even)), |v| v)
+		List.map2(lats, lngs, |lat, lng| { lat, lng })
+	}
+
+	# the spacing, in metres, of a map line's near and far point lists
+	near_step : F32
+	near_step = 2.0
+
+	far_step : F32
+	far_step = 40.0
+
+	# the projected line of a list of coordinates; fewer than two points
+	# draw nothing, so they make no line
+	map_line : { x : F64, y : F64 }, U8, List({ lat : F64, lng : F64 }) -> Try(MapLine, [TooShort])
+	map_line = |origin, kind, coords|
+		if List.len(coords) < 2 {
+			Err(TooShort)
+		} else {
+			pts = Geo.thin(List.map(coords, |c| Geo.rel(origin, c.lat, c.lng)), near_step)
+			Ok({ kind, pts, far: Geo.thin(pts, far_step), box: Geo.box_of(pts) })
+		}
+
+	# a failed read, named for the athlete
+	query_err : Str, [SqliteErr(_, Str), ResultTooLarge, MultipleStatements] -> Str
+	query_err = |what, e|
+		match e {
+			SqliteErr(_, msg) => "could not read ${what}: ${msg}"
+			ResultTooLarge => "could not read ${what}: one page is larger than the window reads at once"
+			MultipleStatements => "could not read ${what}"
+		}
+
+	# The window's SQLite binding refuses a query whose result passes a byte
+	# budget rather than returning part of it, and one stored route answer
+	# runs to hundreds of kilobytes, so routes and ways are read in pages
+	# keyed by id. A page of routes is decoded by the engine's own rule
+	# (core.Route) as it lands, keeping only the coordinates.
+	route_page_size : I64
+	route_page_size = 16
+
+	way_page_size : I64
+	way_page_size = 4000
+
+	route_pages! : Sqlite.Db, I64, List(List({ lat : F64, lng : F64 })) => Try(List(List({ lat : F64, lng : F64 })), Str)
+	route_pages! = |db, after, acc|
+		match db.query!("SELECT activity_id AS id, CAST(raw_json AS TEXT) AS j FROM routes WHERE raw_json IS NOT NULL AND raw_json <> '{}' AND activity_id > :a ORDER BY activity_id LIMIT :n", [{ name: ":a", value: Integer(after) }, { name: ":n", value: Integer(route_page_size) }]) {
+			Err(e) => Err(query_err("the routes", e))
+			Ok(rs) =>
+				match List.last(rs) {
+					Err(_) => Ok(acc)
+					Ok(last) => {
+						tracks = List.keep_oks(
+							rs,
+							|r| {
+								b = r.str("j") ? |_| BadBody
+								match Route.decode_route(b) {
+									Points(ps) => Ok(List.map(ps, |p| { lat: p.lat, lng: p.lng }))
+									_ => Err(NoGps)
+								}
+							},
+						)
+						match last.i64("id") {
+							Ok(id) => route_pages!(db, id, List.concat(acc, tracks))
+							Err(_) => Err("could not read the routes: a route row has no id")
+						}
+					}
+				}
+		}
+
+	way_pages! : Sqlite.Db, I64, List({ code : U8, coords : List({ lat : F64, lng : F64 }) }) => Try(List({ code : U8, coords : List({ lat : F64, lng : F64 }) }), Str)
+	way_pages! = |db, after, acc|
+		match db.query!("SELECT way_id AS id, CAST(kind AS TEXT) AS k, CAST(points AS TEXT) AS p FROM map_ways WHERE way_id > :a ORDER BY way_id LIMIT :n", [{ name: ":a", value: Integer(after) }, { name: ":n", value: Integer(way_page_size) }]) {
+			Err(e) => Err(query_err("the street map", e))
+			Ok(rs) =>
+				match List.last(rs) {
+					Err(_) => Ok(acc)
+					Ok(last) => {
+						ways = List.keep_oks(
+							rs,
+							|r| {
+								k = r.str("k") ? |_| BadKind
+								p = r.str("p") ? |_| BadPoints
+								code = kind_code(k)?
+								flat : Try(List(F64), [InvalidJson(Str), MissingRequiredField(Str)])
+								flat = Json.parse(p)
+								match flat {
+									Ok(xs) => Ok({ code, coords: flat_pairs(xs) })
+									Err(_) => Err(BadPoints)
+								}
+							},
+						)
+						match last.i64("id") {
+							Ok(id) => way_pages!(db, id, List.concat(acc, ways))
+							Err(_) => Err("could not read the street map: a way row has no id")
+						}
+					}
+				}
+		}
+
+	# A database without the routes table holds no route yet, and one
+	# without the map_ways table no base map; either draws what it has, the
+	# routes on a bare ground or the empty-map note. Any other failed read is
+	# named on the map. The origin is the first route point, else the first
+	# way point: anything near the data keeps the F32 metres small. A route
+	# is unwrapped across the antimeridian before it is projected.
+	load_map! : Sqlite.Db => MapData
+	load_map! = |db| {
+		has_table! = |name|
+			match db.query!("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = :t", [{ name: ":t", value: String(name) }]) {
+				Ok(rs) => (List.first(rs)).map_ok(|r| r.i64("n") ?? 0).ok_or(0) > 0
+				Err(_) => Bool.False
+			}
+		tracks = if (has_table!("routes")) route_pages!(db, -9223372036854775807, []) else Ok([])
+		raw_ways = if (has_table!("map_ways")) way_pages!(db, -9223372036854775807, []) else Ok([])
+		ts = List.map(tracks ?? [], Geo.unwrap)
+		ws = raw_ways ?? []
+		first_of = |lists|
+			match List.first(lists) {
+				Ok(l) => List.first(l)
+				Err(_) => Err(ListWasEmpty)
+			}
+		origin = match first_of(ts) {
+			Ok(c) => Geo.merc(c.lat, c.lng)
+			Err(_) =>
+				match first_of(List.map(ws, |w| w.coords)) {
+					Ok(c) => Geo.merc(c.lat, c.lng)
+					Err(_) => { x: 0.0, y: 0.0 }
+				}
+		}
+		routes = List.keep_oks(ts, |t| map_line(origin, route_kind, t))
+		# drawn bottom first, so each kind's lines lie together, in kind order
+		ways = List.join(
+			List.map_with_index(
+				way_kinds,
+				|_, i| {
+					k = U64.to_u8_wrap(i)
+					List.keep_oks(ws, |w| if (w.code == k) map_line(origin, w.code, w.coords) else Err(OtherKind))
+				},
+			),
+		)
+		shown = if (List.is_empty(routes)) ways else routes
+		err = match (tracks, raw_ways) {
+			(Err(e), _) => e
+			(_, Err(e)) => e
+			_ => ""
+		}
+		{
+			routes,
+			ways,
+			fit: List.fold(shown, Geo.no_box, |b, l| Geo.union(b, l.box)),
+			focus: Geo.focus(List.keep_oks(shown, |l| (List.first(l.pts)).map_ok(|p| { start: p, box: l.box }))),
+			err,
+		}
+	}
 }
 
 expect Db.parse_utc_offset("-0500") == Ok(-300)
@@ -2047,3 +2241,26 @@ expect Db.pick_last([]).shown == NoneYet
 expect Db.mass_units("metric", [11.34, 22.68]) == Metric and Db.mass_units("imperial", [10.0, 20.0]) == Imperial
 expect Db.mass_units("", [11.3398, 22.6796, 15.9, 10.0]) == Imperial
 expect Db.mass_units("", [10.0, 20.0, 12.5, 11.3398]) == Metric
+
+# a stored points column pairs up in order, and an odd trailing number is dropped
+expect Db.flat_pairs([41.9, -87.6, 42.0, -87.7, 43.0]) == [{ lat: 41.9, lng: -87.6 }, { lat: 42.0, lng: -87.7 }]
+
+# the base map's kinds code in drawing order, and a kind the view does not know is refused
+expect Db.kind_code("water") == Ok(0) and Db.kind_code("motorway") == Ok(4) and Db.kind_code("footway") == Err(UnknownKind)
+
+# a single coordinate makes no line. Fifty points 0.0001 degrees of latitude
+# apart, about fifteen projected metres each, keep every point in the near
+# list and every third, with the last, in the far list, and the box holds
+# them all
+expect {
+	o = Geo.merc(41.88, -87.63)
+	coords = List.map_with_index(List.repeat(0, 50), |_, i| { lat: 41.88 + U64.to_f64(i) * 0.0001, lng: -87.63 })
+	short = match Db.map_line(o, 1, [{ lat: 41.88, lng: -87.63 }]) {
+		Ok(_) => Bool.False
+		Err(TooShort) => Bool.True
+	}
+	match Db.map_line(o, 1, coords) {
+		Ok(l) => short and List.len(l.pts) == 50 and List.len(l.far) == 18 and l.box.y1 > 700.0 and l.box.y0.abs() < 0.001
+		Err(_) => Bool.False
+	}
+}

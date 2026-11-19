@@ -180,6 +180,46 @@ complete month and the month in progress, each with its `covered/total`
 coverage. The strength family is Sports' own, so Workout and WeightTraining
 read as one, and the career view leaves the tonnage spine to this tab.
 
+## The map view
+
+The `map` pill (view 10, captured as `map.png`) draws every stored GPS route
+over a street map, in Web Mercator with north up. The routes are the answers
+`stride sync` stores, one per outdoor session, each decoded by `core.Route`,
+the rule the engine uses to tell a route from the no-GPS marker. The street
+map is the `map_ways` table `stride basemap` fills from OpenStreetMap: water,
+streets, cycleways, arterials and motorways, each a dim line in the window's
+palette, with the routes in the accent over them. Water, arterials and
+motorways draw at every zoom; streets and cycleways fade in as the view
+closes in on street level, where the grid stops reading as a grey wash. A
+database without `map_ways` draws the routes on a bare ground and says the
+street map is missing.
+
+The map opens fitted to the routes, or to the street map when no route has
+GPS. When they span more than the widest zoom shows, as a single trip abroad
+makes them, it opens on where they gather instead: the routes starting in the
+100 km cell (in projected metres, about 75 km on the ground at Chicago's
+latitude) that holds the most route starts or in a cell beside it, and, should
+even those not fit, on the first route start in that cell at the widest zoom.
+A route that crosses the antimeridian is carried across the seam rather than
+drawn back across the whole map. A drag that begins on the map pans it, the
+wheel zooms at the cursor, and `0` returns to the opening view. The window
+keeps the map as an offscreen picture, repainted only when the camera, the
+window or the data changes; mid-drag the picture slides with the cursor and
+the release repaints it.
+Each line keeps a dense point list for close zooms and a sparse one for wide
+zooms, since a full backfill holds millions of points and every repaint
+walks the list it draws.
+
+The map loads in a task beside the other views, which open without waiting
+for it; on the first load the map says it is being read until it lands, and it
+names a read that failed. One map load runs at a time: R pressed while one
+runs reads the map once more after it lands, and a capture of the map view
+waits for the map. A database with no routes table reads as having no routes
+yet. The window's SQLite binding refuses a query whose result passes a byte
+budget rather than returning part of it, so routes and ways are read in
+pages. The credit, © OpenStreetMap contributors, sits on the title row over
+the map's right edge; the street data is OpenStreetMap's, under the ODbL.
+
 ## Controls
 
 | key / gesture | effect |
@@ -192,7 +232,7 @@ read as one, and the career view leaves the tonnage spine to this tab.
 | `G` | toggle the glow pass - the scene renders offscreen and its bright parts come back blurred and added on top; if the GPU refuses any of it, the app draws exactly as before the pass existed |
 | `V` | toggle a WebM recording of the screen into `captures/` under the window's working directory, named for the view it started on; FixedStep timing, so the same data replays to the same file |
 | nav pills (top right) | click any view directly; the active one is filled - each wears its vector mark, drawn from primitives (no sprite sheet, crisp at any DPI) |
-| `TAB` | cycle the nav left to right: form board / power view / session trace / the day tab / lifts / the weeks tab / career; from any day mode it steps on to lifts, and from either weeks mode to career |
+| `TAB` | cycle the nav left to right: form board / power view / session trace / the day tab / lifts / the weeks tab / career / map; from any day mode it steps on to lifts, and from either weeks mode to career |
 | `week` / `log` / `year` chips (day tab) | switch the day tab between the plan, the data table and the heatmap |
 | `zones` / `load` chips (weeks tab) | switch the weeks tab between time in zone and weekly load |
 | click a week (weeks tab) | keep that week in focus in both modes; click it again to drop it |
@@ -201,6 +241,7 @@ read as one, and the career view leaves the tonnage spine to this tab.
 | `C` (trace view) | clear the ghost in one press, from any state |
 | `X` (trace view) | cycle the picker's sport filter (all / each sport the menu holds); the header names the active filter |
 | wheel / drag / `0` (trace view) | zoom anchored at the cursor's moment, pan while held, reset - the window is [pan, pan+1/zoom] of the session |
+| wheel / drag / `0` (map view) | zoom at the cursor, pan while a drag that began on the map is held, return to the opening view |
 | `[` / `]` (trace view) | older / newer session among those the active sport filter admits - every one is cached at load, so a switch is a memory read, not a query |
 | `←` / `→` (table view) | scroll the window through the whole series (rows fill the window height) |
 | click a date (table view) | open that day's detail panel: sessions, minutes, km, TSS, NP |
@@ -445,7 +486,7 @@ INSERT INTO viz_directives (view, family) VALUES (1, 'pace:Run');
 -- gutter when none was pushed all-out: 1 shows them, 0 folds them again; any
 -- other value is refused by name
 INSERT INTO viz_directives (view, short) VALUES (1, 1);
--- view 0..9 (form/power/trace/table/plan/heat/zones/ramp/career/lifts;
+-- view 0..10 (form/power/trace/table/plan/heat/zones/ramp/career/lifts/map;
 -- 3, 4 and 5 are the day tab's log, week and year modes; 6 and 7 are the
 -- weeks tab's zones and load modes) - but read
 -- the list from `stride viz --json`, which the running binary publishes,

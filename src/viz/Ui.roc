@@ -5,6 +5,7 @@ import rr.Shader
 import rr.Text
 import rr.Texture
 import Db
+import Geo
 
 Ui :: [].{
 	# one month as the career view draws it: screen position, and whether the
@@ -260,5 +261,32 @@ Ui :: [].{
 		glow_on : Bool,
 		mouse_in : Bool,
 		cursor : I64,
+		# the map view: every route and base-map way
+		map : Db.MapData,
+		# Unloaded until a load task is spawned, Loading while it runs, and
+		# Loaded once its map has landed; a finished reload (R) sets a loaded
+		# map back to Unloaded and marks a loading one stale (map_on_reload)
+		map_load : [Unloaded, Loading, Loaded],
+		# the identity of the newest map load, stamped on the task it spawns
+		map_gen : U64,
+		# R was pressed while the map was being read, so it is read once more
+		# when that read lands
+		map_stale : Bool,
+		# the camera the athlete moved the map to; until map_moved says they
+		# have, the view opens where Geo.opening puts it
+		map_cam : Geo.Cam,
+		map_moved : Bool,
+		# the cursor's last position while the left button holds a drag that
+		# began on the map
+		map_drag : [Idle, Held({ x : F32, y : F32 })],
+		# the map's offscreen picture, sized to the window's pixels and
+		# allocated the first time the view shows. Refused remembers the size
+		# the GPU refused at, so a resize earns one fresh attempt; without a
+		# picture the view draws every line straight to the frame
+		map_rt : [NoTarget, Refused({ w : F32, h : F32 }), Target({ rt : Draw.RenderTexture, w : F32, h : F32 })],
+		# whether this frame's render repaints the picture, and the camera the
+		# picture holds once it has
+		map_paint : Bool,
+		map_painted : Geo.Cam,
 	}
 }

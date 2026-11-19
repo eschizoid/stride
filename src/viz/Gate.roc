@@ -9,7 +9,9 @@ import Db
 import DisplayScale
 import Heat
 import Hud
+import Geo
 import Labels
+import Map
 import Plan
 import Ramp
 import Scene
@@ -431,7 +433,7 @@ Gate :: [].{
 			bus_note: "",
 			plan_title: p,
 			plan_hint: p,
-			nav: List.map([0.U8, 1, 2, 4, 9, 6, 8], |v| { p, v }),
+			nav: List.map(Chrome.nav_views, |v| { p, v }),
 			heat: [],
 			strength: Db.empty_strength_view,
 			heat_events: [],
@@ -457,6 +459,16 @@ Gate :: [].{
 			last_directive: { id: -1, refused: "", result: "" },
 			glow: Unbuilt,
 			glow_on: Bool.False,
+			map: Db.no_map,
+			map_load: Loaded,
+			map_gen: 0,
+			map_stale: Bool.False,
+			map_cam: Map.unpainted,
+			map_moved: Bool.False,
+			map_drag: Idle,
+			map_rt: NoTarget,
+			map_paint: Bool.False,
+			map_painted: Map.unpainted,
 			mouse_in: Bool.False,
 			cursor: -1,
 		}
@@ -851,6 +863,65 @@ Gate :: [].{
 		List.map_with_index(days, |day, i| { day, tss: if (i % 7 == 4) 0 else 30 + U64.to_i64_wrap(i % 9) * 15, dow: U64.to_i64_wrap((i + 3) % 7) })
 	}
 
+	# ── the map view's fixtures ────────────────────────────────────────────
+	# a route and a street around it, in metres from the origin
+	map_fixture : Db.MapData
+	map_fixture = {
+		route = [{ x: 0.0, y: 0.0 }, { x: 1200.0, y: 400.0 }, { x: 2600.0, y: -300.0 }]
+		street = [{ x: -500.0, y: 200.0 }, { x: 3000.0, y: 200.0 }]
+		{
+			routes: [{ kind: Db.route_kind, pts: route, far: route, box: Geo.box_of(route) }],
+			ways: [{ kind: 1, pts: street, far: street, box: Geo.box_of(street) }],
+			fit: Geo.box_of(route),
+			focus: Geo.focus([{ start: { x: 0.0, y: 0.0 }, box: Geo.box_of(route) }]),
+			err: "",
+		}
+	}
+
+	# the same home route with one more standing in for Madrid, about 9,340 km
+	# east and 220 km south of it in projected metres
+	madrid_fixture : Db.MapData
+	madrid_fixture = {
+		home = [{ x: 0.0, y: 0.0 }, { x: 1200.0, y: 400.0 }, { x: 2600.0, y: -300.0 }]
+		away = [{ x: 9350000.0, y: -230000.0 }, { x: 9351000.0, y: -229500.0 }]
+		lines = [{ kind: Db.route_kind, pts: home, far: home, box: Geo.box_of(home) }, { kind: Db.route_kind, pts: away, far: away, box: Geo.box_of(away) }]
+		{
+			routes: lines,
+			ways: [],
+			fit: List.fold(lines, Geo.no_box, |b, l| Geo.union(b, l.box)),
+			focus: Geo.focus(List.keep_oks(lines, |l| (List.first(l.pts)).map_ok(|p| { start: p, box: l.box }))),
+			err: "",
+		}
+	}
+
+	# the map with routes and streets, with routes before the streets are
+	# fetched, with a route an ocean from the rest, with no route at all,
+	# while it loads, and with a read that failed whose message is longer
+	# than the map is wide, for every athlete at every size
+	map_models : List({ name : Str, model : Ui.Model })
+	map_models =
+		List.join(
+			List.map(
+				athletes,
+				|a| List.join(
+					List.map(
+						sizes,
+						|sz| {
+							base = { ..athlete_model(a, sz), view: 10, map: map_fixture }
+							[
+								{ name: "${a.name} map at ${size_name(sz)}", model: base },
+								{ name: "${a.name} map without streets at ${size_name(sz)}", model: { ..base, map: { ..map_fixture, ways: [] } } },
+								{ name: "${a.name} map without routes at ${size_name(sz)}", model: { ..base, map: Db.no_map } },
+								{ name: "${a.name} map with a route an ocean away at ${size_name(sz)}", model: { ..base, map: madrid_fixture } },
+								{ name: "${a.name} map loading at ${size_name(sz)}", model: { ..base, map: Db.no_map, map_load: Loading } },
+								{ name: "${a.name} map with a failed read at ${size_name(sz)}", model: { ..base, map: { ..Db.no_map, err: Str.repeat("could not read the routes: ", 8) } } },
+							]
+						},
+					),
+				),
+			),
+		)
+
 	heat_models : List({ name : Str, model : Ui.Model })
 	heat_models = {
 		per_athlete = List.join(
@@ -1051,6 +1122,9 @@ expect Gate.failures(|m| Gate.judge(Plan.owned(m, Gate.measure), Plan.marks(m)),
 expect Gate.failures(|m| Gate.judge(Table.owned(m, Gate.measure), Table.marks(m)), Gate.table_models) == []
 expect Gate.failures(|m| Gate.judge(Heat.owned(m, Gate.measure), Heat.marks(m)), Gate.heat_models) == []
 
+# the map's gate, over every map fixture
+expect Gate.failures(|m| Gate.judge(Map.owned(m, Gate.measure), Map.marks(m, Gate.measure)), Gate.map_models) == []
+
 # the weeks tab's gates: zones and load for every athlete at every size,
 # with no week picked, on a picked week with per-sport zones, and with no
 # history
@@ -1148,3 +1222,21 @@ expect {
 		Err(_) => Bool.False
 	}
 }
+
+# a route an ocean from the rest leaves the map opening on the rest: every
+# point of the home route lies inside the map at every size
+expect List.all(
+	Gate.sizes,
+	|sz| {
+		m = { ..Gate.empty_model(sz), view: 10, map: Gate.madrid_fixture }
+		r = Map.rect(m.win)
+		c = Map.cam(m)
+		List.all(
+			[{ x: 0.0, y: 0.0 }, { x: 1200.0, y: 400.0 }, { x: 2600.0, y: -300.0 }],
+			|p| {
+				s = Geo.to_screen(c, r, p)
+				s.x >= r.x and s.x <= r.x + r.w and s.y >= r.y and s.y <= r.y + r.h
+			},
+		)
+	},
+)
