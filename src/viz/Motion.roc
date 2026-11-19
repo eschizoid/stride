@@ -7,9 +7,11 @@ Motion :: [].{
 	# Playback runs every route at once, each on its own clock from its own
 	# start, all sped up by one factor, so a faster session's marker still
 	# outruns a slower one's. Speed colours a route against that route's own
-	# moving speed, so a run and a ride share one ramp. Heat counts passes:
-	# each route adds one to every pixel it covers, and the count is
-	# tone-mapped on a log scale into the window's palette.
+	# moving speed, so a run and a ride share one ramp. Heat counts segments:
+	# every segment drawn adds one to each pixel it covers, so a road ridden
+	# out and back counts twice and the overlapping ends of a line's
+	# segments a little more, and the count is tone-mapped on a log scale
+	# into the window's palette.
 
 	# an hour of a session plays in thirty seconds
 	speedup : F32
@@ -104,8 +106,10 @@ Motion :: [].{
 
 	# the speed a route's colours are measured against: distance over time
 	# across the segments where the athlete was moving, faster than half a
-	# metre a second, so a stop at a light does not drag it down; 0 for a
-	# route that never moved
+	# projected metre a second, so a stop at a light does not drag it down;
+	# 0 for a route that never moved. The points are Web Mercator metres,
+	# which stretch with latitude, and a band is a ratio of two speeds in the
+	# same metres, so the stretch cancels.
 	moving_speed : List(Geo.Pt), List(F32) -> F32
 	moving_speed = |pts, ts| {
 		raw = speeds(pts, ts, 0)
@@ -203,15 +207,33 @@ Motion :: [].{
 		{ r: ch(lo.c.r, hi.c.r), g: ch(lo.c.g, hi.c.g), b: ch(lo.c.b, hi.c.b) }
 	}
 
-	# how opaque heat draws: nothing where no route passed, a third for one
-	# pass, rising to full at heat_top
-	heat_alpha : F32 -> F32
-	heat_alpha = |v| if (v <= 0.0) 0.0 else 0.3 + 0.7 * v
+	# how opaque heat draws: nothing where no route passed, heat_floor plus
+	# heat_rise of the level otherwise, so a single pass (level about 0.18)
+	# draws at about 0.42 and heat_top passes at full
+	heat_floor : F32
+	heat_floor = 0.3
 
-	# The tone map as a fragment shader, built from heat_top and the same
-	# stops, so the shader and the expects on heat_level, heat_colour and
-	# heat_alpha cannot drift apart. The texture it reads holds one count
-	# per pass in its red channel, added one 255th at a time.
+	heat_rise : F32
+	heat_rise = 0.7
+
+	heat_alpha : F32 -> F32
+	heat_alpha = |v| if (v <= 0.0) 0.0 else heat_floor + heat_rise * v
+
+	# the shader's spelling of heat_level and heat_alpha: GLSL cannot call
+	# the Roc, so the two formulas are written in both, and the alpha's
+	# constants are spliced in from heat_floor and heat_rise
+	heat_level_glsl : Str
+	heat_level_glsl = "float v = min(1.0, log(1.0 + n) / log(1.0 + top));"
+
+	heat_alpha_glsl : Str
+	heat_alpha_glsl = "finalColor = vec4(ramp(v), ${F32.to_str(heat_floor)} + ${F32.to_str(heat_rise)} * v);"
+
+	# The tone map as a fragment shader. Its ramp is built from heat_stops,
+	# its saturation count arrives as the `top` uniform set to heat_top, and
+	# its level and alpha lines are heat_level_glsl and heat_alpha_glsl; the
+	# expects pin those lines beside the Roc definitions they spell. The
+	# texture it reads holds a count in its red channel, one 255th added for
+	# every segment drawn over the pixel.
 	heat_frag : Str
 	heat_frag = {
 		v3 = |c| "vec3(${F32.to_str(U8.to_f32(c.r) / 255.0)}, ${F32.to_str(U8.to_f32(c.g) / 255.0)}, ${F32.to_str(U8.to_f32(c.b) / 255.0)})"
@@ -232,8 +254,8 @@ Motion :: [].{
 				"void main() {",
 				"    float n = floor(texture(texture0, fragTexCoord).r * 255.0 + 0.5);",
 				"    if (n < 1.0) { finalColor = vec4(0.0); return; }",
-				"    float v = min(1.0, log(1.0 + n) / log(1.0 + top));",
-				"    finalColor = vec4(ramp(v), 0.3 + 0.7 * v);",
+				"    ${heat_level_glsl}",
+				"    ${heat_alpha_glsl}",
 				"}",
 			],
 			"\n",
@@ -298,6 +320,8 @@ Motion :: [].{
 		near(c0.b, U8.to_f32(Theme.ctl_c.b) / 255.0, 0.001) and near(ct.g, U8.to_f32(Theme.tsb_c.g) / 255.0, 0.001) and near(c1.r, 1.0, 0.001) and near(c1.g, 1.0, 0.001)
 	}
 
-	# the shader reads the same saturation count and stops as the expects
-	expect Str.contains(heat_frag, "log(1.0 + top)") and Str.contains(heat_frag, "if (v < 0.45)") and Str.contains(heat_frag, F32.to_str(U8.to_f32(Theme.tsb_c.g) / 255.0)) and heat_alpha(0.0) == 0.0 and near(heat_alpha(1.0), 1.0, 0.001)
+	# the shader carries the stops and its level and alpha lines, which spell
+	# heat_level and heat_alpha with heat_floor and heat_rise; one pass shows
+	# at level 0.178 and alpha 0.425
+	expect Str.contains(heat_frag, heat_level_glsl) and Str.contains(heat_frag, heat_alpha_glsl) and Str.contains(heat_level_glsl, "log(1.0 + n) / log(1.0 + top)") and Str.contains(heat_alpha_glsl, "ramp(v), 0.3") and Str.contains(heat_alpha_glsl, " + 0.7") and Str.contains(heat_frag, "if (v < 0.45)") and Str.contains(heat_frag, F32.to_str(U8.to_f32(Theme.tsb_c.g) / 255.0)) and heat_alpha(0.0) == 0.0 and near(heat_alpha(1.0), 1.0, 0.001) and near(heat_level(1.0), 0.1781, 0.0005) and near(heat_alpha(heat_level(1.0)), 0.4247, 0.0005)
 }

@@ -881,12 +881,12 @@ Gate :: [].{
 		}
 	}
 
-	# the same home route with one more standing in for Madrid, about 9,340 km
-	# east and 220 km south of it in projected metres
+	# the same home route with one more standing in for Madrid, 9,389 km east
+	# and 250 km south of a home near Chicago in projected metres
 	madrid_fixture : Db.MapData
 	madrid_fixture = {
 		home = [{ x: 0.0, y: 0.0 }, { x: 1200.0, y: 400.0 }, { x: 2600.0, y: -300.0 }]
-		away = [{ x: 9350000.0, y: -230000.0 }, { x: 9351000.0, y: -229500.0 }]
+		away = [{ x: 9389000.0, y: -250000.0 }, { x: 9390000.0, y: -249500.0 }]
 		lines = [{ kind: Db.route_kind, pts: home, ts: [0.0, 300.0, 600.0], far: home, fts: [0.0, 300.0, 600.0], box: Geo.box_of(home) }, { kind: Db.route_kind, pts: away, ts: [0.0, 400.0], far: away, fts: [0.0, 400.0], box: Geo.box_of(away) }]
 		{
 			routes: lines,

@@ -3146,10 +3146,10 @@ scaled_scene! = |model, frame|
 
 # The map's picture, repainted on the frames update! marks, before anything
 # draws to the screen: a scope opened inside the glow's own offscreen pass
-# would nest one target in another. In heat mode the passes are summed on
-# the same frames into heat's own texture, each route drawn with added
-# colours so a pixel's count is the routes that cover it. A refused scope
-# leaves the last picture standing.
+# would nest one target in another. In heat mode the routes are drawn on the
+# same frames into heat's own texture with added colours, so a pixel's count
+# is the segments drawn over it. A refused scope leaves the last picture
+# standing.
 paint_map! : Model, Draw.Frame => {}
 paint_map! = |model, frame|
 	if Map.is_map(model.view) and model.map_paint {

@@ -223,15 +223,18 @@ budget rather than returning part of it, so routes and ways are read in
 pages. The credit, © OpenStreetMap contributors, sits on the title row over
 the map's right edge; the street data is OpenStreetMap's, under the ODbL.
 
-Heat sums the passes. Each route is drawn once into a texture of its own
-with added colours, so a pixel's count is the routes that cover it, and a
-shader tone-maps the count on a log scale through the window's blue, the
-accent teal and gold to white, a single pass faint and the busiest roads
-white-hot (`Motion.heat_level`, saturating at `Motion.heat_top` passes; the
-shader is built from the same constants). The texture is summed again only
-when the picture is repainted, so heat costs nothing while the map sits still.
-A GPU that refuses the texture or the shader gets the routes drawn as routes
-mode draws them.
+Heat sums what was drawn. Every route is drawn once into a texture of its
+own with added colours, each segment adding one to every pixel it covers,
+so a pixel's count is the segments drawn over it: a road ridden out and
+back counts twice, and the overlapping ends of a line's segments add a
+little more. A shader tone-maps the count on a log scale through the
+window's blue, the accent teal and gold to white, a single segment faint and
+the busiest roads white-hot (`Motion.heat_level`, saturating at
+`Motion.heat_top`; the shader's ramp, alpha and saturation come from the
+same definitions). The texture is summed again only when the picture is
+repainted, so heat costs nothing while the map sits still. A GPU that
+refuses the texture or the shader gets the routes drawn as routes mode draws
+them.
 
 Play runs every route at once, each on its own clock from its own start, an
 hour of session in thirty seconds of play (`Motion.speedup`), so a faster
@@ -240,8 +243,7 @@ against its own moving speed, slowest blue through the accent to ember, so a
 run and a ride share one ramp; the cycle starts over a little after the
 longest route ends. The coloured routes are the cached picture, and only the
 markers are drawn each frame, so playback never repaints the map; `P` pauses
-and resumes, and the clock starts over each time the mode opens. One route
-at a time is the trace view's job, so playback shows them all.
+and resumes, and the clock starts over each time the mode opens.
 
 ## Controls
 
@@ -258,9 +260,9 @@ at a time is the trace view's job, so playback shows them all.
 | `TAB` | cycle the nav left to right: form board / power view / session trace / the day tab / lifts / the weeks tab / career / map; from any day mode it steps on to lifts, and from either weeks mode to career |
 | `week` / `log` / `year` chips (day tab) | switch the day tab between the plan, the data table and the heatmap |
 | `zones` / `load` chips (weeks tab) | switch the weeks tab between time in zone and weekly load |
-| `routes` / `heat` / `play` chips (map tab) | switch the map tab between the routes in the accent, the passes summed as heat, and playback |
-| `P` (map playback) | pause and resume playback |
 | click a week (weeks tab) | keep that week in focus in both modes; click it again to drop it |
+| `routes` / `heat` / `play` chips (map tab) | switch the map tab between the routes in the accent, the summed segments as heat, and playback |
+| `P` (map playback) | pause and resume playback |
 | `1` / `2` / `3` or the chips (power view) | re-window the blue ladder and CP fit to 30/60/90 days |
 | `shift+[` / `shift+]` (trace view) | summon / walk the ghost overlay through sessions of the live one's KIND - same sport, same unit; the walk skips the live session itself, and stepping past the last compatible one dismisses it |
 | `C` (trace view) | clear the ghost in one press, from any state |

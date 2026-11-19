@@ -368,13 +368,14 @@ Geo :: [].{
 		t.pts == thin(pts, 2.0) and t.ts == [0.0, 2.0, 4.0]
 	}
 
-	# thirty routes round a home and one in Madrid, about 9,350 km east: the
-	# whole extent cannot fit, so the map opens on the home cluster with every
-	# home route inside the rectangle and Madrid left out
+	# thirty routes round a home and one in Madrid, 9,389 km east and 250 km
+	# south of a home near Chicago in projected metres: the whole extent cannot
+	# fit, so the map opens on the home cluster with every home route inside
+	# the rectangle and Madrid left out
 	expect {
 		r = { x: 36.0, y: 96.0, w: 908.0, h: 456.0 }
 		home = List.map_with_index(List.repeat(0, 30), |_, i| { start: { x: U64.to_f32(i) * 1000.0, y: U64.to_f32(i) * 500.0 }, box: { x0: U64.to_f32(i) * 1000.0 - 5000.0, y0: U64.to_f32(i) * 500.0 - 5000.0, x1: U64.to_f32(i) * 1000.0 + 5000.0, y1: U64.to_f32(i) * 500.0 + 5000.0 } })
-		madrid = { start: { x: 9350000.0, y: -230000.0 }, box: { x0: 9349000.0, y0: -231000.0, x1: 9351000.0, y1: -229000.0 } }
+		madrid = { start: { x: 9389000.0, y: -250000.0 }, box: { x0: 9388000.0, y0: -251000.0, x1: 9390000.0, y1: -249000.0 } }
 		items = List.append(home, madrid)
 		all = List.fold(items, no_box, |b, it| union(b, it.box))
 		f = focus(items)

@@ -90,13 +90,13 @@ Map :: [].{
 	title_text : U8 -> Str
 	title_text = |v|
 		if (v == 11) "heat - the roads used most glow hottest"
-		else if (v == 12) "playback - every session at once, an hour in thirty seconds"
+		else if (v == 12) "playback - every session at once, an hour in ${U64.to_str((F32.round_to_u64_try(3600.0 / Motion.speedup)) ?? 0)} seconds"
 		else "routes - every GPS session on the street map"
 
 	hint_text : U8 -> Str
 	hint_text = |v|
-		if (v == 12) "P  pause      drag  pan      wheel  zoom      0  fit      TAB  form      S  screenshot      ESC quit"
-		else "drag  pan      wheel  zoom      0  fit      TAB  form      R  reload      S  screenshot      ESC quit"
+		if (v == 12) "P  pause      drag  pan      wheel  zoom      0  home      TAB  form      S  screenshot      ESC quit"
+		else "drag  pan      wheel  zoom      0  home      TAB  form      R  reload      S  screenshot      ESC quit"
 
 	# playback's clock as the route time every marker shows: hours and
 	# minutes into each session
@@ -243,8 +243,8 @@ Map :: [].{
 		)
 	}
 
-	# a pass's line in the heat texture: one 255th of white, so each route
-	# adds one count to every pixel it covers when drawn with added colours
+	# a route's ink in the heat texture: one 255th of white, so each segment
+	# drawn with added colours adds one count to every pixel it covers
 	heat_ink : Color.Rgba
 	heat_ink = Color.rgba(1, 1, 1, 255)
 
@@ -432,3 +432,6 @@ expect Map.clock_text(0.0) == "0:00 into each session" and Map.clock_text(3725.0
 
 # each mode titles itself, and only playback offers P
 expect Map.title_text(11) != Map.title_text(10) and Map.title_text(12) != Map.title_text(10) and Str.starts_with(Map.hint_text(12), "P  pause") and !(Str.contains(Map.hint_text(10), "P  pause"))
+
+# playback's title states the speed-up the clock runs at
+expect Str.contains(Map.title_text(12), "an hour in ${U64.to_str((F32.round_to_u64_try(3600.0 / Motion.speedup)) ?? 0)} seconds") and Str.contains(Map.title_text(12), "an hour in 30 seconds")
