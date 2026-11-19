@@ -158,6 +158,22 @@ Geo :: [].{
 		)
 	}
 
+	# thin's rule on points that each carry a time: a point and its time are
+	# kept or dropped together, so the two lists stay aligned
+	thin_timed : List(Pt), List(F32), F32 -> { pts : List(Pt), ts : List(F32) }
+	thin_timed = |pts, ts, step| {
+		n = List.len(pts)
+		List.fold(
+			List.map2(List.map_with_index(pts, |p, i| { p, last: i + 1 == n }), ts, |q, t| { p: q.p, t, last: q.last }),
+			{ pts: [], ts: [] },
+			|acc, q|
+				match List.last(acc.pts) {
+					Ok(k) => if (q.last or (q.p.x - k.x).abs() >= step or (q.p.y - k.y).abs() >= step) { pts: List.append(acc.pts, q.p), ts: List.append(acc.ts, q.t) } else acc
+					Err(_) => { pts: List.append(acc.pts, q.p), ts: List.append(acc.ts, q.t) }
+				},
+		)
+	}
+
 	# whether a box can be shown whole in the rectangle at the widest zoom,
 	# with the tenth to spare fit keeps
 	fits : Bounds, Rect -> Bool
@@ -344,6 +360,13 @@ Geo :: [].{
 	# thinning keeps the first and last points and every point a full step
 	# from the last kept one
 	expect List.map(thin([{ x: 0.0, y: 0.0 }, { x: 1.0, y: 0.0 }, { x: 3.0, y: 0.0 }, { x: 3.5, y: 0.0 }, { x: 3.6, y: 0.0 }], 2.0), |p| p.x) == [0.0, 3.0, 3.6]
+
+	# timed thinning keeps exactly the points thin keeps, each with its own time
+	expect {
+		pts = [{ x: 0.0, y: 0.0 }, { x: 1.0, y: 0.0 }, { x: 3.0, y: 0.0 }, { x: 3.5, y: 0.0 }, { x: 3.6, y: 0.0 }]
+		t = thin_timed(pts, [0.0, 1.0, 2.0, 3.0, 4.0], 2.0)
+		t.pts == thin(pts, 2.0) and t.ts == [0.0, 2.0, 4.0]
+	}
 
 	# thirty routes round a home and one in Madrid, about 9,350 km east: the
 	# whole extent cannot fit, so the map opens on the home cluster with every

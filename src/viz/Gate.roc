@@ -469,6 +469,9 @@ Gate :: [].{
 			map_rt: NoTarget,
 			map_paint: Bool.False,
 			map_painted: Map.unpainted,
+			map_painted_view: 0,
+			map_heat: Unbuilt,
+			map_play: { secs: 0.0, paused: Bool.False },
 			mouse_in: Bool.False,
 			cursor: -1,
 		}
@@ -870,8 +873,8 @@ Gate :: [].{
 		route = [{ x: 0.0, y: 0.0 }, { x: 1200.0, y: 400.0 }, { x: 2600.0, y: -300.0 }]
 		street = [{ x: -500.0, y: 200.0 }, { x: 3000.0, y: 200.0 }]
 		{
-			routes: [{ kind: Db.route_kind, pts: route, far: route, box: Geo.box_of(route) }],
-			ways: [{ kind: 1, pts: street, far: street, box: Geo.box_of(street) }],
+			routes: [{ kind: Db.route_kind, pts: route, ts: [0.0, 300.0, 600.0], far: route, fts: [0.0, 300.0, 600.0], box: Geo.box_of(route) }],
+			ways: [{ kind: 1, pts: street, ts: [], far: street, fts: [], box: Geo.box_of(street) }],
 			fit: Geo.box_of(route),
 			focus: Geo.focus([{ start: { x: 0.0, y: 0.0 }, box: Geo.box_of(route) }]),
 			err: "",
@@ -884,7 +887,7 @@ Gate :: [].{
 	madrid_fixture = {
 		home = [{ x: 0.0, y: 0.0 }, { x: 1200.0, y: 400.0 }, { x: 2600.0, y: -300.0 }]
 		away = [{ x: 9350000.0, y: -230000.0 }, { x: 9351000.0, y: -229500.0 }]
-		lines = [{ kind: Db.route_kind, pts: home, far: home, box: Geo.box_of(home) }, { kind: Db.route_kind, pts: away, far: away, box: Geo.box_of(away) }]
+		lines = [{ kind: Db.route_kind, pts: home, ts: [0.0, 300.0, 600.0], far: home, fts: [0.0, 300.0, 600.0], box: Geo.box_of(home) }, { kind: Db.route_kind, pts: away, ts: [0.0, 400.0], far: away, fts: [0.0, 400.0], box: Geo.box_of(away) }]
 		{
 			routes: lines,
 			ways: [],
@@ -895,9 +898,10 @@ Gate :: [].{
 	}
 
 	# the map with routes and streets, with routes before the streets are
-	# fetched, with a route an ocean from the rest, with no route at all,
-	# while it loads, and with a read that failed whose message is longer
-	# than the map is wide, for every athlete at every size
+	# fetched, with a route an ocean from the rest, in heat, in playback with
+	# its clock and with no route to play, with no route at all, while it
+	# loads, and with a read that failed whose message is longer than the map
+	# is wide, for every athlete at every size
 	map_models : List({ name : Str, model : Ui.Model })
 	map_models =
 		List.join(
@@ -913,6 +917,9 @@ Gate :: [].{
 								{ name: "${a.name} map without streets at ${size_name(sz)}", model: { ..base, map: { ..map_fixture, ways: [] } } },
 								{ name: "${a.name} map without routes at ${size_name(sz)}", model: { ..base, map: Db.no_map } },
 								{ name: "${a.name} map with a route an ocean away at ${size_name(sz)}", model: { ..base, map: madrid_fixture } },
+								{ name: "${a.name} map heat at ${size_name(sz)}", model: { ..base, view: 11 } },
+								{ name: "${a.name} map playback at ${size_name(sz)}", model: { ..base, view: 12, map_play: { secs: 125.0, paused: Bool.False } } },
+								{ name: "${a.name} map playback with no routes at ${size_name(sz)}", model: { ..base, view: 12, map: Db.no_map } },
 								{ name: "${a.name} map loading at ${size_name(sz)}", model: { ..base, map: Db.no_map, map_load: Loading } },
 								{ name: "${a.name} map with a failed read at ${size_name(sz)}", model: { ..base, map: { ..Db.no_map, err: Str.repeat("could not read the routes: ", 8) } } },
 							]

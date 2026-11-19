@@ -30,6 +30,7 @@ import Board
 import Heat
 import Geo
 import Map
+import Motion
 import Plan
 import Ramp
 import Zones
@@ -512,6 +513,9 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		map_rt: NoTarget,
 		map_paint: Bool.False,
 		map_painted: Map.unpainted,
+		map_painted_view: 0,
+		map_heat: Unbuilt,
+		map_play: { secs: 0.0, paused: Bool.False },
 		ramp_title: mk!(Ramp.title_text, 15)?,
 		ramp_hint: mk!(Ramp.hint_text, 13)?,
 		zones_title: mk!(Zones.title_text, 15)?,
@@ -616,6 +620,21 @@ build_map_rt! = |px|
 		_ => Refused({ w: px.w, h: px.h })
 	}
 
+# Heat's texture of summed passes, window-sized like the picture, and the
+# shader that tone-maps it (Motion.heat_frag). A refusal of either is
+# remembered at its size, and heat mode then draws the routes as routes
+# mode does.
+build_map_heat! : { w : F32, h : F32 } => [Unbuilt, Unavailable({ w : F32, h : F32 }), Ready({ rt : Draw.RenderTexture, shader : Shader({ top : F32 }), w : F32, h : F32 })]
+build_map_heat! = |px|
+	match build_map_rt!(px) {
+		Target(t) =>
+			match Shader.from_source!({ vertex_source: "", fragment_source: Motion.heat_frag }, { top: Motion.heat_top }) {
+				Ok(shader) => Ready({ rt: t.rt, shader, w: px.w, h: px.h })
+				Err(_) => Unavailable({ w: px.w, h: px.h })
+			}
+		_ => Unavailable({ w: px.w, h: px.h })
+	}
+
 # whether two cameras show the same picture: the same zoom, and centres
 # closer than a hundredth of a pixel
 same_cam : Geo.Cam, Geo.Cam -> Bool
@@ -673,9 +692,9 @@ map_on_landing = |stale| if (stale) Unloaded else Loaded
 # starts exactly one more, and a map at rest is read again at once
 expect map_on_reload(Loading) == { load: Loading, stale: Bool.True } and map_on_reload(Loaded) == { load: Unloaded, stale: Bool.False } and map_on_reload(Unloaded) == { load: Unloaded, stale: Bool.False } and map_on_landing(Bool.True) == Unloaded and map_on_landing(Bool.False) == Loaded
 
-# a capture on the map waits for the map to land, and one on another view
-# does not wait on it
-expect !(view_settled({ view: 10, view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: map_unread(Loading) })) and view_settled({ view: 10, view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: map_unread(Loaded) }) and view_settled({ view: 0, view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: map_unread(Loading) })
+# a capture in any map mode waits for the map to land, and one on another
+# view does not wait on it
+expect List.all([10, 11, 12], |v| !(view_settled({ view: v, view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: map_unread(Loading) }))) and view_settled({ view: 10, view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: map_unread(Loaded) }) and view_settled({ view: 0, view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: map_unread(Loading) })
 
 # Every route and base-map way, read off the main loop: a full backfill is
 # hundreds of megabytes of stored answers to decode, which would hold every
@@ -1249,7 +1268,7 @@ refusals_for : { has_d : Bool, id : I64, view : I64, range : I64, cursor_day : S
 refusals_for = |dv, cdir, wsel, cur_sel, ids, rec_active, cap_pending| {
 	segs = List.keep_if(
 		[
-			(if (dv.view > 10 or dv.view < -1) ("view ${I64.to_str(dv.view)} unknown") else ""),
+			(if (dv.view > 12 or dv.view < -1) ("view ${I64.to_str(dv.view)} unknown") else ""),
 			(if (dv.range != -1 and dv.range != 30 and dv.range != 60 and dv.range != 90) ("range ${I64.to_str(dv.range)} not 30/60/90") else ""),
 			(if (dv.cursor_day != "" and cdir == -2) ("cursor_day ${dv.cursor_day} not in the series") else ""),
 			# a day beside an id is not judged: the resolver reads the id and never
@@ -1497,7 +1516,7 @@ rec_failure_text = |r|
 # no trace or ghost fetch is in flight, no reload is, and on the map view
 # the map has landed
 view_settled : { view : U8, view_anim : U64, tick : U64, trace_loading : Bool, ghost_loading : Bool, reloading : Bool, map_loading : Bool } -> Bool
-view_settled = |m| (m.view_anim == 0 or m.tick - m.view_anim >= settle_ticks(m.view)) and !m.trace_loading and !m.ghost_loading and !m.reloading and !(m.view == 10 and m.map_loading)
+view_settled = |m| (m.view_anim == 0 or m.tick - m.view_anim >= settle_ticks(m.view)) and !m.trace_loading and !m.ghost_loading and !m.reloading and !(Map.is_map(m.view) and m.map_loading)
 
 # how long a view animates after it arrives: the career view's sweep
 # (Career.sweep_ticks), and the crossfade and the form board's draw-in, half
@@ -1816,13 +1835,13 @@ load_tcache! = |db, units, ids|
 # miscompiles, and a call compiles correctly
 focus_view_code : U8 -> I64
 focus_view_code = |v|
-	if (v == 0) (0) else if (v == 1) (1) else if (v == 2) (2) else if (v == 3) (3) else if (v == 4) (4) else if (v == 5) (5) else if (v == 6) (6) else if (v == 7) (7) else if (v == 8) (8) else if (v == 9) (9) else 10
+	if (v == 0) (0) else if (v == 1) (1) else if (v == 2) (2) else if (v == 3) (3) else if (v == 4) (4) else if (v == 5) (5) else if (v == 6) (6) else if (v == 7) (7) else if (v == 8) (8) else if (v == 9) (9) else if (v == 10) (10) else if (v == 11) (11) else 12
 
 # ONE view->basename map for every capture format: png and webm derive
 # from it, so a capture is named for its view in both
 view_basename : U8 -> Str
 view_basename = |v|
-	if (v == 0) "form-board" else if (v == 1) "power" else if (v == 2) "session-trace" else if (v == 3) "data-table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else if (v == 8) "career" else if (v == 9) "lifts" else "map"
+	if (v == 0) "form-board" else if (v == 1) "power" else if (v == 2) "session-trace" else if (v == 3) "data-table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else if (v == 8) "career" else if (v == 9) "lifts" else if (v == 10) "map" else if (v == 11) "map-heat" else "map-play"
 
 # The first load asks for no family, so load_model! opens the curve on the
 # athlete's most-trained family (Db.default_curve) rather than a fixed sport.
@@ -1833,14 +1852,15 @@ expect boot_curve_family == ""
 
 # the highest view number a directive may name, the one caps_views ends on
 last_view : I64
-last_view = 10
+last_view = 12
 
-expect List.last(caps_views) == Ok({ id: last_view, name: "map" })
+expect List.last(caps_views) == Ok({ id: last_view, name: "map-play" })
 
-# the map is a view a directive may name, and the number past it is not
+# every map mode is a view a directive may name, and the number past the
+# last is not
 expect {
 	dv = { has_d: Bool.True, id: 0, view: 10, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "", family: "", short: -1 }
-	refusals_for(dv, -2, 0, 0, [], Bool.False, Bool.False) == "" and refusals_for({ ..dv, view: 11 }, -2, 0, 0, [], Bool.False, Bool.False) == "view 11 unknown"
+	List.all([10, 11, 12], |v| refusals_for({ ..dv, view: v }, -2, 0, 0, [], Bool.False, Bool.False) == "") and refusals_for({ ..dv, view: 13 }, -2, 0, 0, [], Bool.False, Bool.False) == "view 13 unknown"
 }
 
 # what the bus accepts, as data. caps_views derives from view_basename
@@ -1848,11 +1868,11 @@ expect {
 # move together with refusals_for - the accepts column states the same rules
 # that function enforces, and both live in this file so an edit sees both.
 caps_views : List({ id : I64, name : Str })
-caps_views = List.map([0.U8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], |v| { id: U8.to_i64(v), name: view_basename(v) })
+caps_views = List.map([0.U8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], |v| { id: U8.to_i64(v), name: view_basename(v) })
 
 caps_fields : List({ name : Str, kind : Str, accepts : Str })
 caps_fields = [
-	{ name: "view", kind: "integer", accepts: "0..10 (3, 4 and 5 are the day tab's log, week and year modes)" },
+	{ name: "view", kind: "integer", accepts: "0..12 (3, 4 and 5 are the day tab's log, week and year modes; 10, 11 and 12 the map tab's routes, heat and play)" },
 	{ name: "range", kind: "integer", accepts: "30|60|90 (days; omitted leaves the range unchanged)" },
 	{ name: "cursor_day", kind: "date", accepts: "YYYY-MM-DD present in the form-board series" },
 	{ name: "trace_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions; picks that day's newest session, trace_id names one exactly" },
@@ -1951,7 +1971,7 @@ update! = |model0, program_input, io| {
 							}
 					}
 				Reloaded(fresh) => {
-					merged = { ..fresh, map: acc.map, map_gen: acc.map_gen, map_load: (map_on_reload(acc.map_load)).load, map_stale: (map_on_reload(acc.map_load)).stale, map_cam: acc.map_cam, map_moved: acc.map_moved, map_rt: acc.map_rt, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_active: acc.last_active, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending, flame: acc.flame }
+					merged = { ..fresh, map: acc.map, map_heat: acc.map_heat, map_play: acc.map_play, map_gen: acc.map_gen, map_load: (map_on_reload(acc.map_load)).load, map_stale: (map_on_reload(acc.map_load)).stale, map_cam: acc.map_cam, map_moved: acc.map_moved, map_rt: acc.map_rt, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_active: acc.last_active, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending, flame: acc.flame }
 					# R reads the curve it was pressed on, and it is the slow path.
 					# A chip clicked while it ran has since moved curve_days or
 					# curve_family and landed its own curve; when the two disagree
@@ -2078,11 +2098,11 @@ update! = |model0, program_input, io| {
 		# the tabs' mode chips: week, log and year switch the day tab between
 		# the plan, table and heat views, and zones and load switch the weeks
 		# tab the same way, without leaving the tab
-		day_mode = if (Days.is_day(model.view) and Mouse.button_pressed(d.mouse, Left)) (Days.mode_at(m0.x, m0.y)) else if (Weeks.is_week(model.view) and Mouse.button_pressed(d.mouse, Left)) (Weeks.mode_at(m0.x, m0.y)) else -1
+		day_mode = if (Days.is_day(model.view) and Mouse.button_pressed(d.mouse, Left)) (Days.mode_at(m0.x, m0.y)) else if (Weeks.is_week(model.view) and Mouse.button_pressed(d.mouse, Left)) (Weeks.mode_at(m0.x, m0.y)) else if (Map.is_map(model.view) and Mouse.button_pressed(d.mouse, Left)) (Map.mode_at(m0.x, m0.y)) else -1
 		view_input =
 			if (nav_click >= 0) (
 				match I64.to_u8_try(nav_click) {
-					Ok(v9) => if (v9 == 6) (Weeks.from_pill(v9, model.view)) else Days.from_pill(v9, model.view)
+					Ok(v9) => if (v9 == 6) (Weeks.from_pill(v9, model.view)) else if (v9 == 10) (Map.from_pill(v9, model.view)) else Days.from_pill(v9, model.view)
 					Err(_) => model.view
 				}
 			)
@@ -2515,7 +2535,7 @@ update! = |model0, program_input, io| {
 		chip0h = win.w - 420.0
 		# per-chip, not one wide band: the 8px gaps between chips are not
 		# clickable and must not claim the pointer
-		over_chip = m.y >= 64.0 and m.y <= 86.0 and (((view2 == 0 or view2 == 1) and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0) or (view2 == 1 and Curve.chip_at(List.concat(Curve.chips_for(win.w, model.curve_keys, model.curve_family, model.curve_days), Curve.short_chips(win.w, model.curve_keys, model.curve_family, Curve.layout(model).foldable, model.show_short)), m.x) != ""))) or (view2 == 8 and Career.kind_chip_at(Career.kind_chips(model), m.x).is_ok()) or (Days.is_day(view2) and Days.mode_at(m.x, m.y) >= 0) or (Weeks.is_week(view2) and Weeks.mode_at(m.x, m.y) >= 0))
+		over_chip = m.y >= 64.0 and m.y <= 86.0 and (((view2 == 0 or view2 == 1) and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0) or (view2 == 1 and Curve.chip_at(List.concat(Curve.chips_for(win.w, model.curve_keys, model.curve_family, model.curve_days), Curve.short_chips(win.w, model.curve_keys, model.curve_family, Curve.layout(model).foldable, model.show_short)), m.x) != ""))) or (view2 == 8 and Career.kind_chip_at(Career.kind_chips(model), m.x).is_ok()) or (Days.is_day(view2) and Days.mode_at(m.x, m.y) >= 0) or (Weeks.is_week(view2) and Weeks.mode_at(m.x, m.y) >= 0) or (Map.is_map(view2) and Map.mode_at(m.x, m.y) >= 0))
 		over_row = view2 == 3 and m.x >= 36.0 and m.x < Table.table_edge(win.w, detail_day2) and (
 			match Table.row_at(Table.page_for(model, cursor2), m.y) {
 				Row(_) => Bool.True
@@ -2674,7 +2694,7 @@ update! = |model0, program_input, io| {
 		map_cam0 = Map.cam({ ..model, win })
 		on_map = m.x >= map_r.x and m.x <= map_r.x + map_r.w and m.y >= map_r.y and m.y <= map_r.y + map_r.h
 		map_drag2 =
-			if view2 != 10 or !(Mouse.button_down(d.mouse, Left)) {
+			if !(Map.is_map(view2)) or !(Mouse.button_down(d.mouse, Left)) {
 				Idle
 			} else {
 				match model.map_drag {
@@ -2690,8 +2710,8 @@ update! = |model0, program_input, io| {
 			Ok(_) => Bool.True
 			Err(_) => Bool.False
 		}
-		map_zoom = if (view2 == 10 and on_map and wheel.y > 0.1) 1.25 else if (view2 == 10 and on_map and wheel.y < -0.1) 0.8 else 1.0
-		map_fit = view2 == 10 and d.key_pressed(Key0) and !ctrl
+		map_zoom = if (Map.is_map(view2) and on_map and wheel.y > 0.1) 1.25 else if (Map.is_map(view2) and on_map and wheel.y < -0.1) 0.8 else 1.0
+		map_fit = Map.is_map(view2) and d.key_pressed(Key0) and !ctrl
 		map_cam1 = match map_dragged {
 			Ok(dd) => Geo.pan(map_cam0, dd.dx, dd.dy)
 			Err(_) => map_cam0
@@ -2704,7 +2724,7 @@ update! = |model0, program_input, io| {
 		# what the view shows, except mid-drag, where the old picture slides
 		# with the cursor and the release repaints it
 		map_rt2 =
-			if view2 != 10 {
+			if !(Map.is_map(view2)) {
 				model.map_rt
 			} else {
 				match model.map_rt {
@@ -2737,7 +2757,35 @@ update! = |model0, program_input, io| {
 			accm2 = { io, dir: model.stride_dir }
 			Task.spawn!(program_input, || map_task!(accm2, map_gen2))
 		}
-		map_paint2 = view2 == 10 and (map_fresh or map_zoomed or map_resized or (map_idle and !(same_cam(map_shown, model.map_painted))))
+		# heat's texture and shader are built the first time heat shows and
+		# follow the window's pixels; a refusal is kept at its size
+		map_heat2 =
+			if view2 != 11 {
+				model.map_heat
+			} else {
+				match model.map_heat {
+					Ready(h) => if (h.w == pixels.w and h.h == pixels.h) model.map_heat else build_map_heat!(pixels)
+					Unavailable(u) => if (u.w == pixels.w and u.h == pixels.h) model.map_heat else build_map_heat!(pixels)
+					Unbuilt => build_map_heat!(pixels)
+				}
+			}
+		map_heat_fresh = match (model.map_heat, map_heat2) {
+			(Ready(a), Ready(b)) => a.w != b.w or a.h != b.h
+			(_, Ready(_)) => Bool.True
+			_ => Bool.False
+		}
+		# playback's clock runs while the play mode shows and is not paused, P
+		# pauses and resumes it, and it starts over each time the mode opens
+		map_play2 =
+			if view2 != 12 {
+				model.map_play
+			} else if model.view != 12 {
+				{ secs: 0.0, paused: Bool.False }
+			} else {
+				paused = if (d.key_pressed(KeyP)) !(model.map_play.paused) else model.map_play.paused
+				{ secs: if (paused) model.map_play.secs else model.map_play.secs + U64.to_f32(tick - model.tick) / U64.to_f32(ticks_per_second), paused }
+			}
+		map_paint2 = Map.is_map(view2) and (map_fresh or map_heat_fresh or view2 != model.map_painted_view or map_zoomed or map_resized or (map_idle and !(same_cam(map_shown, model.map_painted))))
 		glow2 =
 			match model.glow {
 				Ready(g9) => if (g9.gw == pixels.w and g9.gh == pixels.h) (model.glow) else build_glow!(pixels)
@@ -2747,15 +2795,16 @@ update! = |model0, program_input, io| {
 			}
 		glow_on2 = if (d.key_pressed(KeyG)) (!model.glow_on) else model.glow_on
 		# full rate while anything on screen still moves: the splash, a
-		# loading note, a view's arrival, a capture or a recording
-		busy = model.booting or reload_spawned or model.reloading or trace_fetch or model.trace_loading or ghost_loading2 or rec_active or capture_is_pending(pending2) or (view_anim > 0 and tick - view_anim < view_anim_ticks)
+		# loading note, a view's arrival, a capture, a recording, or playback
+		# running
+		busy = (view2 == 12 and !(map_play2.paused)) or model.booting or reload_spawned or model.reloading or trace_fetch or model.trace_loading or ghost_loading2 or rec_active or capture_is_pending(pending2) or (view_anim > 0 and tick - view_anim < view_anim_ticks)
 		# the athlete at work: any key, click, wheel notch or pointer move,
 		# a resize, or a directive from the coach
 		pointer = d.mouse.delta()
 		used = !List.is_empty(d.events) or List.any(d.keys, |k| k != 0) or pointer.x != 0.0 or pointer.y != 0.0 or wheel.x != 0.0 or wheel.y != 0.0 or Mouse.button_down(d.mouse, Left) or Mouse.button_down(d.mouse, Right) or win.w != model.win.w or win.h != model.win.h or directive.has_d
 		last_active = if (used) tick else model.last_active
 		Window.set_target_fps!(frame_rate({ busy, tick, last_active }))
-		Ok({ ..model, map_load: (if (map_spawn) Loading else model.map_load), map_gen: map_gen2, map_cam: map_cam2, map_moved: map_moved2, map_drag: map_drag2, map_rt: map_rt2, map_paint: map_paint2, map_painted: (if (map_paint2) map_shown else model.map_painted), lifts_off: lifts_off2, last_off: last_off2, week_off: week_off2, week_cursor: week_cursor2, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, show_short: want_short, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else if (view2 == 1) Curve.plot_top else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, map_heat: map_heat2, map_play: map_play2, map_painted_view: (if (map_paint2) view2 else model.map_painted_view), map_load: (if (map_spawn) Loading else model.map_load), map_gen: map_gen2, map_cam: map_cam2, map_moved: map_moved2, map_drag: map_drag2, map_rt: map_rt2, map_paint: map_paint2, map_painted: (if (map_paint2) map_shown else model.map_painted), lifts_off: lifts_off2, last_off: last_off2, week_off: week_off2, week_cursor: week_cursor2, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, show_short: want_short, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else if (view2 == 1) Curve.plot_top else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
@@ -2846,7 +2895,7 @@ scene! = |model, frame| {
 		List.map_with_index(model.nav, |nv, ni| { nv, ni }),
 		|x| {
 			pill = Chrome.nav_pill(model.win.w, List.len(model.nav), x.ni)
-			on2 = x.nv.v == Weeks.group(Days.group(model.view))
+			on2 = x.nv.v == Map.group(Weeks.group(Days.group(model.view)))
 			hov2 = model.mouse_x >= pill.x and model.mouse_x <= pill.x + pill.w and model.mouse_y >= pill.y and model.mouse_y <= pill.y + pill.h
 			style2 = if (on2) (Draw.filled(Color.with_alpha(Theme.ctl_c, 60))) else if (hov2) (Draw.filled(Color.with_alpha(Color.white, 18))) else Draw.filled(Theme.card)
 			frame.rounded_rectangle!({ x: pill.x, y: pill.y, width: pill.w, height: pill.h, radius: 7.0, segments: 6, style: style2 })
@@ -2869,7 +2918,7 @@ scene! = |model, frame| {
 		Weeks.draw_chips!(model, frame)
 	}
 	drawn =
-		if model.view == 10 {
+		if Map.is_map(model.view) {
 			Map.draw!(model, frame)
 		} else if model.view == 9 {
 			Strength.draw!(model, frame)
@@ -3097,11 +3146,13 @@ scaled_scene! = |model, frame|
 
 # The map's picture, repainted on the frames update! marks, before anything
 # draws to the screen: a scope opened inside the glow's own offscreen pass
-# would nest one target in another. A refused scope leaves the last picture
-# standing.
+# would nest one target in another. In heat mode the passes are summed on
+# the same frames into heat's own texture, each route drawn with added
+# colours so a pixel's count is the routes that cover it. A refused scope
+# leaves the last picture standing.
 paint_map! : Model, Draw.Frame => {}
 paint_map! = |model, frame|
-	if model.view == 10 and model.map_paint {
+	if Map.is_map(model.view) and model.map_paint {
 		match model.map_rt {
 			Target(t) => {
 				_ = frame.with_render_texture!(
@@ -3109,6 +3160,19 @@ paint_map! = |model, frame|
 					|f| {
 						f.clear!(Color.transparent)
 						f.with_camera!(Camera.default.with_zoom(model.ui_scale), |g| Ok(Map.paint!(model, model.map_painted, g)))
+					},
+				)
+				{}
+			}
+			_ => {}
+		}
+		match model.map_heat {
+			Ready(h) if model.view == 11 => {
+				_ = frame.with_render_texture!(
+					h.rt,
+					|f| {
+						f.clear!(Color.transparent)
+						f.with_blend_mode!(AddColors, |g| g.with_camera!(Camera.default.with_zoom(model.ui_scale), |k| Ok(Map.paint_heat!(model, model.map_painted, k))))
 					},
 				)
 				{}
