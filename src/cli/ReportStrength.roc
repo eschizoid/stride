@@ -1,4 +1,5 @@
 import Db
+import Metrics
 import Output
 import Render
 import core.Units
@@ -7,7 +8,7 @@ import pf.Path
 
 ReportStrength :: [].{
 	# ── the strength report: per-exercise progression + tonnage with its
-	# coverage (#522) ────────────────────────────────────────────────────
+	# coverage ───────────────────────────────────────────────────────────
 	#
 	# Tonnage is volume, not strength: a month's total falls when pull work
 	# gives way to isolation whatever happened to the athlete's capacity, so
@@ -15,6 +16,11 @@ ReportStrength :: [].{
 	# exercise's working weight over time. This command publishes both, and
 	# never a verdict — whether a trend is good is the coach's sentence to
 	# write (ADR 0012).
+	#
+	# The heaviest weight one rep moved stays flat while an athlete adds reps
+	# at that weight, so each day of a rep exercise also carries an estimated
+	# one-rep max (Metrics.best_e1rm, Epley) from its best set, with a known
+	# flag for the days no set can give one.
 	#
 	# Every figure rides with the fact that qualifies it. Monthly tonnage
 	# carries covered/total (strength_coverage — tracked sessions carry a
@@ -91,6 +97,42 @@ ReportStrength :: [].{
 				Ok({ ex, held: held != 0, day, top_kg, kg_reps, top_reps, total_reps, top_hold_s, total_hold_s })
 			},
 		})?
+		# every rep set (holds excluded: a hold has no rep count to estimate
+		# from), keyed by exercise and day, for the day's estimated one-rep
+		# max. The day is ten characters and holds no tab, so the key splits
+		# back unambiguously.
+		rep_sets = Sql.query_many!({
+			path: Path.utf8(path),
+			query: \\SELECT CAST(s.exercise AS TEXT) AS ex,
+				\\       CAST(substr(CAST(a.start_local AS TEXT), 1, 10) AS TEXT) AS day,
+				\\       COALESCE(s.reps, 0) AS reps,
+				\\       CAST(COALESCE(s.weight_kg, 0) AS REAL) AS weight_kg
+				\\FROM strength_sets s JOIN activities a ON a.id = s.activity_id
+				\\WHERE COALESCE(s.hold_s, 0) = 0
+			,
+			bindings: [],
+			rows: |cols| |stmt| {
+				ex = Sql.str("ex")(cols)(stmt)?
+				day = Sql.str("day")(cols)(stmt)?
+				reps = Sql.i64("reps")(cols)(stmt)?
+				weight_kg = Sql.f64("weight_kg")(cols)(stmt)?
+				Ok({ key: "${ex}\t${day}", reps, weight_kg })
+			},
+		})?
+		sets_by_day = List.fold(
+			rep_sets,
+			Dict.empty(),
+			|acc, s| Dict.insert(acc, s.key, List.append(Dict.get(acc, s.key).ok_or([]), { reps: s.reps, weight_kg: s.weight_kg })),
+		)
+		e1rm_of = |ex, held, day|
+			if held {
+				{ e1rm_kg: 0.0, e1rm_reps: 0, e1rm_known: Bool.False }
+			} else {
+				match Metrics.best_e1rm(Dict.get(sets_by_day, "${ex}\t${day}").ok_or([])) {
+					Ok(b) => { e1rm_kg: b.kg, e1rm_reps: b.reps, e1rm_known: Bool.True }
+					Err(_) => { e1rm_kg: 0.0, e1rm_reps: 0, e1rm_known: Bool.False }
+				}
+			}
 		# rows arrive sorted by (exercise, held, day); fold adjacent runs into
 		# one entry per exercise and kind. Entries and their points are both
 		# prepended and reversed once, never appended or concatenated in the
@@ -99,7 +141,8 @@ ReportStrength :: [].{
 			points,
 			[],
 			|acc, p| {
-				pt = { date: p.day, top_kg: p.top_kg, kg_reps: p.kg_reps, top_reps: p.top_reps, total_reps: p.total_reps, top_hold_s: p.top_hold_s, total_hold_s: p.total_hold_s }
+				e = e1rm_of(p.ex, p.held, p.day)
+				pt = { date: p.day, top_kg: p.top_kg, kg_reps: p.kg_reps, top_reps: p.top_reps, total_reps: p.total_reps, top_hold_s: p.top_hold_s, total_hold_s: p.total_hold_s, e1rm_kg: e.e1rm_kg, e1rm_reps: e.e1rm_reps, e1rm_known: e.e1rm_known }
 				match acc {
 					[head, .. as rest] if head.exercise == p.ex and head.held == p.held =>
 						List.prepend(rest, { exercise: head.exercise, held: head.held, points: List.prepend(head.points, pt) })
@@ -169,14 +212,14 @@ ReportStrength :: [].{
 		})?
 		# ANNOTATED and closed: the renderer below infers an open record, and
 		# a new key would otherwise ship undeclared in schemas/v3 (ADR §9c)
-		payload : { exercises : List({ exercise : Str, measure : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64, top_hold_s : I64, total_hold_s : I64 }) }), monthly : List({ month : Str, kg : F64, tonnage_known : Bool, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } }
+		payload : { exercises : List({ exercise : Str, measure : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64, top_hold_s : I64, total_hold_s : I64, e1rm_kg : F64, e1rm_reps : I64, e1rm_known : Bool }) }), monthly : List({ month : Str, kg : F64, tonnage_known : Bool, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } }
 		payload = { exercises, monthly, sessions: counts }
 		Output.out!(payload, |p| screen(units, p))
 	}
 
 	# numbers in tables, meaning in legends — and no verdict line at all:
 	# progression is exactly the number a coach must not have pre-judged
-	screen : [Metric, Imperial], { exercises : List({ exercise : Str, measure : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64, top_hold_s : I64, total_hold_s : I64 }) }), monthly : List({ month : Str, kg : F64, tonnage_known : Bool, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } } -> Str
+	screen : [Metric, Imperial], { exercises : List({ exercise : Str, measure : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64, top_hold_s : I64, total_hold_s : I64, e1rm_kg : F64, e1rm_reps : I64, e1rm_known : Bool }) }), monthly : List({ month : Str, kg : F64, tonnage_known : Bool, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } } -> Str
 	screen = |units, p| {
 		if p.sessions.total == 0 {
 			"no strength sessions yet — they arrive with `stride sync` like every other activity"
@@ -188,7 +231,7 @@ ReportStrength :: [].{
 			prog_rows = List.map(
 				repeated,
 				|e| {
-					none = { date: "", top_kg: 0.0, kg_reps: 0.0, top_reps: 0, total_reps: 0, top_hold_s: 0, total_hold_s: 0 }
+					none = { date: "", top_kg: 0.0, kg_reps: 0.0, top_reps: 0, total_reps: 0, top_hold_s: 0, total_hold_s: 0, e1rm_kg: 0.0, e1rm_reps: 0, e1rm_known: Bool.False }
 					first = List.first(e.points).ok_or(none)
 					last = List.last(e.points).ok_or(none)
 					[
@@ -259,7 +302,7 @@ ReportStrength :: [].{
 	# a top set as its measure reads it: a mass for a weighted exercise, the
 	# most reps in one set for one measured in reps, and the longest hold,
 	# with that hold's weight when it carried one, for a hold
-	top_set : [Metric, Imperial], Str, { date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64, top_hold_s : I64, total_hold_s : I64 } -> Str
+	top_set : [Metric, Imperial], Str, { date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64, top_hold_s : I64, total_hold_s : I64, e1rm_kg : F64, e1rm_reps : I64, e1rm_known : Bool } -> Str
 	top_set = |units, measure, pt|
 		if measure == "reps" {
 			"${pt.top_reps.to_str()} ${if (pt.top_reps == 1) "rep" else "reps"}"

@@ -1,6 +1,6 @@
 {
   "title": "load",
-  "description": "Payload of `stride load` \u2014 a list.",
+  "description": "Payload of `stride load`: the daily series, chronological. `tss`/`ctl`/`atl`/`tsb` are the combined series every sport feeds, and the only source of form. `families` splits fitness by sport family (activities.sport_family: Ride, Run, Rowing, Swim, WeightTraining, ... or the sport_type itself for a sport in no family): the same CTL/ATL recurrence over that family's own scored load, walked over its whole history, so on any day the families' `ctl` sum to the combined `ctl` and their `atl` to the combined `atl`, apart from families left out as below. A family is listed only when it has scored load somewhere in the returned window, and only from its first loaded day on, so a family is ABSENT rather than a zero series that reads as detraining; a family last trained before the window is absent from every row. Families are descriptive and carry no `tsb`.",
   "type": "array",
   "items": {
     "type": "object",
@@ -9,7 +9,8 @@
       "ctl",
       "day",
       "tsb",
-      "tss"
+      "tss",
+      "families"
     ],
     "additionalKeys": false,
     "properties": {
@@ -27,6 +28,34 @@
       },
       "tss": {
         "type": "number"
+      },
+      "families": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "family",
+            "tss",
+            "ctl",
+            "atl"
+          ],
+          "additionalKeys": false,
+          "properties": {
+            "family": {
+              "type": "string"
+            },
+            "tss": {
+              "type": "number",
+              "description": "the load this family added that day"
+            },
+            "ctl": {
+              "type": "number"
+            },
+            "atl": {
+              "type": "number"
+            }
+          }
+        }
       }
     }
   }

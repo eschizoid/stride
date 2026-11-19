@@ -145,8 +145,8 @@ Analyze :: [].{
 						stream_errors,
 						stream_errors_capped,
 						form_tsb,
-						# stable band id (#154); "" when TSB itself is unknown — an id
-						# derived from a placeholder 0.0 would claim a band nobody measured
+						# stable band id; "" when TSB itself is unknown — an id derived
+						# from a placeholder 0.0 would claim a band nobody measured
 						form_state: if (tsb_known) Metrics.form_state(form_tsb) else "",
 						form_delta_7d: match form_delta {
 							Known(d) => d
@@ -388,7 +388,7 @@ Analyze :: [].{
 		"${Render.fmt0(zb.z1_max)},${Render.fmt0(zb.z2_max)},${Render.fmt0(zb.z3_max)},${Render.fmt0(zb.z4_max)}"
 	# The DERIVED FTP for when an activity happened (ADR 0005), as a SQL expression correlated
 	# to the outer `a`; period_ftp_sql raises it to a test in force. Same derivation as
-	# Db.derive_sport_ftp! — the sport FAMILY's best 20-min power × 0.95 (#151, ADR 0002 as
+	# Db.derive_sport_ftp! — the sport FAMILY's best 20-min power × 0.95 (ADR 0002 as
 	# amended) — but the 60-day window is anchored to the ACTIVITY's date, not to today.
 	#
 	# `a2.start_local <= a.start_local` is the load-bearing half: an activity is never scored
@@ -407,13 +407,13 @@ Analyze :: [].{
 	# is lexical — so "2024-03-10T09:00:00Z" sorts AFTER "2024-03-10" and every activity on
 	# the cutoff day would drop out of the window. The trailing branch above is safe without
 	# it because its comparison runs the other way (>=), where the longer string still
-	# matches. Population is the sport FAMILY (#151) via the stored sport_family
-	# column, indexed by idx_activities_family_start (schema v23) — the column, not
-	# a CASE over sport_type, so the range seek survives.
-	# An FTP needs TWO sessions with a best in its window (#574, the power twin of
-	# #567): with one, the best is that session's own, the ratio is 1.05 by
-	# construction, and a lone soft-pedalled hour scores hours at threshold. The
-	# cold-start arm fills only sessions inside the family's first 60 days, so a
+	# matches. Population is the sport FAMILY via the stored sport_family column, indexed
+	# by idx_activities_family_start (schema v23) — the column, not a CASE over
+	# sport_type, so the range seek survives.
+	# An FTP needs TWO sessions with a best in its window, the power twin of the pace
+	# rule in period_threshold_sql: with one, the best is that session's own, the ratio
+	# is 1.05 by construction, and a lone soft-pedalled hour scores hours at threshold.
+	# The cold-start arm fills only sessions inside the family's first 60 days, so a
 	# lone session later in the family's history is not scored against that first
 	# period: both arms NULL, the COALESCE lands on 0, and the power rungs decline.
 	# A stored best of 0 (a meter that reported nothing for the whole ride) is not a
@@ -439,11 +439,11 @@ Analyze :: [].{
 	# The pace twin of derived_ftp_sql (ADR 0005, as amended): the sport's best 20-minute
 	# grade-adjusted SPEED over the 60 days ending on THIS activity's date, × 0.95, with a
 	# cold-start forward-fill gated to the sport's first 60 days, as power's is.
-	# ONE global number anchored to today would score a
-	# 2021 run against 2026 fitness and — because the window moves whenever a recent
-	# metrics row is deleted — invalidate every activity of that sport at once (#79).
+	# ONE global number anchored to today would score a 2021 run against 2026 fitness
+	# and — because the window moves whenever a recent metrics row is deleted —
+	# invalidate every activity of that sport at once.
 	# Speeds are metres per second, so the ×1000 comparisons downstream are mm/s.
-	# A threshold needs TWO sessions with a best in its window (#567): with one,
+	# A threshold needs TWO sessions with a best in its window: with one,
 	# the best is that session's own, the ratio is 1.05 by construction, and a
 	# lone four-hour walk scores hours at threshold. With fewer the arm yields
 	# NULL. The cold-start arm fills only sessions inside the sport's first 60
@@ -690,14 +690,14 @@ Analyze :: [].{
 		hr_pairs = List.keep_if(hr_raw, |p| Metrics.valid_hr(p.v))
 		# drop non-physiological power samples (sensor glitches) the same way HR is
 		# filtered — one 1s spike would inflate NP and the 20-min best behind FTP.
-		# Estimated watts (#73): device_watts=False means the whole stream is Strava's
+		# Estimated watts: device_watts=False means the whole stream is Strava's
 		# model output, not a measurement — it must not feed NP, the 20-min best behind
 		# DERIVED FTP, the power curve, or the intensity split. Drop it wholesale.
 		watts_raw = if (row.dw) Streams.stream_pairs(streams.time, streams.watts) else []
 		watts_pairs = List.keep_if(watts_raw, |p| Metrics.valid_watts(p.v))
 
 		# The in-band mean of this session's HR stream — the number the SCORING
-		# lenses divide by when it exists (#311). `hr_pairs` is already
+		# lenses divide by when it exists. `hr_pairs` is already
 		# `valid_hr`-filtered, so dropout and dead-sensor stretches are left out
 		# rather than averaged in: a stored average computed from a lossy stream can
 		# be plausible and still wrong.
@@ -739,10 +739,10 @@ Analyze :: [].{
 			} else {
 				Real(List.fold(hr_pairs, 0.0, |acc, p| acc + p.v) / (List.len(hr_pairs)).to_f64())
 			}
-		# #92 sample-validity counters. Counted against `*_raw`, which for watts is ALREADY
-		# empty when the stream is estimated — so the wholesale #73 exclusion contributes
-		# 0 dropped of 0 total rather than reading as 100% junk. Only samples a validity
-		# filter rejected are counted as dropped.
+		# sample-validity counters. Counted against `*_raw`, which for watts is ALREADY
+		# empty when the stream is estimated — so the wholesale estimated-watts exclusion
+		# contributes 0 dropped of 0 total rather than reading as 100% junk. Only samples a
+		# validity filter rejected are counted as dropped.
 		hr_total = List.len(hr_raw)
 		hr_dropped = hr_total - List.len(hr_pairs)
 		watts_total = List.len(watts_raw)
@@ -787,7 +787,7 @@ Analyze :: [].{
 			else
 				graded_triple
 		gas_1s_pairs = Metrics.graded_speed_1s(pace_triple.time, pace_triple.dist, pace_triple.alt)
-		# aerobic decoupling (#94/#134) — computed HERE, below the graded-speed
+		# aerobic decoupling — computed HERE, below the graded-speed
 		# derivation, so the pace variant reuses it instead of duplicating it. Power
 		# wins when real watts exist; pace-routed sports (runs/swims) fall to graded
 		# speed vs HR — same drift arithmetic, same Known/Unknown honesty.
@@ -821,7 +821,7 @@ Analyze :: [].{
 		gas_speeds = List.map(gas_1s_pairs, |p| p.v)
 		ngp_speed = Metrics.normalized_power(gas_speeds)
 		best20_speed = Metrics.best_rolling_mean_moving(gas_1s_pairs, 1200)
-		# the 300 s and 600 s rungs of the same grade-adjusted ladder (#188). Same source
+		# the 300 s and 600 s rungs of the same grade-adjusted ladder. Same source
 		# stream as best20_speed, so a hilly rep is comparable with a flat one; together
 		# the three points are what critical speed fits S(t) = D'/t + CS against.
 		best300_speed = Metrics.best_rolling_mean_moving(gas_1s_pairs, 300)
@@ -932,6 +932,22 @@ Analyze :: [].{
 				Err(_) => Null
 
 			}
+		# durability (Metrics.durability_kj / durability_moving_s): the best at
+		# each duration after the session's first 500/1000/2000 kJ of work, on
+		# the same 1 Hz watts the power bests read, and after its first 30/60/90
+		# moving minutes, on the same graded speed the speed bests read. NULL
+		# when the session never reached the threshold or too little of it was
+		# left for the window.
+		after_work_w = |kj, window|
+			match Metrics.post_work_best(watts_1s_pairs, kj, window) {
+				Ok(b) => Real(b)
+				Err(_) => Null
+			}
+		after_moving_speed = |secs, window|
+			match Metrics.post_moving_best(gas_1s_pairs, secs, window) {
+				Ok(b) => Real(b)
+				Err(_) => Null
+			}
 		# ADR 0008: detected interval structure — same lifecycle as the metrics row
 		# (invalidate paths DELETE it; it recomputes here whenever the row recomputes).
 		# Power detects when real watts exist; pace only for pace-routed sports
@@ -962,8 +978,8 @@ Analyze :: [].{
 					}
 				_ = run!(
 					\\INSERT OR REPLACE INTO activity_metrics
-					\\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, best_300s_speed, best_600s_speed, threshold_pace_used, hr_samples_total, hr_samples_dropped, watts_samples_total, watts_samples_dropped, mt_used, dist_used, elev_used, aw_used, ahr_used, waw_used, re_used, dw_used, sport_used, start_used, stream_len_used, decoupling_pct, decoupling_signal, avg_hr_stream)
-					\\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :b300s, :b600s, :thru, :hrt, :hrd, :wt, :wd, :umt, :udist, :uelev, :uaw, :uahr, :uwaw, :ure, :udw, :usport, :ustart, :uslen, :decoup, :dsig, :ahrs)
+					\\  (activity_id, tss, normalized_power, intensity_factor, z1_s, z2_s, z3_s, z4_s, z5_s, computed_at, best_20min_w, ftp_used, zones_used, metrics_rev, load_model, pi_easy_s, pi_moderate_s, pi_hard_s, best_5s_w, best_15s_w, best_30s_w, best_60s_w, best_300s_w, best_600s_w, best_3600s_w, best_20min_speed, best_300s_speed, best_600s_speed, threshold_pace_used, hr_samples_total, hr_samples_dropped, watts_samples_total, watts_samples_dropped, mt_used, dist_used, elev_used, aw_used, ahr_used, waw_used, re_used, dw_used, sport_used, start_used, stream_len_used, decoupling_pct, decoupling_signal, avg_hr_stream, after_500kj_300s_w, after_500kj_1200s_w, after_1000kj_300s_w, after_1000kj_1200s_w, after_2000kj_300s_w, after_2000kj_1200s_w, after_30min_300s_speed, after_30min_1200s_speed, after_60min_300s_speed, after_60min_1200s_speed, after_90min_300s_speed, after_90min_1200s_speed)
+					\\VALUES (:id, :tss, :np, :if, :z1, :z2, :z3, :z4, :z5, :at, :b20, :ftpu, :zused, :rev, :model, :pie, :pim, :pih, :bc5, :bc15, :bc30, :bc60, :bc300, :bc600, :bc3600, :b20s, :b300s, :b600s, :thru, :hrt, :hrd, :wt, :wd, :umt, :udist, :uelev, :uaw, :uahr, :uwaw, :ure, :udw, :usport, :ustart, :uslen, :decoup, :dsig, :ahrs, :dp500a, :dp500b, :dp1000a, :dp1000b, :dp2000a, :dp2000b, :ds30a, :ds30b, :ds60a, :ds60b, :ds90a, :ds90b)
 					,
 					[
 						{ name: ":umt", value: Integer(row.s_mt) },
@@ -1020,6 +1036,18 @@ Analyze :: [].{
 						{ name: ":b20s", value: best20_speed_binding },
 						{ name: ":b300s", value: best300_speed_binding },
 						{ name: ":b600s", value: best600_speed_binding },
+						{ name: ":dp500a", value: after_work_w(500.0, 300) },
+						{ name: ":dp500b", value: after_work_w(500.0, 1200) },
+						{ name: ":dp1000a", value: after_work_w(1000.0, 300) },
+						{ name: ":dp1000b", value: after_work_w(1000.0, 1200) },
+						{ name: ":dp2000a", value: after_work_w(2000.0, 300) },
+						{ name: ":dp2000b", value: after_work_w(2000.0, 1200) },
+						{ name: ":ds30a", value: after_moving_speed(1800, 300) },
+						{ name: ":ds30b", value: after_moving_speed(1800, 1200) },
+						{ name: ":ds60a", value: after_moving_speed(3600, 300) },
+						{ name: ":ds60b", value: after_moving_speed(3600, 1200) },
+						{ name: ":ds90a", value: after_moving_speed(5400, 300) },
+						{ name: ":ds90b", value: after_moving_speed(5400, 1200) },
 						# store the threshold the row was scored against — the pace twin of ftp_used,
 						# so a later threshold change invalidates via the recompute WHERE
 						{ name: ":thru", value: Real(threshold_speed) },
@@ -1322,5 +1350,5 @@ Analyze :: [].{
 	# stays NULL on every row already in the db, so the feature reading it is
 	# inert for exactly the history that would make it useful — the whole
 	# activity archive.
-	metrics_rev = 37
+	metrics_rev = 38
 }

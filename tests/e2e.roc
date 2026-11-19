@@ -372,7 +372,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1438)?
+	checks_ran_exactly!(1449)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3461,6 +3461,24 @@ b_seed_analyze! = |ctx| {
 	check!("pace-curve conforms — with rows, so points.items is exercised", validate!("pace-curve 90 Run", "pace_curve") == "")?
 	check!("...and its no-sport refusal conforms too", validate!("pace-curve 90", "pace_curve") == "")?
 	_ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 9004; DELETE FROM activities WHERE id = 9004;")
+	# durability, read back per family from seeded post-threshold bests: a
+	# ride and a row on the power side, a run and a swim on the pace side.
+	# Each seeded fresh best sits far above anything a fixture session holds,
+	# so it is the window's best for its family whatever else the db carries.
+	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9041,'Durable Ride','Ride','${ctx.today}T06:00:00Z',7200,60000),(9042,'Durable Row','Rowing','${ctx.today}T07:00:00Z',5400,15000),(9043,'Durable Run','Run','${ctx.today}T08:00:00Z',7200,20000),(9044,'Durable Swim','Swim','${ctx.today}T09:00:00Z',5400,4000);")
+	_ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,metrics_rev,best_300s_w,best_20min_w,after_500kj_300s_w) VALUES (9041,100.0,1,9000.0,8000.0,7200.0),(9042,80.0,1,5000.0,4000.0,4500.0);")
+	_ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,metrics_rev,best_300s_speed,best_20min_speed,after_30min_300s_speed,after_60min_300s_speed) VALUES (9043,90.0,1,50.0,40.0,45.0,NULL),(9044,70.0,1,30.0,25.0,NULL,24.0);")
+	dura! = |args, q| strjq!(ctx, args, "[.data.durability[] | ${q}] | tojson")
+	check!("power-curve durability holds a ride's post-500 kJ best beside its fresh one", dura!(["pc", "90", "bike"], "select(.threshold_kj == 500 and .dur_s == 300) | [.known, .fresh_w, .after_w, (.ratio * 1000 | round), .sessions >= 1]") == "[[true,9000,7200,800,true]]")?
+	check!("...and a row's, from its own family", dura!(["pc", "90", "row"], "select(.threshold_kj == 500 and .dur_s == 300) | [.known, .fresh_w, .after_w, (.ratio * 1000 | round)]") == "[[true,5000,4500,900]]")?
+	check!("...flagging a threshold no row reached, its after and ratio 0 rather than readings", dura!(["pc", "90", "row"], "select(.threshold_kj == 2000) | [.known, .after_w, .ratio, .sessions]") == "[[false,0,0,0],[false,0,0,0]]")?
+	check!("...with every threshold at 300 s then 1200 s, in order", dura!(["pc", "90", "row"], "[.threshold_kj, .dur_s]") == "[[500,300],[500,1200],[1000,300],[1000,1200],[2000,300],[2000,1200]]")?
+	check!("pace-curve durability holds a run's post-30-minute best beside its fresh one", dura!(["pace-curve", "90", "Run"], "select(.threshold_s == 1800 and .dur_s == 300) | [.known, .fresh_speed, .after_speed, (.ratio * 1000 | round), .sessions >= 1]") == "[[true,50,45,900,true]]")?
+	check!("...and a swim's after 60 minutes, while 30 minutes stays flagged", dura!(["pace-curve", "90", "Swim"], "select(.dur_s == 300 and .threshold_s <= 3600) | [.threshold_s, .known, (.ratio * 1000 | round)]") == "[[1800,false,0],[3600,true,800]]")?
+	check!("...and refuses with the fit when no sport is named", dura!(["pace-curve", "90"], ".") == "[]")?
+	check!("power-curve conforms with durability rows known", validate!("power-curve 90 row", "power_curve") == "")?
+	check!("pace-curve conforms with durability rows known", validate!("pace-curve 90 Swim", "pace_curve") == "")?
+	_ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (9041, 9042, 9043, 9044); DELETE FROM activities WHERE id IN (9041, 9042, 9043, 9044);")
 	check!("compare conforms", validate!("compare week", "compare") == "")?
 	check!("progress conforms", validate!("progress", "progress") == "")?
 	# `week` is the CURRENT Mon-Sun window, and the fixture's sessions are dated
@@ -7509,8 +7527,10 @@ b_strength_import! = |ctx| {
 	# second with more reps. Both store 0 kg, so only reps can show the gain.
 	pu = |aid, reps| "{\"activity_id\":\"${aid}\",\"exercise_sets\":[{\"exercise_name\":\"Push Up\",\"weight\":{\"value\":\"79.4 kg\"},\"reps\":{\"value\":\"${reps}\"}},{\"exercise_name\":\"Push Up\",\"weight\":{\"value\":\"79.4 kg\"},\"reps\":{\"value\":\"${reps}\"}},{\"exercise_name\":\"Push Up\",\"weight\":{\"value\":\"79.4 kg\"},\"reps\":{\"value\":\"${reps}\"}}]}"
 	_ = sh!("printf '%s' '[${pu("9721", "8")},${pu("9722", "12")}]' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - >/dev/null")
-	check!("a bodyweight exercise progresses in reps: top set and total per day, its kg figures 0", strjq!(ctx, ["strength"], "[.data.exercises[] | select(.exercise == \"Push Up\")] | tojson") == "[{\"exercise\":\"Push Up\",\"measure\":\"reps\",\"points\":[{\"date\":\"2018-07-01\",\"kg_reps\":0,\"top_hold_s\":0,\"top_kg\":0,\"top_reps\":8,\"total_hold_s\":0,\"total_reps\":24},{\"date\":\"2018-07-04\",\"kg_reps\":0,\"top_hold_s\":0,\"top_kg\":0,\"top_reps\":12,\"total_hold_s\":0,\"total_reps\":36}]}]")?
+	check!("a bodyweight exercise progresses in reps: top set and total per day, its kg figures 0", strjq!(ctx, ["strength"], "[.data.exercises[] | select(.exercise == \"Push Up\")] | tojson") == "[{\"exercise\":\"Push Up\",\"measure\":\"reps\",\"points\":[{\"date\":\"2018-07-01\",\"e1rm_kg\":0,\"e1rm_known\":false,\"e1rm_reps\":0,\"kg_reps\":0,\"top_hold_s\":0,\"top_kg\":0,\"top_reps\":8,\"total_hold_s\":0,\"total_reps\":24},{\"date\":\"2018-07-04\",\"e1rm_kg\":0,\"e1rm_known\":false,\"e1rm_reps\":0,\"kg_reps\":0,\"top_hold_s\":0,\"top_kg\":0,\"top_reps\":12,\"total_hold_s\":0,\"total_reps\":36}]}]")?
 	check!("...while a weighted exercise keeps its kg measure", strjq!(ctx, ["strength"], "[.data.exercises[] | select(.exercise == \"Curl\") | .measure] | unique | join(\",\")") == "kg")?
+	# 22 lb is 9.979 kg, and Epley at 10 reps adds a third: 13.305 kg
+	check!("...and carries an Epley one-rep max from its best set, with that set's reps", strjq!(ctx, ["strength"], "[.data.exercises[] | select(.exercise == \"Curl\") | .points[] | [.date, .e1rm_known, (.e1rm_kg * 1000 | round), .e1rm_reps]] | tojson") == "[[\"2018-06-04\",true,13305,10]]")?
 	check!("...and the human table shows the bodyweight top set as reps", Str.contains(stride_human!(ctx.bin, ctx.home, ["strength"]), "2018-07-01  8 reps") and Str.contains(stride_human!(ctx.bin, ctx.home, ["strength"]), "2018-07-04  12 reps"))?
 	# holds: three one-minute Curl holds at 9.1 kg, logged with a duration and
 	# no reps, beside rep-counted Curls in the same workout. The holds fold into
@@ -7524,6 +7544,9 @@ b_strength_import! = |ctx| {
 	check!("...adding no tonnage", Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(SUM(sets * reps * weight_kg) * 10) AS INTEGER) FROM strength_sets WHERE activity_id = 9725;")) == "1356")?
 	check!("...and reported as its own entry measured in time", strjq!(ctx, ["strength"], "[.data.exercises[] | select(.exercise == \"Curl\" and .measure == \"hold\") | .points[] | select(.date == \"2018-07-10\") | [.top_hold_s, .total_hold_s, .top_reps, .total_reps, .kg_reps, (.top_kg * 10 | round)]] | tojson") == "[[60,180,0,0,0,91]]")?
 	check!("...while the Curls lifted for reps keep their kg entry", strjq!(ctx, ["strength"], "[.data.exercises[] | select(.exercise == \"Curl\") | .measure] | join(\",\")") == "kg,hold")?
+	# the day's only rep set ran to 12 reps, past the ceiling an estimate is
+	# trusted to, and a hold has no rep count at all
+	check!("a 12-rep day and a hold day carry no one-rep max, flagged rather than 0 as a reading", strjq!(ctx, ["strength"], "[.data.exercises[] | select(.exercise == \"Curl\") | .points[] | select(.date == \"2018-07-10\") | [.e1rm_known, .e1rm_kg, .e1rm_reps]] | tojson") == "[[false,0,0],[false,0,0]]")?
 	check!("strength conforms to its schema with a hold in it", validate_schema!(ctx, "strength", "strength") == "")?
 	# a second hold day, held longer, makes the hold a repeated exercise the
 	# human table shows first and latest. A shorter, heavier hold beside the

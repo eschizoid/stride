@@ -14,7 +14,8 @@
     "test_known",
     "test_value",
     "test_kind",
-    "test_date"
+    "test_date",
+    "durability"
   ],
   "additionalKeys": false,
   "properties": {
@@ -74,6 +75,46 @@
     },
     "test_date": {
       "type": "string"
+    },
+    "durability": {
+      "type": "array",
+      "description": "Durability, the pace twin of `power_curve`'s: how much of a fresh best speed holds after prior time in motion. One row per threshold (1800, 3600 and 5400 moving seconds since the session began, so a stop does not count) and duration (300 s and 1200 s), thresholds in that order, each at 300 s then 1200 s, on the same grade-adjusted speed as `points`, in m/s. EMPTY when no sport is named, refused with the fit for the same reason. `fresh_speed` is the window's best at the duration regardless of prior work (0 when the sport has none). `after_speed` is the best any session held over that duration entirely after the threshold, and `ratio` is `after_speed / fresh_speed`, at most 1. `known` is the both-possible flag (ADR 0009): false when no session in the window reached the threshold with the duration still to go, and `after_speed` and `ratio` are then 0, not measurements. `sessions` counts the sessions that did.",
+      "items": {
+        "type": "object",
+        "required": [
+          "threshold_s",
+          "dur_s",
+          "fresh_speed",
+          "after_speed",
+          "ratio",
+          "known",
+          "sessions"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "threshold_s": {
+            "type": "integer"
+          },
+          "dur_s": {
+            "type": "integer"
+          },
+          "fresh_speed": {
+            "type": "number"
+          },
+          "after_speed": {
+            "type": "number"
+          },
+          "ratio": {
+            "type": "number"
+          },
+          "known": {
+            "type": "boolean"
+          },
+          "sessions": {
+            "type": "integer"
+          }
+        }
+      }
     }
   }
 }

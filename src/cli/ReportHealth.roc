@@ -1,9 +1,8 @@
 # ── reference and diagnostics: doctor, stats, zones, power-curve, pace-curve, tte ─
 #
-# Split from Report.roc under ADR 0001 (doctor! had passed the ~250-line
-# trigger). These are the commands you run to check the ENGINE rather than the
-# training: coverage, provenance, the configured zones, the power- and speed-duration
-# curves and what they imply.
+# These are the commands you run to check the ENGINE rather than the training:
+# coverage, provenance, the configured zones, the power- and speed-duration curves
+# and what they imply. Report.roc is split by command family under ADR 0001.
 #
 # Five helpers live in Report.roc rather than here. Three because each is shared with
 # another family — the high/medium/low model lists (doctor + summary's coverage),
@@ -14,8 +13,7 @@
 # Two are NOT shared and stay there only by adjacency: Report.sport_exact_sql and
 # Report.sports_with_speed! serve pace-curve alone. They sit beside sport_filter_sql
 # because they are the same concern — resolving a sport word to a SQL predicate — and
-# splitting one across two files would be worse than the rule they break. Stated rather
-# than left for a reader to notice the rule does not hold.
+# splitting one across two files would be worse than the rule they break.
 import Strava
 import Report
 import Analyze
@@ -304,7 +302,7 @@ ReportHealth :: [].{
 			}
 		# Bool-TYPED, not bare True/False tags: the builtin JSON serializes a bare tag as the
 		# string "True"/"False", which breaks the boolean contract (a consumer sees "True",
-		# not true). Same fix as the config `redacted` field. `1 == 1` / `1 == 0` are Bool.
+		# not true). Same rule as the config `redacted` field. `1 == 1` / `1 == 0` are Bool.
 		time_ok =
 			match mode {
 				BadZone(_, _) => 1 == 0
@@ -1042,16 +1040,14 @@ ReportHealth :: [].{
 		)
 		cpfit =
 			match Metrics.critical_power(fit_points) {
-				# UNREACHABLE today: hyperbolic_fit returns Ok only when intercept and slope
-				# are both > 0, and this adapter maps them straight through, so Ok(c) cannot
-				# carry a non-positive cp or w_prime. Kept anyway, for SYMMETRY with the pace
-				# twin and as a second line — not because it protects the contract. It does
-				# not: if the shared fit were relaxed, this gate would turn the bad values
-				# into `cp: 0`, the documented refusal signal, and publish a schema-conforming
-				# payload with no error and no failing test. What actually catches that
-				# relaxation is the Metrics expect headed "critical_power refuses a
-				# physically meaningless fit" — dropping `or slope <= 0.0` fails it — and its
-				# pace twin. Trust those, not this.
+				# The `> 0.0` checks cannot fire: hyperbolic_fit returns Ok only when intercept and
+				# slope are both > 0, and this adapter maps them straight through. They do not
+				# protect the contract either: if the shared fit were relaxed, this gate would turn
+				# the bad values into `cp: 0`, the documented refusal signal, and publish a
+				# schema-conforming payload with no error. The guards on that relaxation are the
+				# Metrics expects headed "critical_power refuses a physically meaningless fit"
+				# (dropping `or slope <= 0.0` fails it) and "critical_speed refuses a physically
+				# meaningless fit".
 				# fit_points counts the bests AVAILABLE to the fit (same meaning tte and
 				# activity publish); `cp` of 0 is the refusal signal, so the key means one
 				# thing across commands.
@@ -1063,21 +1059,73 @@ ReportHealth :: [].{
 		test = if (Str.is_empty(sport)) ({ value: 0.0, date: "none", kind: "none", activity_id: 0 }) else Db.test_in_force_today!(path, "power", Sports.canonical(sport))?
 		test_known : Bool
 		test_known = test.value > 0.0
+		# durability over the same window and population as the curve: the best
+		# any session held after its first 500/1000/2000 kJ, beside the curve's
+		# own point at that duration, which is the fresh best
+		after = Sql.query!({
+			path: Path.utf8(path),
+			query: \\SELECT
+				\\  CAST(COALESCE(MAX(m.after_500kj_300s_w), 0) AS REAL) AS a1, COUNT(NULLIF(m.after_500kj_300s_w, 0)) AS n1,
+				\\  CAST(COALESCE(MAX(m.after_500kj_1200s_w), 0) AS REAL) AS a2, COUNT(NULLIF(m.after_500kj_1200s_w, 0)) AS n2,
+				\\  CAST(COALESCE(MAX(m.after_1000kj_300s_w), 0) AS REAL) AS a3, COUNT(NULLIF(m.after_1000kj_300s_w, 0)) AS n3,
+				\\  CAST(COALESCE(MAX(m.after_1000kj_1200s_w), 0) AS REAL) AS a4, COUNT(NULLIF(m.after_1000kj_1200s_w, 0)) AS n4,
+				\\  CAST(COALESCE(MAX(m.after_2000kj_300s_w), 0) AS REAL) AS a5, COUNT(NULLIF(m.after_2000kj_300s_w, 0)) AS n5,
+				\\  CAST(COALESCE(MAX(m.after_2000kj_1200s_w), 0) AS REAL) AS a6, COUNT(NULLIF(m.after_2000kj_1200s_w, 0)) AS n6
+				\\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+				\\WHERE a.start_local >= :cutoff${sf.frag}
+			,
+			bindings: List.concat([{ name: ":cutoff", value: String(cutoff) }], sf.binds),
+			row: |cols| |stmt| durability_cells(cols, stmt),
+		})?
+		fresh_w = |dur_s| if (dur_s == 300) r.d300 else r.d1200
+		durability = List.map(
+			durability_cells_list(after, Metrics.durability_kj),
+			|c| {
+				d = Metrics.durability_row(fresh_w(c.dur_s), c.after, c.sessions)
+				{ threshold_kj: c.threshold, dur_s: c.dur_s, fresh_w: fresh_w(c.dur_s), after_w: d.after, ratio: d.ratio, known: d.known, sessions: c.sessions }
+			},
+		)
 		Output.out!(
-			{ window_days: days, sport, points, cp: cpfit.cp, w_prime: cpfit.w_prime, fit_r2: cpfit.r2, fit_points: cpfit.points, test_known, test_value: test.value, test_kind: if (test_known) test.kind else "", test_date: if (test_known) test.date else "" },
+			{ window_days: days, sport, points, cp: cpfit.cp, w_prime: cpfit.w_prime, fit_r2: cpfit.r2, fit_points: cpfit.points, test_known, test_value: test.value, test_kind: if (test_known) test.kind else "", test_date: if (test_known) test.date else "", durability },
 			|p| Render.power_curve_screen({ window_days: p.window_days, sport: p.sport, points: p.points, cp: p.cp, w_prime: p.w_prime, fit_r2: p.fit_r2, fit_points: p.fit_points }),
 		)
+	}
+
+	# The six (best, sessions) cells a durability query selects as a1..a6 and
+	# n1..n6: each threshold at 300 s, then at 1200 s, thresholds in order.
+	durability_cells = |cols, stmt| {
+		a1 = Sql.f64("a1")(cols)(stmt)?
+		n1 = Sql.i64("n1")(cols)(stmt)?
+		a2 = Sql.f64("a2")(cols)(stmt)?
+		n2 = Sql.i64("n2")(cols)(stmt)?
+		a3 = Sql.f64("a3")(cols)(stmt)?
+		n3 = Sql.i64("n3")(cols)(stmt)?
+		a4 = Sql.f64("a4")(cols)(stmt)?
+		n4 = Sql.i64("n4")(cols)(stmt)?
+		a5 = Sql.f64("a5")(cols)(stmt)?
+		n5 = Sql.i64("n5")(cols)(stmt)?
+		a6 = Sql.f64("a6")(cols)(stmt)?
+		n6 = Sql.i64("n6")(cols)(stmt)?
+		Ok([{ after: a1, sessions: n1 }, { after: a2, sessions: n2 }, { after: a3, sessions: n3 }, { after: a4, sessions: n4 }, { after: a5, sessions: n5 }, { after: a6, sessions: n6 }])
+	}
+
+	# the cells labelled with the threshold and duration each one measures, in
+	# the order durability_cells selects them
+	durability_cells_list : List({ after : F64, sessions : I64 }), List(F64) -> List({ threshold : F64, dur_s : U64, after : F64, sessions : I64 })
+	durability_cells_list = |cells, thresholds| {
+		labels = List.join(List.map(thresholds, |t| List.map(Metrics.durability_durations, |d| { threshold: t, dur_s: d })))
+		List.map2(labels, cells, |l, c| { threshold: l.threshold, dur_s: l.dur_s, after: c.after, sessions: c.sessions })
 	}
 
 	# Critical speed: the pace twin of power_curve!. Three grade-adjusted rungs
 	# (300/600/1200 s), MAXed over the window, fitted to S(t) = D'/t + CS.
 	#
-	# Two deliberate differences from the power side, both required rather than stylistic:
-	# the sport filter is EXACT (sport_exact_sql, not sport_filter_sql) because speed
-	# populations do not pool across a family the way power does; and every stored rung
-	# already sits inside the 2-20 min band where the 2-parameter model holds, so there is
-	# no aerobic/anaerobic trim here — the power version needs one only because it stores
-	# sprint and 60-min rungs that this ladder does not have.
+	# Two differences from the power side: the sport filter is EXACT (sport_exact_sql,
+	# not sport_filter_sql) because speed populations do not pool across a family the
+	# way power does; and every stored rung already sits inside the 2-20 min band where
+	# the 2-parameter model holds, so there is no aerobic/anaerobic trim here — the power
+	# version needs one only because it stores sprint and 60-min rungs that this ladder
+	# does not have.
 	pace_curve! : U64, Str => Try({}, _)
 	pace_curve! = |days, sport| {
 		path = Db.open_db!({})?
@@ -1126,11 +1174,10 @@ ReportHealth :: [].{
 		fit_points = List.map(points, |p| { dur_s: (p.dur_s).to_f64(), speed: p.speed })
 		csfit =
 			match Metrics.critical_speed(fit_points) {
-				# UNREACHABLE today, and kept for SYMMETRY with the power twin above —
-				# see that gate for why it does NOT protect the contract. The values
-				# here are `cs`/`d_prime`, and the guard that actually catches a
-				# relaxed fit is the Metrics expect headed "critical_speed refuses a
-				# physically meaningless fit".
+				# The `> 0.0` checks mirror the power gate above and cannot fire for the same
+				# reason. The values here are `cs`/`d_prime`, and the guard on a relaxed fit is
+				# the Metrics expect headed "critical_speed refuses a physically meaningless
+				# fit".
 				# fit_points counts the bests AVAILABLE to the fit; `cs` of 0 is the refusal
 				# signal, so the key means one thing across commands, exactly as `cp` does.
 				Ok(c) => (if (c.cs > 0.0 and c.d_prime > 0.0) { cs: c.cs, d_prime: c.d_prime, r2: c.r2, points: (List.len(fit_points)).to_i64_wrap() } else { cs: 0.0, d_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() })
@@ -1140,8 +1187,48 @@ ReportHealth :: [].{
 		test = if (Str.is_empty(sport)) ({ value: 0.0, date: "none", kind: "none", activity_id: 0 }) else Db.test_in_force_today!(path, "pace", Sports.canonical(sport))?
 		test_known : Bool
 		test_known = test.value > 0.0
+		# durability for the named sport: the best speed any session held
+		# after its first 30/60/90 moving minutes, beside the window's fresh
+		# best at that duration. Refused with the fit when no sport is named,
+		# for the same reason: a pooled speed is mostly rides.
+		durability =
+			if Str.is_empty(sport) {
+				[]
+			} else {
+				cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - (days).to_i64_wrap())
+				after = Sql.query!({
+					path: Path.utf8(path),
+					query: \\SELECT
+						\\  CAST(COALESCE(MAX(m.after_30min_300s_speed), 0) AS REAL) AS a1, COUNT(NULLIF(m.after_30min_300s_speed, 0)) AS n1,
+						\\  CAST(COALESCE(MAX(m.after_30min_1200s_speed), 0) AS REAL) AS a2, COUNT(NULLIF(m.after_30min_1200s_speed, 0)) AS n2,
+						\\  CAST(COALESCE(MAX(m.after_60min_300s_speed), 0) AS REAL) AS a3, COUNT(NULLIF(m.after_60min_300s_speed, 0)) AS n3,
+						\\  CAST(COALESCE(MAX(m.after_60min_1200s_speed), 0) AS REAL) AS a4, COUNT(NULLIF(m.after_60min_1200s_speed, 0)) AS n4,
+						\\  CAST(COALESCE(MAX(m.after_90min_300s_speed), 0) AS REAL) AS a5, COUNT(NULLIF(m.after_90min_300s_speed, 0)) AS n5,
+						\\  CAST(COALESCE(MAX(m.after_90min_1200s_speed), 0) AS REAL) AS a6, COUNT(NULLIF(m.after_90min_1200s_speed, 0)) AS n6,
+						\\  CAST(COALESCE(MAX(m.best_300s_speed), 0) AS REAL) AS f300,
+						\\  CAST(COALESCE(MAX(m.best_20min_speed), 0) AS REAL) AS f1200
+						\\FROM activity_metrics m JOIN activities a ON a.id = m.activity_id
+						\\WHERE a.start_local >= :cutoff${sx.frag}
+					,
+					bindings: List.concat([{ name: ":cutoff", value: String(cutoff) }], sx.binds),
+					row: |cols| |stmt| {
+						cells = durability_cells(cols, stmt)?
+						f300 = Sql.f64("f300")(cols)(stmt)?
+						f1200 = Sql.f64("f1200")(cols)(stmt)?
+						Ok({ cells, f300, f1200 })
+					},
+				})?
+				List.map(
+					durability_cells_list(after.cells, List.map(Metrics.durability_moving_s, |t| (t).to_f64())),
+					|c| {
+						fresh = if (c.dur_s == 300) after.f300 else after.f1200
+						d = Metrics.durability_row(fresh, c.after, c.sessions)
+						{ threshold_s: (c.threshold).round_to_i64_try().ok_or(0), dur_s: c.dur_s, fresh_speed: fresh, after_speed: d.after, ratio: d.ratio, known: d.known, sessions: c.sessions }
+					},
+				)
+			}
 		Output.out!(
-			{ window_days: days, sport, points, cs: csfit.cs, d_prime: csfit.d_prime, fit_r2: csfit.r2, fit_points: csfit.points, available_sports: avail, test_known, test_value: test.value, test_kind: if (test_known) test.kind else "", test_date: if (test_known) test.date else "" },
+			{ window_days: days, sport, points, cs: csfit.cs, d_prime: csfit.d_prime, fit_r2: csfit.r2, fit_points: csfit.points, available_sports: avail, test_known, test_value: test.value, test_kind: if (test_known) test.kind else "", test_date: if (test_known) test.date else "", durability },
 			|p| Render.pace_curve_screen(units, { window_days: p.window_days, sport: p.sport, points: p.points, cs: p.cs, d_prime: p.d_prime, fit_r2: p.fit_r2, fit_points: p.fit_points, available_sports: p.available_sports }),
 		)
 	}

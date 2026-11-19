@@ -13,7 +13,8 @@
     "test_known",
     "test_value",
     "test_kind",
-    "test_date"
+    "test_date",
+    "durability"
   ],
   "additionalKeys": false,
   "properties": {
@@ -67,6 +68,46 @@
     },
     "test_date": {
       "type": "string"
+    },
+    "durability": {
+      "type": "array",
+      "description": "Durability: how much of a fresh best holds after prior work in the same session. One row per threshold (500, 1000 and 2000 kJ of work done since the session began, counted from the 1 Hz power stream, so a pause adds none) and duration (300 s and 1200 s), thresholds in that order, each at 300 s then 1200 s. Same window and sport population as `points`. `fresh_w` is the window's best at the duration regardless of prior work, the curve's own point (0 when the curve has none). `after_w` is the best any session held over that duration entirely after reaching the threshold, and `ratio` is `after_w / fresh_w`, at most 1. `known` is the both-possible flag (ADR 0009): false when no session in the window reached the threshold with the duration still to go, and `after_w` and `ratio` are then 0, not measurements. `sessions` counts the sessions that did, so a ratio from one long ride can be weighed as one ride.",
+      "items": {
+        "type": "object",
+        "required": [
+          "threshold_kj",
+          "dur_s",
+          "fresh_w",
+          "after_w",
+          "ratio",
+          "known",
+          "sessions"
+        ],
+        "additionalKeys": false,
+        "properties": {
+          "threshold_kj": {
+            "type": "number"
+          },
+          "dur_s": {
+            "type": "integer"
+          },
+          "fresh_w": {
+            "type": "number"
+          },
+          "after_w": {
+            "type": "number"
+          },
+          "ratio": {
+            "type": "number"
+          },
+          "known": {
+            "type": "boolean"
+          },
+          "sessions": {
+            "type": "integer"
+          }
+        }
+      }
     }
   }
 }
