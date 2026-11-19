@@ -529,6 +529,8 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		map_play: { secs: 0.0, paused: Bool.False },
 		map_tiles: [],
 		map_source: Unasked,
+		map_planned: { cam: Map.unpainted, tick: 0 },
+		map_plan_due: Bool.True,
 		ramp_title: mk!(Ramp.title_text, 15)?,
 		ramp_hint: mk!(Ramp.hint_text, 13)?,
 		zones_title: mk!(Zones.title_text, 15)?,
@@ -655,6 +657,22 @@ same_cam = |a, b| (a.mpp - b.mpp).abs() <= a.mpp * 0.00001 and (a.cx - b.cx).abs
 
 expect same_cam({ cx: 10.0, cy: 20.0, mpp: 2.0 }, { cx: 10.001, cy: 20.0, mpp: 2.0 }) and !(same_cam({ cx: 10.0, cy: 20.0, mpp: 2.0 }, { cx: 10.5, cy: 20.0, mpp: 2.0 })) and !(same_cam({ cx: 10.0, cy: 20.0, mpp: 2.0 }, { cx: 10.0, cy: 20.0, mpp: 2.5 })) and !(same_cam(Map.unpainted, { cx: 0.0, cy: 0.0, mpp: 1.0 }))
 
+# Whether this frame plans the tiles: when something the plan reads has
+# changed (a tile's answer, the source, the map), when the map has just come
+# on screen, when the window was resized, when the camera has moved since the
+# last plan, and once a second besides, which is when a failed tile's or the
+# source's retry can come due. A frame on a still map plans nothing.
+plan_now : { due : Bool, was_map : Bool, resized : Bool, cam : Geo.Cam, planned : { cam : Geo.Cam, tick : U64 }, tick : U64 } -> Bool
+plan_now = |p| p.due or !p.was_map or p.resized or !(same_cam(p.cam, p.planned.cam)) or p.tick - p.planned.tick >= ticks_per_second
+
+# a still map plans once a second, and at once when anything it reads moves
+expect {
+	cam = { cx: 10.0, cy: 20.0, mpp: 2.0 }
+	still = { due: Bool.False, was_map: Bool.True, resized: Bool.False, cam, planned: { cam, tick: 100 }, tick: 130 }
+	!(plan_now(still)) and plan_now({ ..still, tick: 100 + ticks_per_second }) and plan_now({ ..still, due: Bool.True }) and plan_now({ ..still, was_map: Bool.False })
+		and plan_now({ ..still, resized: Bool.True }) and plan_now({ ..still, cam: { ..cam, mpp: 1.6 } }) and plan_now({ ..still, cam: { ..cam, cx: 15.0 } })
+}
+
 # Runs INSIDE a spawned task (Sqlite parks there legally): loads the ghost
 # session's trace and duration (no segments - the ghost is a line, not a
 # block chart). The caller already cleared the drawn overlay when the
@@ -701,25 +719,25 @@ map_on_reload = |l|
 map_on_landing : Bool -> [Unloaded, Loading, Loaded]
 map_on_landing = |stale| if (stale) Unloaded else Loaded
 
-# A tile's answer lands in its slot (Tiles.land). One that brings a tile
-# repaints the picture, so the view sharpens as each arrives; one that
-# brings none leaves the picture as it is.
+# A tile's answer lands in its slot (Tiles.land) and has the tiles planned
+# again. One that brings a tile repaints the picture, so the view sharpens
+# as each arrives; one that brings none leaves the picture as it is.
 tile_landed : Ui.Model, Tiles.Answer, U64 -> Ui.Model
 tile_landed = |m, ans, tick|
 	match ans {
-		Read(_) => { ..m, map_tiles: Tiles.land(m.map_tiles, ans, tick), map_painted: Map.unpainted }
-		Absent(_) => { ..m, map_tiles: Tiles.land(m.map_tiles, ans, tick) }
+		Read(_) => { ..m, map_tiles: Tiles.land(m.map_tiles, ans, tick), map_painted: Map.unpainted, map_plan_due: Bool.True }
+		Absent(_) => { ..m, map_tiles: Tiles.land(m.map_tiles, ans, tick), map_plan_due: Bool.True }
 	}
 
 # a tile that lands is drawn and repaints the picture; a miss is recorded
-# and repaints nothing
+# and repaints nothing; either has the tiles planned again
 expect {
 	k = { z: 9, x: 130, y: 189 }
 	painted = { cx: 1.0, cy: 2.0, mpp: 3.0 }
-	m = { ..Gate.empty_model({ w: 980.0, h: 600.0 }), map_painted: painted, map_tiles: [{ key: k, state: Fetching, refresh: Done, used: 0 }] }
+	m = { ..Gate.empty_model({ w: 980.0, h: 600.0 }), map_painted: painted, map_plan_due: Bool.False, map_tiles: [{ key: k, state: Fetching, refresh: Done, used: 0 }] }
 	read = tile_landed(m, Read({ key: k, tile: Mvt.empty, fresh: Bool.True, tried: Bool.True }), 7)
 	miss = tile_landed(m, Absent({ key: k, tried: Bool.True }), 7)
-	read.map_painted == Map.unpainted and Tiles.drawn(read.map_tiles, k) == Ok(Mvt.empty) and miss.map_painted == painted and List.map(miss.map_tiles, |s| s.state) == [Failed(7)]
+	read.map_painted == Map.unpainted and Tiles.drawn(read.map_tiles, k) == Ok(Mvt.empty) and miss.map_painted == painted and List.map(miss.map_tiles, |s| s.state) == [Failed(7)] and read.map_plan_due and miss.map_plan_due
 }
 
 # R during a read never starts a second one; the read that lands then
@@ -789,31 +807,30 @@ tile_task! = |acc, k, template| {
 	}
 }
 
-# A tile from the network: a 200 carries the tile, a 204 an empty one.
-# What decodes is stored before it is drawn, and a tile the cache could not
-# take is still drawn; anything that does not decode is not stored.
+# A tile from the network, its answer read by Tiles.body_of. What decodes
+# is stored before it is drawn, and a tile the cache could not take is
+# still drawn; anything that does not decode is not stored.
 fetch_tile! : Access, Str, Tiles.Key => Try(Mvt.Tile, [NotFetched])
 fetch_tile! = |acc, template, k|
 	match acc.io.http().send!(Request.from_method(GET).with_uri(Tiles.url(template, k))) {
 		Ok(resp) =>
-			if Response.status(resp) == 200 or Response.status(resp) == 204 {
-				body = Response.body(resp)
-				match Mvt.drawable(body) {
-					Ok(t) => {
-						match open_db!(acc) {
-							Ok(db) => {
-								_ = Db.store_tile!(db, k, Tiles.build_of(template), body)
-								_ = db.close!()
-								{}
+			match Tiles.body_of(Response.status(resp), Response.body(resp)) {
+				Ok(body) =>
+					match Mvt.drawable(body) {
+						Ok(t) => {
+							match open_db!(acc) {
+								Ok(db) => {
+									_ = Db.store_tile!(db, k, Tiles.build_of(template), body)
+									_ = db.close!()
+									{}
+								}
+								Err(_) => {}
 							}
-							Err(_) => {}
+							Ok(t)
 						}
-						Ok(t)
+						Err(_) => Err(NotFetched)
 					}
-					Err(_) => Err(NotFetched)
-				}
-			} else {
-				Err(NotFetched)
+				Err(_) => Err(NotFetched)
 			}
 		Err(_) => Err(NotFetched)
 	}
@@ -2105,7 +2122,7 @@ update! = |model0, program_input, io| {
 							}
 					}
 				Reloaded(fresh) => {
-					merged = { ..fresh, map: acc.map, map_tiles: acc.map_tiles, map_source: acc.map_source, map_heat: acc.map_heat, map_play: acc.map_play, map_gen: acc.map_gen, map_load: (map_on_reload(acc.map_load)).load, map_stale: (map_on_reload(acc.map_load)).stale, map_cam: acc.map_cam, map_moved: acc.map_moved, map_rt: acc.map_rt, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_active: acc.last_active, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending, flame: acc.flame }
+					merged = { ..fresh, map: acc.map, map_tiles: acc.map_tiles, map_source: acc.map_source, map_planned: acc.map_planned, map_plan_due: acc.map_plan_due, map_heat: acc.map_heat, map_play: acc.map_play, map_gen: acc.map_gen, map_load: (map_on_reload(acc.map_load)).load, map_stale: (map_on_reload(acc.map_load)).stale, map_cam: acc.map_cam, map_moved: acc.map_moved, map_rt: acc.map_rt, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_active: acc.last_active, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending, flame: acc.flame }
 					# R reads the curve it was pressed on, and it is the slow path.
 					# A chip clicked while it ran has since moved curve_days or
 					# curve_family and landed its own curve; when the two disagree
@@ -2127,12 +2144,12 @@ update! = |model0, program_input, io| {
 				TraceSwitched(sw) => if (sw.gen != acc.trace_gen) acc else { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_day: sw.day, trace_unit: sw.un, trace_splits: sw.sp, trace_sets: sw.st, trace_loading: Bool.False }
 				# the map lands only from the newest load and is repainted; one R
 				# marked stale while it was read is read once more (map_on_landing)
-				MapLoaded(ml) => if (ml.gen != acc.map_gen) acc else { ..acc, map: ml.map, map_load: map_on_landing(acc.map_stale), map_stale: Bool.False, map_painted: Map.unpainted }
+				MapLoaded(ml) => if (ml.gen != acc.map_gen) acc else { ..acc, map: ml.map, map_load: map_on_landing(acc.map_stale), map_stale: Bool.False, map_painted: Map.unpainted, map_plan_due: Bool.True }
 				TileAnswer(ans) => tile_landed(acc, ans, tick)
 				# the template a tile fetch needs, or the tick the TileJSON could
 				# not be read at, after which it is asked for again
-				SourceRead(Ok(t)) => { ..acc, map_source: Known(t) }
-				SourceRead(Err(_)) => { ..acc, map_source: Unreachable(tick) }
+				SourceRead(Ok(t)) => { ..acc, map_source: Known(t), map_plan_due: Bool.True }
+				SourceRead(Err(_)) => { ..acc, map_source: Unreachable(tick), map_plan_due: Bool.True }
 			},
 	)
 	# the coach's word arrives beside the human's input and steers only what
@@ -2173,7 +2190,7 @@ update! = |model0, program_input, io| {
 			_ => acc9
 		},
 	)
-	cap_step = capture_step(model.pending_capture, { shot: shot_done, rec: program_input.capture, settled: view_settled({ view: model.view, view_anim: model.view_anim, tick, trace_loading: model.trace_loading, ghost_loading: model.ghost_loading, reloading: model.reloading, map_loading: map_unread(model.map_load) or !(Map.tiles_settled(model)) }), tick })
+	cap_step = capture_step(model.pending_capture, { shot: shot_done, rec: program_input.capture, settled: view_settled({ view: model.view, view_anim: model.view_anim, tick, trace_loading: model.trace_loading, ghost_loading: model.ghost_loading, reloading: model.reloading, map_loading: map_unread(model.map_load) or (capture_is_pending(model.pending_capture) and !(Map.tiles_settled(model))) }), tick })
 	pending1 = cap_step.next
 	_ = match cap_step.act {
 		Nothing => {}
@@ -2897,12 +2914,14 @@ update! = |model0, program_input, io| {
 			Task.spawn!(program_input, || map_task!(accm2, map_gen2))
 		}
 		# the street map's tiles: while a map mode shows a landed map with
-		# something on it, every frame plans the tiles the camera wants
-		# (Tiles.plan), starts a task for each one it picks, and reads the
-		# TileJSON first when a tile needs the network and no template is known
+		# something on it, a frame plan_now picks plans the tiles the camera
+		# wants (Tiles.plan), starts a task for each one it picks, and reads
+		# the TileJSON first when a tile needs the network and no template is
+		# known
 		tiles_on = Map.is_map(view2) and !(map_unread(model.map_load)) and Map.has_data(model)
+		planning = tiles_on and plan_now({ due: model.map_plan_due, was_map: Map.is_map(model.view), resized: map_resized, cam: map_shown, planned: model.map_planned, tick })
 		tile_plan =
-			if tiles_on {
+			if planning {
 				want = List.map(Tiles.wanted(Map.cells({ ..model, win }, map_shown)), |c| c.key)
 				Tiles.plan(model.map_tiles, want, model.map_source, tick, tile_retry_ticks)
 			} else {
@@ -2970,7 +2989,7 @@ update! = |model0, program_input, io| {
 		used = !List.is_empty(d.events) or List.any(d.keys, |k| k != 0) or pointer.x != 0.0 or pointer.y != 0.0 or wheel.x != 0.0 or wheel.y != 0.0 or Mouse.button_down(d.mouse, Left) or Mouse.button_down(d.mouse, Right) or win.w != model.win.w or win.h != model.win.h or directive.has_d
 		last_active = if (used) tick else model.last_active
 		Window.set_target_fps!(frame_rate({ busy, tick, last_active }))
-		Ok({ ..model, map_tiles: tile_plan.slots, map_source: map_source2, map_heat: map_heat2, map_play: map_play2, map_painted_view: (if (map_paint2) view2 else model.map_painted_view), map_load: (if (map_spawn) Loading else model.map_load), map_gen: map_gen2, map_cam: map_cam2, map_moved: map_moved2, map_drag: map_drag2, map_rt: map_rt2, map_paint: map_paint2, map_painted: (if (map_paint2) map_shown else model.map_painted), lifts_off: lifts_off2, last_off: last_off2, week_off: week_off2, week_cursor: week_cursor2, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, show_short: want_short, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else if (view2 == 1) Curve.plot_top else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, map_tiles: tile_plan.slots, map_source: map_source2, map_planned: (if (planning) { cam: map_shown, tick } else model.map_planned), map_plan_due: model.map_plan_due and !planning, map_heat: map_heat2, map_play: map_play2, map_painted_view: (if (map_paint2) view2 else model.map_painted_view), map_load: (if (map_spawn) Loading else model.map_load), map_gen: map_gen2, map_cam: map_cam2, map_moved: map_moved2, map_drag: map_drag2, map_rt: map_rt2, map_paint: map_paint2, map_painted: (if (map_paint2) map_shown else model.map_painted), lifts_off: lifts_off2, last_off: last_off2, week_off: week_off2, week_cursor: week_cursor2, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, show_short: want_short, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else if (view2 == 1) Curve.plot_top else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 

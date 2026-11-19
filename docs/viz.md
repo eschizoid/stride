@@ -214,18 +214,22 @@ tile maths and cache policy (`Tiles`) are pure modules with expects. A task
 waits for the cache and the network off the frame loop, but tasks run on
 the frame thread, so decoding a tile holds the frames while it runs, longest
 for the widest zooms.
-
 Every fetched tile is kept raw in the `map_tiles` table, keyed by zoom,
-column and row alone, with the planet build it came from and when it was
-fetched. OpenFreeMap rebuilds the planet about weekly, and its TileJSON
-(`https://tiles.openfreemap.org/planet`) names the current build's tile URL;
-the window reads it once a tile needs the network, never before. A cached
-tile is drawn as it is until it is ninety days old, and is then fetched again
-by the build of the day, the old copy drawn meanwhile and kept when the
-network does not answer. So panning back over ground already seen needs no
-network, and works offline; the window holds the last 64 tiles it was asked
-for decoded, and one dropped from those is read and decoded again from the
-cache. The window creates the table, is its only reader
+column and row alone, with the planet build it came from, when it was
+fetched and when it was last used. OpenFreeMap rebuilds the planet about
+weekly, and its TileJSON (`https://tiles.openfreemap.org/planet`) names the
+current build's tile URL; the window reads it once a tile needs the network,
+never before. A 200 answer carries a tile and a 204 an empty one; a 200 with
+no body is a failed fetch, tried again, never cached. A cached tile is drawn
+as it is until it is ninety days old, and is then fetched again by the build
+of the day, the old copy drawn meanwhile and kept when the network does not
+answer. So panning back over ground already seen needs no network, and works
+offline; the window holds the last 64 tiles it was asked for decoded, and
+one dropped from those is read and decoded again from the cache. The table is
+held to 64 MB: after each store the most recently used tiles are kept while
+their bytes fit, and every older one is deleted. A read marks a tile used,
+writing that mark at most once an hour. The window creates the table, is its
+only reader
 and writer, and fetches nothing but these tiles and that document, from the
 one origin it declares. While no tile of the view can be drawn, the ways
 `stride basemap` stored in `map_ways` draw instead, if there are any; with
@@ -257,8 +261,8 @@ screen drawn, failed, or waiting on a TileJSON that cannot be read. A database
 with no routes table reads as having no routes yet. The window's SQLite
 binding refuses a query whose result passes a byte budget rather than
 returning part of it, so routes and ways are read in pages. The credit, ©
-OpenFreeMap, OpenMapTiles and OpenStreetMap contributors, sits on the title
-row over the map's right edge; the street data is OpenStreetMap's, under the
+OpenFreeMap, OpenMapTiles and OpenStreetMap contributors, sits on a card in
+the map's lower-right corner, leaving the title row to the mode titles; the street data is OpenStreetMap's, under the
 ODbL.
 
 Heat sums what was drawn. Every route is drawn once into a texture of its

@@ -440,17 +440,22 @@ Map :: [].{
 		)
 	}
 
-	# the credit sits on the title row over the map's right edge, after its
-	# copyright mark: a ring with its letter inside, drawn, because the brand
-	# atlases carry ASCII alone
-	credit_y : F32
-	credit_y = 74.0
+	# The credit sits in the map's lower-right corner on a card of the map's
+	# ground, as web maps carry theirs, after its copyright mark: a ring
+	# with a c inside, both drawn as shapes, so the mark is the same in any
+	# face. That leaves the title row to the mode titles, which in a wide
+	# face run past where a credit on that row would start.
+	credit_box : { w : F32, h : F32 }, Scene.Measure -> Labels.Rect
+	credit_box = |win, measure| {
+		r = rect(win)
+		w = measure(credit_text, 11.0, Prose)
+		{ x: r.x + r.w - w - 30.0, y: r.y + r.h - 24.0, w: w + 26.0, h: 20.0 }
+	}
 
 	credit_ring : { w : F32, h : F32 }, Scene.Measure -> Labels.Rect
 	credit_ring = |win, measure| {
-		r = rect(win)
-		w = measure(credit_text, 11.0, Prose)
-		{ x: r.x + r.w - w - 18.0, y: credit_y, w: 13.0, h: 13.0 }
+		b = credit_box(win, measure)
+		{ x: b.x + 5.0, y: b.y + 3.5, w: 13.0, h: 13.0 }
 	}
 
 	# a failed read's message, cut to what the map's narrowest width holds
@@ -468,7 +473,6 @@ Map :: [].{
 	texts = |model, measure| {
 		panel = Labels.panel(model.win)
 		r = rect(model.win)
-		ring = credit_ring(model.win, measure)
 		fix = |it, x, y, align, region| Scene.fixed(measure, it, { x, y, align }, region)
 		note =
 			if model.map.err != "" {
@@ -485,8 +489,7 @@ Map :: [].{
 		List.join([
 			[
 				fix(Scene.prose(title_text(model.view), 15.0, Theme.ink_muted), title_x, 70.0, Left, panel),
-				fix(Scene.prose(credit_text, 11.0, Theme.ink_faint), r.x + r.w, credit_y, Right, panel),
-				fix(Scene.data("c", 9.0, Theme.ink_faint), ring.x + ring.w / 2.0, ring.y + 2.0, Center, ring),
+				fix(Scene.prose(credit_text, 11.0, Theme.ink_faint), r.x + r.w - 6.0, (credit_box(model.win, measure)).y + 4.0, Right, r),
 				fix(Scene.prose(hint_text(model.view), 13.0, Theme.ink_faint), 36.0, model.win.h - 30.0, Left, panel),
 			],
 			note,
@@ -496,11 +499,11 @@ Map :: [].{
 	}
 
 	# the shapes no text may cover but its own: the pills, the mode chips,
-	# the map and the copyright ring
+	# the map and the copyright mark
 	marks : Ui.Model, Scene.Measure -> List(Labels.Mark)
 	marks = |model, measure| {
 		r = rect(model.win)
-		List.join([Chrome.marks(model), chip_marks, [{ key: "the map", box: r }, { key: "the copyright ring", box: credit_ring(model.win, measure) }]])
+		List.join([Chrome.marks(model), chip_marks, [{ key: "the map", box: r }, { key: "the copyright mark", box: credit_ring(model.win, measure) }]])
 	}
 
 	# The cached picture when the window holds one, shifted by however far
@@ -549,8 +552,11 @@ Map :: [].{
 				Ok({})
 			},
 		)
+		card = credit_box(model.win, measure)
+		frame.rounded_rectangle!({ x: card.x, y: card.y, width: card.w, height: card.h, radius: 6.0, segments: 6, style: Draw.filled(Color.with_alpha(Theme.card, 230)) })
 		ring = credit_ring(model.win, measure)
 		frame.circle!({ center: { x: ring.x + ring.w / 2.0, y: ring.y + ring.h / 2.0 }, radius: ring.w / 2.0, style: Draw.outlined(Theme.ink_faint, 1.0) })
+		frame.ring!({ center: { x: ring.x + ring.w / 2.0, y: ring.y + ring.h / 2.0 }, inner_radius: 2.0, outer_radius: 3.2, start_angle: 45.0, end_angle: 315.0, segments: 16, style: Draw.filled(Theme.ink_faint) })
 		Scene.draw!(frame, model, scene(model, measure))
 		Ok({})
 	}

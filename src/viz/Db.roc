@@ -2170,29 +2170,45 @@ Db :: [].{
 
 	# ── the street map's tile cache ────────────────────────────────────────
 	# Every tile the window fetches is kept raw in map_tiles, keyed by its
-	# zoom, column and row alone, beside the planet build it came from and
-	# when it was fetched, in seconds since 1970; Tiles says why the build
-	# is not part of the key. The window is the table's one reader and
-	# writer. It creates the table before its first write, and a database
-	# without it reads as holding no tile. Like the other mirror tables it
-	# holds nothing that cannot be fetched again.
+	# zoom, column and row alone, beside the planet build it came from, when
+	# it was fetched and when it was last used, both in seconds since 1970;
+	# Tiles says why the build is not part of the key, and how the table is
+	# held to its budget (Tiles.evicted), which every store enforces. The
+	# window is the table's one reader and writer. It creates the table
+	# before its first write, and a database without it reads as holding no
+	# tile. Like the other mirror tables it holds nothing that cannot be
+	# fetched again.
 	tiles_ddl : Str
-	tiles_ddl = "CREATE TABLE IF NOT EXISTS map_tiles (z INTEGER NOT NULL, x INTEGER NOT NULL, y INTEGER NOT NULL, build TEXT NOT NULL, fetched INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY (z, x, y))"
+	tiles_ddl = "CREATE TABLE IF NOT EXISTS map_tiles (z INTEGER NOT NULL, x INTEGER NOT NULL, y INTEGER NOT NULL, build TEXT NOT NULL, fetched INTEGER NOT NULL, used INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY (z, x, y))"
 
 	tile_read_sql : Str
 	tile_read_sql = "SELECT data AS d, CAST(strftime('%s', 'now') AS INTEGER) - fetched AS age FROM map_tiles WHERE z = :z AND x = :x AND y = :y"
 
 	tile_store_sql : Str
-	tile_store_sql = "INSERT INTO map_tiles (z, x, y, build, fetched, data) VALUES (:z, :x, :y, :b, CAST(strftime('%s', 'now') AS INTEGER), :d) ON CONFLICT (z, x, y) DO UPDATE SET build = excluded.build, fetched = excluded.fetched, data = excluded.data"
+	tile_store_sql = "INSERT INTO map_tiles (z, x, y, build, fetched, used, data) VALUES (:z, :x, :y, :b, CAST(strftime('%s', 'now') AS INTEGER), CAST(strftime('%s', 'now') AS INTEGER), :d) ON CONFLICT (z, x, y) DO UPDATE SET build = excluded.build, fetched = excluded.fetched, used = excluded.used, data = excluded.data"
+
+	# a read marks the tile used, but writes only when its mark is older
+	# than Tiles.touch_secs, so panning over cached ground rarely writes
+	tile_touch_sql : Str
+	tile_touch_sql = "UPDATE map_tiles SET used = CAST(strftime('%s', 'now') AS INTEGER) WHERE z = :z AND x = :x AND y = :y AND used < CAST(strftime('%s', 'now') AS INTEGER) - :t"
+
+	# every stored tile's size and last use; length() of a blob is read from
+	# the row's header, never from the bytes
+	tile_sizes_sql : Str
+	tile_sizes_sql = "SELECT z AS z, x AS x, y AS y, length(data) AS n, used AS u FROM map_tiles"
+
+	tile_drop_sql : Str
+	tile_drop_sql = "DELETE FROM map_tiles WHERE z = :z AND x = :x AND y = :y"
 
 	tile_bindings : Tiles.Key -> List({ name : Str, value : Sqlite.Value })
 	tile_bindings = |k| [{ name: ":z", value: Integer(U64.to_i64_wrap(k.z)) }, { name: ":x", value: Integer(U64.to_i64_wrap(k.x)) }, { name: ":y", value: Integer(U64.to_i64_wrap(k.y)) }]
 
 	# a cached tile's bytes and its age in seconds; a tile stored with no
-	# bytes, as a 204 answer is, reads back as no bytes
+	# bytes, as a 204 answer is, reads back as no bytes. A tile found is
+	# marked used.
 	read_tile! : Sqlite.Db, Tiles.Key => Try({ data : List(U8), age : I64 }, [Absent])
-	read_tile! = |db, k|
-		match db.query!(tile_read_sql, tile_bindings(k)) {
+	read_tile! = |db, k| {
+		found = match db.query!(tile_read_sql, tile_bindings(k)) {
 			Ok(rs) =>
 				match List.first(rs) {
 					Ok(r) =>
@@ -2205,28 +2221,70 @@ Db :: [].{
 				}
 			Err(_) => Err(Absent)
 		}
+		match found {
+			Ok(_) => {
+				_ = db.execute!(tile_touch_sql, List.append(tile_bindings(k), { name: ":t", value: Integer(Tiles.touch_secs) }))
+				found
+			}
+			Err(_) => found
+		}
+	}
 
+	# A tile stored, then the table held to its budget. A tile the store
+	# could not write is still drawn by its caller, and a trim that fails
+	# leaves the table as it was, to be trimmed by the next store.
 	store_tile! : Sqlite.Db, Tiles.Key, Str, List(U8) => Try({}, [NotStored])
 	store_tile! = |db, k, build, data| {
 		_ = db.execute!(tiles_ddl, [])
 		match db.execute!(tile_store_sql, List.concat(tile_bindings(k), [{ name: ":b", value: String(build) }, { name: ":d", value: Bytes(data) }])) {
-			Ok(_) => Ok({})
+			Ok(_) => {
+				trim_tiles!(db, Tiles.cache_budget)
+				Ok({})
+			}
 			Err(_) => Err(NotStored)
 		}
 	}
-}
 
+	trim_tiles! : Sqlite.Db, U64 => {}
+	trim_tiles! = |db, budget|
+		match db.query!(tile_sizes_sql, []) {
+			Ok(rs) => {
+				rows = List.keep_oks(
+					rs,
+					|r| {
+						z = r.i64("z")?
+						x = r.i64("x")?
+						y = r.i64("y")?
+						n = r.i64("n")?
+						u = r.i64("u")?
+						Ok({ key: { z: I64.to_u64_wrap(z), x: I64.to_u64_wrap(x), y: I64.to_u64_wrap(y) }, bytes: I64.to_u64_wrap(n), used: u })
+					},
+				)
+				List.for_each!(
+					Tiles.evicted(rows, budget),
+					|k| {
+						_ = db.execute!(tile_drop_sql, tile_bindings(k))
+						{}
+					},
+				)
+			}
+			Err(_) => {}
+		}
+}
 # the tile cache's statements and their bindings agree: every placeholder
-# either statement names is bound under its own name, the store binds the
-# build and the bytes beside the key, and the key is the table's whole
-# primary key
+# each statement names is bound under its own name, the store binds the
+# build and the bytes beside the key and sets the last use, the touch binds
+# its interval, the key is the table's whole primary key, and the sizes
+# read back carry every column the trim decodes
 expect {
 	names = List.map(Db.tile_bindings({ z: 14, x: 4203, y: 6088 }), |b| b.name)
 	store = List.concat(names, [":b", ":d"])
+	touch = List.append(names, ":t")
 	placeholders = |sql| List.count_if(Str.to_utf8(sql), |c| c == ':')
-	names == [":z", ":x", ":y"] and placeholders(Db.tile_read_sql) == 3 and placeholders(Db.tile_store_sql) == 5
-		and List.all(names, |nm| Str.contains(Db.tile_read_sql, nm)) and List.all(store, |nm| Str.contains(Db.tile_store_sql, nm))
-		and Str.contains(Db.tiles_ddl, "PRIMARY KEY (z, x, y)") and Str.contains(Db.tile_store_sql, "ON CONFLICT (z, x, y)")
+	names == [":z", ":x", ":y"] and placeholders(Db.tile_read_sql) == 3 and placeholders(Db.tile_store_sql) == 5 and placeholders(Db.tile_touch_sql) == 4 and placeholders(Db.tile_drop_sql) == 3
+		and List.all(names, |nm| Str.contains(Db.tile_read_sql, nm) and Str.contains(Db.tile_drop_sql, nm)) and List.all(store, |nm| Str.contains(Db.tile_store_sql, nm)) and List.all(touch, |nm| Str.contains(Db.tile_touch_sql, nm))
+		and Str.contains(Db.tiles_ddl, "PRIMARY KEY (z, x, y)") and Str.contains(Db.tile_store_sql, "ON CONFLICT (z, x, y)") and Str.contains(Db.tile_store_sql, "used = excluded.used")
+		and List.all(["AS z", "AS x", "AS y", "AS n", "AS u"], |a| Str.contains(Db.tile_sizes_sql, a))
 }
 
 expect Db.parse_utc_offset("-0500") == Ok(-300)

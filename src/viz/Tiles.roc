@@ -238,6 +238,65 @@ Tiles :: [].{
 	fresh : I64 -> Bool
 	fresh = |age| age < max_age_secs
 
+	# A tile answer's body: a 200 carries the tile and a 204 an empty one,
+	# a tile with nothing in it. A 200 with no body is a fetch that failed
+	# and is tried again, never a tile cached as empty; any other status is
+	# a failure too.
+	body_of : U16, List(U8) -> Try(List(U8), [NotATile])
+	body_of = |status, body|
+		if status == 204 {
+			Ok([])
+		} else if status == 200 and !(List.is_empty(body)) {
+			Ok(body)
+		} else {
+			Err(NotATile)
+		}
+
+	# The cache's bound: the tiles kept are the most recently used whose
+	# bytes, taken newest first, fit in cache_budget; every tile past that
+	# point goes, oldest use first, a tie going by zoom, column and row. A
+	# street-detail tile of a dense city runs to hundreds of kilobytes, so
+	# 64 MB holds the street detail of a few metro areas and every coarser
+	# zoom over them, and keeps the cache below the size of the athlete's
+	# own records in the same file. A tile's last use is recorded when it
+	# is stored and, at most hourly, when it is read.
+	cache_budget : U64
+	cache_budget = 64 * 1024 * 1024
+
+	touch_secs : I64
+	touch_secs = 3600
+
+	# a key as one number in zoom, column, row order: a column or row stays
+	# below 2^28 at any zoom the pyramid has
+	order : Key -> U64
+	order = |k| k.z * 72057594037927936 + k.x * 268435456 + k.y
+
+	evicted : List({ key : Key, bytes : U64, used : I64 }), U64 -> List(Key)
+	evicted = |rows, budget| {
+		newest_first = List.sort_with(
+			rows,
+			|a, b|
+				if a.used > b.used {
+					Before
+				} else if a.used < b.used {
+					After
+				} else if order(a.key) < order(b.key) {
+					Before
+				} else {
+					After
+				},
+		)
+		var $total = 0
+		var $out = []
+		for r in newest_first {
+			$total = $total + r.bytes
+			if $total > budget {
+				$out = List.append($out, r.key)
+			}
+		}
+		$out
+	}
+
 	# ── what the window knows of each tile ─────────────────────────────────
 	# Fetching: a task is reading it. Waiting: it is not cached and the
 	# source has not been read yet. Drawn: its picture, which a stale cached
@@ -352,8 +411,8 @@ Tiles :: [].{
 			slots
 		} else {
 			idle = |s| !(List.contains(want, s.key)) and running([s]) == 0
-			order = List.sort_with(List.keep_if(slots, idle), |a, b| if (a.used < b.used) Before else if (a.used > b.used) After else Same)
-			gone = List.map(List.take_first(order, over), |s| s.key)
+			oldest = List.sort_with(List.keep_if(slots, idle), |a, b| if (a.used < b.used) Before else if (a.used > b.used) After else Same)
+			gone = List.map(List.take_first(oldest, over), |s| s.key)
 			List.drop_if(slots, |s| List.contains(gone, s.key))
 		}
 	}
@@ -637,3 +696,25 @@ expect {
 # read at once, a coarse tile three zooms up, and a cached copy good for
 # ninety days
 expect Tiles.max_cells == 48 and Tiles.max_slots == 64 and Tiles.max_running == 4 and Tiles.coarse_up == 3 and Tiles.max_age_secs == 90 * 86400 and Tiles.tile_px == 256.0 and Tiles.max_zoom == 14
+
+# a 200 with a body is a tile, a 204 the empty tile, and an empty 200 or any
+# other status no tile at all
+expect Tiles.body_of(200, [0x1a, 0x00]) == Ok([0x1a, 0x00]) and Tiles.body_of(204, []) == Ok([]) and Tiles.body_of(200, []) == Err(NotATile) and Tiles.body_of(404, [1]) == Err(NotATile) and Tiles.body_of(500, []) == Err(NotATile)
+
+# past the budget the least recently used tiles go, however the rows came;
+# the newest stay while their bytes fit, and once one does not, every older
+# one goes too, even a small one that would have fit
+expect {
+	row = |x, bytes, used| { key: { z: 14, x, y: 0 }, bytes, used }
+	rows = [row(1, 40, 100), row(2, 30, 300), row(3, 50, 200), row(4, 5, 50)]
+	Tiles.evicted(rows, 100) == [{ z: 14, x: 1, y: 0 }, { z: 14, x: 4, y: 0 }]
+		and Tiles.evicted(rows, 125) == []
+		and Tiles.evicted(rows, 79) == [{ z: 14, x: 3, y: 0 }, { z: 14, x: 1, y: 0 }, { z: 14, x: 4, y: 0 }]
+		and Tiles.evicted([], 10) == []
+}
+
+# tiles last used at the same time keep or go by zoom, column and row
+expect Tiles.evicted([{ key: { z: 9, x: 2, y: 0 }, bytes: 10, used: 5 }, { key: { z: 9, x: 1, y: 0 }, bytes: 10, used: 5 }], 15) == [{ z: 9, x: 2, y: 0 }]
+
+# the budget the docs state
+expect Tiles.cache_budget == 64 * 1024 * 1024 and Tiles.touch_secs == 3600

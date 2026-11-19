@@ -303,5 +303,10 @@ Ui :: [].{
 		# TileJSON their addresses are read from (Tiles)
 		map_tiles : List(Tiles.Slot),
 		map_source : Tiles.Source,
+		# the camera and tick the tiles were last planned at, and whether
+		# something has changed them since (a tile landed, the source was read,
+		# the map was read); main's plan_now says when a frame plans again
+		map_planned : { cam : Geo.Cam, tick : U64 },
+		map_plan_due : Bool,
 	}
 }

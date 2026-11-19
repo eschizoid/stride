@@ -68,6 +68,28 @@ Gate :: [].{
 	measure : Scene.Measure
 	measure = Scene.measure_with(data_font, prose_font)
 
+	# the platform's built-in face, which the window draws both faces in when
+	# the brand fonts cannot be read: a 10 px atlas whose glyphs carry no
+	# advance, so each measures its width, here for the printable ASCII
+	# range as Draw.default_font reports it; a code point outside the range
+	# measures as the platform's fallback glyph, the space
+	builtin_font : Text.Font
+	builtin_font = {
+		..Text.font_stub,
+		metrics: {
+			base_size: 10.0,
+			line_spacing: 0.0,
+			fallback_index: 0,
+			glyphs: List.map_with_index(builtin_widths, |w, i| { codepoint: 32 + U64.to_u32_wrap(i), advance_x: 0.0, offset_x: 0.0, offset_y: 0.0, width: w, height: 10.0 }),
+		},
+	}
+
+	builtin_widths : List(F32)
+	builtin_widths = [3, 1, 4, 6, 5, 7, 6, 2, 3, 3, 5, 5, 2, 4, 1, 7, 5, 2, 5, 5, 5, 5, 5, 5, 5, 5, 1, 1, 3, 4, 3, 6, 7, 6, 6, 6, 6, 6, 6, 6, 6, 3, 5, 6, 5, 7, 6, 6, 6, 6, 6, 6, 7, 6, 7, 7, 6, 6, 6, 2, 7, 2, 3, 5, 2, 5, 5, 5, 5, 5, 4, 5, 5, 1, 2, 5, 2, 5, 5, 5, 5, 5, 5, 5, 4, 5, 5, 5, 5, 5, 5, 3, 1, 3, 4]
+
+	builtin_measure : Scene.Measure
+	builtin_measure = Scene.measure_with(builtin_font, builtin_font)
+
 	# the window's logical sizes: the minimum, the default window at the
 	# default scale and at 100%, and a wide display, each once
 	sizes : List({ w : F32, h : F32 })
@@ -476,6 +498,8 @@ Gate :: [].{
 			map_play: { secs: 0.0, paused: Bool.False },
 			map_tiles: [],
 			map_source: Unasked,
+			map_planned: { cam: Map.unpainted, tick: 0 },
+			map_plan_due: Bool.True,
 			mouse_in: Bool.False,
 			cursor: -1,
 		}
@@ -1292,3 +1316,12 @@ expect List.all(
 			and Map.tiles_settled({ ..base, map: Db.no_map })
 	},
 )
+
+# the built-in face measures as Draw.default_font does: the play title at
+# 15 px is 412.5 px wide in both
+expect (Gate.builtin_measure("playback - every session at once, an hour in 30 seconds", 15.0, Prose) - 412.5).abs() < 0.01 and Gate.size_name(Gate.default_size) == "980x600"
+
+# every map mode at the size the window opens, judged in the built-in face
+# the window falls back to without its brand fonts, which runs wider: the
+# title, the credit and every note still keep apart
+expect Gate.failures(|m| Gate.judge(Map.owned(m, Gate.builtin_measure), Map.marks(m, Gate.builtin_measure)), List.keep_if(Gate.map_models, |e| Str.ends_with(e.name, " at ${Gate.size_name(Gate.default_size)}"))) == []
