@@ -2027,7 +2027,7 @@ expect {
 expect {
 	vo2 = { day: "2026-11-01", typ: "vo2max", dur_s: 300, val: 270, val_txt: "270W", rep_txt: "6x5:00" }
 	days = List.map(["2026-11-01", "2026-11-08", "2026-11-15", "2026-11-22", "2026-11-29"], |d| { ..vo2, day: d })
-	pace = { day: "2026-11-25", typ: "threshold", dur_s: 600, val: 3984, val_txt: "4:11/km", rep_txt: "3x10:00" }
+	pace = { day: "2026-11-25", typ: "threshold", dur_s: 600, val: 3984, val_txt: "6:44/mi", rep_txt: "3x10:00" }
 	Curve.ring_labels(days, |_| 0.0) == ["planned 11-01, 11-08 +3 270W"]
-		and Curve.ring_labels([pace, { ..pace, day: "2026-12-02", val_txt: "6:44/mi" }], |_| 0.0) == ["planned 11-25 4:11/km", "planned 12-02 6:44/mi"]
+		and Curve.ring_labels([pace, { ..pace, day: "2026-12-02", val_txt: "2:05/500m" }], |_| 0.0) == ["planned 11-25 6:44/mi", "planned 12-02 2:05/500m"]
 }
