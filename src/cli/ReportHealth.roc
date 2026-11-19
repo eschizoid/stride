@@ -10,11 +10,12 @@
 # (tte + activity). Moving a shared helper into one family is how a split turns into a
 # tangle.
 #
-# Two are NOT shared and stay there only by adjacency: Report.sport_exact_sql and
-# Report.sports_with_speed! serve this family alone (pace-curve, and tte pace through
-# speed_ladder!). They sit beside sport_filter_sql because they are the same concern —
-# resolving a sport word to a SQL predicate — and splitting one across two files would
-# be worse than the rule they break.
+# Two are NOT shared and stay there only by adjacency, each serving this family alone:
+# Report.sport_exact_sql, which pace-curve and tte pace both reach through
+# speed_ladder!, and Report.sports_with_speed!, which serves pace-curve. They sit
+# beside sport_filter_sql because they are the same concern — resolving a sport word
+# to a SQL predicate — and splitting one across two files would be worse than the
+# rule they break.
 import Strava
 import Report
 import Analyze
@@ -896,15 +897,18 @@ ReportHealth :: [].{
 			}
 		}
 	}
-	# Time to exhaustion at a caller-named power, against the CP fit of ONE sport
-	# family: the family a sport word names (Sports.family_head, so `row`,
-	# `Rowing` and `VirtualRow` all name the rowing family), the ride family when
-	# none is named. NOT the same fit power-curve publishes: that one spans every
-	# power sport unless named, filters by sport spelling rather than family, and
-	# includes today; this one is per-family and excludes its anchor date. Every
-	# refusal is explicit: no fit, at-or-below CP, or a result outside the 2-20
-	# minute band where the 2-parameter model holds — that last still returns the
-	# number, LABELLED, rather than hiding it or pretending it is trustworthy.
+	# Time to exhaustion at a caller-named power, against the CP fit of ONE whole
+	# sport family, the ride family when no sport is named. A family word (`row`)
+	# and any member's Strava spelling (`VirtualRow`) both select the whole family
+	# (Sports.family_head); a word outside every family selects the family stored
+	# under it, matched without regard to case (family_as_stored!). NOT the same
+	# fit power-curve publishes: power-curve widens a family WORD to its family but
+	# filters a Strava spelling to that spelling alone, spans every power sport
+	# when none is named, and includes today; this one always covers a whole
+	# family and excludes its anchor date. Every refusal is explicit: no fit,
+	# at-or-below CP, or a result outside the 2-20 minute band where the
+	# 2-parameter model holds — that last still returns the number, LABELLED,
+	# rather than hiding it or pretending it is trustworthy.
 	tte! : Str, Str => Try({}, _)
 	tte! = |watts_arg, sport|
 		match Metrics.arg_f64(Str.trim(watts_arg)) {
@@ -919,9 +923,12 @@ ReportHealth :: [].{
 				} else {
 					path = Db.open_db!({})?
 					today = Metrics.days_to_date_str(Db.local_today_days!(path))
-					family = if (Str.is_empty(Str.trim(sport))) Sports.canonical("Ride") else Sports.family_head(Str.trim(sport))
+					resolved = family_as_stored!(path, if (Str.is_empty(Str.trim(sport))) Sports.canonical("Ride") else Sports.family_head(Str.trim(sport)))?
+					family = resolved.family
 					fit = Report.cp_fit_as_of!(path, family, today, 90.U64)?
-					if fit.cp <= 0.0 {
+					if fit.cp <= 0.0 and !(resolved.known) {
+						Output.err_out!("no_cp_fit", "no session on record belongs to a family named '${family}', so there is nothing to fit a CP model from; `stride stats` lists the sports on record")
+					} else if fit.cp <= 0.0 {
 						# Two different causes, one branch: too few bests, or
 						# bests that are inconsistent (a longer one above a
 						# shorter one). Saying only "not enough" sends a coach
@@ -977,12 +984,12 @@ ReportHealth :: [].{
 		}
 
 	# Time to exhaustion at a caller-named pace, against the critical-speed fit of
-	# ONE exact sport over the same 90-day speed ladder `pace-curve 90 <sport>`
-	# fits (speed_ladder!, today included), so the CS spent here is the CS that
-	# command prints. The pace is read in the unit the caller wrote it in and
-	# turned into m/s, the model's unit; CS comes back in that same unit as
-	# `cs_pace_s`. The refusals are the power form's: no fit, at-or-below CS, or
-	# a labelled result outside the 2-20 minute band.
+	# ONE exact sport over the same speed ladder `pace-curve 90 <sport>` fits
+	# (speed_ladder!), so the CS spent here is the CS that command prints. The
+	# pace is read in the unit the caller wrote it in and turned into m/s, the
+	# model's unit; `cs_pace_s` is CS as seconds per that same unit. The refusals
+	# are the power form's: no fit, at-or-below CS, or a labelled result outside
+	# the 2-20 minute band.
 	tte_pace! : Str, Str => Try({}, _)
 	tte_pace! = |pace_arg, sport_arg|
 		match Metrics.parse_pace(pace_arg) {
@@ -1256,11 +1263,12 @@ ReportHealth :: [].{
 	}
 
 	# The window's grade-adjusted speed ladder for ONE exact sport: the 5, 10 and
-	# 20-minute bests MAXed over the last `days` days, today included, with an
-	# unrecorded rung dropped. `pace-curve` and `tte pace` both fit this, so the
-	# CS a `tte pace` answer spends is the one `pace-curve` prints for the same
-	# sport and window. The sport filter is EXACT (sport_exact_sql) because speed
-	# populations do not pool across a family the way power does.
+	# 20-minute bests MAXed over every session from `days` days before today
+	# through today, with an unrecorded rung dropped. `pace-curve` and `tte pace`
+	# both fit this, so the CS a `tte pace` answer spends is the one `pace-curve`
+	# prints for the same sport and window. The sport filter is EXACT
+	# (sport_exact_sql) because speed populations do not pool across a family the
+	# way power does.
 	speed_ladder! : Str, Str, U64 => Try(List({ dur_s : U64, speed : F64 }), _)
 	speed_ladder! = |path, sport, days| {
 		sx = Report.sport_exact_sql(sport)
@@ -1296,9 +1304,37 @@ ReportHealth :: [].{
 	# Critical speed over a speed ladder, refused to all zeros when the fit is.
 	# `cs` of 0 is the refusal signal, so the key means one thing across commands,
 	# exactly as `cp` does, and `points` counts the bests AVAILABLE to the fit.
-	# The `> 0.0` checks mirror the power gate in power_curve! and cannot fire for
-	# the same reason: the guard on a relaxed fit is the Metrics expect headed
+	#
+	# The `> 0.0` checks cannot fire: Metrics.critical_speed returns Ok only when
+	# CS and D' are both positive. If that fit were relaxed, these checks would
+	# turn its bad values into the documented refusal rather than publish them,
+	# and the expect that fails on such a relaxation is the Metrics one headed
 	# "critical_speed refuses a physically meaningless fit".
+	# The family as activities.sport_family stores it, matched without regard to
+	# case, with whether any session carries it at all. The fit compares the
+	# stored column exactly, so a word typed in another case than Strava's
+	# (`kayaking` for `Kayaking`) has to be resolved to the stored spelling first;
+	# a family nothing is stored under comes back as typed and unknown.
+	family_as_stored! : Str, Str => Try({ family : Str, known : Bool }, _)
+	family_as_stored! = |path, word| {
+		rows = Sql.query_many!({
+			path: Path.utf8(path),
+			query: \\SELECT CAST(a.sport_family AS TEXT) AS fam
+				\\FROM activities a
+				\\WHERE a.sport_family = :w COLLATE NOCASE
+				\\GROUP BY a.sport_family
+				\\ORDER BY COUNT(*) DESC
+				\\LIMIT 1
+			,
+			bindings: [{ name: ":w", value: String(word) }],
+			rows: Sql.str("fam"),
+		})?
+		match List.first(rows) {
+			Ok(f) => Ok({ family: f, known: Bool.True })
+			Err(_) => Ok({ family: word, known: Bool.False })
+		}
+	}
+
 	cs_fit : List({ dur_s : U64, speed : F64 }) -> { cs : F64, d_prime : F64, r2 : F64, points : I64 }
 	cs_fit = |points| {
 		fit_points = List.map(points, |p| { dur_s: (p.dur_s).to_f64(), speed: p.speed })

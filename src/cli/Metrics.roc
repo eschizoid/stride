@@ -1296,9 +1296,9 @@ Metrics :: [].{
 	# Time to exhaustion ABOVE the ceiling of a two-parameter hyperbolic model:
 	# the finite capacity (W' in joules, D' in metres) drains at the excess
 	# over the ceiling (CP in watts, CS in m/s), so it lasts capacity / excess
-	# seconds. Both models are the same line, P(t) = W'/t + CP and
-	# S(t) = D'/t + CS, so one walk answers both and two honest refusals hold
-	# for both:
+	# seconds. P(t) = W'/t + CP and S(t) = D'/t + CS are the same hyperbola
+	# with different units, so one function answers both and two honest
+	# refusals hold for both:
 	#   - at or below the ceiling the model divides by zero or goes negative,
 	#     which reads as "forever". The model believes that; bodies do not.
 	#   - the 2-parameter model is only meaningful over roughly 2-20 minutes.
@@ -1346,15 +1346,16 @@ Metrics :: [].{
 		)
 
 	# A pace the athlete names, `m:ss/<unit>` in one of the units a pace target
-	# is written in (`4:10/km`, `6:45/mi`, `1:40/100m`, `1:55/500m`), as the
-	# speed in m/s the critical-speed model reads. The same bounds as a pace
-	# target: under 10 s or over an hour per unit is a typo, not a pace.
+	# is written in (`4:10/km`, `6:45/mi`, `1:40/100m`, `1:55/500m`, the unit in
+	# any case), as the speed in m/s the critical-speed model reads. The same
+	# bounds as a pace target: under 10 s or over an hour per unit is a typo,
+	# not a pace.
 	parse_pace : Str -> Try({ pace_s : F64, unit : Str, speed : F64 }, [BadPace])
 	parse_pace = |lit|
 		match Str.split_first(Str.trim(lit), "/") {
 			Err(_) => Err(BadPace)
 			Ok({ before: pace_str, after: unit_s }) => {
-				unit = "/${unit_s}"
+				unit = "/${Str.with_ascii_lowercased(unit_s)}"
 				m = pace_unit_m(unit)
 				match mmss_seconds(pace_str) {
 					Ok(s) =>
@@ -5826,7 +5827,12 @@ expect {
 			Err(BadPace) => True
 			Ok(_) => False
 		}
-	ok_km and ok_swim and ok_row and ok_mi
+	# the unit is read in any case and published in the one spelling the schema names
+	ok_upper = match Metrics.parse_pace("4:10/KM") {
+		Ok(p) => p.unit == "/km" and (p.speed - 4.0).abs() < 0.001
+		Err(_) => False
+	}
+	ok_km and ok_swim and ok_row and ok_mi and ok_upper
 		and List.all(["4:10", "4:10/furlong", "4:1/km", "0:05/km", "300", "1", "60:01/km"], refused)
 }
 

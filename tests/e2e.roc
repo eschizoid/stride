@@ -407,7 +407,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1475)?
+	checks_ran_exactly!(1478)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7579,17 +7579,19 @@ validate_schema! = |ctx, cmd, schema| Str.trim(sh!("out=$(HOME='${ctx.home}' STR
 # pace form against critical speed. Each family gets bests no other fixture
 # session reaches, dated inside the 90-day window and before today, so each
 # fit below is exactly the one its own rows define:
-#   Ride   2200/2100/2050 W at 5/10/20 min: CP 2000 W, W' 60 kJ, on the line
-#   Rowing 240/220/215 W: CP 205 W, W' 10285.7 J, OFF the line, so the 20-min
-#          best outlasts the prediction at 215 W and refutes the fit
-#   Run    4.8/4.4/4.2 m/s: CS 4.0 m/s, D' 240 m, on the line
+#   Ride     2200/2100/2050 W at 5/10/20 min: CP 2000 W, W' 60 kJ, on the line
+#   Rowing   240/220/215 W: CP 205 W, W' 10285.7 J, OFF the line, so the 20-min
+#            best outlasts the prediction at 215 W and refutes the fit
+#   Kayaking 180/165/157.5 W: CP 150 W, W' 9 kJ, on the line, a sport outside
+#            every family, stored in Strava's case
+#   Run      4.8/4.4/4.2 m/s: CS 4.0 m/s, D' 240 m, on the line
 # The rowing row is spelled VirtualRow, so naming the family by a word, by its
 # head and by that member spelling all have to land on the same fit.
 b_tte_families! : Ctx => Try({}, _)
 b_tte_families! = |ctx| {
-	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9721,'TTE Ride','Ride','${ctx.d1}T06:00:00Z',3600,30000),(9722,'TTE Row','VirtualRow','${ctx.d1}T07:00:00Z',3600,12000),(9723,'TTE Run','Run','${ctx.d1}T08:00:00Z',3600,12000);")
-	_ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,metrics_rev,best_300s_w,best_600s_w,best_20min_w) VALUES (9721,100.0,1,2200.0,2100.0,2050.0),(9722,80.0,1,240.0,220.0,215.0);")
-	_ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,metrics_rev,best_300s_speed,best_600s_speed,best_20min_speed) VALUES (9723,60.0,1,4.8,4.4,4.2);")
+	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9741,'TTE Ride','Ride','${ctx.d1}T06:00:00Z',3600,30000),(9742,'TTE Row','VirtualRow','${ctx.d1}T07:00:00Z',3600,12000),(9743,'TTE Run','Run','${ctx.d1}T08:00:00Z',3600,12000),(9744,'TTE Kayak','Kayaking','${ctx.d1}T09:00:00Z',3600,8000);")
+	_ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,metrics_rev,best_300s_w,best_600s_w,best_20min_w) VALUES (9741,100.0,1,2200.0,2100.0,2050.0),(9742,80.0,1,240.0,220.0,215.0),(9744,50.0,1,180.0,165.0,157.5);")
+	_ = sql!(ctx.db, "INSERT INTO activity_metrics (activity_id,tss,metrics_rev,best_300s_speed,best_600s_speed,best_20min_speed) VALUES (9743,60.0,1,4.8,4.4,4.2);")
 	fit_of = "[.data.sport_family, (.data.cp | round), (.data.w_prime | round), .data.fit_points] | map(tostring) | join(\",\")"
 	# the power form, ride family by default and by name
 	check!("tte with no sport fits the ride family", strjq!(ctx, ["tte", "2150"], fit_of) == "Ride,2000,60000,3")?
@@ -7607,6 +7609,13 @@ b_tte_families! = |ctx| {
 	# a family with no power bests refuses by name rather than borrowing the ride fit
 	swim_cp = stride!(ctx.bin, ctx.home, ["tte", "300", "swim"])
 	check!("a family with no CP fit is refused with no_cp_fit, naming that family", Str.contains(swim_cp, "\"no_cp_fit\"") and Str.contains(swim_cp, "for the Swim family") and stride_status!(ctx.bin, ctx.home, ["tte", "300", "swim"]) == 1)?
+	# a sport outside every family matches its stored spelling in any case,
+	# as power-curve's sport filter does
+	check!("a sport outside every family fits its own sessions, typed in Strava's case or lower case", strjq!(ctx, ["tte", "160", "kayaking"], fit_of) == "Kayaking,150,9000,3" and strjq!(ctx, ["tte", "160", "Kayaking"], fit_of) == "Kayaking,150,9000,3" and strjq!(ctx, ["tte", "160", "KAYAKING"], fit_of) == "Kayaking,150,9000,3")?
+	check!("...and 160 W lasts 9000/10 = 900 s against it", strjq!(ctx, ["tte", "160", "kayaking"], "[(.data.seconds | round), .data.status] | map(tostring) | join(\",\")") == "900,in_model")?
+	# a word no stored family carries is refused as that, not as a fit that failed
+	bogus = stride!(ctx.bin, ctx.home, ["tte", "300", "bogus"])
+	check!("a word naming no stored family is refused with no_cp_fit saying nothing is on record under it", Str.contains(bogus, "\"no_cp_fit\"") and Str.contains(bogus, "no session on record belongs to a family named 'bogus'"))?
 	# the pace form, on one exact sport's critical speed
 	pace_of! = |args| strjq!(ctx, args, "[(.data.cs * 1000 | round), (.data.d_prime | round), (.data.cs_pace_s | round), (.data.seconds | round), .data.status, .data.known, .data.sport, .data.pace_unit] | map(tostring) | join(\",\")")
 	check!("tte pace fits the run's CS 4.0 m/s and D' 240 m, and 3:45/km lasts 240/0.444 = 540 s", pace_of!(["tte", "pace", "3:45/km", "Run"]) == "4000,240,250,540,in_model,true,Run,/km")?
@@ -7620,9 +7629,9 @@ b_tte_families! = |ctx| {
 	swim_cs = stride!(ctx.bin, ctx.home, ["tte", "pace", "1:40/100m", "Swim"])
 	check!("a sport with no CS fit is refused with no_cs_fit, naming that sport", Str.contains(swim_cs, "\"no_cs_fit\"") and Str.contains(swim_cs, "for Swim") and stride_status!(ctx.bin, ctx.home, ["tte", "pace", "1:40/100m", "Swim"]) == 1)?
 	check!("...and the pace fit does not pool a family: TrailRun has no speed bests of its own", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "pace", "3:45/km", "TrailRun"]), "\"no_cs_fit\""))?
-	check!("a pace without a unit is refused with bad_pace before any fit is read", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "pace", "3:45", "Run"]), "\"bad_pace\"") and stride_status!(ctx.bin, ctx.home, ["tte", "pace", "3:45", "Run"]) == 1)?
-	_ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (9721, 9722, 9723); DELETE FROM activities WHERE id IN (9721, 9722, 9723);")
-	check!("...and the scenario leaves no tte fixture behind", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE id IN (9721, 9722, 9723);")) == "0" and Str.contains(stride!(ctx.bin, ctx.home, ["tte", "230", "rowing"]), "\"no_cp_fit\""))?
+	check!("a pace without a unit is refused with bad_pace", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "pace", "3:45", "Run"]), "\"bad_pace\"") and stride_status!(ctx.bin, ctx.home, ["tte", "pace", "3:45", "Run"]) == 1)?
+	_ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id IN (9741, 9742, 9743, 9744); DELETE FROM activities WHERE id IN (9741, 9742, 9743, 9744);")
+	check!("...and the scenario leaves no tte fixture behind", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activities WHERE id IN (9741, 9742, 9743, 9744);")) == "0" and Str.contains(stride!(ctx.bin, ctx.home, ["tte", "230", "rowing"]), "\"no_cp_fit\""))?
 	Ok({})
 }
 

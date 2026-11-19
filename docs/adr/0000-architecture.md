@@ -318,20 +318,18 @@ What the remaining five share is not that they mutate, since `analyze`, `config 
 `week add`, `skip` and `import` all mutate and are all validated. They share instead that
 `just schema-check` derives its form list from the command table filtered on
 `mutates == false and network == false and interactive == false`, so any command outside
-that filter gets no automatic coverage and has to be given an explicit `e2e` arm by hand.
-Nine of the fourteen schema-bearing mutating commands have one, and those five do not. #259
-gave `auth` a payload and an `e2e-sync` arm in the same commit for that reason. The arm
-validates auth's payload against its schema and asserts that the tokens it reports storing
-are in the database, which is narrower than `sync`'s coverage in the same recipe. `sync`'s
-payload is validated in eight places across three drivers, and, as the next paragraph
-explains, `sync` carries closed record annotations that make a key change a build error,
-while `auth`'s payload literal is unannotated with a `|_|` renderer and has no such guard.
-`tte` and `tte pace` are validated by e2e arms that seed a fit, since the table-driven sweep
-meets only their refusals on the fixture. `sync` is covered by a third pass,
-`just e2e-sync`, which drives it against loopback mocks and now runs in CI. The recipe was
-assumed to need a token and a live API and so was left out of CI for a long time, and it
-needs neither, because the mocks bind loopback and the token is a fake row in a sandboxed
-HOME. The assumption cost the stream drain its only check of payload against schema.
+that filter gets no automatic coverage and needs an explicit `e2e` arm, which those five
+lack. `auth` has one in `e2e-sync`: it validates auth's payload against its schema and
+asserts that the tokens it reports storing are in the database, which is narrower than
+`sync`'s coverage in the same recipe. `sync`'s payload is validated by several arms across
+three drivers, and, as the next paragraph explains, `sync` carries closed record
+annotations that make a key change a build error, while `auth`'s payload literal is
+unannotated with a `|_|` renderer and has no such guard. `tte` and `tte pace` are validated
+by e2e arms that seed a fit, since the table-driven sweep meets only their refusals on the
+fixture. `sync` is covered by a third pass, `just e2e-sync`, which drives it against
+loopback mocks and runs in CI. It needs no token and no live API: the mocks bind loopback
+and the token is a fake row in a sandboxed HOME. It is the stream drain's only check of
+payload against schema.
 
 The next point is stated plainly because the near-miss is tempting. The compiler does not
 substitute for the validator. Where a payload carries a closed record annotation, as

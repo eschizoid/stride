@@ -86,8 +86,9 @@ Sports :: [].{
 	# The family head a word the ATHLETE typed scores against: a family word
 	# (`bike`, `rowing`) or any member's Strava spelling, case folded, names
 	# its family's head, which is the value activities.sport_family stores.
-	# Anything else passes through as typed, so a sport outside every family
-	# still selects itself and a typo selects nothing.
+	# Anything else passes through as typed. Only the database knows how Strava
+	# spells a sport outside every family, so matching such a word to a stored
+	# family regardless of case is the caller's job.
 	family_head : Str -> Str
 	family_head = |word| {
 		low = Str.with_ascii_lowercased(word)
