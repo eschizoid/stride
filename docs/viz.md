@@ -273,9 +273,11 @@ cannot be created, the window falls back to its default font.
 Both binaries build on **one compiler** — the tag is the `setup-roc` action's
 default, and `tools/pin-check.sh` holds the justfile's local viz default to it,
 refuses any per-job override, and refuses a compiler named in the app header.
-roc-ray names no compiler, so a viz build carries no mismatch warning and
-`tools/roc-viz.sh` forgives none: it runs roc, passes the exit code through,
-and holds a test run to its two assertion counts.
+roc-ray names no compiler, so a viz build carries no mismatch warning.
+`tools/roc-viz.sh` runs roc and holds a test run to its two assertion counts;
+it forgives warnings located inside the pinned roc-ray package, which stride
+cannot edit, and passes every other exit code through. Its header states the
+rule.
 
 ## Typography
 

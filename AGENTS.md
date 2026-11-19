@@ -47,7 +47,7 @@ just fmt       # roc fmt over src/ and tests/; CI fails any .roc file not in thi
 
 `tests/e2e.roc` rides basic-webserver 0.22.0, which builds at zero warnings on the
 pinned nightly, so `just e2e`, `just test` and `just e2e-sync` pass;
-docs/roc-new-compiler-notes.md says which floor each platform sets on the pin.
+docs/roc-new-compiler-notes.md says why the pin sits where it does.
 
 CI runs more than `just test`, and a green `just test` is not a green build. These are the
 rest of it, all runnable locally — run them before pushing. Every one is network-free
@@ -96,7 +96,7 @@ to it and refuses a per-job override.
 - A failed build leaves a stale binary that e2e would happily "pass" against; `just
   test` orders steps to prevent this. Don't run `just e2e` after a failed build.
 - Toolchain: the new (Zig) compiler, pinned by exact nightly tag (engine and viz
-  pins: see *Compiler pins* under Code conventions) · basic-cli **0.28** · builtin
+  pins: see the compiler-pin rule under Code conventions) · basic-cli **0.28** · builtin
   JSON. `~/.local/bin/roc` is a SYMLINK to the engine nightly; a bare `roc` in the
   justfile rides it — pin the explicit path in anything that must not depend on that
   link.

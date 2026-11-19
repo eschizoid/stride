@@ -13,19 +13,20 @@ on `nightly-2026-10-26-3c0fffe`, and basic-cli 0.26.0 does not type-check on
 this one (its streams pass `Unknown` where `Stream.custom` now takes
 `Err(Unknown)`, after `size_hint` was renamed `len_if_known`).
 
-Two nightly boundaries fix where the pin can sit. Before
-`nightly-2026-11-13-03dce41`, compile-time evaluation on Windows overflows its
-stack on plain literals such as `locale = "en-US"` (roc#12996 fixes it), so no
-earlier nightly builds on Windows; basic-cli 0.28.1 sets its floor there. From
-`nightly-2026-11-12-ce942d6` on, a local or parameter that shadows a definition
-in an enclosing scope is a `duplicate definition` warning. Stride's source has
-none. roc-ray 0.12.2's own source has many, and `tools/roc-viz.sh` forgives
-exactly those, under the rule its header states, until a roc-ray release checks
-clean. roc-ray names no compiler at all, so the viz app header carries no
-`roc:` field and the `setup-roc` default is the only pin.
+The Windows build sets the floor. On Windows, nightlies from
+`nightly-2026-11-11-7679cc5` until `nightly-2026-11-13-03dce41` report a
+compile-time stack overflow on plain literals such as `locale = "en-US"`
+(basic-cli#555; roc#12996 fixes it), and basic-cli 0.28.1 sets its floor at
+11-13. From `nightly-2026-11-12-ce942d6` on, a local or parameter that shadows
+a definition in an enclosing scope is a `duplicate definition` warning.
+Stride's source has none. roc-ray 0.12.2's own source has many, and
+`tools/roc-viz.sh` forgives any warning located inside that package, under the
+rule its header states; another roc-ray release gets no such pass until the
+wrapper names it. roc-ray names no compiler at all, so the viz app header
+carries no `roc:` field and the `setup-roc` default is the only pin.
 
-The previous pin's notes follow; the SQLite API they describe is unchanged in
-basic-cli 0.28.
+The previous pin's notes follow; every SQLite call the engine makes is unchanged
+in basic-cli 0.28.
 
 **basic-cli 0.26 replaced the SQLite API.** `Sqlite.open!` returns a `Db`
 connection, parameters are `${…}` interpolations or `?` markers, and rows decode

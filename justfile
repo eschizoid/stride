@@ -456,13 +456,15 @@ e2e:
 # the docs both point there); ROC_VIZ still overrides, PATH roc is the last resort
 viz_pin := `sh -c 'P="$HOME/.local/share/roc/nightly-2026-11-15-f25da45/roc"; [ -x "$P" ] && echo "$P" || echo roc'`
 roc_viz := env("ROC_VIZ", viz_pin)
-# open the app window (ESC quits). The two arguments are the athlete's directory,
-# the window's read-write grant (a home resolved at launch cannot be written into
-# the source the grant lives in), and the directory it was launched from, which a
-# capture's status row names its file under. Without them the window still opens
-# and says it has no database. roc hands everything after the file to the app
-# exactly as written, so no `--` separates them: one would arrive as the first
-# argument and be taken for the athlete's directory.
+
+# The two arguments are the athlete's directory, the window's read-write grant
+# (a home resolved at launch cannot be written into the source the grant lives
+# in), and the directory it was launched from, which a capture's status row
+# names its file under. Without them the window still opens and says it has no
+# database. roc hands everything after the file to the app exactly as written,
+# so no `--` separates them: one would arrive as the first argument and be
+# taken for the athlete's directory.
+# open the app window (ESC quits)
 viz:
     {{roc_viz}} src/viz/main.roc "$HOME/.stride" "$PWD"
 

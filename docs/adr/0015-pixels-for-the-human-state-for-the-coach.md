@@ -181,3 +181,7 @@ across the window's whole import graph.
 ## Update, 2026-10-29. roc-ray names no compiler
 
 roc-ray 0.11 names no compiler, so the viz app header no longer carries a `roc:` field and the `setup-roc` action's default is the only pin. `tools/pin-check.sh` now refuses a compiler named in the header and holds the justfile's local viz default to the pin. The 2026-09-29 update's conclusion stands: the viz build has no mismatch warning to forgive, now because there is nothing to mismatch.
+
+## Update, 2026-11-18. Warnings inside the roc-ray package are forgiven
+
+roc-ray 0.12.2 raises `duplicate definition` warnings in its own source on the pinned nightly, in source this repository cannot edit. `tools/roc-viz.sh` forgives a warning only when it is located inside the pinned roc-ray package; a warning in stride's own source, any error, and any warning from another roc-ray release still fail the run, and the wrapper's header states the full rule. The 2026-10-29 update's conclusion holds for the compiler: the viz build has no mismatch warning to forgive. The assertion-count pins are unchanged.
