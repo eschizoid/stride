@@ -878,8 +878,8 @@ Gate :: [].{
 		}
 	}
 
-	# the same home route with one more in Madrid, about 9,350 km east and
-	# 230 km south of it in projected metres
+	# the same home route with one more standing in for Madrid, about 9,340 km
+	# east and 220 km south of it in projected metres
 	madrid_fixture : Db.MapData
 	madrid_fixture = {
 		home = [{ x: 0.0, y: 0.0 }, { x: 1200.0, y: 400.0 }, { x: 2600.0, y: -300.0 }]

@@ -197,13 +197,15 @@ street map is missing.
 The map opens fitted to the routes, or to the street map when no route has
 GPS. When they span more than the widest zoom shows, as a single trip abroad
 makes them, it opens on where they gather instead: the routes starting in the
-100 km cell that holds the most route starts or in a cell beside it, and,
-should even those not fit, on the first of those starts at the widest zoom.
+100 km cell (in projected metres, about 75 km on the ground at Chicago's
+latitude) that holds the most route starts or in a cell beside it, and, should
+even those not fit, on the first route start in that cell at the widest zoom.
 A route that crosses the antimeridian is carried across the seam rather than
 drawn back across the whole map. A drag that begins on the map pans it, the
-wheel zooms at the cursor, and `0` returns to the opening view. The window keeps the map as an offscreen
-picture, repainted only when the camera, the window or the data changes;
-mid-drag the picture slides with the cursor and the release repaints it.
+wheel zooms at the cursor, and `0` returns to the opening view. The window
+keeps the map as an offscreen picture, repainted only when the camera, the
+window or the data changes; mid-drag the picture slides with the cursor and
+the release repaints it.
 Each line keeps a dense point list for close zooms and a sparse one for wide
 zooms, since a full backfill holds millions of points and every repaint
 walks the list it draws.
@@ -213,11 +215,10 @@ for it; on the first load the map says it is being read until it lands, and it
 names a read that failed. One map load runs at a time: R pressed while one
 runs reads the map once more after it lands, and a capture of the map view
 waits for the map. A database with no routes table reads as having no routes
-yet. The window's SQLite binding refuses a query whose
-result passes a byte budget rather than returning part of it, so routes and
-ways are read in pages. The credit, ©
-OpenStreetMap contributors, sits on the title row over the map's right edge;
-the street data is OpenStreetMap's, under the ODbL.
+yet. The window's SQLite binding refuses a query whose result passes a byte
+budget rather than returning part of it, so routes and ways are read in
+pages. The credit, © OpenStreetMap contributors, sits on the title row over
+the map's right edge; the street data is OpenStreetMap's, under the ODbL.
 
 ## Controls
 

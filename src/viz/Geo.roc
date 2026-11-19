@@ -163,12 +163,13 @@ Geo :: [].{
 	fits : Bounds, Rect -> Bool
 	fits = |b, r| b.x1 - b.x0 <= r.w * 0.9 * max_mpp and b.y1 - b.y0 <= r.h * 0.9 * max_mpp
 
-	# where the routes gather, for when they cannot all be shown at once: the
-	# square cell, focus_cell metres on a side, holding the most route
-	# starts, a tie going to the cell met first; the extent of every route
-	# starting in that cell or the eight around it, so a metro a cell edge
-	# runs through stays whole; and the first of those starts, the point a
-	# cluster too wide to fit is centred on
+	# where the lines gather, for when they cannot all be shown at once: the
+	# square cell, focus_cell metres on a side, holding the most line starts
+	# (the routes', or the base map's when no route has GPS), a tie going to
+	# the cell met first; the extent of every line starting in that cell or
+	# the eight around it, so a metro a cell edge runs through stays whole;
+	# and the first line start in that cell, the point a cluster too wide to
+	# fit is centred on
 	Focus : { box : Bounds, anchor : Pt }
 
 	focus_cell : F32
