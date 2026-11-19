@@ -764,9 +764,10 @@ Curve :: [].{
 	}
 
 	# a target label's width at the 10px label size, generous for the
-	# widest form, a pace label such as "planned MM-DD M:SS/100m NNN%"
+	# widest form, a pace target planned on more than two days such as
+	# "planned MM-DD, MM-DD +NN M:SS/100m NNN%"
 	ring_label_w : F32
-	ring_label_w = 170.0
+	ring_label_w = 210.0
 
 	# the first label row of each ring, left to right: a ring closer than a
 	# label's width to the one before it starts below that ring's labels, and
@@ -795,21 +796,25 @@ Curve :: [].{
 	target_label : Mark, F32 -> Str
 	target_label = |t, best| days_label(t, [t.day], best)
 
-	# the same label for one target planned on several days, the days in the
-	# order given and joined by commas
+	# the same label for one target planned on several days: the first two
+	# days in the order given, joined by a comma, and a count of the rest, so
+	# the label stays one ring_label_w wide however often the target repeats
 	days_label : Mark, List(Str), F32 -> Str
 	days_label = |t, days, best| {
-		mmdd = Str.join_with(List.map(days, |d| Str.from_utf8_lossy(List.drop_first(Str.to_utf8(d), 5))), ", ")
+		shown = Str.join_with(List.map(List.take_first(days, 2), |d| Str.from_utf8_lossy(List.drop_first(Str.to_utf8(d), 5))), ", ")
+		more = if (List.len(days) > 2) " +${(List.len(days) - 2).to_str()}" else ""
+		mmdd = "${shown}${more}"
 		pct = if (best <= 0.0) "" else " ${Db.fmt_i(I64.to_f32(t.val) / best * 100.0)}%"
 		"planned ${mmdd} ${t.val_txt}${pct}"
 	}
 
 	# the labels a ring prints: one per distinct target, a target being its
-	# rep duration and value, so a workout planned on several days reads once
-	# with all its days. Targets keep the order they arrive in, date order.
+	# rep duration, value and printed value (a pace in another unit prints
+	# differently for the same speed), so a workout planned on several days
+	# reads once. Targets keep the order they arrive in, date order.
 	ring_labels : List(Mark), (Mark -> F32) -> List(Str)
 	ring_labels = |ts, best_of| {
-		same = |a, b| a.val == b.val and a.dur_s == b.dur_s
+		same = |a, b| a.val == b.val and a.dur_s == b.dur_s and a.val_txt == b.val_txt
 		groups = List.fold(
 			ts,
 			[],
@@ -2015,4 +2020,14 @@ expect {
 	Curve.ring_labels([vo2, { ..vo2, day: "2026-12-09" }], |_| 267.0) == ["planned 11-25, 12-09 275W 103%"]
 		and Curve.ring_labels([vo2, { ..vo2, day: "2026-12-09", val: 280, val_txt: "280W" }], |_| 0.0) == ["planned 11-25 275W", "planned 12-09 280W"]
 		and Curve.ring_labels([vo2, { ..vo2, day: "2026-12-02", dur_s: 900 }, { ..vo2, day: "2026-12-09" }], |_| 0.0) == ["planned 11-25, 12-09 275W", "planned 12-02 275W"]
+}
+# more than two days print the first two and a count of the rest, so a long
+# repeat keeps a label of one width; the same speed printed in another unit
+# keeps its own label
+expect {
+	vo2 = { day: "2026-11-01", typ: "vo2max", dur_s: 300, val: 270, val_txt: "270W", rep_txt: "6x5:00" }
+	days = List.map(["2026-11-01", "2026-11-08", "2026-11-15", "2026-11-22", "2026-11-29"], |d| { ..vo2, day: d })
+	pace = { day: "2026-11-25", typ: "threshold", dur_s: 600, val: 3984, val_txt: "4:11/km", rep_txt: "3x10:00" }
+	Curve.ring_labels(days, |_| 0.0) == ["planned 11-01, 11-08 +3 270W"]
+		and Curve.ring_labels([pace, { ..pace, day: "2026-12-02", val_txt: "6:44/mi" }], |_| 0.0) == ["planned 11-25 4:11/km", "planned 12-02 6:44/mi"]
 }

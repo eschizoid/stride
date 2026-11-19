@@ -1132,3 +1132,19 @@ expect List.join(List.map(Gate.splash_models, |f| List.map(Labels.check(Scene.ow
 # the XP rail's sheet holds its lines inside its card for every athlete at
 # every size
 expect List.join(List.map(Gate.board_models, |f| List.map(Labels.check(Scene.owned(Labels.place((Hud.sheet(f.model, Gate.measure)).lines, { boxes: [], segs: [] }))), |e| "${f.name}: ${e}"))) == []
+
+# the power view draws one label for a workout planned on nine days, the
+# first two days and a count of the rest, at the default window, where nine
+# days written out would fit nowhere
+expect {
+	power = List.keep_if(Gate.curve_models, |c| Str.contains(c.name, " power ") and Str.contains(c.name, "90d") and Str.contains(c.name, "folded") and Str.contains(c.name, "at 980x600"))
+	match List.first(power) {
+		Ok(c) => {
+			nine = List.map(["01", "02", "03", "04", "05", "06", "07", "08", "09"], |d| { day: "2026-11-${d}", typ: "vo2", reps: 6, dur_s: 300, watts: 270 })
+			m = { ..c.model, plan_targets: nine, pace_targets: [] }
+			labels = List.keep_if(List.map(Curve.scene(m, Gate.measure), |p| p.item.text), |t| Str.starts_with(t, "planned "))
+			List.len(labels) == 1 and List.any(labels, |t| Str.starts_with(t, "planned 11-01, 11-02 +7 270W"))
+		}
+		Err(_) => Bool.False
+	}
+}
