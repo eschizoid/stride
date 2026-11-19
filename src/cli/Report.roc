@@ -14,18 +14,17 @@ import Render
 Report :: [].{
 	# ── shared queries ──────────────────────────────────────────────────
 
-	# ONE home for the load_model -> confidence-tier mapping (#157): doctor's
-	# session counts and summary's TSS-weighted coverage read these same lists,
-	# so the ladder cannot drift between surfaces. high = measured power (and
-	# rtss: pace threshold derives from measured speed), medium = HR/RPE-scaled,
-	# low = relative_effort (Strava's opaque estimate).
+	# ONE home for the load_model -> confidence-tier mapping: doctor's session
+	# counts and summary's TSS-weighted coverage read these same lists, so the
+	# ladder cannot drift between surfaces. high = measured power (and rtss: pace
+	# threshold derives from measured speed), medium = HR/RPE-scaled, low =
+	# relative_effort (Strava's opaque estimate).
 	high_models_sql = "'power_stream','weighted_watts','avg_watts','rtss'"
 
 	# "is this activity's stored date readable", in SQL, for the sites that need the
 	# answer inside a query — `date_known` on `activities` and `top`, and
-	# `doctor`'s undateable count. ONE constant because they were
-	# byte-identical copies, and only one was value-pinned: collapsing them makes the
-	# '1000-02-30' fixture hold every site by construction.
+	# `doctor`'s undateable count. ONE constant, so the '1000-02-30' fixture that
+	# value-pins it holds every site by construction.
 	# The rule itself lives in Metrics.usable_date_days / date_known_sql_for, beside
 	# its Roc twin (`Analyze` and `Strava` cannot import Report); this stays as the
 	# name they already share. The SQL round-trips through SQLite's own date(),
@@ -172,9 +171,9 @@ Report :: [].{
 				Ok(latest_day) => {
 					# PROPAGATE, through the same helper summary_payload! uses on the same anchor
 					# (same semantics, not the same statement). Collapsing to epoch day 0 does not
-					# fail loudly — it answers: a real 28-day block came back `has_data: false`,
-					# every figure 0, "fitness holding", while `summary` refused on the same
-					# database in the same run.
+					# fail loudly — it answers: a real 28-day block would come back `has_data: false`,
+					# every figure 0, "fitness holding", while `summary` refuses on the same
+					# database.
 					anchor = canonical_day(latest_day)?
 					# AFTER the daily_load anchor, before the windows. After, because `summary` reads
 					# its anchor first too, and the two commands must meet the same fault first on
@@ -298,33 +297,13 @@ Report :: [].{
 	# Same rule, different table, so a different tag: an activity date is repaired by
 	# re-fetching or deleting the ROW, a daily_load day by rebuilding the table, and the
 	# boundary picks the message from the tag. Takes the id rather than inventing one:
-	# naming the date alone is what #243 was opened about, and "activity -1" would be that
-	# defect wearing a number.
+	# a message naming only the date does not say which row to repair, and "activity -1"
+	# names no row either.
 	canonical_activity_day : Str, I64 -> Try(I64, _)
 	canonical_activity_day = |d, id| (Metrics.usable_date_days(d)).map_err(|_| BadActivityDate(d, id))
 
-	# Every stored activity date, refused if any is unreadable, naming a row.
-	# ONE BODY, because five spellings of "canonical and parseable" had to agree and
-	# did not (#243). FIVE call sites reaching `rate`, `week`, `compare`, `summary`,
-	# `plan` and `stats`. `season` is deliberately NOT one: it guards inline over a
-	# query grouped by (date, family), so sharing this body would name a different
-	# row than its comment promises.
-	#
-	# CONTRACT FOR CALLERS: a command that reads `daily_load` must guard THAT column
-	# first. With both faults present, `analyze` — the daily_load remedy — clears the
-	# poisoned day AND surfaces the activity fault in one run; reverse the order and
-	# the user meets a second failure nobody warned them about. The fragile holder is
-	# `summary`, which holds the order ACROSS TWO FUNCTIONS; only call order and one
-	# e2e check pin it.
-	#
-	# A WHOLE-TABLE sweep rather than a per-query guard because of the failure mode:
-	# `compare` and `stats` use the date as a FILTER over an aggregate, and an
-	# unreadable date makes the comparison NULL — the row silently LEAVES THE SET.
-	# An absence, not a fabrication (compare's verdict crossed a category with one
-	# date NULLed; stats said 474 under ALL TIME while holding 475), and a guard on
-	# the filtering query cannot catch a row that is already gone.
 	# The one body of "latest" activity resolution, shared by `rate latest` and
-	# `complete latest` (#465). It returns the id AND the day, because a caller
+	# `complete latest`. It returns the id AND the day, because a caller
 	# linking a session needs the date and a second query would be a second
 	# chance to disagree with this one.
 	latest_activity! : Str => Try({ id : I64, day : Str }, _)
@@ -340,17 +319,15 @@ Report :: [].{
 		# TWO steps, and the split is the point: Roc GUARDS, SQL RANKS. The guard
 		# validates substr(start_local, 1, 19) and the ranker compares the SAME slice —
 		# not two lists that must agree. Positions 1..19 are the whole date and time;
-		# anything past them cannot reorder rows (a lowercase 'z' in position 20 once
-		# outranked an uppercase 'Z' on an identical timestamp).
+		# anything past them cannot reorder rows (a lowercase 'z' in position 20 would
+		# outrank an uppercase 'Z' on an identical timestamp).
 		# The date half needs Roc (round-trip + year bound), grouped by DAY — grouping
-		# by whole timestamp scaled with activities, ~870ms at 50k vs ~86ms. The time
-		# half is pure comparison and stays in SQL. This calls the shared sweep rather
-		# than restating it: a byte-identical copy once sat here, ~270 lines above a
-		# call to the helper whose comment claimed to be the one body.
+		# by whole timestamp would scale with the number of activities rather than days.
+		# The time half is pure comparison and stays in SQL. This calls the shared sweep
+		# rather than restating it, so there is one body of the date rule to keep correct.
 		_ = Report.guard_activity_dates!(path)?
-		# ...and the TIME half. No NULL arm, deliberately: a NULL start_local is already
-		# refused by the date sweep above, and a mutation test proved the arm could not
-		# fail — a guard that cannot fail is worse than none. The ORDERING is therefore
+		# ...and the TIME half. No NULL arm: a NULL start_local is already refused by the
+		# date sweep above, so such an arm could never fail. The ORDERING is therefore
 		# load-bearing: the date sweep must run before this, or a NULL reaches the
 		# decoder as UnexpectedType(Null) — internal_error on a write path.
 		bad_time = Sql.query_many!({
@@ -378,9 +355,9 @@ Report :: [].{
 				Ok({ id, t })
 			},
 		})?
-		# names the component that FAILED, not the one that is fine: the message used to
-		# hand back the date half for a row whose time is T37. BadActivityTime's argument
-		# is the time COMPONENT — raising `('T37:00:00')` framed as a stored value
+		# names the component that FAILED, not the one that is fine: for a row whose time
+		# is T37 the date half is readable and the time half is not. BadActivityTime's
+		# argument is the time COMPONENT — raising `('T37:00:00')` framed as a stored value
 		# matches zero rows for anyone who pastes it into a WHERE clause, so the empty
 		# case is worded rather than given a fake literal.
 		_ = match List.first(bad_time) {
@@ -404,6 +381,26 @@ Report :: [].{
 		Ok({ id, day })
 	}
 
+	# Every stored activity date, refused if any is unreadable, naming a row.
+	# ONE BODY, so every caller applies the same "canonical and parseable" rule.
+	# Its callers reach `rate`, `week`, `compare`, `summary`, `plan` and `stats`.
+	# `season` is NOT one: it guards inline over a query grouped by (date,
+	# family), so sharing this body would name a different row than its comment
+	# promises.
+	#
+	# CONTRACT FOR CALLERS: a command that reads `daily_load` must guard THAT column
+	# first. With both faults present, `analyze` — the daily_load remedy — clears the
+	# poisoned day AND surfaces the activity fault in one run; reverse the order and
+	# the user meets a second failure nobody warned them about. The fragile holder is
+	# `summary`, which holds the order ACROSS TWO FUNCTIONS; only call order and one
+	# e2e check pin it.
+	#
+	# A WHOLE-TABLE sweep rather than a per-query guard because of the failure mode:
+	# `compare` and `stats` use the date as a FILTER over an aggregate, and an
+	# unreadable date makes the comparison NULL — the row silently LEAVES THE SET.
+	# That is an absence, not a fabrication (a verdict computed without the row, an
+	# ALL TIME total one short), and a guard on the filtering query cannot catch a
+	# row that is already gone.
 	guard_activity_dates! : Str => Try({}, _)
 	guard_activity_dates! = |path| {
 		act_days = Sql.query_many!({
@@ -448,18 +445,18 @@ Report :: [].{
 				}
 		}
 	}
-	# The hard-day block of summary_payload!, lifted whole (#196). It is the one
+	# The hard-day block of summary_payload!, as its own function. It is the one
 	# self-contained stretch in that function -- three inputs, one record out, and
 	# nothing downstream re-reads an intermediate. `hard_expr` stays inside: it is SQL
 	# text used twice here and nowhere else, and returning it would put a query
 	# fragment in a payload record.
 	hard_day_stats! = |path, anchor, cutoff28| {
 		# most recent day with a real hard stimulus (5+ min in Z4/Z5); '' = never.
-		# ONE hard-session predicate (#159), power-aware like every other hard surface:
-		# pi_hard when the activity has an intensity split, HR Z4+Z5 otherwise. HR-only
-		# missed power rides with junk straps; consolidated, not a second definition.
+		# ONE hard-session predicate, power-aware like every other hard surface:
+		# pi_hard when the activity has an intensity split, HR Z4+Z5 otherwise. HR alone
+		# would miss power rides recorded with a bad strap.
 		# MAX(substr(...)) is a STRING max reaching the payload with no Roc-side parse,
-		# so a malformed start_local shipped verbatim into a date field — covered by the
+		# so a malformed start_local would ship verbatim into a date field — covered by the
 		# all-time sweep below, NOT by anything in this query (this one has no cutoff).
 		hard_expr = "COALESCE(ai.hard_s, 0) >= 300"
 		last_hard = Sql.query!({
@@ -472,11 +469,11 @@ Report :: [].{
 			bindings: [],
 			row: Sql.str("d"),
 		})?
-		# stimulus features (#159): counts, spacing and windowed loads the coach would
-		# otherwise re-derive — measurements only, never judgments (#154).
-		# ONE sweep over every activity date, before any read below. It replaces a
-		# per-query guard that named the wrong row (MIN(a.id) inside a GROUP BY names the
-		# lowest id IN THE GROUP, not the row whose date is the MAX), and it covers the
+		# stimulus features: counts, spacing and windowed loads the coach would
+		# otherwise re-derive — measurements only, never judgments.
+		# ONE sweep over every activity date, before any read below. A per-query guard
+		# would name the wrong row (MIN(a.id) inside a GROUP BY names the lowest id IN
+		# THE GROUP, not the row whose date is the MAX), and the sweep also covers the
 		# two string MAXes with no parse to hang a guard on: `last_hard` is all-time, so
 		# a cutoff-scoped guard cannot see a malformed hard session older than the
 		# window, and `sports_28d.last_date` has no hard_expr at all.
@@ -583,7 +580,7 @@ Report :: [].{
 		})?
 
 		# the best the ESTIMATE stands on: the same window, but only once two
-		# sessions of the family carry a best there (#574, the rule scoring uses),
+		# sessions of the family carry a best there (the rule scoring uses),
 		# so a lone ride reports its measured best and an estimate of 0
 		ftp_best_row = Sql.query!({
 			path: Path.utf8(path),
@@ -617,7 +614,7 @@ Report :: [].{
 				tss = Sql.f64("tss")(cols)(stmt)?
 				moving_time = Sql.i64("moving_time")(cols)(stmt)?
 				distance_m = Sql.f64("distance_m")(cols)(stmt)?
-				# when this sport was last seen (#159) — '' can't happen inside the
+				# when this sport was last seen — '' can't happen inside the
 				# window filter, but COALESCE keeps the decoder total
 				last_date = Sql.str("last_date")(cols)(stmt)?
 				Ok({ sport, sessions, tss, moving_time, distance_m, last_date })
@@ -626,7 +623,7 @@ Report :: [].{
 
 		cutoff7 = Metrics.days_to_date_str(anchor - 6)
 		zsum7 = zone_sum!(path, cutoff7)?
-		# TSS-weighted confidence coverage per window (#157): 7d and 28d speak for
+		# TSS-weighted confidence coverage per window: 7d and 28d speak for
 		# the load numbers beside them; 90d spans two CTL time constants, so it is
 		# the honest provenance for CTL/ATL/TSB. Percentages sum to exactly 100
 		# (Metrics.coverage_pcts) and known=false marks an empty window — 0/0/0
@@ -742,10 +739,10 @@ Report :: [].{
 			row: Sql.i64("n"),
 		})?
 
-		# #93 ramp: reuses the `anchor` this function already computed, rather than
+		# ramp: reuses the `anchor` this function already computed, rather than
 		# deriving the same day again — two bindings for one day can drift, and then the
 		# ramp window and summary's 7d/28d windows would disagree about which day "now"
-		# is. 30 days of series covers the 28-day ramp lookback with room for gaps — and now
+		# is. 30 days of series covers the 28-day ramp lookback with room for gaps, and
 		# also bounds days_in_band, which has NO natural upper limit. That is why the streak
 		# returns AtLeast when it fills this window rather than a bare number: widening the
 		# window moves the truncation point, it does not remove it.
@@ -758,7 +755,7 @@ Report :: [].{
 				c = Sql.f64("ctl")(cols)(stmt)?
 				# tsb rides along on the ramp query rather than getting its own: the two
 				# lookbacks want the same rows over the same window, and a second query
-				# could disagree with this one about which days exist (#111).
+				# could disagree with this one about which days exist.
 				t = Sql.f64("tsb")(cols)(stmt)?
 				Ok({ d, ctl: c, tsb: t })
 			},
@@ -790,7 +787,7 @@ Report :: [].{
 		# projections keep the date validation above from being done twice
 		ramps = Metrics.ramp_rates(List.map(dated_load, |e| { day: e.day, ctl: e.ctl }), anchor)
 		form_delta = Metrics.form_delta_7d(List.map(dated_load, |e| { day: e.day, tsb: e.tsb }), anchor)
-		# how long the band has held (#123) — the thing the label itself cannot say
+		# how long the band has held — the thing the label itself cannot say
 		band_days = Metrics.days_in_band(List.map(dated_load, |e| { day: e.day, tsb: e.tsb }), anchor)
 		# ANNOTATED Bool, not a bare tag: the builtin JSON serializes an unconstrained
 		# tag as the STRING "True". This payload happens to escape already — it is
@@ -818,8 +815,8 @@ Report :: [].{
 			ramp_28d_avg: ramps.ramp_28d_avg,
 			fatigue_atl: latest.atl,
 			form_tsb: latest.tsb,
-			# stable machine identifier for the form band (#154) — ADDITIVE; clients
-			# switch on this instead of re-deriving band boundaries from raw TSB
+			# stable machine identifier for the form band; clients switch on
+			# this instead of re-deriving band boundaries from raw TSB
 			form_state: Metrics.form_state(latest.tsb),
 			# ADDITIVE field, so the envelope version stays (same precedent as `converged`
 			# and the ramp fields). Unknown flattens to 0.0 here, which is the house
@@ -843,14 +840,14 @@ Report :: [].{
 				Unknown => 0
 			},
 			# TRUE means the streak filled the whole series and is a FLOOR, not a count.
-			# `dated_load` is a 31-day window sized for the #93 ramp, so a 45-day streak
+			# `dated_load` is a 31-day window sized for the ramp, so a 45-day streak
 			# arrives here as 31; without this flag the coach reads 31 as fact. Annotated
 			# Bool for the same reason delta_known is.
 			form_band_days_capped: band_capped,
 			load_days: load_days,
 			ctl_warming_up: load_days < 90,
 			last_hard_session_date: last_hard,
-			# stimulus features (#159) — counts and spacing are MEASUREMENTS; the
+			# stimulus features — counts and spacing are MEASUREMENTS; the
 			# spacing/days-since flags are the ADR 0009 null (0 with known false)
 			hard_days: {
 				d14: (hard_d14).to_i64_wrap(),
@@ -915,7 +912,7 @@ Report :: [].{
 				load_coverage: cov28,
 			},
 			# provenance for the CTL/ATL/TSB numbers above: what the trailing ~two
-			# CTL time constants of load are MADE of. Descriptive only (#154) —
+			# CTL time constants of load are MADE of. Descriptive only —
 			# stride states the mix, the coach decides whether it matters.
 			form_coverage_90d: cov90,
 			ftp: {
@@ -929,7 +926,7 @@ Report :: [].{
 				test_ftp_w: ride_test.value,
 				test_kind: ride_test.kind,
 				test_date: ride_test.date,
-				# trajectory (#159): the PRIOR 60d window's best beside the current —
+				# trajectory: the PRIOR 60d window's best beside the current —
 				# which way the demonstrated ceiling moved; known=false = no power
 				# in that window (a delta against nothing is not 0)
 				prior_60d_best_20min_w: prior_best20.b,
@@ -974,7 +971,7 @@ Report :: [].{
 	# Each rung is tested separately rather than COALESCEd into one: COALESCE returns the
 	# first NON-NULL, so a stored 0.0 in the 20-min rung would mask positive 5- and 10-min
 	# ones — and Db.roc documents these columns as "0/NULL = no data", so 0 is an admitted
-	# stored value. That predicate denied a sport whose curve fits.
+	# stored value, and a COALESCEd test would deny a sport whose curve fits.
 	# Ordered by row count so the sport they train most is named first.
 	sports_with_speed! : Str, U64 => Try(List(Str), _)
 	sports_with_speed! = |path, days| {
@@ -1009,35 +1006,67 @@ Report :: [].{
 				Ok({ day, tss, ctl, atl, tsb })
 			},
 		})?
-		# GUARDED here rather than in Render: a pure renderer can DROP the row but cannot
-		# NAME it, and naming the row is the whole of #243. What Render absorbed was real —
-		# `.ok_or(0)` collapses an unreadable day to epoch 0, rendering a 1969 week row
-		# AND anchoring the verdict on it (`List.last(ordered)` makes it `today`).
-		# Dropping via keep_oks would silently under-count the rollup instead; daily_load
-		# is DERIVED, so refusing with a one-command remedy costs nothing that was ever
-		# available — a lexically-high garbage day sorts to the top of `ORDER BY day
-		# DESC`, so it is inside every window. Same rule and helper as every other
-		# daily_load.day read here (#243), so `load` stops being the one command that
-		# answers where the rest refuse.
-		_ = List.map_try(rows, |r| canonical_day(r.day))?
-		ordered = List.fold(rows, [], |acc, x| List.concat([x], acc))
-		Output.out!(ordered, Render.load_screen)
+		# Every day is guarded here rather than in Render: a pure renderer can
+		# drop an unreadable row but cannot name it, and collapsing it to epoch
+		# day 0 would render a 1969 week and anchor the verdict on it. Dropping
+		# it would under-count the rollup instead. daily_load is derived, so
+		# refusing with a one-command remedy (`stride analyze`) loses nothing,
+		# and a lexically high garbage day sorts to the top of `ORDER BY day
+		# DESC`, so it is inside every window. Every other daily_load.day
+		# reader refuses through the same helper.
+		days_known = List.map_try(rows, |r| canonical_day(r.day))?
+		ordered = Render.reverse_list(rows)
+		# Per-family fitness beside the combined series, from the same scored
+		# load rebuild_daily_load! sums, grouped by family as well as day. It
+		# walks each family's whole history, so a day's family CTL is the
+		# same whatever window was asked for. The combined row stays the
+		# source of form; the families are descriptive and carry no tsb.
+		fam_loads = Sql.query_many!({
+			path: Path.utf8(path),
+			query: \\SELECT COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS day,
+				\\       CAST(COALESCE(a.sport_family, a.sport_type, '') AS TEXT) AS fam,
+				\\       CAST(COALESCE(SUM(m.tss), 0) AS REAL) AS fam_tss
+				\\FROM activity_metrics m
+				\\JOIN activities a ON a.id = m.activity_id
+				\\GROUP BY day, fam ORDER BY fam, day
+			,
+			bindings: [],
+			rows: |cols| |stmt| {
+				day = Sql.str("day")(cols)(stmt)?
+				fam = Sql.str("fam")(cols)(stmt)?
+				fam_tss = Sql.f64("fam_tss")(cols)(stmt)?
+				Ok({ day, fam, t: fam_tss })
+			},
+		})?
+		# a day that does not parse is left out here exactly as the combined
+		# rebuild leaves it out, which refuses by name on the next analyze
+		loads = List.keep_oks(fam_loads, |r| Metrics.usable_date_days(r.day).map_ok(|d| { day: d, family: r.fam, tss: r.t }))
+		# rows arrive newest first
+		hi = List.first(days_known).ok_or(0)
+		lo = List.last(days_known).ok_or(0)
+		by_day = List.fold(Metrics.family_fitness(loads, lo, hi), Dict.empty(), |acc, d| Dict.insert(acc, d.day, d.families))
+		payload : List({ day : Str, tss : F64, ctl : F64, atl : F64, tsb : F64, families : List({ family : Str, tss : F64, ctl : F64, atl : F64 }) })
+		payload = List.map2(
+			ordered,
+			Render.reverse_list(days_known),
+			|r, d| { day: r.day, tss: r.tss, ctl: r.ctl, atl: r.atl, tsb: r.tsb, families: Dict.get(by_day, d).ok_or([]) },
+		)
+		Output.out!(payload, |p| Render.load_screen(List.map(p, |r| { day: r.day, tss: r.tss, ctl: r.ctl, atl: r.atl, tsb: r.tsb })))
 	}
 
 	# The athlete's CP/W' fit for ONE SPORT FAMILY as of a DATE, over the same
-	# 2-20 minute band power-curve fits (#186/#187 spend this model, so they
-	# must not fit a second, differently-shaped one).
+	# 2-20 minute band power-curve fits (time to exhaustion and W' balance spend
+	# this model, so they must not fit a second, differently-shaped one).
 	#
 	# Strictly BEFORE the date, not on-or-before: a ride inside its own fit
-	# window raises the very W' it is then measured against. Measured on a
-	# breakthrough 3x12 — W' 2490 J excluding the
-	# ride, 6416 J including it, a 2.58x change in the denominator that scales
-	# every W' number for that ride, and it fires precisely on the rides where
-	# the athlete did something new.
+	# window raises the very W' it is then measured against. A breakthrough
+	# session can more than double W' that way, and that change in the
+	# denominator scales every W' number for that ride, precisely on the rides
+	# where the athlete did something new.
 	#
-	# The family is the CALLER's, never a hardcoded Ride: a rowing session was
-	# being scored against a cyclist's CP and flagged known, which is worse than
-	# having no number at all.
+	# The family is the CALLER's, never a hardcoded Ride: a rowing session scored
+	# against a cyclist's CP and flagged known is worse than having no number at
+	# all.
 	cp_fit_as_of! = |path, family, on_date, days| {
 		row = Sql.query!({
 			path: Path.utf8(path),

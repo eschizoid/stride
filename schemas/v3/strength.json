@@ -35,7 +35,10 @@
                 "top_reps",
                 "total_reps",
                 "top_hold_s",
-                "total_hold_s"
+                "total_hold_s",
+                "e1rm_kg",
+                "e1rm_reps",
+                "e1rm_known"
               ],
               "additionalKeys": false,
               "properties": {
@@ -63,6 +66,18 @@
                 "total_hold_s": {
                   "type": "integer",
                   "description": "the day's summed hold time for the exercise, sets times the seconds each was held; 0 on an entry whose measure is not \"hold\""
+                },
+                "e1rm_kg": {
+                  "type": "number",
+                  "description": "the day's estimated one-rep max in kg, by Epley (weight x (1 + reps / 30); a single is its own weight), from whichever of the day's rep sets gives the highest estimate. Per hand for a dumbbell pair, like top_kg, since logged weights are stored as entered. 0 whenever e1rm_known is false, which is not a measurement."
+                },
+                "e1rm_reps": {
+                  "type": "integer",
+                  "description": "the reps of the set the estimate came from, 1 to 10; fewer reps make a closer estimate. 0 when e1rm_known is false."
+                },
+                "e1rm_known": {
+                  "type": "boolean",
+                  "description": "false when no set that day can give an estimate: every set moved 0 kg (a bodyweight or weightless day, so always false on a measure \"reps\" entry), every set ran past 10 reps (where rep-max formulas stop tracking maximal strength), or the entry is a hold (always false on measure \"hold\")."
                 }
               }
             }

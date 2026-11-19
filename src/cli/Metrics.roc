@@ -416,8 +416,8 @@ Metrics :: [].{
 	# Which intensity band a power sample belongs to.
 	#
 	# Coasting is NOT easy riding. Freewheeling down a descent reads as zero watts, and
-	# folding that into "easy" inflates the easy share — a descent-heavy ride came out
-	# looking far more polarized than it was, which is exactly the number a coach reads to
+	# folding that into "easy" inflates the easy share — a descent-heavy ride would look
+	# far more polarized than it is, which is exactly the number a coach reads to
 	# decide the next week. Zero power is time not pedalling, so it is excluded from the
 	# split: the three buckets sum to PEDALLING time, not moving time.
 	power_band : F64, F64, F64 -> [Coasting, Easy, Moderate, Hard]
@@ -518,12 +518,12 @@ Metrics :: [].{
 	hr_zone_key_global = |n|
 		"hr_z${U64.to_str(n)}_max"
 
-	# The config key holding a sport's threshold PACE, as a SPEED in m/s (the pace engine
-	# works in speeds). Per-sport `threshold_pace_<sport>` (threshold_pace_run, ...), same
-	# built from the sport name, no hardcoded list. Zero-config derivation from a stored
-	# best-sustained-pace column SHIPPED instead (Analyze.period_threshold_sql stores
-	# threshold_pace_used), so no such config key exists or is planned — see the
-	# known_key note in Config.roc. This helper survives for its expects.
+	# The config key name for a sport's threshold PACE, as a SPEED in m/s (the pace
+	# engine works in speeds): per-sport `threshold_pace_<sport>` (threshold_pace_run,
+	# ...), built from the sport name, no hardcoded list. No such config key is read:
+	# the threshold is derived from a stored best-sustained-pace column
+	# (Analyze.period_threshold_sql stores threshold_pace_used) — see the known_key
+	# note in Config.roc. Only its expects call this helper.
 	threshold_pace_key : Str -> Str
 	threshold_pace_key = |sport|
 		"threshold_pace_${Str.with_ascii_lowercased(sport)}"
@@ -556,7 +556,7 @@ Metrics :: [].{
 		f = hr_tss_per_hour
 		(zs.z1.to_f64() * f.z1 + zs.z2.to_f64() * f.z2 + zs.z3.to_f64() * f.z3 + zs.z4.to_f64() * f.z4 + zs.z5.to_f64() * f.z5) / 3600.0
 	}
-	# ── ramp rate (#93): weekly CTL delta, as a number ───────────────────
+	# ── ramp rate: weekly CTL delta, as a number ─────────────────────────
 	#
 	# CTL on the most recent day at or before `target`. Missing is NOT zero: a series that
 	# does not reach back that far has no answer, and treating absence as a CTL of 0 would
@@ -565,10 +565,10 @@ Metrics :: [].{
 	ctl_as_of : List({ day : I64, ctl : F64 }), I64 -> [Found(F64), Missing]
 	ctl_as_of = |series, target| {
 		# ONE pass, carrying the best candidate rather than re-scanning the list per
-		# element — the inner scan made this quadratic. The caller may pass any order, so
-		# the walk cannot assume sortedness. DISTINCT tags for the accumulator: it carries
-		# a whole {day, ctl} row while the return carries a bare ctl, and reusing Found for
-		# both reads like a type error even though the compiler accepts it.
+		# element — a per-element scan would make this quadratic. The caller may pass any
+		# order, so the walk cannot assume sortedness. DISTINCT tags for the accumulator: it
+		# carries a whole {day, ctl} row while the return carries a bare ctl, and reusing
+		# Found for both reads like a type error even though the compiler accepts it.
 		best = List.fold(
 			series,
 			NoCandidate,
@@ -613,10 +613,10 @@ Metrics :: [].{
 			}
 		}
 
-	# ── form trend (#111): the weekly TSB delta ──────────────────────────
+	# ── form trend: the weekly TSB delta ─────────────────────────────────
 	#
-	# A band label has no memory. TSB spent a full month inside the -15..-5 band while
-	# moving 9 points, so the verdict line read identically for weeks — and a conclusion
+	# A band label has no memory. TSB can spend a month inside one band while moving
+	# several points, and the verdict line reads identically throughout — and a conclusion
 	# that never changes is indistinguishable from no conclusion. The band is right; it
 	# just cannot say whether you are digging deeper or climbing out. This is that.
 	#
@@ -631,7 +631,7 @@ Metrics :: [].{
 	# Known vs Unknown, NOT a bare 0.0. Both "form is exactly where it was" and "there is
 	# no history to compare against" would collapse to zero, and the renderer must not
 	# tell the reader form is level when it simply does not know. The JSON layer flattens
-	# Unknown to 0.0, which is the house meaning of a numeric 0 (#111 acceptance).
+	# Unknown to 0.0, which is the house meaning of a numeric 0.
 	form_delta_7d : List({ day : I64, tsb : F64 }), I64 -> [Known(F64), Unknown]
 	form_delta_7d = |series, today|
 		match (tsb_as_of(series, today), tsb_as_of(series, today - 7)) {
@@ -643,10 +643,10 @@ Metrics :: [].{
 	# `rows` must be newest-first; the walk stops at the first session that did record it.
 	#
 	# Strength-like sports are FILTERED OUT rather than treated as breaks in the streak.
-	# They routinely run without a strap, so counting them would inflate the number and
+	# They routinely run without a strap, so counting them would inflate the number, and
 	# letting them stop the walk would hide the thing worth seeing: two strapless rides in
-	# a row went unnoticed for two days, and a lifting session in between must not reset
-	# that. This reports a count and nothing else — what it means is the coach's call.
+	# a row stay a streak of two with a lifting session between them. This reports a
+	# count and nothing else — what it means is the coach's call.
 	hr_missing_streak : List({ sport : Str, has_hr : Bool }) -> U64
 	hr_missing_streak = |rows|
 		List.fold(
@@ -665,7 +665,7 @@ Metrics :: [].{
 	# ── session-RPE load (Foster) ───────────────────────────────────────
 	# hours × RPE × 10, so one hour at RPE 10 = 100 — TSS-commensurate BY
 	# CONSTRUCTION. Raw Foster units (minutes × RPE) would be ~6x too large and
-	# corrupt CTL/ATL; do not "simplify" this back to minutes.
+	# corrupt CTL/ATL.
 	srpe_load : { rpe : F64, moving_time : I64 } -> F64
 	srpe_load = |{ rpe, moving_time }|
 		(moving_time.to_f64() / 3600.0) * rpe * 10.0
@@ -715,7 +715,7 @@ Metrics :: [].{
 			moving_time : I64,
 			# False = Strava marked these watts ESTIMATED (no power meter). An estimate is
 			# a guess dressed as a measurement — it must not outrank the honest fallback
-			# rungs (pace/HR/RPE/RE), so all three power candidates are skipped (#73).
+			# rungs (pace/HR/RPE/RE), so all three power candidates are skipped.
 			device_watts : Bool,
 		}
 		# power_if is the intensity the POWER rung actually scored with — absent
@@ -753,7 +753,7 @@ Metrics :: [].{
 				# Reachable in normal operation, not only via import: a freshly listed activity
 				# whose stream has not drained yet (rate limit / daily cap — doctor's undrained
 				# line) has no zone seconds, so analyze takes this rung; it self-heals on the next
-				# drain. Note `top hr` deliberately still bounds the STORED column (#315/#316).
+				# drain. `top hr` still bounds the STORED column.
 				#
 				# Refused means `NoHr`, not zero and not unknown: the ladder falls to its next rung
 				# exactly as for a session that never carried HR, so the outcome is visible in
@@ -861,8 +861,8 @@ Metrics :: [].{
 	atl_alpha : F64
 	atl_alpha = 0.1331221
 
-	## deterministic TSS of a structured target's WORK (#138, ADR 0014 targets as the
-	## input): (watts/ftp)² × hours × 100 — the same arithmetic analyze runs on real
+	## deterministic TSS of a structured target's WORK (ADR 0014 targets as the input):
+	## (watts/ftp)² × hours × 100 — the same arithmetic analyze runs on real
 	## watts, over the work the target names. It understates the session (warmup and
 	## recoveries carry load the target does not describe); the projection publishes
 	## how many sessions contributed so that understatement is data, not surprise.
@@ -960,7 +960,7 @@ Metrics :: [].{
 		if (n <= 1) f.z1 else if (n == 2) f.z2 else if (n == 3) f.z3 else if (n == 4) f.z4 else f.z5
 	}
 
-	## the hypothetical-plan literal (#189, ADR 0010): comma-separated
+	## the hypothetical-plan literal (ADR 0010): comma-separated
 	## `<YYYY-MM-DD>=<target>` pairs, the target in any kind parse_any_target
 	## reads. Caller input, echoed back verbatim, NEVER stored — the recorded plan
 	## stays the single source of adherence truth. Errors name the half that failed
@@ -986,7 +986,7 @@ Metrics :: [].{
 				},
 		)
 
-	## the projection walk (#138/#189, ADR 0010): fold load_step day by day from a
+	## the projection walk (ADR 0010): fold load_step day by day from a
 	## measured baseline to a horizon, over (day, tss) contributions. PURE — both the
 	## recorded-plan projection (`events`) and the hypothetical one (`project`) call
 	## this, so the two can never disagree about the arithmetic.
@@ -1017,8 +1017,7 @@ Metrics :: [].{
 	}
 
 	# ── derived FTP ─────────────────────────────────────────────────────
-	# Invariant: FTP is derived from power history, never configured (a calibration
-	# check against a configured FTP compared the same number to itself, so it died).
+	# Invariant: FTP is derived from power history, never configured.
 	# The standard 95% of the 20-min best. One Roc constant — the SQL twins in Analyze's
 	# period_ftp_sql / period_threshold_sql spell it again, as SQL must. Used by the
 	# per-sport derive (Db.derive_sport_ftp!) and the summary display.
@@ -1262,7 +1261,7 @@ Metrics :: [].{
 		}
 
 	# Critical Speed model: S(t) = D'/t + CS — the pace-sport twin of critical
-	# power (#188). CS is the sustainable speed in METRES PER SECOND, D' the finite
+	# power. CS is the sustainable speed in METRES PER SECOND, D' the finite
 	# distance capacity above it in METRES (the running analog of W', and the reason
 	# the slope is a distance here and an energy there).
 	#
@@ -1282,9 +1281,7 @@ Metrics :: [].{
 	# does not exist on F64 at all, so the CTL/ATL constants above are literals
 	# — but `.pow()` does exist and is correct to full double precision, which
 	# is what W' balance needs (tau varies with how far below CP each sample
-	# sits, so no lookup table covers the range). This replaced a hand-rolled
-	# range-reduction-plus-Taylor series that was ~0.6% off by x = 700 and
-	# returned +INFINITY past x ~ 11000, the exact inverse of its meaning.
+	# sits, so no lookup table covers the range).
 	# Negative input would be e^(+x); callers pass magnitudes, and the guard
 	# keeps a sign slip from silently returning a plausible number.
 	exp_neg : F64 -> F64
@@ -1294,7 +1291,7 @@ Metrics :: [].{
 	e_const : F64
 	e_const = 2.718281828459045
 
-	# ── spending the CP model (#186, #187) ──────────────────────────────
+	# ── spending the CP model ───────────────────────────────────────────
 	#
 	# Time to exhaustion at a power ABOVE CP: the model says the finite capacity
 	# W' drains at (P - CP) watts, so it lasts W'/(P - CP) seconds. Two honest
@@ -1324,10 +1321,10 @@ Metrics :: [].{
 	# under it. This is the Skiba 2012 INTEGRAL form, evaluated as an
 	# exponential recurrence. It is NOT the Froncioni/Skiba differential form,
 	# which carries no tau and reconstitutes nothing at exactly CP — the two
-	# land 41% of W' apart on a real session here, so the name is load-bearing.
+	# can land far apart on a real session, so the name is load-bearing.
 	# Tau follows Skiba's fit, 546*e^(-0.01*DCP) + 316, computed from the
-	# INSTANTANEOUS sub-CP deficit per sample rather than Skiba's ride-mean;
-	# that is a deliberate variant worth ~3% of W' on real data.
+	# INSTANTANEOUS sub-CP deficit per sample rather than Skiba's ride-mean,
+	# a variant that moves W' by a few percent on real data.
 	#
 	# Returns the balance AFTER each sample, so the minimum over the list is the
 	# deepest the athlete went. Pauses are bridged at max_sample_gap_s like
@@ -1369,9 +1366,9 @@ Metrics :: [].{
 						}
 					# The clock never runs backwards. A stamp EARLIER than the last
 					# one charges dt = 0 above, but advancing prev_t to it would then
-					# re-charge the span up to the next stamp — t = 0,10,5,20 billed
+					# re-charge the span up to the next stamp — t = 0,10,5,20 would bill
 					# 25s of drain across a 20s window. Callers resample sorted, so
-					# this is the function's own guard, not a live bug.
+					# this guard is the function's own.
 					latest = match acc.prev_t {
 						Ok(pt) => if (p.t > pt) p.t else pt
 						Err(_) => p.t
@@ -1405,8 +1402,8 @@ Metrics :: [].{
 	mean = |ys| if (List.is_empty(ys)) 0.0 else List.sum(ys) / List.len(ys).to_f64()
 
 	# Percent change from -> to. A non-positive `from` means there is NOTHING to measure
-	# against, which is a different fact from "measured, and it did not change" — both used
-	# to come back as 0.0, so a first-ever week read as "load steady (0%)". The Try makes the
+	# against, which is a different fact from "measured, and it did not change" — 0.0
+	# for both would make a first-ever week read as "load steady (0%)". The Try makes the
 	# caller say which one it means.
 	pct_change : F64, F64 -> Try(F64, [NoBaseline])
 	pct_change = |from, to| if (from > 0.0) Ok((to - from) / from * 100.0) else Err(NoBaseline)
@@ -1423,7 +1420,7 @@ Metrics :: [].{
 
 	# ── repeated-workout progress (the `progress` command's business rules) ─
 	# `id` is carried for ONE reason: so `progress` can name the row when it refuses an
-	# unreadable date (#249). It lives on the row rather than in a second guard query
+	# unreadable date. It lives on the row rather than in a second guard query
 	# because the guard's domain has to BE the consumer's domain, not merely match it.
 	ProgressRow : { name : Str, date : Str, sport : Str, distance_m : F64, moving_time : I64, np_w : F64, avg_hr : F64, avg_hr_scored : F64, rpe : F64, output_kj : F64, tss : F64, load_model : Str, decoupling_pct : F64, decoupling_known : Bool, id : I64 }
 
@@ -1448,7 +1445,7 @@ Metrics :: [].{
 	# distance compare — and with no distance recorded, only the anchor itself shows.
 	# Groups whose anchor isn't on the asked date drop entirely.
 	# `total` is the group's size BEFORE truncation: every row this function drops is
-	# invisible downstream, so the hidden count must be carried, not recomputed (#291).
+	# invisible downstream, so the hidden count must be carried, not recomputed.
 	# `scope_why` travels WITH the truncation; empty means "this kind cannot withhold
 	# rows", and the caller only reads it when it measured a drop.
 	anchor_filter : { name : Str, rows : List(ProgressRow) }, Str -> Try({ name : Str, kind : [Exact, SimilarDistance(F64), LoneNoDistance], rows : List(ProgressRow), total : U64, scope_why : Str }, [NoAnchor])
@@ -1513,15 +1510,15 @@ Metrics :: [].{
 	lens_score = |lens, r|
 		match lens {
 			# `valid_hr`, not `avg_hr > 0.0`: a rowing session storing 18.0 or 31.3 bpm
-			# scores "improving (221%)" or "88% below your best" against sessions sitting
-			# near 0.85 (#294). Both HR lenses, not just EF — speed/HR divides by
+			# would score "improving (221%)" or "88% below your best" against sessions sitting
+			# near 0.85. Both HR lenses, not just EF — speed/HR divides by
 			# the same number.
 			#
 			# EF is NP-per-heartbeat, so it is only comparable when np_w really IS normalized
 			# power (`np_like`): a row scored from plain avg_watts would put avg-watts-per-beat
 			# on the same trend line and invent an improvement.
 			#
-			# `avg_hr_scored`, not `avg_hr` (#311): the stream's in-band mean when a usable
+			# `avg_hr_scored`, not `avg_hr`: the stream's in-band mean when a usable
 			# stream exists, since a stored average can be plausible and still wrong (computed
 			# through dropout). SCORING only — `avg_hr` stays what the tables and JSON print.
 			Ef =>
@@ -1643,7 +1640,7 @@ Metrics :: [].{
 			}
 		hour = h?
 		# bound BEFORE the +12: an unbounded `hour + 12` overflows U64 on a large
-		# plain-digit hour and CRASHES the process, so a single poison row denied the
+		# plain-digit hour and CRASHES the process, so a single poison row would deny the
 		# whole export -- worse than the bad row it was meant to reject.
 		if hour > 12 {
 			Err(BadExportDate)
@@ -1666,12 +1663,12 @@ Metrics :: [].{
 			Err(_) => False
 		}
 
-	# What a lens REQUIRES, as a sentence. One call site (`Render`'s unscored note),
-	# extracted because the three arms and the singular/plural pair are the rule the
+	# What a lens REQUIRES, as a sentence, for `Render`'s unscored note. Its own
+	# function because the three arms and the singular/plural pair are the rule the
 	# e2e checks mutate one at a time. It names what the LENS needs, never which field
-	# the row lacks: `lens_score` rejects an EF row for three separate reasons, and
-	# reporting all three as "no HR" was measurably false — 7 of 10 rows in one real
-	# group carried heart rates between 95 and 132 bpm.
+	# the row lacks: `lens_score` rejects an EF row for three separate reasons, so
+	# reporting every rejection as "no HR" would be false for rows that do carry a
+	# heart rate.
 	lens_needs : [Ef, SpeedHr, Rpe], Bool -> Str
 	lens_needs = |lens, plural| {
 		verb = if (plural) "need" else "needs"
@@ -1696,9 +1693,9 @@ Metrics :: [].{
 	# The CAST is the whole reason this is a function: SQLite sorts a BLOB above every
 	# number, so a bare `avg_hr BETWEEN 35 AND 220` is FALSE for a BLOB holding the
 	# bytes "100" while every other consumer casts and scores that session at 100 bpm
-	# (`> 0` was TRUE for it — fixing an over-count by introducing an under-count on
-	# the same value class is not a fix). On a healthy db every avg_hr is REAL or NULL,
-	# so the difference only appears when a hand-edit or bad import plants one.
+	# (and `> 0` is TRUE for it, so neither bare form counts that value class right).
+	# On a healthy db every avg_hr is REAL or NULL, so the difference only appears when
+	# a hand-edit or bad import plants one.
 	#
 	# Takes the column EXPRESSION, not a name, so callers can pass a subquery alias.
 	# (`top hr` still inlines its own copy of the bound in `top_metric` — a second
@@ -1716,8 +1713,8 @@ Metrics :: [].{
 	# `hr_zones` — its load computed FROM heart rate — must count as usable HR. The
 	# scalar arm can never rescue that population: a stored average is impossible
 	# BECAUSE the strap misbehaved, and a misbehaving strap is exactly what fails the
-	# #311 coverage gate, so the fallback is anti-correlated with the rows it was
-	# reached for.
+	# stream-span gate on the scored mean, so the fallback is anti-correlated with the
+	# rows it was reached for.
 	usable_hr_sql : Str, Str -> Str
 	usable_hr_sql = |scored_col, zone_total_expr|
 		"(${valid_hr_sql(scored_col)} OR ${zone_total_expr} > 0)"
@@ -1735,7 +1732,7 @@ Metrics :: [].{
 	# sensible predicate, which is why it is pinned textually rather than by shape
 	expect Metrics.usable_hr_sql("s", "z") == "(CAST(s AS REAL) BETWEEN 35 AND 220 OR z > 0)"
 
-	# ── aerobic decoupling / Pw:HR drift (#94) ──────────────────────────
+	# ── aerobic decoupling / Pw:HR drift ────────────────────────────────
 	#
 	# Split the session in half BY TIME, compute efficiency (signal per heartbeat) in
 	# each half, report how much it fell. Positive = the second half cost more
@@ -1744,10 +1741,10 @@ Metrics :: [].{
 	# averaged over the same window rather than joined sample-by-sample — a join drops
 	# every second where one sensor blinked, biasing whichever half dropped more.
 	#
-	# KNOWN ASYMMETRY for the pace signal (#134): grade_step emits nothing for stopped
+	# KNOWN ASYMMETRY for the pace signal: grade_step emits nothing for stopped
 	# time but HR from those seconds stays in the half mean, so a stop-heavy half mixes
-	# standing HR against moving-only speeds. Owned rather than hidden; power is immune
-	# because coasting emits a real 0 W sample.
+	# standing HR against moving-only speeds. Power is immune because coasting emits a
+	# real 0 W sample.
 	#
 	# Known/Unknown, never a bare 0.0: 0.0 is a legitimate PERFECT result, so a
 	# 0-sentinel would render an ideal ride and a meterless session identically.
@@ -1859,7 +1856,7 @@ Metrics :: [].{
 		List.any(words, |w| Str.contains(low, w))
 	}
 
-	# median gap in days between consecutive stimulus dates (#159) — Unknown
+	# median gap in days between consecutive stimulus dates — Unknown
 	# below two dates, because one session has no spacing to measure. Input is
 	# day numbers in ANY order; dedup + sort happen here so callers stay dumb.
 	median_gap_days : List(I64) -> [Known(I64), Unknown]
@@ -1888,7 +1885,7 @@ Metrics :: [].{
 	}
 
 	# three-way percentage split that ALWAYS sums to exactly 100 (largest-
-	# remainder rounding) — the #157 coverage invariant. All-zero inputs return
+	# remainder rounding) — the coverage invariant. All-zero inputs return
 	# zeros; callers carry a _known flag for that case per ADR 0009.
 	coverage_pcts : F64, F64, F64 -> { high_pct : I64, medium_pct : I64, low_pct : I64 }
 	coverage_pcts = |hi, med, lo| {
@@ -1930,13 +1927,13 @@ Metrics :: [].{
 		}
 	}
 
-	# ── personal-baseline primitives (#160) ─────────────────────────────
+	# ── personal-baseline primitives ────────────────────────────────────
 	# THE comparability rule, in one place: two activities compare iff same
 	# sport family AND same duration band AND the metric exists on both sides.
 	# Bands are FIXED edges, not ±% of the current ride — fixed edges make
 	# comparability symmetric and deterministic (a is comparable to b exactly
-	# when b is comparable to a), which ±% is not. #149's rep-level progression
-	# must consume THIS function rather than grow a second definition.
+	# when b is comparable to a), which ±% is not. Rep-level comparison follows
+	# the same fixed-edge rule (rep_duration_band) rather than a second definition.
 	duration_band : I64 -> { lo : I64, hi : I64 }
 	duration_band = |moving_time|
 		if (moving_time < 1200) { lo: 0, hi: 1200 }
@@ -1967,7 +1964,7 @@ Metrics :: [].{
 	is_uniform_reps = |min_dur, max_dur|
 		min_dur > 0 and max_dur * anchor_uniformity_den <= min_dur * anchor_uniformity_num
 
-	# The rep-scale twin of duration_band (#149). Session band EDGES sit at
+	# The rep-scale twin of duration_band. Session band EDGES sit at
 	# 20/45/75/120 minutes, which at rep scale is useless: a 3x2min VO2 set and a 3x17min
 	# tempo block both land in "under 20 minutes" and would be compared as the
 	# same workout. These edges follow how intervals are actually prescribed —
@@ -2034,7 +2031,7 @@ Metrics :: [].{
 	# information, not because it is wrong.
 	# `AtLeast` exists because the walk can stop for a reason that
 	# is not an answer: running out of series. Callers hand this a WINDOW (summary passes 31
-	# days sized for the #93 ramp, `load` passes whatever window it was asked for), so a
+	# days sized for the ramp, `load` passes whatever window it was asked for), so a
 	# streak longer than the window is truncated — and a truncated 31 is indistinguishable
 	# from a real 31 unless the type says so. Reporting the cap as an exact count is the
 	# same class of lie as a 0 that means "no data": the number looks like a measurement.
@@ -2043,7 +2040,7 @@ Metrics :: [].{
 		# EXACT lookup for the anchor, not at-or-before. With at-or-before, a `today` the
 		# series has no row for would borrow an older day's value and then count today as
 		# day 1 of a streak the series cannot vouch for — precisely what tsb_as_of_exact
-		# exists to prevent, below. Unknown now means exactly what the contract
+		# exists to prevent, below. Unknown therefore means exactly what the contract
 		# says: nothing is known about the anchor day itself.
 		match tsb_as_of_exact(series, today) {
 			Missing => Unknown
@@ -2128,12 +2125,12 @@ Metrics :: [].{
 	# A block is a maximal run of training weeks, closed by `gap_weeks` or more
 	# CONSECUTIVE calendar weeks carrying no load — a single blank week does not close
 	# one. That threshold is the one judgment; everything downstream is arithmetic.
-	# The textbook alternative, build weeks followed by a recovery week, fits real
-	# history only for a handful of weeks depending on how adjacency is read, so a
-	# detector built on it segments noise; any changepoint rule instead lets its own sensitivity
-	# parameter choose the answer. Blocks are DESCRIBED (span, load, measured
-	# trend) and never named: "base"/"build"/"peak" are claims about intent,
-	# and load does not observe intent (#154).
+	# The textbook alternative, build weeks followed by a recovery week, rarely fits
+	# real history and how well it fits depends on how adjacency is read, so a
+	# detector built on it segments noise; any changepoint rule instead lets its own
+	# sensitivity parameter choose the answer. Blocks are DESCRIBED (span, load,
+	# measured trend) and never named: "base"/"build"/"peak" are claims about intent,
+	# and load does not observe intent.
 	SeasonBlock : { first_week : I64, last_week : I64, weeks : I64, total_load : F64, sessions : I64, slope : F64, r2 : F64, trend_known : Bool, fitted_start : F64, fitted_end : F64 }
 
 	season_blocks : List({ week_start : I64, tss : F64, sessions : I64, complete : Bool }), I64 -> List(SeasonBlock)
@@ -2176,11 +2173,10 @@ Metrics :: [].{
 		total = List.fold(g, 0.0, |a, w| a + w.tss)
 		sess = List.fold(g, 0, |a, w| a + w.sessions)
 		# A week still in progress is a PARTIAL sum, not a low week. Left in the
-		# regression it plants a large negative outlier at the right edge: on
-		# real data one Monday ride took the current block from +11.0/wk at
-		# r2 0.56 to +5.8/wk at r2 0.13 — i.e. training MORE made "building"
-		# look weaker, and the number swung back every Sunday. It still counts
-		# toward load, weeks and sessions, because the training happened.
+		# regression it plants a large negative outlier at the right edge, so one
+		# early-week session makes training MORE look like weaker "building", and
+		# the slope swings back when the week completes. It still counts toward
+		# load, weeks and sessions, because the training happened.
 		fit_weeks = List.keep_if(g, |w| w.complete)
 		fn = List.len(fit_weeks)
 		fnf = fn.to_f64()
@@ -2201,8 +2197,8 @@ Metrics :: [].{
 		r2 = if (trend_known and syy > 0.0000001) (sxy * sxy) / (sxx * syy) else 0.0
 		# The fitted line's own endpoints. A slope with a low r2 is routinely
 		# misread as "no trend" — but r2 measures SCATTER, not whether the
-		# slope differs from zero, and a 71-week block at r2 0.10 still fell
-		# from 315 to 214 TSS/week. "315 → 214" cannot be mis-told that way.
+		# slope differs from zero, and a long block with a low r2 can still fall
+		# steeply. Endpoints like "315 → 214" cannot be mis-told that way.
 		# Seeded from the first element, not 0.0: seeding at zero computes
 		# min(0, xs), which is right only while complete weeks are a PREFIX.
 		# They are, and the reason is `complete = week_start + 6 < today` is
@@ -2219,7 +2215,7 @@ Metrics :: [].{
 		{ first_week: first, last_week: last, weeks: (n).to_i64_wrap(), total_load: total, sessions: sess, slope, r2, trend_known, fitted_start, fitted_end }
 	}
 
-	## the prescription-target literal (#198, ADR 0014): `<reps>x<mm:ss>@<watts>W`,
+	## the prescription-target literal (ADR 0014): `<reps>x<mm:ss>@<watts>W`,
 	## e.g. `3x12:00@230W`. STRICT on purpose — a target that half-parses is a target
 	## the athlete and the arithmetic disagree about. Power only (ADR 0014 §2).
 	parse_target : Str -> Try({ reps : I64, dur_s : I64, watts : F64 }, [BadTarget])
@@ -2251,7 +2247,7 @@ Metrics :: [].{
 				}
 		}
 
-	## A structured target on any signal (#636). `kind` names the signal the
+	## A structured target on any signal. `kind` names the signal the
 	## session is judged on: "power", "hr" (a bpm band), "zone" (an HR zone),
 	## "pace" or "rpe" (a session rating, 1-10). Magnitudes that do not belong to
 	## the kind ride at 0 or "" (ADR 0009 impossible-zero), and a rep is a duration
@@ -2701,8 +2697,8 @@ Metrics :: [].{
 
 	# The MIRROR of rank_ts_sql, for a listing whose job is surfacing rows that need
 	# repair: unrankable rows go FIRST. The two intents pull opposite ways — ranking
-	# wants an unrankable row last so it is never mistaken for the newest; #249's
-	# `activities` hoist wants it first so it cannot fall past the limit and hide.
+	# wants an unrankable row last so it is never mistaken for the newest; the
+	# `activities` repair hoist wants it first so it cannot fall past the limit and hide.
 	#
 	# It hoists on RANKABILITY, not `date_known` — the flag subsumes that term. Within
 	# the hoisted group the key is the raw `substr(...)`, not the NULL-yielding form: a
@@ -2739,21 +2735,19 @@ Metrics :: [].{
 		}
 
 	is_canonical_date : Str -> Bool
-	# DEFINED OVER usable_date_days, not beside it. These were two independent bodies of
-	# the same rule, which is how one of them lost the year bound without the other
-	# noticing — and `week add 999-01-01` kept answering `bad_date` while every stored-date
-	# guard accepted it, in the same binary.
+	# DEFINED OVER usable_date_days, not beside it: two independent bodies of one rule
+	# drift, and a copy that lost the year bound would have `week add 999-01-01`
+	# answer `bad_date` while every stored-date guard accepts it, in the same binary.
 	is_canonical_date = |s| is_usable_date(s)
 
 	# exactly two digits, and within range — a one-digit hour sorts WRONG against a
 	# two-digit one under byte comparison, the property callers protect when ranking
 	# timestamps as strings.
 	#
-	# NOT CALLED BY ANYTHING. Written for the job `rankable_sql` now does in SQL (the
-	# sites that need the answer need it inside a query), so the time halves are two
-	# bodies and already disagree: SQLite `datetime()` accepts T24:00:00, this rejects
-	# hour > 23. Kept because the divergence is the useful record — a future Roc-side
-	# caller starts here and must reconcile that disagreement.
+	# Not called by anything: `rankable_sql` answers the same question inside a query,
+	# where the sites that need it need it. The two time halves disagree: SQLite
+	# `datetime()` accepts T24:00:00, this rejects hour > 23, so a Roc-side caller
+	# must reconcile that before relying on either.
 	two_digit_in : Str, I64 -> Bool
 	two_digit_in = |s, hi|
 		if Str.count_utf8_bytes(s) != 2 {
@@ -2952,9 +2946,9 @@ Metrics :: [].{
 
 	# Normalized Graded Pace as a SPEED (m/s): the grade-adjusted speed stream through
 	# the same 30-SAMPLE-rolling / 4th-power machinery as NP. That window is 30 s only if
-	# samples are ~1 Hz — the power path guarantees it via resample_1s; the analyze-wiring
-	# PR should resample time/dist/alt to 1 Hz before calling here, or a variable-rate
-	# stream over-smooths NGP toward the mean. (Swim NSS: flat altitude.)
+	# samples are ~1 Hz — the power path guarantees it via resample_1s; a caller here
+	# must resample time/dist/alt to 1 Hz first (graded_speed_1s does), or a
+	# variable-rate stream over-smooths NGP toward the mean. (Swim NSS: flat altitude.)
 	normalized_graded_pace : List(F64), List(F64), List(F64) -> Try(F64, [TooShort])
 	normalized_graded_pace = |time, dist, alt|
 		normalized_power(grade_adjusted_speeds(time, dist, alt))
@@ -2981,8 +2975,8 @@ Metrics :: [].{
 	# threshold_speed, IF^exp x hours x 100; 1 h at threshold = 100 for any exponent.
 	# The exponent is per-sport (Sports.pace_tss_exponent): running resistance is near
 	# linear in speed so it keeps 2 (TrainingPeaks rTSS); swimming fights drag, which
-	# rises with v^3, so it uses 3 (TP sSS). Squaring both under-scored hard swim sets
-	# ~20% (at IF 1.2: 144 vs 173 per hour).
+	# rises with v^3, so it uses 3 (TP sSS). Squaring a swim would under-score hard
+	# sets by ~20% (at IF 1.2: 144 vs 173 per hour).
 	pace_tss : { ngp_speed : F64, threshold_speed : F64, dur_s : F64, exponent : F64 } -> F64
 	pace_tss = |{ ngp_speed, threshold_speed, dur_s, exponent }|
 		if threshold_speed <= 0.0 {
@@ -2998,14 +2992,13 @@ Metrics :: [].{
 	# edges (a shift counts when the H-second forward mean moves ≥ shift_frac of the
 	# session IQR away from the H-second backward mean) → segments between edges →
 	# merge neighbors closer than the shift threshold → label work/recovery by the
-	# Otsu split of the segment LEVEL MEANS (#170 — never the session's global
+	# Otsu split of the segment LEVEL MEANS (never the session's global
 	# distribution), merge adjacent work, then gate on contrast and work fraction.
 	# HR never places edges (it lags effort by 30+ s);
 	# it only enriches segments already found (segment_hr below).
 	#
-	# These constants are the ADR 0008 starting point, validated against the
-	# maintainer's own VO2/threshold sessions — every change bumps metrics_rev
-	# (Analyze), because a tuning change recomputes history.
+	# These constants are the ADR 0008 starting point; every change bumps
+	# metrics_rev (Analyze), because a tuning change recomputes history.
 	#
 	# min_shift is the no-invented-intervals FLOOR on the edge threshold: an edge
 	# requires at least this much level change, so steady rides and GPS wobble
@@ -3186,8 +3179,8 @@ Metrics :: [].{
 			iqr = q75 - q25
 			{
 				# floored, not gated: shift_frac*iqr adapts to noisy signals, and the
-				# min_shift floor is what keeps steady rides edge-free — detection no
-				# longer depends on how much of the ride the work occupies (#170)
+				# min_shift floor is what keeps steady rides edge-free — detection does
+				# not depend on how much of the ride the work occupies
 				adaptive = p.shift_frac * iqr
 				delta = if (adaptive > p.min_shift) adaptive else p.min_shift
 				# the trailing smoother lags the signal by (w-1)/2 samples, so raw edge
@@ -3229,18 +3222,18 @@ Metrics :: [].{
 				kept = List.keep_if(absorbed, |s| s.hi - s.lo >= p.hold)
 				# one level is a steady ride, not structure — and the work/recovery
 				# threshold comes from the LEVELS THEMSELVES (the two-cluster split
-				# below), never from the global distribution: v1's
-				# quantile-midpoint threshold sat ABOVE the reps on a work-dominated
-				# ride and labeled 3x12 all-recovery (#170)
+				# below), never from the global distribution: a quantile midpoint of
+				# the samples sits ABOVE the reps on a work-dominated ride and would
+				# label a 3x12 all-recovery
 				if List.len(kept) < 2 {
 					[]
 				} else {
 					sorted_means = List.sort_with(List.map(kept, |s| s.mean), |a, b| if (a < b) Before else if (a > b) After else Same)
 					# two-cluster split maximizing between-class variance (Otsu in 1D),
-					# gated on CLUSTER-MEAN separation. Largest-adjacent-gap was tried
-					# first and failed on real rowing intervals: ten work and ten
-					# recovery levels make the sorted means quasi-continuous (max gap
-					# 10 W) while the clusters sit 46 W apart.
+					# gated on CLUSTER-MEAN separation. A largest-adjacent-gap split fails
+					# on rowing intervals: ten work and ten recovery levels can make the
+					# sorted means quasi-continuous (max gap 10 W) while the clusters sit
+					# 46 W apart.
 					m_prefix = prefix_sums(sorted_means)
 					nm = List.len(sorted_means)
 					split = Iter.fold(
@@ -3263,8 +3256,8 @@ Metrics :: [].{
 					)
 					labeled0 = List.map(kept, |s| { work: s.mean >= split.thr, lo: s.lo, hi: s.hi, mean: s.mean })
 					# adjacent work pieces are ONE effort: a sliced continuous block
-					# must not read as reps (the #170 false-positive repro was seven
-					# back-to-back "reps" carved out of a 25-minute steady push)
+					# must not read as reps (a 25-minute steady push would otherwise be
+					# carved into back-to-back "reps")
 					merged = List.fold(
 						labeled0,
 						[],
@@ -3389,6 +3382,172 @@ Metrics :: [].{
 		}
 	}
 
+	# ── estimated one-rep max ───────────────────────────────────────────
+	# Epley: 1RM = w x (1 + reps / 30). A single is its own one-rep max, so one
+	# rep returns the weight itself rather than Epley's 3% markup. Rep-max
+	# formulas lose accuracy as the rep count rises, and past about ten reps a
+	# set measures muscular endurance more than maximal strength, so a set of
+	# more than e1rm_max_reps yields no estimate. A set that moved no weight
+	# yields none either: a bodyweight move stored at 0 kg would otherwise
+	# estimate a 0 kg max. The weight is the stored one, per hand for a
+	# dumbbell pair, so an estimate is in the same units as the top_kg beside it.
+	e1rm_max_reps : I64
+	e1rm_max_reps = 10
+
+	e1rm_epley : F64, I64 -> Try(F64, [NoWeight, NoReps, TooManyReps])
+	e1rm_epley = |weight_kg, reps|
+		if !(weight_kg > 0.0) {
+			Err(NoWeight)
+		} else if reps < 1 {
+			Err(NoReps)
+		} else if reps > e1rm_max_reps {
+			Err(TooManyReps)
+		} else if reps == 1 {
+			Ok(weight_kg)
+		} else {
+			Ok(weight_kg * (1.0 + (reps).to_f64() / 30.0))
+		}
+
+	# A day's estimate is the highest any one of its sets gives, carried with
+	# the reps of that set. A day whose every set is unweighted or above the
+	# rep ceiling has no estimate, never a 0 that reads as a measurement.
+	best_e1rm : List({ reps : I64, weight_kg : F64 }) -> Try({ kg : F64, reps : I64 }, [NoReliableSet])
+	best_e1rm = |sets|
+		List.fold(
+			sets,
+			Err(NoReliableSet),
+			|acc, s|
+				match e1rm_epley(s.weight_kg, s.reps) {
+					Ok(e) =>
+						match acc {
+							Ok(b) if b.kg >= e => acc
+							_ => Ok({ kg: e, reps: s.reps })
+						}
+					Err(_) => acc
+				},
+		)
+
+	# ── durability: bests after prior work ──────────────────────────────
+	# How much of a fresh best an athlete still holds once a session has
+	# already cost them a fixed amount of work. Power sports count that work
+	# in kilojoules: a Hold-resampled watts stream has one sample per second,
+	# so a sample of v watts is v joules, and a pause leaves no samples and
+	# adds no work. Pace sports count moving time: the graded speed series
+	# has one pair per moving second, so the pairs before the threshold are
+	# the seconds already spent moving. The best after the threshold is
+	# taken over the remainder only, under the pause rules the whole-session
+	# bests use (wall-contiguous windows for power, the bounded moving-axis
+	# stitch for pace), so it can never exceed the session's own best at the
+	# same duration.
+	durability_kj : List(F64)
+	durability_kj = [500.0, 1000.0, 2000.0]
+
+	durability_moving_s : List(U64)
+	durability_moving_s = [1800, 3600, 5400]
+
+	durability_durations : List(U64)
+	durability_durations = [300, 1200]
+
+	# the samples left once cumulative work reaches threshold_kj
+	after_work : List({ t : I64, v : F64 }), F64 -> Try(List({ t : I64, v : F64 }), [NotReached])
+	after_work = |watts_1s_pairs, threshold_kj| {
+		target_j = threshold_kj * 1000.0
+		walked = List.fold_until(
+			watts_1s_pairs,
+			{ joules: 0.0.F64, n: 0.U64, reached: False },
+			|acc, p| {
+				joules = acc.joules + p.v
+				n = acc.n + 1
+				if (joules >= target_j) Break({ joules, n, reached: True }) else Continue({ joules, n, reached: False })
+			},
+		)
+		if (walked.reached) Ok(List.drop_first(watts_1s_pairs, walked.n)) else Err(NotReached)
+	}
+
+	# the pairs left once threshold_s moving seconds have passed
+	after_moving : List({ t : I64, v : F64 }), U64 -> Try(List({ t : I64, v : F64 }), [NotReached])
+	after_moving = |speed_pairs, threshold_s|
+		if (List.len(speed_pairs) >= threshold_s) Ok(List.drop_first(speed_pairs, threshold_s)) else Err(NotReached)
+
+	post_work_best : List({ t : I64, v : F64 }), F64, U64 -> Try(F64, [NotReached, TooShort])
+	post_work_best = |watts_1s_pairs, threshold_kj, window|
+		match after_work(watts_1s_pairs, threshold_kj) {
+			Ok(rest) => best_rolling_mean_1s(rest, window)
+			Err(NotReached) => Err(NotReached)
+		}
+
+	post_moving_best : List({ t : I64, v : F64 }), U64, U64 -> Try(F64, [NotReached, TooShort])
+	post_moving_best = |speed_pairs, threshold_s, window|
+		match after_moving(speed_pairs, threshold_s) {
+			Ok(rest) => best_rolling_mean_moving(rest, window)
+			Err(NotReached) => Err(NotReached)
+		}
+
+	# One durability row: the window's fresh best at a duration beside the
+	# best any session held at that duration after the threshold. `known` is
+	# false when no session in the window reached the threshold with the
+	# duration still to go; after and ratio are then 0, which is not a
+	# measurement. A known ratio is at most 1, because the best after a
+	# threshold is inside the session whose whole best the fresh figure
+	# already counts.
+	durability_row : F64, F64, I64 -> { after : F64, ratio : F64, known : Bool }
+	durability_row = |fresh, after, sessions| {
+		known = after > 0.0 and fresh > 0.0 and sessions > 0
+		if known {
+			{ after, ratio: after / fresh, known: True }
+		} else {
+			{ after: 0.0, ratio: 0.0, known: False }
+		}
+	}
+
+	# ── fitness per sport family ────────────────────────────────────────
+	# The combined CTL/ATL recurrence, run once per family over that
+	# family's own scored load. A family's walk starts on its first loaded
+	# day, so it has no entry before it was ever trained rather than a zero
+	# that reads as detraining, and a day without its load decays it as a
+	# rest day decays the combined series. The recurrence is linear in load
+	# and every walk starts from zero, so on any day the families' CTLs sum
+	# to the combined CTL and their ATLs to the combined ATL.
+	#
+	# Only families with load inside [lo, hi] are reported; a family last
+	# trained before the window is absent from it. Families appear in the
+	# order their first load arrives in `loads`.
+	FamilyDay : { family : Str, tss : F64, ctl : F64, atl : F64 }
+
+	family_fitness : List({ day : I64, family : Str, tss : F64 }), I64, I64 -> List({ day : I64, families : List(FamilyDay) })
+	family_fitness = |loads, lo, hi| {
+		scored = List.keep_if(loads, |l| l.tss > 0.0)
+		names = List.fold(scored, [], |acc, l| if (List.contains(acc, l.family)) acc else List.append(acc, l.family))
+		active = List.keep_if(names, |n| List.any(scored, |l| l.family == n and l.day >= lo and l.day <= hi))
+		series = List.map(active, |n| family_walk(List.keep_if(scored, |l| l.family == n), n, lo, hi))
+		span = if (hi >= lo) (hi - lo + 1).to_u64_wrap() else 0
+		Iter.fold(
+			(0.U64..<span).iter(),
+			[],
+			|acc, i| {
+				d = lo + (i).to_i64_wrap()
+				List.append(acc, { day: d, families: List.keep_oks(series, |s| Dict.get(s, d)) })
+			},
+		)
+	}
+
+	family_walk : List({ day : I64, family : Str, tss : F64 }), Str, I64, I64 -> Dict(I64, FamilyDay)
+	family_walk = |fam_loads, family, lo, hi| {
+		by_day = List.fold(fam_loads, Dict.empty(), |acc, l| Dict.insert(acc, l.day, Dict.get(acc, l.day).ok_or(0.0) + l.tss))
+		start = List.fold(fam_loads, hi, |m, l| m.min(l.day))
+		span = if (hi >= start) (hi - start + 1).to_u64_wrap() else 0
+		Iter.fold(
+			(0.U64..<span).iter(),
+			{ ctl: 0.0.F64, atl: 0.0.F64, out: Dict.empty() },
+			|acc, i| {
+				d = start + (i).to_i64_wrap()
+				tss = Dict.get(by_day, d).ok_or(0.0)
+				step = load_step({ ctl_prev: acc.ctl, atl_prev: acc.atl, tss })
+				out = if (d >= lo) Dict.insert(acc.out, d, { family, tss, ctl: step.ctl, atl: step.atl }) else acc.out
+				{ ctl: step.ctl, atl: step.atl, out }
+			},
+		).out
+	}
 }
 
 # ── tests ───────────────────────────────────────────────────────────
@@ -3414,8 +3573,8 @@ expect {
 }
 
 # ...and the same two lenses refuse an IMPOSSIBLE heart rate. `valid_hr`'s own
-# expects pin the predicate, not its use — with both lens arms reverted to
-# `avg_hr > 0.0` every expect file still passed. These assert the lenses themselves.
+# expects pin the predicate, not its use; these are the only guard on the lenses
+# themselves using it instead of `avg_hr > 0.0`.
 expect {
 	hr_row = |hr| { name: "X", date: "2025-01-01", sport: "Ride", distance_m: 12000.0, moving_time: 3600, np_w: 200.0, avg_hr: hr, avg_hr_scored: hr, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
 	Metrics.lens_score(Ef, hr_row(150.0)).is_ok()
@@ -3480,8 +3639,8 @@ expect {
 
 # coasting is excluded from the intensity split, not counted as easy. 60 s pedalling at
 # 100 W (easy vs FTP 250) then 60 s freewheeling at 0 W: easy is 60 s, not 120 s, and the
-# buckets sum to pedalling time. Counting the descent as "easy" was what made a
-# descent-heavy ride read as far more polarized than it really was.
+# buckets sum to pedalling time. Counting the descent as "easy" would make a
+# descent-heavy ride read as far more polarized than it really is.
 expect {
 	ride = List.map_with_index(
 		List.repeat(0.0, 121),
@@ -3529,7 +3688,7 @@ expect {
 	Metrics.sorted_by_t(up) == up and Metrics.sorted_by_t(down) == up
 }
 
-# a stray far-future sample no longer eats the rest of the stream
+# a stray far-future sample does not eat the rest of the stream
 expect {
 	stray = [{ t: 0.I64, v: 0.0.F64 }, { t: 999.I64, v: 99.0.F64 }, { t: 1.I64, v: 4.0.F64 }, { t: 2.I64, v: 8.0.F64 }]
 	pts = Metrics.resample_1s_pairs(stray, Interpolate)
@@ -3562,8 +3721,8 @@ expect {
 	rested.ctl < trained.ctl and rested.atl < trained.atl and rested.tsb > trained.tsb
 }
 
-# hrTSS per-hour weights follow Friel: 30 / 55 / 70 / 80 / 100. Only Z2 was pinned before,
-# so Z4 sat at 85 unnoticed. One hour in each zone, one zone at a time.
+# hrTSS per-hour weights follow Friel: 30 / 55 / 70 / 80 / 100. One hour in each zone,
+# one zone at a time, so every weight is pinned and not only Z2's.
 expect {
 	hour = |z| Metrics.hr_tss(z)
 	zero = { z1: 0, z2: 0, z3: 0, z4: 0, z5: 0 }
@@ -3626,9 +3785,8 @@ expect !(Str.contains(Metrics.rank_ts_sql("start_local", Desc), "a.start_local")
 
 # ...and the same three for the HOISTING twin. Sharing `rankable_sql` holds the
 # PREDICATE across both helpers; the direction and the key are per-helper, so pinning
-# one leaves the other open. Without these, shrinking this key to 1..10 while its
-# guard stays at 1..19 — the identical mutant already closed for rank_ts_sql —
-# passes the whole suite.
+# one leaves the other open. These are the only guard on this helper's key: shrinking
+# it to 1..10 while its guard stays at 1..19 is caught nowhere else.
 expect Str.contains(Metrics.hoist_unrankable_sql("a.start_local"), "substr(a.start_local, 1, 19) DESC")
 expect Str.contains(Metrics.hoist_unrankable_sql("a.start_local"), "END) ASC,")
 expect !(Str.contains(Metrics.hoist_unrankable_sql("start_local"), "a.start_local"))
@@ -3767,9 +3925,9 @@ expect {
 expect {
 	hi = Metrics.tss_ladder({ ..Metrics.ladder_base, avg_hr: Ok(250.0), rpe: Ok(7.0) })
 	lo = Metrics.tss_ladder({ ..Metrics.ladder_base, avg_hr: Ok(18.0), rpe: Ok(7.0) })
-	# Names the rung that DOES answer, and its number. `!= "hr_avg"` is absence-only:
-	# the rejected design — refused HR scoring 0 with model "none", which WINS and blocks
-	# the rpe rung — satisfies it. The point is which rung answers, so say which.
+	# Names the rung that DOES answer, and its number. `!= "hr_avg"` is absence-only: a
+	# refused HR scoring 0 with model "none", which WINS and blocks the rpe rung, would
+	# satisfy it. The point is which rung answers, so say which.
 	hi.model == "session_rpe" and lo.model == "session_rpe"
 		and (hi.tss - 70.0).abs() < 0.001
 		and (lo.tss - 70.0).abs() < 0.001
@@ -3789,7 +3947,7 @@ expect {
 	r.tss.abs() < 0.001 and r.model == "none"
 }
 
-# estimated watts (#73): device_watts=False skips ALL power rungs — a 120-min meterless
+# estimated watts: device_watts=False skips ALL power rungs — a 120-min meterless
 # ride with estimated avg 85 W must not score IF 0.35 / TSS 24 when honest rungs exist.
 # Here avg_hr 150 scores instead (55 hrTSS), exactly as if no watts were reported.
 expect {
@@ -3833,8 +3991,8 @@ expect {
 	(r.tss - 55.0).abs() < 0.001 and r.np.is_err()
 }
 
-# the #505 shape: a threshold anchored by a stroll makes a real run's implied IF
-# 7 — the pace rung refuses and the hour of Z2 HR scores instead, 55 not ~4900
+# a threshold anchored by a stroll makes a real run's implied IF 7 — the
+# pace rung refuses and the hour of Z2 HR scores instead, 55 not ~4900
 expect {
 	r = Metrics.tss_ladder({ ..Metrics.ladder_base, ngp: Ok(4.0), threshold_speed: 0.57, zones: { ..Metrics.test_zeroz, z2: 3600 } })
 	(r.tss - 55.0).abs() < 0.001 and r.model == "hr_zones"
@@ -3963,7 +4121,7 @@ expect {
 		and (s.tsb - (s.ctl - s.atl)).abs() < 0.001 and s.tsb < 0.0
 }
 
-# ── aerobic decoupling (#94) ─────────────────────────────────────────
+# ── aerobic decoupling ───────────────────────────────────────────────
 # Flat 200W for 20 minutes; HR rises 100 -> 110 exactly at the half boundary (mid =
 # t_lo + span//2 = 599, which belongs to the SECOND half). Efficiency goes 200/100 = 2.0 to 200/110 = 1.818,
 # so the drift is (2.0 - 1.818) / 2.0 = 9.09% — the same output costing more heartbeats.
@@ -4059,7 +4217,7 @@ expect {
 }
 
 # a 5-second recording interval is 5 seconds of work, not 1 "sample" — this is the whole
-# point of taking pairs: the pace path now agrees with the power path on what a second is
+# point of taking pairs: the pace path agrees with the power path on what a second is
 expect {
 	coarse = [{ t: 0.I64, v: 4.0.F64 }, { t: 5.I64, v: 4.0.F64 }, { t: 10.I64, v: 4.0.F64 }]
 	Metrics.time_in_pace_intensity(coarse, 4.0) == { easy_s: 0, moderate_s: 0, hard_s: 10 }
@@ -4302,12 +4460,11 @@ expect {
 # distance-less auto-name anchors show alone; off-date anchors drop the group.
 #
 # `total` and `scope_why` are BOUND rather than swallowed. The `..` stays — Roc needs it,
-# since the record also carries `name` — but the two fields under test are named, which is
-# the difference that matters — they were swallowed before, and that is why `total` could
-# be broken unnoticed: `total` is what makes the hidden count see this truncation at all,
-# and a mutation setting `LoneNoDistance`'s `total` to 1 restored the "first session of
-# this workout" falsehood with every gate green. `total` differs from `List.len(rows)` on
-# both truncating kinds, which is the whole point of carrying it.
+# since the record also carries `name` — but the two fields under test are named, which
+# makes this the guard on `total`: it is what makes the hidden count see this truncation
+# at all, and a `LoneNoDistance` `total` of 1 would bring back the "first session of
+# this workout" falsehood. `total` differs from `List.len(rows)` on both truncating
+# kinds, which is the whole point of carrying it.
 expect {
 	pr = |name, date, dist| { name, date, sport: "Ride", distance_m: dist, moving_time: 3600, np_w: 100.0, avg_hr: 100.0, avg_hr_scored: 100.0, rpe: 0.0, output_kj: 0.0, tss: 0.0, load_model: "power_stream", decoupling_pct: 0.0, decoupling_known: False, id: 0 }
 	exact = Metrics.anchor_filter({ name: "Class X", rows: [pr("Class X", "2025-01-01", 0.0)] }, "2025-01-01")
@@ -4335,8 +4492,8 @@ expect {
 
 expect (Metrics.mean([1.0, 2.0, 3.0]) - 2.0).abs() < 0.001 and (Metrics.mean([])).abs() < 0.001
 
-# pct_change: a real baseline measures; a zero baseline is NoBaseline, not 0% — those were
-# the same answer before, so "first week ever" reported as "load steady (0%)"
+# pct_change: a real baseline measures; a zero baseline is NoBaseline, not 0% — the
+# same answer for both would report "first week ever" as "load steady (0%)"
 expect {
 	measured = match Metrics.pct_change(2.0, 3.0) {
 		Ok(p) => (p - 50.0).abs() < 0.001
@@ -4384,9 +4541,9 @@ expect {
 	(z1.lo_w).abs() < 0.001 and (z7.hi_w).abs() < 0.001
 }
 
-# ── form trend (#111) ────────────────────────────────────────────────
-# A real athlete shape: a month inside one band, so the label never moved while form
-# actually swung 7 points. The delta is the thing that carries the information.
+# ── form trend ───────────────────────────────────────────────────────
+# A real athlete shape: a month inside one band, so the label never moves while form
+# swings 7 points. The delta is the thing that carries the information.
 expect {
 	series = [
 		{ day: 100, tsb: -13.0 },
@@ -4428,12 +4585,12 @@ expect {
 	}
 }
 
-# ── form band duration (#123) ────────────────────────────────────────
-# The case that prompted the issue: 16 days inside -15..-5 without ever leaving. The
-# values DRIFT (-12.5 up to -5.1) rather than repeating, because that is what real TSB
-# does and because a constant fixture cannot tell band identity from value equality — an
-# implementation comparing `v == now` instead of `form_band(v) == band_now` would pass a
-# constant fixture and then return 1 every day in production, silently emitting nothing.
+# ── form band duration ───────────────────────────────────────────────
+# 16 days inside -15..-5 without ever leaving. The values DRIFT (-12.5 up to -5.1)
+# rather than repeating, because that is what real TSB does and because a constant
+# fixture cannot tell band identity from value equality — an implementation comparing
+# `v == now` instead of `form_band(v) == band_now` would pass a constant fixture and
+# then return 1 every day in production, silently emitting nothing.
 expect {
 	series = [
 		# day 99 sits in a DIFFERENT band, so the streak has a real left edge and the walk
@@ -4503,7 +4660,7 @@ expect {
 
 # A streak that fills the whole window reports AtLeast, never Known — the caller passes a
 # WINDOW, so "the walk ran out of series" is not the same answer as "the band changed".
-# Reporting the cap as an exact count is how `summary` claimed 31 for a 45-day streak.
+# Reporting the cap as an exact count would claim 31 for a 45-day streak.
 expect {
 	series = [{ day: 100, tsb: -11.0 }, { day: 101, tsb: -11.2 }, { day: 102, tsb: -11.4 }]
 	match Metrics.days_in_band(series, 102) {
@@ -4523,7 +4680,7 @@ expect {
 }
 
 # The anchor day itself must be present. A series ending BEFORE the anchor is Unknown —
-# not Known(1) borrowed from an older day, which is what an at-or-before anchor produced.
+# not Known(1) borrowed from an older day, which is what an at-or-before anchor would produce.
 expect {
 	match Metrics.days_in_band([{ day: 100, tsb: -11.0 }], 114) {
 		Known(_) => False
@@ -4532,7 +4689,7 @@ expect {
 	}
 }
 
-# the labels NAME the state and no longer prescribe (#123)
+# the labels NAME the state and never prescribe
 # Band BOUNDARIES, pinned exactly. Samples sitting far from the edges let every
 # comparator here (<= vs <) survive any mutation, so these sit ON the edges. It
 # matters more than it would for prose: days_in_band derives identity from form_band,
@@ -4763,9 +4920,9 @@ expect {
 }
 
 # graded_speed_1s on a COARSE recording (5 s interval, still 4 m/s). Distance is
-# cumulative, so forward-HOLDING it and then differencing gave four 0 m/s samples and one
-# 20 m/s spike per interval — 5x the truth, raised to the 4th power by NGP. Linear
-# interpolation keeps every sample at ~4; a gapless 1 Hz fixture cannot see this.
+# cumulative, so forward-HOLDING it and then differencing would give four 0 m/s samples
+# and one 20 m/s spike per interval — 5x the truth, raised to the 4th power by NGP.
+# Linear interpolation keeps every sample at ~4; a gapless 1 Hz fixture cannot see this.
 expect {
 	ramp = |n, step| List.map_with_index(List.repeat(0.0, n), |_, i| (i).to_f64() * step)
 	gas = Metrics.graded_speed_1s(ramp(25, 5.0), ramp(25, 20.0), List.repeat(0.0, 25))
@@ -4823,7 +4980,7 @@ expect {
 		and first_warm
 		and last_cool
 		# tight on purpose: the lag-compensated edges must land within 2 s / 2 W of
-		# truth — the wide tolerances that hid the smoothing bias are not coming back
+		# truth, and a wider tolerance would hide a smoothing bias
 		and List.all(works, |s| (s.avg_signal - 250.0).abs() < 2.0)
 		and List.all(works, |s| s.dur_s >= 176 and s.dur_s <= 184)
 		and first_work_start >= 298 and first_work_start <= 302
@@ -4974,7 +5131,7 @@ expect {
 
 # sub-hold efforts (40/20s HIIT) cannot become individual reps BY DESIGN — the
 # whole rep block reads as ONE sustained work segment at its blended level, which
-# is the honest v1 semantic (a 40/20 block IS ~continuous sweet-spot effort).
+# is the honest semantic (a 40/20 block IS ~continuous sweet-spot effort).
 # Tuning hold downward must consciously break this expect, not slip through.
 expect {
 	mk = |dur, v, t0| Iter.fold((0.I64..<dur).iter(), [], |acc, i| List.append(acc, { t: t0 + i, v }))
@@ -5007,7 +5164,7 @@ expect {
 	List.is_empty(Metrics.detect_segments(fixture, { ..Metrics.detect_power_params, shift_frac: 5.0 }))
 }
 
-# the contrast gate's tripwire (#170): near-flat alternation is NOT structure —
+# the contrast gate's tripwire: near-flat alternation is NOT structure —
 # this and the floor expect below are what make future gate tuning a conscious act
 expect {
 	mk = |dur, v, t0| Iter.fold((0.I64..<dur).iter(), [], |acc, i| List.append(acc, { t: t0 + i, v }))
@@ -5023,7 +5180,7 @@ expect {
 	# 205 W "reps" over 165 W "recovery" is near-flat riding, not intervals: the
 	# easy parts sit at 0.82 of the work — above the multi-rep contrast limit —
 	# so the detector reports no structure even though the 40 W steps clear the
-	# min_shift floor. This is the #170 false-positive class, pinned.
+	# min_shift floor. This pins the near-flat false-positive class.
 	near_flat = Metrics.detect_segments(fixture, { ..Metrics.detect_power_params, min_shift: 30.0 })
 	List.is_empty(near_flat)
 }
@@ -5047,7 +5204,7 @@ expect {
 	List.len(List.keep_if(above, |s| s.kind == Work)) == 4 and List.is_empty(below)
 }
 
-# ── the #170 pins ───────────────────────────────────────────────────
+# ── interval detection on real and synthetic failure shapes ─────────
 # One REAL ride and two synthetics. The real stream holds a false negative no simple
 # synthetic shape reproduces, so it stays as the anchor. The other two failure modes reduce to
 # clean synthetic shapes (plus the near-flat and floor expects above).
@@ -5253,7 +5410,7 @@ expect {
 	List.len(works) == 3 and List.all(works, |s| s.dur_s >= 650 and s.dur_s <= 800 and s.avg_signal >= 240.0 and s.avg_signal <= 280.0)
 }
 
-# the false-positive shape (#170): a progressive ride — levels stepping up
+# the false-positive shape: a progressive ride — levels stepping up
 # back-to-back with no recoveries between — is ONE continuous effort, not reps.
 # (The gentle steps stay under the edge delta, so this rejects via the
 # single-effort contrast limit against its warm "easy" parts; the merge has its
@@ -5308,7 +5465,7 @@ expect {
 	List.len(works) >= 3 and List.all(works, |s| s.avg_signal >= 230.0 and s.avg_signal <= 255.0)
 }
 
-# ── stimulus spacing (#159): dedup, sort, upper median; honest Unknown below
+# ── stimulus spacing: dedup, sort, upper median; honest Unknown below
 # two distinct dates
 expect {
 	Metrics.median_gap_days([100, 103, 107, 110]) == Known(3)
@@ -5319,7 +5476,7 @@ expect {
 		and Metrics.median_gap_days([100, 101]) == Known(1)
 }
 
-# ── coverage split (#157): sums to exactly 100 under every rounding shape —
+# ── coverage split: sums to exactly 100 under every rounding shape —
 # thirds, halves, tiny slivers, single-tier, and the all-zero honest case
 expect {
 	sum_of = |c| c.high_pct + c.medium_pct + c.low_pct
@@ -5335,7 +5492,7 @@ expect {
 		and sum_of(zero) == 0
 }
 
-# ── baseline primitives (#160): fixed band edges are symmetric and total;
+# ── baseline primitives: fixed band edges are symmetric and total;
 # percentile is direction-free rank, exact at the edges
 expect {
 	Metrics.duration_band(2699) == { lo: 1200, hi: 2700 }
@@ -5400,7 +5557,7 @@ expect {
 		Err(_) => False
 	}
 	# two weeks: r2 would be 1 by construction and the slope is just the
-	# difference, so neither is published (the CP-fit lesson, #190)
+	# difference, so neither is published (the same rule the CP fit uses)
 	pair = Metrics.season_blocks([w(0, 100.0), w(1, 300.0)], 2)
 	withheld = match List.first(pair) {
 		Ok(b) => !(b.trend_known) and (b.slope).abs() < 0.001
@@ -5417,9 +5574,9 @@ expect {
 
 # The regression's x is the CALENDAR-week ordinal, not the position in the list.
 # They are identical for contiguous weeks -- which is every other expect here --
-# so the distinction that ADR 0011 is built on (a rest week is trained through,
-# not a boundary) was never exercised, and swapping them changed real slopes
-# while the whole suite stayed green.
+# so this is the only expect that exercises the distinction ADR 0011 is built on
+# (a rest week is trained through, not a boundary): swapping the two axes changes
+# real slopes.
 expect {
 	w = |wk, tss| { week_start: wk * 7, tss, sessions: 1.I64, complete: True }
 	# weeks 0,1,3,4 -- week 2 is an interior rest week. Loads chosen so the two
@@ -5439,10 +5596,10 @@ expect {
 }
 
 # A week still in progress is a PARTIAL sum, not a low week. Left in the
-# regression it is a large negative outlier at the right edge: on real data one
-# Monday ride took the current block from +11.0/wk at r2 0.56 to +5.8/wk at
-# r2 0.13, so training MORE made "building" look weaker and the number swung
-# back every Sunday. It still counts toward load, weeks and sessions.
+# regression it is a large negative outlier at the right edge, so one
+# early-week session makes training MORE look like weaker "building" and the
+# slope swings back when the week completes. It still counts toward load,
+# weeks and sessions.
 expect {
 	w = |wk, tss, c| { week_start: wk * 7, tss, sessions: 1.I64, complete: c }
 	full = [w(0, 100.0, True), w(1, 200.0, True), w(2, 300.0, True), w(3, 400.0, True)]
@@ -5457,8 +5614,8 @@ expect {
 		Ok(o) => o.weeks == 5 and (o.total_load - 1030.0).abs() < 0.001
 		Err(_) => False
 	}
-	# with the partial week IN the fit the slope would collapse, which is the
-	# regression this guards -- pinned so the exclusion cannot be quietly undone
+	# with the partial week IN the fit the slope would collapse; this pins the
+	# exclusion
 	would_collapse = match List.first(Metrics.season_blocks(List.append(full, w(4, 30.0, True)), 2)) {
 		Ok(x) => x.slope < 60.0
 		Err(_) => False
@@ -5601,7 +5758,7 @@ expect {
 	correct and unchanged
 }
 
-# rep bands separate workouts that session bands would merge (#149): a 3x2min
+# rep bands separate workouts that session bands would merge: a 3x2min
 # VO2 set and a 3x12min threshold block are not the same session shape
 expect {
 	Metrics.rep_duration_band(120) != Metrics.rep_duration_band(720)
@@ -5627,8 +5784,7 @@ expect {
 	outside = !(Metrics.is_uniform_reps(100, 161))
 	# A zero shortest rep is UNMEASURED, not perfectly uniform. The (0, 600)
 	# case is already False from the arithmetic alone, so it does NOT exercise
-	# the guard -- (0, 0) is the one that does, and asserting only the former
-	# let a mutation of the guard survive.
+	# the guard -- (0, 0) is the one that does, and it is the guard's only pin.
 	zero_not_uniform = !(Metrics.is_uniform_reps(0, 600)) and !(Metrics.is_uniform_reps(0, 0))
 	same and inside and outside and zero_not_uniform
 }
@@ -5645,10 +5801,10 @@ expect {
 		and (Metrics.atl_alpha - atl_true).abs() < 0.0000000003
 }
 
-# ── the engine/coach boundary, pinned (#154) ────────────────────────
+# ── the engine/coach boundary, pinned ───────────────────────────────
 # Stride describes state; it never prescribes. These expects iterate every
-# band's label and state id and fail if coaching vocabulary ever reappears —
-# the reform that #123/#127 performed, held as an invariant.
+# band's label and state id and fail if coaching vocabulary appears in any
+# of them.
 expect {
 	tsbs = [-25.0, -12.0, -2.0, 8.0, 20.0]
 	labels = List.concat(List.map(tsbs, Metrics.form_label), List.map(tsbs, Metrics.form_state))
@@ -5672,7 +5828,7 @@ expect {
 	ids == ["high_modeled_fatigue", "modeled_fatigue_building", "balanced", "fresh", "very_fresh"]
 }
 
-# ── arg_i64 / arg_u64 / arg_f64: user-argument number parsing (#201) ────
+# ── arg_i64 / arg_u64 / arg_f64: user-argument number parsing ───────────
 # Plain integers parse; every non-digit form is refused BEFORE the stdlib sees it,
 # which is what makes the accepted SHAPE independent of the compiler pin. Not the whole
 # set: overflow stays the stdlib's call, and arg_i64/arg_f64 differ there on purpose
@@ -5681,12 +5837,11 @@ expect Metrics.is_plain_int("10") and Metrics.is_plain_int("-3") and Metrics.is_
 expect !(Metrics.is_plain_int("1e1")) and !(Metrics.is_plain_int("3.3e1")) and !(Metrics.is_plain_int("1E1"))
 expect !(Metrics.is_plain_int("")) and !(Metrics.is_plain_int("-")) and !(Metrics.is_plain_int("ten")) and !(Metrics.is_plain_int(" 1"))
 expect !(Metrics.is_plain_int("0x10")) and !(Metrics.is_plain_int("1_0")) and !(Metrics.is_plain_int("+1"))
-# both ENDS of the digit range, because widening it by one either way survived otherwise:
-# '/' is 47 and ':' is 58, so a 47..58 mutant admitted "1/0" and "1:0" with every expect green
+# both ENDS of the digit range: '/' is 47 and ':' is 58, so a range widened by one
+# either way to 47..58 would admit "1/0" and "1:0"; this is the only pin on either end
 expect !(Metrics.is_plain_int("1/0")) and !(Metrics.is_plain_int("1:0"))
-# ...and the SAME bounds on is_plain_decimal, which the line above does not cover: the
-# 47..58 mutant survived here after being killed there, and the commit message said
-# "both endpoints are pinned now" while meaning one of the two functions
+# ...and the SAME bounds on is_plain_decimal, which the line above does not cover:
+# each of the two functions needs its own pin on both ends
 expect !(Metrics.is_plain_decimal("1/0")) and !(Metrics.is_plain_decimal("1:0"))
 expect Metrics.is_plain_decimal("7.5") and Metrics.is_plain_decimal("7") and Metrics.is_plain_decimal("-0.5")
 expect !(Metrics.is_plain_decimal("1e1")) and !(Metrics.is_plain_decimal("0.5e1")) and !(Metrics.is_plain_decimal("7.5.5"))
@@ -5698,7 +5853,7 @@ expect Metrics.arg_i64("-10") == Ok(-10)
 expect Metrics.arg_i64("1e1") == Err(NotAnInt)
 expect Metrics.arg_u64("10") == Ok(10)
 expect Metrics.arg_u64("1e1") == Err(NotAnInt)
-# the inconsistency that proved it was an accident, now refused on both sides
+# the stdlib accepts `1e1` but not `3.3e1`; both are refused here
 expect Metrics.arg_i64("1e1") == Err(NotAnInt) and Metrics.arg_i64("3.3e1") == Err(NotAnInt)
 
 expect Metrics.parse_target("3x12:00@230W") == Ok({ reps: 3, dur_s: 720, watts: 230.0 })
@@ -5922,3 +6077,208 @@ expect {
 # Sunday is the last day of a running week, not a past one
 expect Metrics.week_in_progress(20410, 20404, 20410)
 expect Metrics.week_in_progress(20404, 20404, 20410) and !(Metrics.week_in_progress(20411, 20404, 20410)) and !(Metrics.week_in_progress(20403, 20404, 20410))
+
+# ── estimated one-rep max ───────────────────────────────────────────
+
+# Epley at 5 reps adds a sixth; a single is the weight itself
+expect {
+	five = Metrics.e1rm_epley(100.0, 5)
+	one = Metrics.e1rm_epley(100.0, 1)
+	ten = Metrics.e1rm_epley(60.0, 10)
+	(
+		match five {
+			Ok(v) => (v - 116.6667).abs() < 0.001
+			Err(_) => False
+		}
+	)
+		and (
+			match one {
+				Ok(v) => (v - 100.0).abs() < 0.001
+				Err(_) => False
+			}
+		)
+		and (
+			match ten {
+				Ok(v) => (v - 80.0).abs() < 0.001
+				Err(_) => False
+			}
+		)
+}
+
+# past the rep ceiling, at 0 kg, and at 0 reps there is no estimate
+expect Metrics.e1rm_epley(60.0, 11) == Err(TooManyReps)
+expect Metrics.e1rm_epley(0.0, 8) == Err(NoWeight)
+expect Metrics.e1rm_epley(40.0, 0) == Err(NoReps)
+
+# the day's best set is the one with the highest estimate, not the heaviest
+# weight or the most reps: 85 kg x 3 (93.5) beats 80 kg x 5 (93.33), and the
+# 12-rep set gives nothing at all
+expect {
+	r = Metrics.best_e1rm([{ reps: 12, weight_kg: 60.0 }, { reps: 5, weight_kg: 80.0 }, { reps: 3, weight_kg: 85.0 }])
+	match r {
+		Ok(b) => (b.kg - 93.5).abs() < 0.001 and b.reps == 3
+		Err(_) => False
+	}
+}
+
+# a bodyweight day (every set at 0 kg) and a high-rep day have no estimate
+expect Metrics.best_e1rm([{ reps: 15, weight_kg: 0.0 }, { reps: 12, weight_kg: 0.0 }]) == Err(NoReliableSet)
+expect Metrics.best_e1rm([{ reps: 15, weight_kg: 20.0 }, { reps: 20, weight_kg: 10.0 }]) == Err(NoReliableSet)
+expect Metrics.best_e1rm([]) == Err(NoReliableSet)
+
+# ── durability ──────────────────────────────────────────────────────
+
+# a 1 Hz stretch of constant value, starting at second t0
+flat_pairs = |t0, n, v| List.map_with_index(List.repeat(v, n), |x, i| { t: t0 + (i).to_i64_wrap(), v: x })
+
+# a ride: 3000 s at 200 W (600 kJ) then 1200 s at 250 W. Past 500 kJ the best
+# 5 minutes is the 250 W finish; 1000 kJ is never reached (600 kJ + 1200 s at
+# 250 W is 900 kJ)
+expect {
+	ride = List.concat(flat_pairs(0, 3000, 200.0), flat_pairs(3000, 1200, 250.0))
+	after500 = Metrics.post_work_best(ride, 500.0, 300)
+	after1000 = Metrics.post_work_best(ride, 1000.0, 300)
+	(
+		match after500 {
+			Ok(w) => (w - 250.0).abs() < 0.001
+			Err(_) => False
+		}
+	)
+		and after1000 == Err(NotReached)
+}
+
+# a row at rowing power: 3600 s at 150 W (540 kJ), then 300 s at 180 W. Past
+# 500 kJ the 5-minute best is the 180 W piece, and 20 minutes no longer fit
+# in what is left
+expect {
+	row = List.concat(flat_pairs(0, 3600, 150.0), flat_pairs(3600, 300, 180.0))
+	(
+		match Metrics.post_work_best(row, 500.0, 300) {
+			Ok(w) => (w - 180.0).abs() < 0.001
+			Err(_) => False
+		}
+	)
+		and Metrics.post_work_best(row, 500.0, 1200) == Err(TooShort)
+}
+
+# a pause adds no work: two 1500 s stretches at 200 W with an hour between
+# them hold exactly 600 kJ, so 600 kJ is reached on the last sample and
+# nothing is left after it
+expect {
+	paused = List.concat(flat_pairs(0, 1500, 200.0), flat_pairs(5100, 1500, 200.0))
+	(
+		match Metrics.after_work(paused, 600.0) {
+			Ok(rest) => List.is_empty(rest)
+			Err(_) => False
+		}
+	)
+		and Metrics.after_work(paused, 600.1) == Err(NotReached)
+}
+
+# a fade: the session's whole 5-minute best is the fresh opening, and the
+# best after 500 kJ is lower, so the post-threshold best never exceeds it
+expect {
+	fade = List.concat(flat_pairs(0, 600, 300.0), flat_pairs(600, 3000, 220.0))
+	whole = Metrics.best_rolling_mean_1s(fade, 300)
+	after = Metrics.post_work_best(fade, 500.0, 300)
+	match (whole, after) {
+		(Ok(w), Ok(a)) => (w - 300.0).abs() < 0.001 and (a - 220.0).abs() < 0.001 and a <= w
+		_ => False
+	}
+}
+
+# a run: 1800 moving seconds at 3.0 m/s, then 600 at 3.5. Past 30 minutes the
+# best 5 minutes is the faster finish; 60 minutes is never reached
+expect {
+	run = List.concat(flat_pairs(0, 1800, 3.0), flat_pairs(1800, 600, 3.5))
+	(
+		match Metrics.post_moving_best(run, 1800, 300) {
+			Ok(s) => (s - 3.5).abs() < 0.001
+			Err(_) => False
+		}
+	)
+		and Metrics.post_moving_best(run, 3600, 300) == Err(NotReached)
+}
+
+# a swim with a one-second stall hole after every 100 m length: moving time,
+# not wall time, is what counts, so the holes neither delay the threshold nor
+# break the 5-minute window after it
+expect {
+	lengths = Iter.fold((0.U64..<24).iter(), [], |acc, k| List.concat(acc, flat_pairs((k).to_i64_wrap() * 101, 100, if (k >= 18) 1.4 else 1.2)))
+	(
+		match Metrics.post_moving_best(lengths, 1800, 300) {
+			Ok(s) => (s - 1.4).abs() < 0.001
+			Err(_) => False
+		}
+	)
+		and Metrics.post_moving_best(lengths, 1800, 1200) == Err(TooShort)
+}
+
+# a durability row is a ratio only when some session reached the threshold
+expect {
+	known = Metrics.durability_row(250.0, 225.0, 3)
+	unknown = Metrics.durability_row(250.0, 0.0, 0)
+	known.known and (known.ratio - 0.9).abs() < 0.001 and (known.after - 225.0).abs() < 0.001
+		and !unknown.known and unknown.ratio.abs() < 0.001 and unknown.after.abs() < 0.001
+}
+
+# ── fitness per sport family ────────────────────────────────────────
+
+# Rides from day 0, runs from day 7, one swim on day 1 only, and a strength
+# family with no scored load. Over the window days 5..12 the swim (no load in
+# the window) and the strength family (none at all) are absent; the run is
+# absent before its first load and present after it; and on every day the
+# families' CTL and ATL sum to the combined recurrence over the same loads.
+expect {
+	loads = [
+		{ day: 0, family: "Ride", tss: 100.0 },
+		{ day: 1, family: "Swim", tss: 40.0 },
+		{ day: 3, family: "Ride", tss: 60.0 },
+		{ day: 6, family: "WeightTraining", tss: 0.0 },
+		{ day: 7, family: "Run", tss: 50.0 },
+		{ day: 10, family: "Ride", tss: 80.0 },
+		{ day: 10, family: "Run", tss: 30.0 },
+	]
+	days = Metrics.family_fitness(loads, 5, 12)
+	combined = Iter.fold(
+		(0.U64..<13).iter(),
+		[],
+		|acc, i| {
+			d = (i).to_i64_wrap()
+			tss = List.fold(loads, 0.0, |t, l| if (l.day == d) t + l.tss else t)
+			prev = List.last(acc).ok_or({ ctl: 0.0, atl: 0.0, tsb: 0.0 })
+			List.append(acc, Metrics.load_step({ ctl_prev: prev.ctl, atl_prev: prev.atl, tss }))
+		},
+	)
+	sums_match = List.all(
+		days,
+		|d|
+			if d.day < 7 {
+				Bool.True
+			} else {
+				c = List.get(combined, (d.day).to_u64_wrap()).ok_or({ ctl: -1.0, atl: -1.0, tsb: 0.0 })
+				fam_ctl = List.fold(d.families, 0.0, |t, f| t + f.ctl)
+				fam_atl = List.fold(d.families, 0.0, |t, f| t + f.atl)
+				# the swim decays outside the window but still sits in the combined series
+				swim = List.get(Metrics.family_fitness(loads, 0, 12), (d.day).to_u64_wrap()).ok_or({ day: 0, families: [] })
+				swim_ctl = List.fold(List.keep_if(swim.families, |f| f.family == "Swim"), 0.0, |t, f| t + f.ctl)
+				swim_atl = List.fold(List.keep_if(swim.families, |f| f.family == "Swim"), 0.0, |t, f| t + f.atl)
+				(fam_ctl + swim_ctl - c.ctl).abs() < 0.0001 and (fam_atl + swim_atl - c.atl).abs() < 0.0001
+			},
+	)
+	names = |d| List.map(d.families, |f| f.family)
+	first = List.first(days).ok_or({ day: 0, families: [] })
+	day10 = List.get(days, 5).ok_or({ day: 0, families: [] })
+	List.len(days) == 8
+		and first.day == 5
+		and names(first) == ["Ride"]
+		and names(day10) == ["Ride", "Run"]
+		and List.all(day10.families, |f| if (f.family == "Run") (f.tss - 30.0).abs() < 0.001 else (f.tss - 80.0).abs() < 0.001)
+		and sums_match
+}
+
+# a window holding no load at all reports no family on any day, not zeros
+expect {
+	days = Metrics.family_fitness([{ day: 0, family: "Ride", tss: 100.0 }], 30, 31)
+	List.len(days) == 2 and List.all(days, |d| List.is_empty(d.families))
+}

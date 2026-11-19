@@ -312,7 +312,7 @@ Db :: [].{
 	# bump when the schema changes; ensure_schema! re-runs migrations when the db's
 	# PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 	# that post-date the original CREATE statements in Schema.roc.)
-	schema_version = 47
+	schema_version = 48
 
 	run_migrations! : Str => Try({}, _)
 	run_migrations! = |path| {
@@ -440,6 +440,23 @@ Db :: [].{
 		# comparable with a flat one. REAL; 0/NULL = no data (activity shorter than the rung).
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_300s_speed REAL")?
 		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN best_600s_speed REAL")?
+		# v48: durability — the best mean-max power after the session's first
+		# 500/1000/2000 kJ of work, and the best grade-adjusted speed after its
+		# first 30/60/90 moving minutes, each at 300 s and 1200 s. REAL; NULL =
+		# the session never reached the threshold or had too little left after
+		# it for the window.
+		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN after_500kj_300s_w REAL")?
+		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN after_500kj_1200s_w REAL")?
+		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN after_1000kj_300s_w REAL")?
+		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN after_1000kj_1200s_w REAL")?
+		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN after_2000kj_300s_w REAL")?
+		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN after_2000kj_1200s_w REAL")?
+		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN after_30min_300s_speed REAL")?
+		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN after_30min_1200s_speed REAL")?
+		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN after_60min_300s_speed REAL")?
+		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN after_60min_1200s_speed REAL")?
+		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN after_90min_300s_speed REAL")?
+		alter_add_column!(path, "ALTER TABLE activity_metrics ADD COLUMN after_90min_1200s_speed REAL")?
 		# v16: HR / power samples dropped by the validity filters vs offered, recorded
 		# here because the filtered values are gone before anything downstream sees the
 		# metrics. Counts ONLY valid_hr / valid_watts rejections — the wholesale exclusion of
