@@ -167,7 +167,7 @@ Board :: [].{
 
 	# the subtitle beside the legend: the range and the series' last day
 	sub_text : U64, Str -> Str
-	sub_text = |r, as_of| "last ${U64.to_str(r)} days, as of ${as_of}"
+	sub_text = |r, day| "last ${U64.to_str(r)} days, as of ${day}"
 
 	as_of : List(Str) -> Str
 	as_of = |days| (List.last(days)) ?? "no data"

@@ -1041,7 +1041,7 @@ Career :: [].{
 				[]
 			}
 		now = peak_is_now(ms)
-		marks = List.join([
+		extreme_labels = List.join([
 			mark(ms.valley.i, ms.valley.f, Theme.alarm_c, Bool.True),
 			mark(ms.peak.i, ms.peak.f, if (now) (Theme.gold_c) else Theme.tsb_c, Bool.False),
 			if (ms.last.i != ms.peak.i and ms.last.i != ms.valley.i) mark(ms.last.i, ms.last.f, Theme.ctl_c, Bool.False) else [],
@@ -1096,7 +1096,7 @@ Career :: [].{
 					Err(Unlabeled)
 				},
 		)
-		List.join([card_texts, grid, legend, withheld, marks, cheer, tests, years, names])
+		List.join([card_texts, grid, legend, withheld, extreme_labels, cheer, tests, years, names])
 	}
 
 	# what the chart's labels keep off: the chrome, every shape the view

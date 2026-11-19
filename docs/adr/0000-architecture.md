@@ -463,3 +463,7 @@ window reads the same database and the coach still reads JSON rather than pixels
 ## Update, 2026-10-29
 
 §9's "basic-cli 0.23" is now basic-cli 0.26, on `nightly-2026-10-26-3c0fffe`. 0.26 replaced the SQLite API with a connection value and typed decoders; the engine reaches it through one module, `src/cli/Sql.roc`, which keeps the named-binding calls every other module makes. The compiler notes record the rest of the migration.
+
+## Update, 2026-11-18
+
+The platforms are now basic-cli 0.28, basic-webserver 0.22 and roc-ray 0.12, on `nightly-2026-11-15-f25da45`. None of them crosses the previous pin in either direction, so they move with the compiler as one change; the compiler notes record why. `src/cli/Sql.roc` needed no change: the SQLite calls it makes kept their signatures.

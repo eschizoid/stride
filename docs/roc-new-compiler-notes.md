@@ -4,16 +4,31 @@ Working reference for the new (Zig) compiler + basic-cli, learned empirically
 against the compiler and roc-lang/roc source during the migration (completed
 2026-08-02). The migration's progress log is gone — this is the part worth keeping.
 
-## Toolchain pin: `nightly-2026-10-26-3c0fffe`
+## Toolchain pin: `nightly-2026-11-15-f25da45`
 
-**Bumped 2026-10-29**, from `nightly-2026-09-27-a3ce7f1`, alongside basic-cli
-0.26.0, roc-ray 0.11.1 and basic-webserver 0.19.0. basic-cli 0.26.0 sets a floor
-of `nightly-2026-10-12-2664a27`, and roc-ray 0.11 names no compiler at all, so
-the viz app header carries no `roc:` field and the `setup-roc` default is the
-only pin. The ceiling is the e2e harness: basic-webserver 0.19.0's own
-`Sqlite.roc` stops type-checking on `nightly-2026-10-27-de79a0f` (a
-`MalformedRow` tag its annotations do not list), so 10-26 is the newest nightly
-on which all three platforms compile.
+**Bumped 2026-11-18**, from `nightly-2026-10-26-3c0fffe`, alongside basic-cli
+0.28.1, roc-ray 0.12.2 and basic-webserver 0.22.0. They move together because
+none of the platforms crosses the old pin: roc-ray 0.12.2 does not type-check
+on `nightly-2026-10-26-3c0fffe`, and basic-cli 0.26.0 does not type-check on
+this one (its streams pass `Unknown` where `Stream.custom` now takes
+`Err(Unknown)`, after `size_hint` was renamed `len_if_known`).
+
+The Windows build sets the floor. On Windows, nightlies from
+`nightly-2026-11-11-7679cc5` until `nightly-2026-11-13-03dce41` report a
+compile-time stack overflow on plain literals such as `locale = "en-US"`
+(basic-cli#555; roc#12996 fixes it), and basic-cli 0.28.1 sets its floor at
+11-13. The pin sits at 11-15 because basic-webserver 0.22.0, which the e2e
+suite rides, is built for `nightly-2026-11-15-f25da45`. From
+`nightly-2026-11-12-ce942d6` on, a local or parameter that shadows a
+definition in an enclosing scope is a `duplicate definition` warning.
+Stride's source has none. roc-ray 0.12.2's own source has many, and
+`tools/roc-viz.sh` forgives any warning located inside that package, under the
+rule its header states; another roc-ray release gets no such pass until the
+wrapper names it. roc-ray names no compiler at all, so the viz app header
+carries no `roc:` field and the `setup-roc` default is the only pin.
+
+The previous pin's notes follow; every SQLite call the engine makes is unchanged
+in basic-cli 0.28.
 
 **basic-cli 0.26 replaced the SQLite API.** `Sqlite.open!` returns a `Db`
 connection, parameters are `${…}` interpolations or `?` markers, and rows decode

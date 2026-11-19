@@ -29,10 +29,10 @@ Scene :: [].{
 	Anchor : { x : F32, y : F32, align : [Left, Center, Right] }
 
 	measure_with : Text.Font, Text.Font -> Measure
-	measure_with = |data, prose| |text, size, face| (
+	measure_with = |data_font, prose_font| |text, size, face| (
 		match face {
-			Data => data
-			Prose => prose
+			Data => data_font
+			Prose => prose_font
 		}
 	).measure({ text, size, spacing: Text.default_spacing }).width
 
