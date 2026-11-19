@@ -2670,12 +2670,15 @@ expect !(Metrics.has_coaching_language(Render.warming_up_note(True, 12))) and !(
 # from the format string.
 expect Render.drain_note(Complete, { streams: 0, owed: 0 }) == ""
 
-# `pending` outranks the reason: a budget stop that empties the queue is done (the
-# window fills on the read just stored), and keying the note on `stopped` printed
-# "0 to go, run `stride sync` again tomorrow" beside `resumable: false`. The human
-# and machine surfaces must not contradict each other about the same run.
+# the count outranks the reason: a budget stop that empties every queue is done (the
+# window fills on the read just stored), so the note says nothing, as `resumable:
+# false` does. The human and machine surfaces must not contradict each other about
+# the same run.
 expect Render.drain_note(BudgetReached, { streams: 0, owed: 0 }) == ""
 expect Render.drain_note(RateLimited, { streams: 0, owed: 0 }) == ""
+# a complete run names only its unreadable streams, and a stop names everything owed
+expect Render.drain_note(Complete, { streams: 2, owed: 9 }) == "2 had unreadable stream data — they retry next sync"
+expect Render.drain_note(BudgetReached, { streams: 0, owed: 9 }) == "filled Strava's 15-minute read window — 9 to go, run `stride sync` again in ~15 minutes"
 expect Render.drain_note(Complete, { streams: 5, owed: 5 }) == "5 had unreadable stream data — they retry next sync"
 expect Render.drain_note(BudgetReached, { streams: 40, owed: 40 }) == "filled Strava's 15-minute read window — 40 to go, run `stride sync` again in ~15 minutes"
 expect Render.drain_note(RateLimited, { streams: 40, owed: 40 }) == "Strava rate-limited this run — 40 to go, try again in ~15 minutes"

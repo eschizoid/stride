@@ -73,10 +73,10 @@ reason `--json` and still answers in JSON).
    - **Never re-run sync in a loop.** Any `stopped` other than `complete` is a limit and
      the command returns at once, so wait out the remedy above before running again. A
      run that fetched nothing (`streams_fetched`, `notes_fetched` and `routes_fetched`
-     all 0) while `streams_skipped` or `routes_skipped` is above 0 read only bodies that
-     would not decode: stop and report it. The next scheduled sync still makes progress,
-     because each queue puts every activity not yet tried ahead of a body that has
-     failed. `stopped: complete` with `resumable: true` means only bodies that would not
+     all 0) while `streams_skipped`, `notes_skipped` or `routes_skipped` is above 0
+     read only bodies that would not decode: stop and report it. The next scheduled
+     sync still makes progress, because the streams and routes queues put every
+     activity not yet tried ahead of a body that has failed. `stopped: complete` with `resumable: true` means only bodies that would not
      decode remain (`streams_skipped`/`notes_skipped`/`routes_skipped`); the next sync asks for them
      again, so stop and report rather than re-running now. Do not count
      `notes_fetched` as progress: it includes the routine re-reads of descriptions

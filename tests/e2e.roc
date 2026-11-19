@@ -680,7 +680,7 @@ run_sync! = || {
 	# the six counts summed here (a 404 stores a marker and counts as fetched), so
 	# they add up to the window.
 	check!("...and the routes drain spent only what was left of the same window", bfq!(".data | .streams_fetched + .streams_skipped + .notes_fetched + .notes_skipped + .routes_fetched + .routes_skipped") == "95" and bfq!(".data.stopped") == "budget_reached" and bfq!(".data.pending_routes > 0") == "true")?
-	check!("...storing the no-GPS marker for each route the mock answered 404", Str.trim(sql!(db, "SELECT count(*) FROM routes WHERE activity_id BETWEEN 901 AND 970 AND raw_json = '{}';")) == bfq!(".data.routes_fetched"))?
+	check!("...storing the no-GPS marker for each of the 23 routes the mock answered 404", bfq!(".data.routes_fetched") == "23" and Str.trim(sql!(db, "SELECT count(*) FROM routes WHERE activity_id BETWEEN 901 AND 970 AND raw_json = '{}';")) == "23")?
 	_ = sql!(db, "DELETE FROM streams WHERE activity_id >= 901; DELETE FROM routes WHERE activity_id >= 901; DELETE FROM activities WHERE id >= 901;")
 	# Nothing else asserts this block tidies up: prune_deleted! skips `synced_at IS
 	# NULL`, exactly what these rows carry, so a leak survives every later run

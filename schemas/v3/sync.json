@@ -62,7 +62,7 @@
       "type": "integer"
     },
     "routes_skipped": {
-      "description": "route reads whose body stride could not use: not UTF-8, not a streams answer, or coordinates with no usable time. No route was stored, only a count of the failed fetch. Below the cap of 3 failed fetches the activity stays in pending_routes and the next sync asks again; at it a plain sync stops asking, the activity leaves pending_routes and doctor counts it in routes_retry_capped (`stride sync --all` asks again)",
+      "description": "route reads whose body stride could not use: not UTF-8, not JSON, or a real position with no usable time to pair it with. A JSON object with no latlng stream is the no-GPS case, stored as a marker and counted in routes_fetched. No route was stored, only a count of the failed fetch. Below the cap of 3 failed fetches the activity stays in pending_routes and the next sync asks again; at it a plain sync stops asking, the activity leaves pending_routes and doctor counts it in routes_retry_capped (`stride sync --all` asks again)",
       "type": "integer"
     },
     "pending_routes": {

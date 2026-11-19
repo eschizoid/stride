@@ -104,11 +104,11 @@ Streams :: [].{
 	RouteResp : { latlng : Try({ data : List(List(F64)) }, [Missing]), time : Try(StreamSeq, [Missing]) }
 
 	# what a route body says. `Points` holds every sample that is a real
-	# coordinate with a real time. `NoGps` is a body with no coordinates to
-	# keep: no `latlng` stream at all, which is what Strava sends for an indoor
-	# session, or coordinates of which none is a real position. `Unreadable` is
-	# a body that is not a streams answer, or one that carries coordinates with
-	# no usable time to place them by, since storing the no-GPS marker for it
+	# coordinate with a real time. `NoGps` is a body with no position to keep:
+	# no `latlng` stream at all, which is what Strava sends for an indoor
+	# session, or coordinates of which none is on the globe. `Unreadable` is a
+	# body that is not a streams answer, or one holding a real position that no
+	# usable time can be paired with, since storing the no-GPS marker for it
 	# would retire a route that exists. The null sentinel is the one
 	# decode_streams uses, so a null time drops its sample.
 	decode_route : Str -> [Points(List(RoutePoint)), NoGps, Unreadable]
@@ -121,30 +121,33 @@ Streams :: [].{
 				match (r.latlng, r.time) {
 					(Ok(ll), Ok(ts)) => {
 						pts = List.keep_oks(List.map2(ll.data, ts.data, |pair, t| route_point(pair, t)), |p| p)
-						timed = List.any(ts.data, |t| t > -99998.0)
 						if !(List.is_empty(pts)) {
 							Points(pts)
-						} else if !(List.is_empty(ll.data)) and !timed {
+						} else if List.any(ll.data, on_globe) {
 							Unreadable
 						} else {
 							NoGps
 						}
 					}
-					(Ok(ll), Err(Missing)) => if (List.is_empty(ll.data)) NoGps else Unreadable
+					(Ok(ll), Err(Missing)) => if (List.any(ll.data, on_globe)) Unreadable else NoGps
 					(Err(Missing), _) => NoGps
 				}
 		}
 	}
 
+	# a [lat, lng] pair that names a place: two numbers, latitude within 90
+	# degrees and longitude within 180
+	on_globe : List(F64) -> Bool
+	on_globe = |pair|
+		match pair {
+			[lat, lng] => lat >= -90.0 and lat <= 90.0 and lng >= -180.0 and lng <= 180.0
+			_ => False
+		}
+
 	route_point : List(F64), F64 -> Try(RoutePoint, [NotACoordinate])
 	route_point = |pair, t|
 		match pair {
-			[lat, lng] =>
-				if lat >= -90.0 and lat <= 90.0 and lng >= -180.0 and lng <= 180.0 and t > -99998.0 {
-					Ok({ lat, lng, t: t.round_to_i64_try().ok_or(0) })
-				} else {
-					Err(NotACoordinate)
-				}
+			[lat, lng] if on_globe(pair) and t > -99998.0 => Ok({ lat, lng, t: t.round_to_i64_try().ok_or(0) })
 			_ => Err(NotACoordinate)
 		}
 }
@@ -320,3 +323,9 @@ expect {
 		_ => False
 	}
 }
+
+# a real position that no usable time pairs with is unreadable, never the marker:
+# its only time on a sample off the globe, or a time stream shorter than the
+# coordinates
+expect Streams.decode_route("{\"latlng\":{\"data\":[[41.88,-87.63],[41.89,-87.64],[95.0,0.0]]},\"time\":{\"data\":[null,null,5]}}") == Unreadable
+expect Streams.decode_route("{\"latlng\":{\"data\":[[95.0,0.0],[41.89,-87.64]]},\"time\":{\"data\":[0]}}") == Unreadable
