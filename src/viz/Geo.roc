@@ -175,23 +175,36 @@ Geo :: [].{
 	focus_cell : F32
 	focus_cell = 100000.0
 
-	cell_of : Pt -> { cx : F32, cy : F32 }
-	cell_of = |p| { cx: F32.div_floor_by(p.x, focus_cell), cy: F32.div_floor_by(p.y, focus_cell) }
+	# a start's cell, as whole cell numbers east and north of the origin
+	cell_of : Pt -> { cx : I64, cy : I64 }
+	cell_of = |p| { cx: (F32.to_i64_try(F32.div_floor_by(p.x, focus_cell))) ?? 0, cy: (F32.to_i64_try(F32.div_floor_by(p.y, focus_cell))) ?? 0 }
 
-	same_cell : { cx : F32, cy : F32 }, { cx : F32, cy : F32 }, F32 -> Bool
-	same_cell = |a, b, reach| (a.cx - b.cx).abs() <= reach and (a.cy - b.cy).abs() <= reach
+	# one number per cell: a cell lies within a few hundred cells of the
+	# origin on either axis, far inside the multiplier
+	cell_key : { cx : I64, cy : I64 } -> I64
+	cell_key = |c| c.cx * 1048576 + c.cy
 
+	# The starts are counted per cell in one pass and the best cell found in
+	# a second, so the cost grows with the number of lines, not its square:
+	# a base map alone holds hundreds of thousands of them.
 	focus : List({ start : Pt, box : Bounds }) -> Focus
 	focus = |items| {
 		cells = List.map(items, |it| cell_of(it.start))
+		counts = List.fold(cells, Dict.empty(), |d, c| Dict.insert(d, cell_key(c), (Dict.get(d, cell_key(c)) ?? 0) + 1))
 		best = List.fold(
-			List.map_with_index(cells, |c, i| { c, i, n: List.count_if(cells, |o| same_cell(o, c, 0.5)) }),
-			{ c: { cx: 0.0, cy: 0.0 }, i: 0, n: 0 },
-			|acc, x| if (x.n > acc.n) x else acc,
+			List.map_with_index(cells, |c, i| { c, i }),
+			{ c: { cx: 0, cy: 0 }, i: 0, n: 0 },
+			|acc, x| {
+				n = Dict.get(counts, cell_key(x.c)) ?? 0
+				if (n > acc.n) { c: x.c, i: x.i, n } else acc
+			},
 		)
-		near = List.keep_if(items, |it| same_cell(cell_of(it.start), best.c, 1.5))
+		near = List.keep_if(
+			List.map2(items, cells, |it, c| { it, c }),
+			|x| (x.c.cx - best.c.cx).abs() <= 1 and (x.c.cy - best.c.cy).abs() <= 1,
+		)
 		{
-			box: List.fold(near, no_box, |b, it| union(b, it.box)),
+			box: List.fold(near, no_box, |b, x| union(b, x.it.box)),
 			anchor: (List.get(items, best.i)).map_ok(|it| it.start).ok_or({ x: 0.0, y: 0.0 }),
 		}
 	}
@@ -355,6 +368,17 @@ Geo :: [].{
 		all = List.fold(items, no_box, |b, it| union(b, it.box))
 		cam = opening(all, focus(items), r)
 		near32(cam.cx, 150005.0, 0.5)
+	}
+
+	# the densest cell wins though a lone start comes first, and two cells
+	# whose numbers sum alike, (0, 5) and (3, 2), are counted apart
+	expect {
+		f = focus([
+			{ start: { x: 50000.0, y: 550000.0 }, box: { x0: 50000.0, y0: 550000.0, x1: 50010.0, y1: 550010.0 } },
+			{ start: { x: 350000.0, y: 250000.0 }, box: { x0: 350000.0, y0: 250000.0, x1: 350010.0, y1: 250010.0 } },
+			{ start: { x: 360000.0, y: 260000.0 }, box: { x0: 360000.0, y0: 260000.0, x1: 360010.0, y1: 260010.0 } },
+		])
+		near32(f.anchor.x, 350000.0, 0.5) and near32(f.box.x0, 350000.0, 0.5) and near32(f.box.y1, 260010.0, 0.5)
 	}
 
 	# a metro a cell edge runs through stays whole, and a tie goes to the
