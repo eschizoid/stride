@@ -230,9 +230,10 @@ launcher resolves it and passes it as the first argument and the startup
 config is built from argv (`App.init_for_args`). The grants are that
 directory read-write, the launch directory read-only (the checkout for `just
 viz`, the athlete's home for the packaged launchers, which change to it first),
-and two programs: `stride` for the CP fit and `sh` for the zone offset `date` reports
-under the configured timezone; captures are allowed beneath `./captures` without
-a declaration. Nothing else, so a new effect in the window is a new declaration, and an
+two programs: `stride` for the CP fit and `sh` for the zone offset `date` reports
+under the configured timezone, and one network origin, OpenFreeMap's, for the map
+tab's street-map tiles (ADR 0015's 2026-11-19 update); captures are allowed beneath
+`./captures` without a declaration. Nothing else, so a new effect in the window is a new declaration, and an
 undeclared facility stops the app rather than failing quietly. Every launch
 path passes the directory, and the launch directory after it so a capture's status
 row can name its file by an absolute path: the `viz` recipe, the macOS `.app` launcher in
@@ -389,8 +390,8 @@ These are measured toolchain behaviors, not style opinions.
   delete). Rest days complete WITHOUT an activity id; every other type requires
   one — done means evidence.
 - **Four data tiers, four recovery stories**: mirror tables (`activities`,
-  `streams`, `routes`, `map_ways`, `map_blocks`) are re-pullable: sync rewrites an activity each time it is
-  listed, a deleted stream or route row is fetched again, and `basemap` fetches a block again once its `map_blocks` row is deleted — design freely (`stream_retries`,
+  `streams`, `routes`, `map_ways`, `map_blocks`, `map_tiles`) are re-pullable: sync rewrites an activity each time it is
+  listed, a deleted stream or route row is fetched again, `basemap` fetches a block again once its `map_blocks` row is deleted, and the window fetches a deleted `map_tiles` tile again when its view next needs it — design freely (`stream_retries`,
   sync's count of stream fetches that would not decode, is deletable too: deleting
   it costs at most three more reads per id); computed tables
   (`activity_metrics`, `activity_segments`, `daily_load`) rebuild from `analyze`; judgment tables

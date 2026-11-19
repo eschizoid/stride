@@ -188,14 +188,41 @@ switched by chips in its header, each its own view so a directive or a
 capture names it: routes (view 10, captured as `map.png`), heat (11,
 `map-heat.png`) and play (12, `map-play.png`). The routes are the answers
 `stride sync` stores, one per outdoor session, each decoded by `core.Route`,
-the rule the engine uses to tell a route from the no-GPS marker. The street
-map is the `map_ways` table `stride basemap` fills from OpenStreetMap: water,
-streets, cycleways, arterials and motorways, each a dim line in the window's
-palette, with the routes in the accent over them. Water, arterials and
-motorways draw at every zoom; streets and cycleways fade in as the view
-closes in on street level, where the grid stops reading as a grey wash. A
-database without `map_ways` draws the routes on a bare ground and says the
-street map is missing.
+the rule the engine uses to tell a route from the no-GPS marker, and they
+draw in the accent over the street map.
+
+The street map is OpenStreetMap's data as OpenFreeMap serves it: vector tiles
+in the OpenMapTiles schema, which the window fetches itself as the view needs
+them. Water and parks (parks, nature reserves, grass and wood, but not
+private gardens) are filled, opaque, in muted tones of the window's palette;
+rivers, streets, cycleways, arterials and motorways are dim lines. Water,
+arterials and motorways draw at every zoom; streets and cycleways fade in as
+the view closes in on street level, where the grid stops reading as a grey
+wash. The view asks for the tiles that cover it at the zoom its scale needs,
+each drawn 256 to 512 logical pixels across, down to zoom 14, where the
+tiles' detail stops and a closer view draws zoom 14 larger; and for the one
+tile three zooms coarser over each, so a pan into new ground shows coarse
+detail at once. A tile not yet drawn shows its nearest drawn coarser tile,
+scaled up and cut to its square, so the view never shows an empty patch
+where a coarser tile is held; each tile that lands repaints the picture, and
+the view sharpens until every tile on screen is its own. At most four tiles
+are read at once. Decoding (`Pbf`, `Mvt`, `Earcut`) and the tile maths and
+cache policy (`Tiles`) are pure modules with expects.
+
+Every fetched tile is kept raw in the `map_tiles` table, keyed by zoom,
+column and row alone, with the planet build it came from and when it was
+fetched. OpenFreeMap rebuilds the planet about weekly, and its TileJSON
+(`https://tiles.openfreemap.org/planet`) names the current build's tile URL;
+the window reads it once a tile needs the network, never before. A cached
+tile is drawn as it is until it is ninety days old, and is then fetched again
+by the build of the day, the old copy drawn meanwhile and kept when the
+network does not answer. So panning back over ground already seen is
+instant, and works offline. The window creates the table, is its only reader
+and writer, and fetches nothing but these tiles and that document, from the
+one origin it declares. While no tile of the view can be drawn, the ways
+`stride basemap` stored in `map_ways` draw instead, if there are any; with
+neither, the map says the street map is on its way while its tiles are
+fetched, and that there is none here yet once nothing more is coming.
 
 The map opens fitted to the routes, or to the street map when no route has
 GPS. When they span more than the widest zoom shows, as a single trip abroad
@@ -216,12 +243,15 @@ walks the list it draws.
 The map loads in a task beside the other views, which open without waiting
 for it; on the first load the map says it is being read until it lands, and it
 names a read that failed. One map load runs at a time: R pressed while one
-runs reads the map once more after it lands, and a capture of the map view
-waits for the map. A database with no routes table reads as having no routes
-yet. The window's SQLite binding refuses a query whose result passes a byte
-budget rather than returning part of it, so routes and ways are read in
-pages. The credit, © OpenStreetMap contributors, sits on the title row over
-the map's right edge; the street data is OpenStreetMap's, under the ODbL.
+runs reads the map once more after it lands, and keeps the tiles already
+drawn. A capture of the map view waits for the map and for its tiles: each on
+screen drawn, failed, or waiting on a TileJSON that cannot be read. A database
+with no routes table reads as having no routes yet. The window's SQLite
+binding refuses a query whose result passes a byte budget rather than
+returning part of it, so routes and ways are read in pages. The credit, ©
+OpenFreeMap, OpenMapTiles and OpenStreetMap contributors, sits on the title
+row over the map's right edge; the street data is OpenStreetMap's, under the
+ODbL.
 
 Heat sums what was drawn. Every route is drawn once into a texture of its
 own with added colours, each segment adding one to every pixel it covers,

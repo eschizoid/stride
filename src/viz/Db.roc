@@ -8,6 +8,7 @@ import rr.Sqlite
 import rr.Cmd
 import Geo
 import Motion
+import Tiles
 
 Db :: [].{
 	CurvePt : { dur_s : I64, watts : F32, aid : I64, name : Str, day : Str, ago : I64 }
@@ -1975,14 +1976,16 @@ Db :: [].{
 	# way keeps none of these.
 	MapLine : { kind : U8, pts : List(Geo.Pt), ts : List(F32), far : List(Geo.Pt), fts : List(F32), runs : List(Motion.Run), fruns : List(Motion.Run), box : Geo.Bounds }
 
-	# every route and base-map way, all relative to one origin; the extent
-	# of everything the map opens on, the routes' or, when no route has GPS,
-	# the base map's; where the routes gather, for when that extent is too
-	# wide to show (Geo.opening); and why a read failed, empty when none did
-	MapData : { routes : List(MapLine), ways : List(MapLine), fit : Geo.Bounds, focus : Geo.Focus, err : Str }
+	# every route and base-map way, all relative to one origin, and that
+	# origin in projected metres, which places the street map's tiles; the
+	# extent of everything the map opens on, the routes' or, when no route
+	# has GPS, the base map's; where the routes gather, for when that extent
+	# is too wide to show (Geo.opening); and why a read failed, empty when
+	# none did
+	MapData : { routes : List(MapLine), ways : List(MapLine), origin : { x : F64, y : F64 }, fit : Geo.Bounds, focus : Geo.Focus, err : Str }
 
 	no_map : MapData
-	no_map = { routes: [], ways: [], fit: Geo.no_box, focus: { box: Geo.no_box, anchor: { x: 0.0, y: 0.0 } }, err: "" }
+	no_map = { routes: [], ways: [], origin: { x: 0.0, y: 0.0 }, fit: Geo.no_box, focus: { box: Geo.no_box, anchor: { x: 0.0, y: 0.0 } }, err: "" }
 
 	# the base map's kinds as the engine stores them, in the order the view
 	# draws them, bottom first; a kind outside the list is not drawn
@@ -2158,11 +2161,72 @@ Db :: [].{
 		{
 			routes,
 			ways,
+			origin,
 			fit: List.fold(shown, Geo.no_box, |b, l| Geo.union(b, l.box)),
 			focus: Geo.focus(List.keep_oks(shown, |l| (List.first(l.pts)).map_ok(|p| { start: p, box: l.box }))),
 			err,
 		}
 	}
+
+	# ── the street map's tile cache ────────────────────────────────────────
+	# Every tile the window fetches is kept raw in map_tiles, keyed by its
+	# zoom, column and row alone, beside the planet build it came from and
+	# when it was fetched, in seconds since 1970; Tiles says why the build
+	# is not part of the key. The window is the table's one reader and
+	# writer. It creates the table before its first write, and a database
+	# without it reads as holding no tile. Like the other mirror tables it
+	# holds nothing that cannot be fetched again.
+	tiles_ddl : Str
+	tiles_ddl = "CREATE TABLE IF NOT EXISTS map_tiles (z INTEGER NOT NULL, x INTEGER NOT NULL, y INTEGER NOT NULL, build TEXT NOT NULL, fetched INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY (z, x, y))"
+
+	tile_read_sql : Str
+	tile_read_sql = "SELECT data AS d, CAST(strftime('%s', 'now') AS INTEGER) - fetched AS age FROM map_tiles WHERE z = :z AND x = :x AND y = :y"
+
+	tile_store_sql : Str
+	tile_store_sql = "INSERT INTO map_tiles (z, x, y, build, fetched, data) VALUES (:z, :x, :y, :b, CAST(strftime('%s', 'now') AS INTEGER), :d) ON CONFLICT (z, x, y) DO UPDATE SET build = excluded.build, fetched = excluded.fetched, data = excluded.data"
+
+	tile_bindings : Tiles.Key -> List({ name : Str, value : Sqlite.Value })
+	tile_bindings = |k| [{ name: ":z", value: Integer(U64.to_i64_wrap(k.z)) }, { name: ":x", value: Integer(U64.to_i64_wrap(k.x)) }, { name: ":y", value: Integer(U64.to_i64_wrap(k.y)) }]
+
+	# a cached tile's bytes and its age in seconds; an empty tile, one with
+	# nothing drawn in it, is stored as no bytes
+	read_tile! : Sqlite.Db, Tiles.Key => Try({ data : List(U8), age : I64 }, [Absent])
+	read_tile! = |db, k|
+		match db.query!(tile_read_sql, tile_bindings(k)) {
+			Ok(rs) =>
+				match List.first(rs) {
+					Ok(r) =>
+						match (r.nullable_bytes("d"), r.i64("age")) {
+							(Ok(NotNull(d)), Ok(a)) => Ok({ data: d, age: a })
+							(Ok(Null), Ok(a)) => Ok({ data: [], age: a })
+							_ => Err(Absent)
+						}
+					Err(_) => Err(Absent)
+				}
+			Err(_) => Err(Absent)
+		}
+
+	store_tile! : Sqlite.Db, Tiles.Key, Str, List(U8) => Try({}, [NotStored])
+	store_tile! = |db, k, build, data| {
+		_ = db.execute!(tiles_ddl, [])
+		match db.execute!(tile_store_sql, List.concat(tile_bindings(k), [{ name: ":b", value: String(build) }, { name: ":d", value: Bytes(data) }])) {
+			Ok(_) => Ok({})
+			Err(_) => Err(NotStored)
+		}
+	}
+}
+
+# the tile cache's statements and their bindings agree: every placeholder
+# either statement names is bound under its own name, the store binds the
+# build and the bytes beside the key, and the key is the table's whole
+# primary key
+expect {
+	names = List.map(Db.tile_bindings({ z: 14, x: 4203, y: 6088 }), |b| b.name)
+	store = List.concat(names, [":b", ":d"])
+	placeholders = |sql| List.count_if(Str.to_utf8(sql), |c| c == ':')
+	names == [":z", ":x", ":y"] and placeholders(Db.tile_read_sql) == 3 and placeholders(Db.tile_store_sql) == 5
+		and List.all(names, |nm| Str.contains(Db.tile_read_sql, nm)) and List.all(store, |nm| Str.contains(Db.tile_store_sql, nm))
+		and Str.contains(Db.tiles_ddl, "PRIMARY KEY (z, x, y)") and Str.contains(Db.tile_store_sql, "ON CONFLICT (z, x, y)")
 }
 
 expect Db.parse_utc_offset("-0500") == Ok(-300)

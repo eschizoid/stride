@@ -12,12 +12,14 @@ import Hud
 import Geo
 import Labels
 import Map
+import Mvt
 import Plan
 import Ramp
 import Scene
 import Strength
 import Table
 import Theme
+import Tiles
 import Trace
 import Ui
 import Zones
@@ -472,6 +474,8 @@ Gate :: [].{
 			map_painted_view: 0,
 			map_heat: Unbuilt,
 			map_play: { secs: 0.0, paused: Bool.False },
+			map_tiles: [],
+			map_source: Unasked,
 			mouse_in: Bool.False,
 			cursor: -1,
 		}
@@ -875,6 +879,7 @@ Gate :: [].{
 		{
 			routes: [{ kind: Db.route_kind, pts: route, ts: [0.0, 300.0, 600.0], far: route, fts: [0.0, 300.0, 600.0], runs: [{ band: 2, pts: List.take_first(route, 2) }, { band: 3, pts: List.drop_first(route, 1) }], fruns: [], box: Geo.box_of(route) }],
 			ways: [{ kind: 1, pts: street, ts: [], far: street, fts: [], runs: [], fruns: [], box: Geo.box_of(street) }],
+			origin: Geo.merc(41.88, -87.63),
 			fit: Geo.box_of(route),
 			focus: Geo.focus([{ start: { x: 0.0, y: 0.0 }, box: Geo.box_of(route) }]),
 			err: "",
@@ -891,17 +896,25 @@ Gate :: [].{
 		{
 			routes: lines,
 			ways: [],
+			origin: Geo.merc(41.88, -87.63),
 			fit: List.fold(lines, Geo.no_box, |b, l| Geo.union(b, l.box)),
 			focus: Geo.focus(List.keep_oks(lines, |l| (List.first(l.pts)).map_ok(|p| { start: p, box: l.box }))),
 			err: "",
 		}
 	}
 
-	# the map with routes and streets, with routes before the streets are
-	# fetched, with a route an ocean from the rest, in heat, in playback with
-	# its clock and with no route to play, with no route at all, while it
-	# loads, and with a read that failed whose message is longer than the map
-	# is wide, for every athlete at every size
+	# the model with every tile its view shows in one state, and the source
+	# in another
+	with_tiles : Ui.Model, [Fetching, Waiting, Drawn(Mvt.Tile), Failed(U64)], Tiles.Source -> Ui.Model
+	with_tiles = |m, st, src| { ..m, map_source: src, map_tiles: List.map(Map.cells(m, Map.cam(m)), |c| { key: c.key, state: st, refresh: Done, used: 0 }) }
+
+	# the map with routes and streets; with routes and neither stored ways
+	# nor tiles yet, while the tiles are fetched; with its tiles drawn; with
+	# its tiles failed and the source unreachable, offline; with a route an
+	# ocean from the rest, in heat, in playback with its clock and with no
+	# route to play, with no route at all, while it loads, and with a read
+	# that failed whose message is longer than the map is wide, for every
+	# athlete at every size
 	map_models : List({ name : Str, model : Ui.Model })
 	map_models =
 		List.join(
@@ -915,6 +928,8 @@ Gate :: [].{
 							[
 								{ name: "${a.name} map at ${size_name(sz)}", model: base },
 								{ name: "${a.name} map without streets at ${size_name(sz)}", model: { ..base, map: { ..map_fixture, ways: [] } } },
+								{ name: "${a.name} map with its tiles at ${size_name(sz)}", model: with_tiles({ ..base, map: { ..map_fixture, ways: [] } }, Drawn(Mvt.empty), Known("t")) },
+								{ name: "${a.name} map offline at ${size_name(sz)}", model: with_tiles({ ..base, map: { ..map_fixture, ways: [] } }, Failed(0), Unreachable(0)) },
 								{ name: "${a.name} map without routes at ${size_name(sz)}", model: { ..base, map: Db.no_map } },
 								{ name: "${a.name} map with a route an ocean away at ${size_name(sz)}", model: { ..base, map: madrid_fixture } },
 								{ name: "${a.name} map heat at ${size_name(sz)}", model: { ..base, view: 11 } },
@@ -1245,5 +1260,35 @@ expect List.all(
 				s.x >= r.x and s.x <= r.x + r.w and s.y >= r.y and s.y <= r.y + r.h
 			},
 		)
+	},
+)
+
+# the street map's note: on its way while the view's tiles are fetched, gone
+# once they draw, there-is-none once they failed with the source
+# unreachable, and gone while the stored ways draw, or in playback
+expect List.all(
+	Gate.sizes,
+	|sz| {
+		base = { ..Gate.empty_model(sz), view: 10, map: { ..Gate.map_fixture, ways: [] } }
+		Map.base_note(base) == Map.fetching_text
+			and Map.base_note(Gate.with_tiles(base, Fetching, Known("t"))) == Map.fetching_text
+			and Map.base_note(Gate.with_tiles(base, Waiting, Asking)) == Map.fetching_text
+			and Map.base_note(Gate.with_tiles(base, Drawn(Mvt.empty), Known("t"))) == ""
+			and Map.base_note(Gate.with_tiles(base, Failed(0), Unreachable(0))) == Map.no_base_text
+			and Map.base_note(Gate.with_tiles(base, Waiting, Unreachable(0))) == Map.no_base_text
+			and Map.base_note({ ..base, map: Gate.map_fixture }) == ""
+			and Map.base_note({ ..base, view: 12 }) == ""
+	},
+)
+
+# a view's capture waits for its tiles: not while one is fetched, and once
+# each is drawn or nothing more is coming
+expect List.all(
+	Gate.sizes,
+	|sz| {
+		base = { ..Gate.empty_model(sz), view: 10, map: { ..Gate.map_fixture, ways: [] } }
+		!(Map.tiles_settled(base)) and !(Map.tiles_settled(Gate.with_tiles(base, Fetching, Known("t"))))
+			and Map.tiles_settled(Gate.with_tiles(base, Drawn(Mvt.empty), Known("t"))) and Map.tiles_settled(Gate.with_tiles(base, Failed(0), Unreachable(0)))
+			and Map.tiles_settled({ ..base, map: Db.no_map })
 	},
 )

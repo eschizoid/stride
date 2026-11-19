@@ -6,6 +6,7 @@ import rr.Text
 import rr.Texture
 import Db
 import Geo
+import Tiles
 
 Ui :: [].{
 	# one month as the career view draws it: screen position, and whether the
@@ -298,5 +299,9 @@ Ui :: [].{
 		# playback's clock in seconds of play, which runs only while the play
 		# mode shows and is not paused, and starts over each time it opens
 		map_play : { secs : F32, paused : Bool },
+		# the street map's tiles the window holds, and the state of the
+		# TileJSON their addresses are read from (Tiles)
+		map_tiles : List(Tiles.Slot),
+		map_source : Tiles.Source,
 	}
 }

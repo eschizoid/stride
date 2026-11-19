@@ -5,15 +5,20 @@ import Db
 import Geo
 import Labels
 import Motion
+import Mvt
 import Scene
 import Theme
+import Tiles
 import Ui
 
 Map :: [].{
-	# The map view: every GPS session drawn over the street map the engine
-	# fetched, in Web Mercator, north up. Drag pans, the wheel zooms at the
-	# cursor, and `0` returns to the opening view (Geo.opening). The streets
-	# come from OpenStreetMap, and the view credits it on the map itself.
+	# The map view: every GPS session drawn over the street map, in Web
+	# Mercator, north up. Drag pans, the wheel zooms at the cursor, and `0`
+	# returns to the opening view (Geo.opening). The street map is
+	# OpenFreeMap's vector tiles of OpenStreetMap's data in the OpenMapTiles
+	# schema, fetched as the view needs them and cached (Tiles); the view
+	# credits all three on the map itself. The ways `stride basemap` stored
+	# draw instead only while no tile is there to draw.
 
 	# The tab's three modes share its pill and switch by chips in the
 	# header, as the day tab's do: routes (view 10) draws every route in the
@@ -109,13 +114,16 @@ Map :: [].{
 	}
 
 	credit_text : Str
-	credit_text = "OpenStreetMap contributors"
+	credit_text = "OpenFreeMap  OpenMapTiles  OpenStreetMap contributors"
 
 	no_routes_text : Str
 	no_routes_text = "no GPS routes yet - stride sync fetches one per outdoor session"
 
+	fetching_text : Str
+	fetching_text = "fetching the street map from OpenFreeMap..."
+
 	no_base_text : Str
-	no_base_text = "no street map yet - stride basemap fetches the streets around these routes"
+	no_base_text = "no street map here yet - it is fetched from OpenFreeMap once the network answers"
 
 	loading_text : Str
 	loading_text = "reading the routes and the street map..."
@@ -178,28 +186,174 @@ Map :: [].{
 	far_mpp : F32
 	far_mpp = 8.0
 
-	# what each mode paints into the cached picture. A line wholly outside
-	# the rectangle or faded out is skipped, and a point closer than a pixel
-	# to the last one drawn adds nothing. The base map goes first, in the kind
-	# order the load sorted it into. Routes mode draws the routes over it in
-	# the accent; play draws them in runs of their speed bands; heat draws
-	# none here, its passes being summed into a texture of their own
-	# (paint_heat!), unless the window could not build that texture, when it
-	# draws them as routes mode does.
-	paint! : Ui.Model, Geo.Cam, Draw.Frame => {}
-	paint! = |model, c, frame| {
-		r = rect(model.win)
+	# the fills' colours: the theme's blue for water and a muted green for
+	# parks, each laid over the map's ground at a fixed strength and opaque,
+	# so where the squares of neighbouring tiles meet nothing shows doubled
+	park_hue : Color.Rgba
+	park_hue = Color.from_hex_rgb(0x54c98a)
+
+	over : Color.Rgba, Color.Rgba, F32 -> Color.Rgba
+	over = |ground, hue, t| {
+		mix = |a, b| U64.to_u8_wrap((F32.round_to_u64_try(U8.to_f32(a) * (1.0 - t) + U8.to_f32(b) * t)) ?? 0)
+		Color.rgba(mix(ground.r, hue.r), mix(ground.g, hue.g), mix(ground.b, hue.b), 255)
+	}
+
+	fill_colour : U8 -> Color.Rgba
+	fill_colour = |k| if (k == Mvt.water_fill) over(Theme.card, Theme.ctl_c, 0.26) else over(Theme.card, park_hue, 0.14)
+
+	# the tiles the camera shows, at the zoom its scale needs (Tiles.view)
+	cells : Ui.Model, Geo.Cam -> List(Tiles.Cell)
+	cells = |model, c| (Tiles.view(c, rect(model.win), model.map.origin)).cells
+
+	# whether the map has anything to show, and so any tile to fetch: a
+	# route, or a stored way when no route has GPS
+	has_data : Ui.Model -> Bool
+	has_data = |model| !(List.is_empty(model.map.routes) and List.is_empty(model.map.ways))
+
+	# whether any tile of the view, its own or an ancestor's, is drawn
+	tiles_shown : Ui.Model, Geo.Cam -> Bool
+	tiles_shown = |model, c| List.any(cells(model, c), |cell| Tiles.shown(model.map_tiles, cell).is_ok())
+
+	# whether the view's tiles have all had their answer (Tiles.settled); a
+	# map with nothing to show fetches none and is settled at once
+	tiles_settled : Ui.Model -> Bool
+	tiles_settled = |model| !(has_data(model)) or Tiles.settled(model.map_tiles, cells(model, cam(model)), model.map_source)
+
+	# whether a tile of the view is still on its way: a task is reading it,
+	# or it waits on a source not yet read
+	fetching : Ui.Model -> Bool
+	fetching = |model|
+		has_data(model) and List.any(
+			cells(model, cam(model)),
+			|cell|
+				match List.find_first(model.map_tiles, |s| s.key == cell.key) {
+					Err(_) => Bool.True
+					Ok(s) =>
+						match s.state {
+							Fetching => Bool.True
+							Waiting =>
+								match model.map_source {
+									Unreachable(_) => Bool.False
+									_ => Bool.True
+								}
+							_ => Bool.False
+						}
+				},
+		)
+
+	# what the map says of its street map when none of it is on screen:
+	# that it is on its way, or, once nothing more is coming, that there is
+	# none here yet; nothing while any tile or stored way draws, or in
+	# playback, whose clock holds that corner
+	base_note : Ui.Model -> Str
+	base_note = |model|
+		if model.view == 12 or !(List.is_empty(model.map.ways)) or tiles_shown(model, cam(model)) {
+			""
+		} else if fetching(model) {
+			fetching_text
+		} else {
+			no_base_text
+		}
+
+	# One tile drawn at its place: its fills, then its lines in kind
+	# order, a line faded out at this zoom skipped and a point closer than a
+	# pixel to the last one kept adding nothing.
+	draw_tile! : Draw.Frame, Mvt.Tile, Tiles.Place, F32 => {}
+	draw_tile! = |frame, t, at, mpp| {
+		to = |p| { x: at.x + p.x * at.k, y: at.y + p.y * at.k }
+		List.for_each!(t.fills, |f| frame.triangles!({ points: List.map(f.tris, to), color: fill_colour(f.kind) }))
 		List.for_each!(
-			model.map.ways,
+			t.lines,
 			|l| {
 				s = style(l.kind)
-				k = fade(s, c.mpp)
-				if k > 0.0 and Geo.visible(c, r, l.box) {
+				k = fade(s, mpp)
+				if k > 0.0 {
 					a = (F32.round_to_u64_try(s.alpha * k)) ?? 0
-					frame.line_strip!({ points: Geo.strip(c, r, if (c.mpp > far_mpp) l.far else l.pts, 1.0), stroke: Draw.stroke(Color.with_alpha(s.color, U64.to_u8_wrap(a)), s.width) })
+					frame.line_strip!({ points: Geo.thin(List.map(l.pts, to), 1.0), stroke: Draw.stroke(Color.with_alpha(s.color, U64.to_u8_wrap(a)), s.width) })
 				}
 			},
 		)
+	}
+
+	# a cell's square in the picture's pixels, cut to the map's rectangle,
+	# its edges pushed out to whole pixels so that neighbouring squares meet
+	# with no gap between them
+	cut : Tiles.Place, Geo.Rect, F32 -> Try({ x : F32, y : F32, width : F32, height : F32 }, [Outside])
+	cut = |p, r, sc| {
+		side = p.k * Mvt.extent_units
+		x0 = F32.max(p.x, r.x) * sc
+		y0 = F32.max(p.y, r.y) * sc
+		x1 = F32.min(p.x + side, r.x + r.w) * sc
+		y1 = F32.min(p.y + side, r.y + r.h) * sc
+		fx = F32.div_floor_by(x0, 1.0)
+		fy = F32.div_floor_by(y0, 1.0)
+		if (x1 <= x0 or y1 <= y0) Err(Outside) else Ok({ x: fx, y: fy, width: 0.0 - F32.div_floor_by(0.0 - x1, 1.0) - fx, height: 0.0 - F32.div_floor_by(0.0 - y1, 1.0) - fy })
+	}
+
+	# Every cell of the view draws its own tile or, until that lands, its
+	# nearest drawn ancestor's scaled up (Tiles.shown), and answers whether
+	# any tile drew. When `squared`, as in the picture, each is cut to its
+	# cell's square, so a coarse stand-in never spills over a neighbour
+	# already sharp and the buffer every tile carries past its edge never
+	# draws twice. Otherwise the view is drawing straight to the frame
+	# inside the map's own scissor, which a second scissor would replace
+	# rather than narrow, so each tile shown draws once, whole.
+	paint_tiles! : Ui.Model, Geo.Cam, Bool, Draw.Frame => Bool
+	paint_tiles! = |model, c, squared, frame| {
+		r = rect(model.win)
+		o = model.map.origin
+		shown = List.keep_oks(cells(model, c), |cell| Tiles.shown(model.map_tiles, cell).map_ok(|s| { cell, s }))
+		if squared {
+			List.for_each!(
+				shown,
+				|e|
+					match cut(Tiles.place(c, r, o, e.cell.key.z, e.cell.col, U64.to_i64_wrap(e.cell.key.y)), r, model.ui_scale) {
+						Ok(px) => {
+							_ = frame.with_scissor!(
+								px,
+								|f| {
+									draw_tile!(f, e.s.tile, Tiles.place(c, r, o, e.s.z, e.s.col, e.s.row), c.mpp)
+									Ok({})
+								},
+							)
+							{}
+						}
+						Err(_) => {}
+					},
+			)
+		} else {
+			once = List.fold(shown, [], |acc, e| if (List.any(acc, |x| x.z == e.s.z and x.col == e.s.col and x.row == e.s.row)) acc else List.append(acc, e.s))
+			List.for_each!(once, |s| draw_tile!(frame, s.tile, Tiles.place(c, r, o, s.z, s.col, s.row), c.mpp))
+		}
+		!(List.is_empty(shown))
+	}
+
+	# what each mode paints into the cached picture. The street map goes
+	# first: the view's tiles, or, while none of them is there to draw, the
+	# stored ways, a line wholly outside the rectangle or faded out skipped
+	# and a point closer than a pixel to the last one drawn adding nothing,
+	# in the kind order the load sorted them into. Routes mode draws the
+	# routes over it in the accent; play draws them in runs of their speed
+	# bands; heat draws none here, its passes being summed into a texture of
+	# their own (paint_heat!), unless the window could not build that
+	# texture, when it draws them as routes mode does.
+	paint! : Ui.Model, Geo.Cam, Bool, Draw.Frame => {}
+	paint! = |model, c, squared, frame| {
+		r = rect(model.win)
+		drew = paint_tiles!(model, c, squared, frame)
+		if !drew {
+			List.for_each!(
+				model.map.ways,
+				|l| {
+					s = style(l.kind)
+					k = fade(s, c.mpp)
+					if k > 0.0 and Geo.visible(c, r, l.box) {
+						a = (F32.round_to_u64_try(s.alpha * k)) ?? 0
+						frame.line_strip!({ points: Geo.strip(c, r, if (c.mpp > far_mpp) l.far else l.pts, 1.0), stroke: Draw.stroke(Color.with_alpha(s.color, U64.to_u8_wrap(a)), s.width) })
+					}
+				},
+			)
+		}
 		if model.view == 12 {
 			paint_speed!(model, c, frame)
 		} else if model.view != 11 or !(heat_ready(model)) {
@@ -322,8 +476,8 @@ Map :: [].{
 				[fix(Scene.prose(loading_text, 13.0, Theme.ink_muted), r.x + 14.0, r.y + 14.0, Left, r)]
 			} else if List.is_empty(model.map.routes) {
 				[fix(Scene.prose(no_routes_text, 13.0, Theme.ink_muted), r.x + 14.0, r.y + 14.0, Left, r)]
-			} else if List.is_empty(model.map.ways) and model.view != 12 {
-				[fix(Scene.prose(no_base_text, 13.0, Theme.ink_muted), r.x + 14.0, r.y + 14.0, Left, r)]
+			} else if base_note(model) != "" {
+				[fix(Scene.prose(base_note(model), 13.0, Theme.ink_muted), r.x + 14.0, r.y + 14.0, Left, r)]
 			} else {
 				[]
 			}
@@ -371,7 +525,7 @@ Map :: [].{
 			|f| {
 				match model.map_rt {
 					Target(t) => f.texture!({ texture: t.rt.texture(), source: t.rt.source(), dest, origin: { x: 0.0, y: 0.0 }, rotation: 0.0, tint: Color.white })
-					_ => paint!(model, c, f)
+					_ => paint!(model, c, Bool.False, f)
 				}
 				if model.view == 11 {
 					match model.map_heat {
@@ -429,3 +583,26 @@ expect Map.title_text(11) != Map.title_text(10) and Map.title_text(12) != Map.ti
 
 # playback's title states the speed-up the clock runs at
 expect Str.contains(Map.title_text(12), "an hour in ${U64.to_str((F32.round_to_u64_try(3600.0 / Motion.speedup)) ?? 0)} seconds") and Str.contains(Map.title_text(12), "an hour in 30 seconds")
+
+# the tiles' line kinds are the stored ways' kinds, code for code, so one
+# style serves both
+expect Mvt.line_kinds == Db.way_kinds
+
+# water and parks fill opaque, each nearer its hue than the ground is
+expect {
+	w = Map.fill_colour(Mvt.water_fill)
+	p = Map.fill_colour(Mvt.park_fill)
+	w.a == 255 and p.a == 255 and w.b > Theme.card.b and p.g > Theme.card.g and w != p
+}
+
+# a cell's square cut to the map, its edges pushed out to whole pixels, and
+# one wholly outside the map cut to nothing
+expect {
+	r = { x: 36.0, y: 96.0, w: 908.0, h: 456.0 }
+	inside = Map.cut({ x: 100.25, y: 120.5, k: 0.1 }, r, 1.5)
+	off = Map.cut({ x: 2000.0, y: 120.5, k: 0.1 }, r, 1.5)
+	match inside {
+		Ok(px) => px.x == 150.0 and px.y == 180.0 and px.x + px.width >= (100.25 + 409.6) * 1.5 and px.x + px.width < (100.25 + 409.6) * 1.5 + 1.0 and off == Err(Outside)
+		Err(_) => Bool.False
+	}
+}
