@@ -319,9 +319,10 @@ Strava :: [].{
 				if day_spent!(path)? {
 					pend0 = pending_streams!(path)?
 					pendn0 = pending_notes!(path)?
+					pendr0 = pending_routes!(path)?
 					cap_stop = FromDrain(DailyCapReached)
-					cap_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, stopped : Str, resumable : Bool }
-					cap_payload = { synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pend0, notes_fetched: 0, notes_skipped: 0, pending_notes: pendn0, stopped: Drain.sync_stopped_label(cap_stop), resumable: True }
+					cap_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, routes_fetched : I64, routes_skipped : I64, pending_routes : I64, stopped : Str, resumable : Bool }
+					cap_payload = { synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pend0, notes_fetched: 0, notes_skipped: 0, pending_notes: pendn0, routes_fetched: 0, routes_skipped: 0, pending_routes: pendr0, stopped: Drain.sync_stopped_label(cap_stop), resumable: True }
 					Output.out!(cap_payload, |p| Render.sync_screen(p, cap_stop, all))
 				} else {
 					counts = fetch_pages!(path, token, after_param, started, 1, { relisted: 0, new_n: 0, updated_n: 0, rate_limited: False })?
@@ -351,6 +352,7 @@ Strava :: [].{
 						# only one of the things that can owe it.
 						pending = pending_streams!(path)?
 						pending_n = pending_notes!(path)?
+						pending_r = pending_routes!(path)?
 						# BOUND once, then used twice: the payload's string and the screen's tag must
 						# describe the same run, and writing the tag at both spots made that a
 						# coincidence. (Above the annotation — Roc reads a separated annotation as a
@@ -362,21 +364,28 @@ Strava :: [].{
 						# one of them forces Render to guess the other from `pending_streams`, which is
 						# what this type was introduced to stop.
 						rl_stop = if (day_spent!(path)?) ListDailyCapReached else ListRateLimited
-						rl_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, stopped : Str, resumable : Bool }
-						rl_payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pending, notes_fetched: 0, notes_skipped: 0, pending_notes: pending_n, stopped: Drain.sync_stopped_label(rl_stop), resumable: True }
+						rl_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, routes_fetched : I64, routes_skipped : I64, pending_routes : I64, stopped : Str, resumable : Bool }
+						rl_payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pending, notes_fetched: 0, notes_skipped: 0, pending_notes: pending_n, routes_fetched: 0, routes_skipped: 0, pending_routes: pending_r, stopped: Drain.sync_stopped_label(rl_stop), resumable: True }
 						Output.out!(rl_payload, |p| Render.sync_screen(p, rl_stop, all))
 					} else {
 						pruned = prune_deleted!(path, started, window_start)?
 						Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
-						pull = drain_missing!(path, token, Streams, all)?
+						pull = drain_missing!(path, token, Streams, all, 0)?
 						# notes drain only after a COMPLETE streams drain: both draw on the
 						# one read budget, and a run that stopped on it would spend its
 						# refusal a second time. The queue is still measured, so resumable
 						# and pending_notes stay true while the work waits its turn.
 						notes =
 							match pull.stopped {
-								Complete => drain_missing!(path, token, Notes, all)?
-								_ => { stored: 0, skipped: 0, pending: pending_notes!(path)?, stopped: pull.stopped }
+								Complete => drain_missing!(path, token, Notes, all, pull.window)?
+								_ => { stored: 0, skipped: 0, pending: pending_notes!(path)?, stopped: pull.stopped, window: pull.window }
+							}
+						# routes drain last, under the same rule one step on: only after a
+						# COMPLETE notes drain, with the queue measured either way
+						routes =
+							match notes.stopped {
+								Complete => drain_missing!(path, token, Routes, all, notes.window)?
+								_ => { stored: 0, skipped: 0, pending: pending_routes!(path)?, stopped: notes.stopped, window: notes.window }
 							}
 						# `synced` keeps its meaning (rows re-listed) so existing consumers are
 						# untouched; new/updated/streams_skipped are ADDITIVE (#112, #224). `stopped` and
@@ -389,12 +398,12 @@ Strava :: [].{
 						# which infers an OPEN record — without this line a new payload key compiles
 						# clean and ships undeclared in schemas/v3/sync.json (ADR 0000 s9c).
 						# BOUND once — see the note at the rate-limited payload above.
-						# the run's terminal reason is whichever drain stopped it: the notes
-						# arm inherits the streams stop when it never ran, so this is the
-						# LAST stop either way
-						stop = FromDrain(notes.stopped)
-						payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, stopped : Str, resumable : Bool }
-						payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: pull.stored, streams_skipped: pull.skipped, pending_streams: pull.pending, notes_fetched: notes.stored, notes_skipped: notes.skipped, pending_notes: notes.pending, stopped: Drain.sync_stopped_label(stop), resumable: pull.pending > 0 or notes.pending > 0 }
+						# the run's terminal reason is whichever drain stopped it: a drain
+						# that never ran inherits the stop of the one before it, so the
+						# routes arm holds the LAST stop either way
+						stop = FromDrain(routes.stopped)
+						payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, routes_fetched : I64, routes_skipped : I64, pending_routes : I64, stopped : Str, resumable : Bool }
+						payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: pull.stored, streams_skipped: pull.skipped, pending_streams: pull.pending, notes_fetched: notes.stored, notes_skipped: notes.skipped, pending_notes: notes.pending, routes_fetched: routes.stored, routes_skipped: routes.skipped, pending_routes: routes.pending, stopped: Drain.sync_stopped_label(stop), resumable: pull.pending > 0 or notes.pending > 0 or routes.pending > 0 }
 						Output.out!(payload, |p| Render.sync_screen(p, stop, all))
 					}
 				}
@@ -428,8 +437,8 @@ Strava :: [].{
 	# + distance are requested EXPLICITLY — they feed grade-adjusted pace / NGP (ADR
 	# 0003). To force a re-pull, DELETE FROM streams (mirror tier) and let the next
 	# sync refetch.
-	drain_missing! : Str, Str, DrainKind, Bool => Try(DrainOutcome, _)
-	drain_missing! = |path, token, kind, all| {
+	drain_missing! : Str, Str, DrainKind, Bool, I64 => Try(DrainOutcome, _)
+	drain_missing! = |path, token, kind, all, window0| {
 		ids =
 			match kind {
 				# Fewest failed fetches first, then newest first. The queue is walked
@@ -491,6 +500,24 @@ Strava :: [].{
 						bindings: [{ name: ":all", value: Integer(if (all) 1 else 0) }],
 						rows: Sql.i64("id"),
 					})?
+				# fewest failed fetches first, then newest first, the streams
+				# order: the recent routes come first in a backfill, and a body
+				# that keeps failing waits behind every id not yet tried. `all`
+				# lifts the attempt cap only; a stored route is final.
+				Routes =>
+					Sql.query_many!({
+						path: Path.utf8(path),
+						query: \\SELECT a.id AS id FROM activities a
+							\\LEFT JOIN routes g ON g.activity_id = a.id
+							\\${route_queue_where}
+							\\ORDER BY COALESCE(g.attempts, 0), ${Metrics.rank_ts_sql("a.start_local", Desc)}
+						,
+						bindings: [
+							{ name: ":all", value: Integer(if (all) 1 else 0) },
+							{ name: ":cap", value: Integer(stream_attempt_cap) },
+						],
+						rows: Sql.i64("id"),
+					})?
 			}
 		total = List.len(ids)
 		# No `total == 0` short-circuit. One existed, returning a hardcoded `pending: 0`
@@ -510,6 +537,7 @@ Strava :: [].{
 				match kind {
 					Streams => Output.say!("draining ${U64.to_str(total)} activities' streams — Strava caps reads per 15-minute window, so a large first pull takes several runs; every stream stored is kept")?
 					Notes => Output.say!("fetching ${U64.to_str(total)} strength sessions' descriptions — the pasted set breakdown lives there; same read budget as the streams")?
+					Routes => Output.say!("fetching ${U64.to_str(total)} activities' GPS routes — on what the streams and descriptions left of the read window; a session with no GPS is asked once")?
 				}
 			# an immediate 0/total frame BEFORE the first request: narrating only after a
 			# response returns shows nothing for exactly as long as a stall lasts
@@ -523,7 +551,7 @@ Strava :: [].{
 		# it needs no scheduled job.
 		day0 = Db.utc_today_days!({})
 		today0 = reads_today!(path, day0)?
-		match drain_queue!(path, token, kind, ids, { window: 0, day: day0, today: today0, stored: 0, skipped: 0, total, refreshes: 0 }) {
+		match drain_queue!(path, token, kind, ids, { window: window0, day: day0, today: today0, stored: 0, skipped: 0, total, refreshes: 0 }) {
 			Ok(o) => Ok(o)
 			Err(e) => {
 				# ONE place covering every propagating `?` in the drain — the token refresh, the
@@ -542,6 +570,17 @@ Strava :: [].{
 		match kind {
 			Streams => "fetching streams"
 			Notes => "fetching descriptions"
+			Routes => "fetching routes"
+		}
+
+	# what a skip line calls the body that would not decode, so a stream and a route
+	# skipped for the same activity read as two different fetches
+	skip_subject : DrainKind -> Str
+	skip_subject = |kind|
+		match kind {
+			Streams => "stream data"
+			Notes => "description"
+			Routes => "route data"
 		}
 
 	pending_for! : Str, DrainKind => Try(I64, _)
@@ -549,6 +588,7 @@ Strava :: [].{
 		match kind {
 			Streams => pending_streams!(path)
 			Notes => pending_notes!(path)
+			Routes => pending_routes!(path)
 		}
 
 	store_response! : Str, DrainKind, I64, Response.Response => Try([Stored, Skipped, SkippedFinal(I64)], _)
@@ -556,7 +596,115 @@ Strava :: [].{
 		match kind {
 			Streams => store_stream_response!(path, id, resp)
 			Notes => store_note_response!(path, id, resp)
+			Routes => store_route_response!(path, id, resp)
 		}
+
+	# THE routes queue: activities that covered ground outside a virtual world
+	# with no stored route, while their failed fetches are under :cap, or
+	# regardless of it when :all = 1. An indoor session with a distance (a
+	# rowing machine, a trainer ride) is asked once and stores the no-GPS
+	# marker. Virtual* sports are left out because their coordinates belong to
+	# a game map, not a street. Callers join `activities a` and `routes g` and
+	# bind :all and :cap.
+	route_queue_where : Str
+	route_queue_where =
+		\\WHERE (g.activity_id IS NULL OR (g.raw_json IS NULL AND (:all = 1 OR g.attempts < :cap)))
+		\\  AND a.moving_time > 0 AND a.distance > 0
+		\\  AND COALESCE(a.sport_type, '') NOT LIKE 'Virtual%'
+
+	# the routes a plain `sync` still owes: its queue, counted
+	pending_routes! : Str => Try(I64, _)
+	pending_routes! = |path|
+		Sql.query!({
+			path: Path.utf8(path),
+			query: \\SELECT COUNT(*) AS n FROM activities a
+				\\LEFT JOIN routes g ON g.activity_id = a.id
+				\\${route_queue_where}
+			,
+			bindings: [
+				{ name: ":all", value: Integer(0) },
+				{ name: ":cap", value: Integer(stream_attempt_cap) },
+			],
+			row: Sql.i64("n"),
+		})
+
+	# the capped_streams! twin for routes: activities whose route has failed
+	# stream_attempt_cap fetches, which pending_routes! leaves out and only
+	# `sync --all` asks for again
+	capped_routes! : Str => Try(I64, _)
+	capped_routes! = |path|
+		Sql.query!({
+			path: Path.utf8(path),
+			query: \\SELECT COUNT(*) AS n FROM routes g
+				\\JOIN activities a ON a.id = g.activity_id
+				\\WHERE g.raw_json IS NULL AND g.attempts >= :cap
+			,
+			bindings: [{ name: ":cap", value: Integer(stream_attempt_cap) }],
+			row: Sql.i64("n"),
+		})
+
+	# THE route-response policy, the stream policy one key over: 404 and a
+	# body with no usable coordinates store the '{}' marker, since no GPS is a
+	# durable fact the queue must retire; a body with coordinates is stored as
+	# Strava sent it; a non-utf8 or undecodable body stores nothing and counts
+	# a failed fetch, so the id is asked again until the attempt cap.
+	store_route_response! : Str, I64, Response.Response => Try([Stored, Skipped, SkippedFinal(I64)], _)
+	store_route_response! = |path, id, resp|
+		if Response.status(resp) == 404 {
+			store_route!(path, id, "{}")?
+			Ok(Stored)
+		} else if Response.status(resp) < 300 {
+			match Str.from_utf8(Response.body(resp)) {
+				Ok(text) =>
+					match Streams.decode_route(text) {
+						Points(_) => {
+							store_route!(path, id, text)?
+							Ok(Stored)
+						}
+						NoGps => {
+							store_route!(path, id, "{}")?
+							Ok(Stored)
+						}
+						Unreadable => count_unreadable_route!(path, id)
+					}
+				Err(_) => count_unreadable_route!(path, id)
+			}
+		} else {
+			text = Str.from_utf8(Response.body(resp)).ok_or("<non-utf8 body>")
+			Err(HttpStatus(Response.status(resp), text))
+		}
+
+	# A route fetch returned a body stride cannot decode: count it on the
+	# route's own row, leaving raw_json NULL, and say whether a plain sync
+	# will ask again.
+	count_unreadable_route! : Str, I64 => Try([Stored, Skipped, SkippedFinal(I64)], _)
+	count_unreadable_route! = |path, id| {
+		Sql.execute!({
+			path: Path.utf8(path),
+			query: "INSERT INTO routes (activity_id, raw_json, attempts) VALUES (:id, NULL, 1) ON CONFLICT(activity_id) DO UPDATE SET attempts = routes.attempts + 1",
+			bindings: [{ name: ":id", value: Integer(id) }],
+		})?
+		n = Sql.query!({
+			path: Path.utf8(path),
+			query: "SELECT attempts AS n FROM routes WHERE activity_id = :id",
+			bindings: [{ name: ":id", value: Integer(id) }],
+			row: Sql.i64("n"),
+		})?
+		if (n < stream_attempt_cap) Ok(Skipped) else Ok(SkippedFinal(n))
+	}
+
+	# no invalidation on store: nothing scored reads a route. Storing replaces
+	# the row, so a stored body also clears its failed-fetch count.
+	store_route! : Str, I64, Str => Try({}, _)
+	store_route! = |path, id, raw|
+		Sql.execute!({
+			path: Path.utf8(path),
+			query: "INSERT OR REPLACE INTO routes (activity_id, raw_json) VALUES (:id, :raw)",
+			bindings: [
+				{ name: ":id", value: Integer(id) },
+				{ name: ":raw", value: String(raw) },
+			],
+		})
 
 	# what the drain durably stored is not knowable from here, so report the queue it was
 	# working and point at the command that continues it. The counts live in the payload
@@ -1013,8 +1161,9 @@ Strava :: [].{
 			text = Str.from_utf8(Response.body(resp)).ok_or("<non-utf8 body>")
 			Err(HttpStatus(Response.status(resp), text))
 		}
-	# Per-run drain state: `window` = reads this run (vs the 15-min cap; never reset,
-	# a run does not span windows); `stored`/`skipped` = what the reads produced.
+	# Per-run drain state: `window` = reads this run against the 15-minute cap, carried
+	# from one drain into the next so the streams, notes and routes drains share one
+	# window (a run does not span windows); `stored`/`skipped` = what the reads produced.
 	# `window` and `stored` are deliberately different: pacing is about READS (a 404
 	# spends a read and stores a marker) while the payload reports WORK — publishing
 	# `window` as `streams_fetched` reported rows that do not exist. `total` is the
@@ -1033,14 +1182,17 @@ Strava :: [].{
 	# fifteen minutes there is an instruction that cannot succeed (#246). `stopped`
 	# has exactly four arms, so a drain CANNOT report the list refusal — that arm
 	# lives on Drain.SyncStop, and sync! wraps this outcome in FromDrain.
-	DrainOutcome : { stored : I64, skipped : I64, pending : I64, stopped : Drain.StopReason }
+	# `window` is the run's read count on return, and the next drain of the run
+	# starts from it.
+	DrainOutcome : { stored : I64, skipped : I64, pending : I64, stopped : Drain.StopReason, window : I64 }
 
 	# what one queue item asks Strava for, and what storing the answer means.
-	# ONE loop serves both kinds — the pacing, refresh, 429 and skip policies
+	# ONE loop serves every kind — the pacing, refresh, 429 and skip policies
 	# are shared by construction, which is the anti-drift rule the loop's own
 	# comment states. Streams fetch the five analysis streams; Notes fetch the
-	# activity DETAIL for its description (the strength share text, #478).
-	DrainKind : [Streams, Notes]
+	# activity DETAIL for its description (the strength share text, #478);
+	# Routes fetch the GPS coordinates and their times (#700).
+	DrainKind : [Streams, Notes, Routes]
 
 	drain_queue! : Str, Str, DrainKind, List(I64), DrainState => Try(DrainOutcome, _)
 	drain_queue! = |path, token, kind, ids, st_in| {
@@ -1054,13 +1206,14 @@ Strava :: [].{
 		match ids {
 			[] => {
 				bar_done!(st)
-				Ok({ stored: st.stored, skipped: st.skipped, pending: pending_for!(path, kind)?, stopped: Complete })
+				Ok({ stored: st.stored, skipped: st.skipped, pending: pending_for!(path, kind)?, stopped: Complete, window: st.window })
 			}
 			[id, .. as rest] => {
 				uri =
 					match kind {
 						Streams => "${api_base!({})}/api/v3/activities/${I64.to_str(id)}/streams?keys=time,heartrate,watts,altitude,distance&key_by_type=true"
 						Notes => "${api_base!({})}/api/v3/activities/${I64.to_str(id)}"
+						Routes => "${api_base!({})}/api/v3/activities/${I64.to_str(id)}/streams?keys=latlng,time&key_by_type=true"
 					}
 				resp = send_bearer!(uri, token)?
 				match Drain.decide({ status: Response.status(resp), window: st.window, today: st.today }, read_limits!({})) {
@@ -1110,12 +1263,12 @@ Strava :: [].{
 						# the moment it needs to be true.
 						_ = save_reads_for_day!(path, st.day, st.today + 1)?
 						bar_done!(st)
-						Ok({ stored: st.stored, skipped: st.skipped, pending: pending_for!(path, kind)?, stopped: DailyCapReached })
+						Ok({ stored: st.stored, skipped: st.skipped, pending: pending_for!(path, kind)?, stopped: DailyCapReached, window: st.window })
 					}
 					RateLimited => {
 						_ = save_reads_for_day!(path, st.day, st.today + 1)?
 						bar_done!(st)
-						Ok({ stored: st.stored, skipped: st.skipped, pending: pending_for!(path, kind)?, stopped: RateLimited })
+						Ok({ stored: st.stored, skipped: st.skipped, pending: pending_for!(path, kind)?, stopped: RateLimited, window: st.window })
 					}
 					Store({ window, today, after }) => {
 						save_reads_for_day!(path, st.day, today)?
@@ -1130,12 +1283,12 @@ Strava :: [].{
 								Stored => { stored: st.stored + 1, skipped: st.skipped }
 								Skipped => {
 									bar_done!(st)
-									Output.say!("  activity ${I64.to_str(id)}: stream data would not decode — skipped, retries next run")?
+									Output.say!("  activity ${I64.to_str(id)}: ${skip_subject(kind)} would not decode — skipped, retries next run")?
 									{ stored: st.stored, skipped: st.skipped + 1 }
 								}
 								SkippedFinal(n) => {
 									bar_done!(st)
-									Output.say!("  activity ${I64.to_str(id)}: stream data would not decode — skipped after ${I64.to_str(n)} failed fetches; plain syncs stop asking, `stride sync --all` asks again")?
+									Output.say!("  activity ${I64.to_str(id)}: ${skip_subject(kind)} would not decode — skipped after ${I64.to_str(n)} failed fetches; plain syncs stop asking, `stride sync --all` asks again")?
 									{ stored: st.stored, skipped: st.skipped + 1 }
 								}
 							}
@@ -1153,14 +1306,14 @@ Strava :: [].{
 							# the message it produces is the one users actually read.
 							WindowFull => {
 								bar_done!(st)
-								Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_for!(path, kind)?, stopped: BudgetReached })
+								Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_for!(path, kind)?, stopped: BudgetReached, window })
 							}
 							# the DAILY allowance, which is a different stop with a
 							# different remedy: the window clears in fifteen minutes, this
 							# one clears at UTC midnight.
 							DayFull => {
 								bar_done!(st)
-								Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_for!(path, kind)?, stopped: DailyCapReached })
+								Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_for!(path, kind)?, stopped: DailyCapReached, window })
 							}
 							Continue =>
 								drain_queue!(path, token, kind, rest, { ..st, window, today, stored: counted.stored, skipped: counted.skipped })
@@ -1410,6 +1563,7 @@ Strava :: [].{
 				_ = run!("DELETE FROM activity_segments WHERE activity_id = :id", b)?
 				_ = run!("DELETE FROM streams WHERE activity_id = :id", b)?
 				_ = run!("DELETE FROM stream_retries WHERE activity_id = :id", b)?
+				_ = run!("DELETE FROM routes WHERE activity_id = :id", b)?
 				# the strength tables reference activities too, and the database
 				# enforces it: a strength session deleted upstream with a stored
 				# description or log would otherwise fail the activity's DELETE

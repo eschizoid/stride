@@ -199,6 +199,10 @@ respond! = |req, _ctx| {
 			# the resulting streams_fetched:1 is what proves the counters survived the
 			# Backoff rounds. A mock that 429s everything reports 0 and proves nothing.
 			Ok(Server.respond(Response.from_status(429).with_body(Str.to_utf8("rate limited"))))
+		} else if Str.contains(uri, "/activities/501/") and Str.contains(uri, "keys=latlng") {
+			# 501's route: three coordinates with their times, and the distance
+			# stream Strava sends with every streams answer
+			Ok(mock_json("{\"latlng\":{\"data\":[[41.88,-87.63],[41.89,-87.64],[41.9,-87.65]]},\"time\":{\"data\":[0,5,10]},\"distance\":{\"data\":[0,120,240]}}"))
 		} else if Str.contains(uri, "/activities/501/") {
 			# a realistic 1 Hz stream (constant 200W, HR sawtooth 120-179): long enough
 			# that best_20min_w -> derived FTP 190 -> TSS ~110.8. 3600 samples, matching
@@ -219,6 +223,10 @@ respond! = |req, _ctx| {
 			# exists for. Served by a SECOND mock instance so the
 			# 404-marker fixture above stays untouched.
 			Ok(mock_bad_utf8)
+		} else if Str.contains(uri, "/activities/502/") and Str.contains(uri, "keys=latlng") {
+			# what Strava sends for an indoor session's route: a 200 carrying
+			# the time and distance streams and no latlng key
+			Ok(mock_json("{\"time\":{\"data\":[0,900,1800]},\"distance\":{\"data\":[0,2500,5000]}}"))
 		} else {
 			# 404 = "no streams recorded" — exercises the {} marker path
 			Ok(mock_not_found("{}"))
@@ -364,7 +372,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1437)?
+	checks_ran_exactly!(1438)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -562,10 +570,11 @@ run_sync! = || {
 	# an FTP needs two sessions of the family with a best, so 501 gets a
 	# mate the mock never lists: `synced_at NULL` exempts it from prune_deleted!
 	# on every later sync (incremental and --all), its stream is seeded here and
-	# again after the drain block's unscoped wipe so no drain ever fetches it and
-	# the fetch counts stay the mock's, and it leaves once 501's last TSS check
-	# has run, before the drain scenarios that count fetches by id
-	_ = sql!(db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) VALUES (599,'Mock Power Ride Mate','Ride','2026-07-20T10:00:00Z',1300,8000.0,0.0,NULL);")
+	# again after the drain block's unscoped wipe, and its no-GPS route marker
+	# here, so no drain ever fetches it and the fetch counts stay the mock's,
+	# and it leaves once 501's last TSS check has run, before the drain
+	# scenarios that count fetches by id
+	_ = sql!(db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) VALUES (599,'Mock Power Ride Mate','Ride','2026-07-20T10:00:00Z',1300,8000.0,0.0,NULL); INSERT INTO routes (activity_id, raw_json) VALUES (599, '{}');")
 	_ = seed_power_stream!(db, 599, 1300, 200)
 	_ = sync_stride!(bin, home, base, ["analyze"])
 	# 501's mock streams are a constant 200W. FTP is DERIVED, not configured: best 20-min
@@ -610,13 +619,26 @@ run_sync! = || {
 	check!("...with a 404-marked activity counted as done, not pending", bfq!(".data.pending_streams") == "0")?
 	check!("...nothing pruned, since the mock still lists both", bfq!(".data.pruned") == "0")?
 	check!("...and nothing skipped on a clean run", bfq!(".data.streams_skipped") == "0")?
+	check!("sync stored 501's GPS route as Strava sent it", Str.trim(sql!(db, "SELECT json_extract(raw_json, '$.latlng.data[2][1]') || '/' || json_array_length(raw_json, '$.time.data') FROM routes WHERE activity_id = 501;")) == "-87.65/3")?
+	# 502 is a rowing machine: its route answer carries no latlng, which
+	# stores the no-GPS marker rather than the body and retires it
+	check!("...and the no-GPS marker for 502, an indoor row", Str.trim(sql!(db, "SELECT raw_json FROM routes WHERE activity_id = 502;")) == "{}")?
+	check!("...so the second run owes no routes and asked for none", bfq!(".data.pending_routes") == "0" and bfq!(".data.routes_fetched") == "0")?
 
-	# drop one stored stream and re-run, so the count has to MOVE. Without this
-	# every check above would pass just as well against a sync that never
-	# fetched anything at all.
-	_ = sql!(db, "DELETE FROM streams WHERE activity_id=501;")
+	# drop one stored stream and one stored route and re-run, so the counts
+	# have to MOVE. Without this every check above would pass just as well
+	# against a sync that never fetched anything at all.
+	_ = sql!(db, "DELETE FROM streams WHERE activity_id=501; DELETE FROM routes WHERE activity_id=501;")
 	_ = sync_run!("json")
 	check!("a run with work to do fetches it", bfq!(".data.streams_fetched") == "1")?
+	check!("...and the deleted route with it", bfq!(".data.routes_fetched") == "1" and bfq!(".data.pending_routes") == "0")?
+	# the queue's sport, distance and moving-time rules, read through doctor's
+	# count: a virtual ride's coordinates belong to a game map, and a session
+	# with no distance or no moving time has no route, so only the outdoor ride
+	# is owed
+	_ = sql!(db, "INSERT INTO activities (id, sport_type, moving_time, distance) VALUES (595, 'Ride', 0, 1000.0), (596, 'Ride', 600, 1000.0), (597, 'VirtualRide', 600, 1000.0), (598, 'WeightTraining', 600, 0.0);")
+	check!("doctor owes a route for an outdoor ride only, not a virtual ride or a session with no distance or no moving time", Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=json '${bin}' doctor 2>/dev/null | jq -r '.data.pending_routes'")) == "1")?
+	_ = sql!(db, "DELETE FROM activities WHERE id IN (595, 596, 597, 598);")
 	check!("...and reports complete once drained", bfq!(".data.stopped") == "complete")?
 	check!("...still not resumable, having finished the queue", bfq!(".data.resumable") == "false")?
 
@@ -648,31 +670,33 @@ run_sync! = || {
 	# hazard the queue query's own comment warns about, so it is left knowingly.
 	check!("the 70 seed rows landed", Str.trim(sql!(db, "SELECT count(*) FROM activities WHERE id BETWEEN 901 AND 970;")) == "70")?
 	_ = sync_run!("json")
-	# Ordered FIRST of the three deliberately: 72 reads must sit UNDER the window
-	# budget, or the run stops on the budget and the checks below measure the budget
-	# rather than the absence of a cap — and the harness aborts on first failure, so
-	# ordered last, a lowered reads_per_window blamed a cap that was not there. A
-	# real cap does NOT trip this one (empty-list arm returns Complete on the
-	# exhausted queue), so putting it first costs the cap checks nothing.
-	check!("the drain finished inside one window, so the read budget is not what ended it", bfq!(".data.stopped") == "complete")?
-	check!("...and it has no per-run cap — it clears a queue past any old LIMIT", bfq!(".data.pending_streams") == "0")?
-	check!("...having stored every one of them in a single run", bfq!(".data.streams_fetched") == "72")?
-	_ = sql!(db, "DELETE FROM streams WHERE activity_id >= 901; DELETE FROM activities WHERE id >= 901;")
+	# The streams queue holds 72 here, under the 95-read window, so the streams
+	# drain clears it in this one run. A per-run cap would stop it short, and so
+	# would a lowered window; the window's own share is checked right after.
+	check!("the streams drain cleared a 72-row queue in one run, past any old LIMIT", bfq!(".data.streams_fetched") == "72" and bfq!(".data.pending_streams") == "0")?
+	# The streams, notes and routes drains share one 15-minute window, so the
+	# routes drain gets only what the first two left of it, and the run stops on
+	# the budget with routes still owed. Every drain read lands in exactly one of
+	# the six counts summed here (a 404 stores a marker and counts as fetched), so
+	# they add up to the window.
+	check!("...and the routes drain spent only what was left of the same window", bfq!(".data | .streams_fetched + .streams_skipped + .notes_fetched + .notes_skipped + .routes_fetched + .routes_skipped") == "95" and bfq!(".data.stopped") == "budget_reached" and bfq!(".data.pending_routes > 0") == "true")?
+	check!("...storing the no-GPS marker for each of the 23 routes the mock answered 404", bfq!(".data.routes_fetched") == "23" and Str.trim(sql!(db, "SELECT count(*) FROM routes WHERE activity_id BETWEEN 901 AND 970 AND raw_json = '{}';")) == "23")?
+	_ = sql!(db, "DELETE FROM streams WHERE activity_id >= 901; DELETE FROM routes WHERE activity_id >= 901; DELETE FROM activities WHERE id >= 901;")
 	# Nothing else asserts this block tidies up: prune_deleted! skips `synced_at IS
-	# NULL` — exactly what these rows carry — so a leak survives every later run
-	# invisibly (disabling the DELETE leaked 70 activities + 70 streams, then 70
-	# metrics rows once analyze ran).
+	# NULL`, exactly what these rows carry, so a leak survives every later run
+	# invisibly and turns into metrics rows once analyze runs.
 	#
-	# BOTH tables, because deleting either half alone still passes: the declared
-	# REFERENCES on streams is unenforced (no PRAGMA foreign_keys) and declares no
-	# ON DELETE, so child rows never go with the parent — the same reason prune_txn!
-	# deletes by hand. activity_metrics needs no clause only because of WHERE this
-	# sits: no analyze runs between seed and cleanup, so there is nothing there.
+	# All three tables, because deleting any one alone still passes: the declared
+	# REFERENCES on streams and routes is unenforced (no PRAGMA foreign_keys) and
+	# declares no ON DELETE, so child rows never go with the parent, the same
+	# reason prune_txn! deletes by hand. activity_metrics needs no clause only
+	# because of where this sits: no analyze runs between seed and cleanup, so
+	# there is nothing there.
 	#
 	# Compared as STRINGS: str_to_i64 maps "" to 0, so a swallowed sqlite error
 	# would read as a passing zero on the one check whose job is leftover state.
 	# "" == "0" is False, which is the answer we want.
-	check!("...and the seeded fixtures left nothing behind, in either table", Str.trim(sql!(db, "SELECT (SELECT count(*) FROM activities WHERE id >= 901) + (SELECT count(*) FROM streams WHERE activity_id >= 901);")) == "0")?
+	check!("...and the seeded fixtures left nothing behind, in any table", Str.trim(sql!(db, "SELECT (SELECT count(*) FROM activities WHERE id >= 901) + (SELECT count(*) FROM streams WHERE activity_id >= 901) + (SELECT count(*) FROM routes WHERE activity_id >= 901);")) == "0")?
 
 	_ = sync_run!("human")
 	bf_human = Str.trim(sh!("cat '${bo}'"))
@@ -713,7 +737,7 @@ run_sync! = || {
 
 	check_near!("501's metrics are restored after the drain block", sfloat(sync_strjq!(bin, home, base, ["activity", "501"], ".data.tss")), 110.8, 1.0)?
 	# the mate leaves here: the drain scenarios below count fetches by id
-	_ = sql!(db, "DELETE FROM activities WHERE id = 599; DELETE FROM activity_metrics WHERE activity_id = 599; DELETE FROM streams WHERE activity_id = 599;")
+	_ = sql!(db, "DELETE FROM activities WHERE id = 599; DELETE FROM activity_metrics WHERE activity_id = 599; DELETE FROM streams WHERE activity_id = 599; DELETE FROM routes WHERE activity_id = 599;")
 
 	# ── a STORED stream analyze cannot decode is fetched again by the next sync,
 	# and the fetched copy replaces it: the promise analyze's warning line makes
@@ -752,7 +776,7 @@ run_sync! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_at_least!(60)?
+	checks_ran_at_least!(84)?
 	Stdout.line!("SYNC E2E CHECKS PASS")
 }
 
@@ -854,6 +878,9 @@ run_skips! = || {
 	check!("sync counts the undecodable body", syncq!(".data.streams_skipped") == "1")?
 	check!("...and stores only the one that decoded", syncq!(".data.streams_fetched") == "1")?
 	check!("...naming it on stderr, with the activity id and the retry", Str.contains(sh!("cat '${sync_err}'"), "502: stream data would not decode — skipped, retries next run"))?
+	# 502's route gets the same body, and its line names the route, so the stream
+	# line above cannot be standing in for it
+	check!("...and its route skip on a line of its own, counted in the payload", Str.contains(sh!("cat '${sync_err}'"), "502: route data would not decode — skipped, retries next run") and syncq!(".data.routes_skipped") == "1")?
 	check!("...while its stdout stays exactly the envelope", Str.starts_with(Str.trim(sh!("cat '${home}/sync.out'")), "{\"schema_version\"") and List.len(Str.split_on(Str.trim(sh!("cat '${home}/sync.out'")), "\n")) == 1)?
 	check!("sync conforms to its schema with the new key", Str.trim(sh!("jq '.data' '${home}/sync.out' 2>&1 | jq -r --slurpfile schema schemas/v3/sync.json -f tools/validate.jq 2>&1")) == "")?
 	check!("...so the activity stays pending", syncq!(".data.pending_streams") == "1")?
@@ -881,11 +908,17 @@ run_skips! = || {
 	check!("a later run re-attempts the skipped id rather than retiring it at once", bfq!(".data.streams_skipped") == "1" and bfq!(".data.streams_fetched") == "0")?
 	check!("...and on the cap's failure says plain syncs stop asking and names `sync --all`", Str.contains(sh!("cat '${be}'"), "502: stream data would not decode — skipped after 3 failed fetches; plain syncs stop asking, `stride sync --all` asks again"))?
 	check!("...leaving nothing pending and the run not resumable", bfq!(".data.pending_streams") == "0" and bfq!(".data.resumable") == "false" and bfq!(".data.stopped") == "complete")?
+	# 502's route request gets the same non-UTF-8 body: the route keeps no
+	# body and counts its failed fetches to the same cap, after which a plain
+	# sync stops owing it
+	check!("...and 502's route stopped at the same cap, with no body kept and none owed", Str.trim(sql!(db, "SELECT attempts || '/' || (raw_json IS NULL) FROM routes WHERE activity_id = 502;")) == "3/1" and bfq!(".data.pending_routes") == "0")?
+	check!("...saying so on its own line, and doctor counts it as a capped route", Str.contains(sh!("cat '${be}'"), "502: route data would not decode — skipped after 3 failed fetches") and Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=json '${bin}' doctor 2>/dev/null | jq -r '.data.routes_retry_capped'")) == "1" and Str.contains(Str.trim(sh!("HOME='${home}' '${bin}' doctor 2>/dev/null")), "GPS routes that would not decode after 3 or more fetches: 1"))?
 	check!("the skip payload conforms to the schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v3/sync.json -f tools/validate.jq 2>&1")) == "")?
 	_ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>/dev/null")
-	check!("a retired id costs a plain sync no read", bfq!(".data.streams_skipped") == "0" and bfq!(".data.streams_fetched") == "0")?
+	check!("a retired id costs a plain sync no read", bfq!(".data.streams_skipped") == "0" and bfq!(".data.streams_fetched") == "0" and bfq!(".data.routes_skipped") == "0" and bfq!(".data.routes_fetched") == "0")?
 	_ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync --all >'${bo}' 2>'${be}'")
 	check!("`sync --all` asks again past the cap", bfq!(".data.streams_skipped") == "1" and Str.contains(sh!("cat '${be}'"), "502: stream data would not decode — skipped after 4 failed fetches"))?
+	check!("...for the route as well", bfq!(".data.routes_skipped") == "1" and Str.contains(sh!("cat '${be}'"), "502: route data would not decode — skipped after 4 failed fetches"))?
 	_ = sh!("rm -rf '${home}'")
 
 	# ── the read budget cannot be spent on a failing id ahead of new work. At one
@@ -903,10 +936,12 @@ run_skips! = || {
 	check!("...and the next run's read goes to the id that has not failed", q2!(".data.streams_fetched") == "1" and q2!(".data.streams_skipped") == "0")?
 	# a UTF-8 body that is not stream JSON is refused the same way as a non-UTF-8
 	# one: not stored, counted. 509 exists only here, and this mock serves it that
-	# body; synced_at stays NULL, so no prune touches it.
-	_ = sql!(db2, "INSERT INTO activities (id,name,sport_type,start_local,moving_time) VALUES (509,'garbled stream','Ride','2026-08-01T10:00:00Z',3600);")
+	# body for its streams and its route alike; synced_at stays NULL, so no prune
+	# touches it.
+	_ = sql!(db2, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (509,'garbled stream','Ride','2026-08-01T10:00:00Z',3600,30000.0);")
 	_ = sh!("HOME='${sh2}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${o2}' 2>/dev/null")
 	check!("a UTF-8 body that will not decode is not stored, and its failed fetch is counted", Str.trim(sql!(db2, "SELECT (SELECT count(*) FROM streams WHERE activity_id = 509) || '/' || (SELECT attempts FROM stream_retries WHERE activity_id = 509);")) == "0/1")?
+	check!("...and the same body as a route answer keeps no body and counts its failed fetch", Str.trim(sql!(db2, "SELECT (raw_json IS NULL) || '/' || attempts FROM routes WHERE activity_id = 509;")) == "1/1")?
 	_ = sh!("rm -rf '${sh2}'")
 
 	# ── the read bound holds across the daily loop. A stored body analyze cannot
@@ -936,7 +971,7 @@ run_skips! = || {
 	check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_at_least!(26)?
+	checks_ran_at_least!(31)?
 	Stdout.line!("SKIPS E2E CHECKS PASS")
 }
 
@@ -8578,6 +8613,16 @@ b_migration! = |ctx| {
 	check!("...whose plan scans nothing per row", Str.trim(sh!("sqlite3 '${v45db}' 'EXPLAIN QUERY PLAN SELECT * FROM monthly_threshold;' | awk '/CORRELATED/{c=1; next} c && /SCAN/{bad=1} {c=0} END{print (bad ? \"scan\" : \"ok\")}'")) == "ok")?
 	check!("...and whose pace spine leaves rides out", Str.trim(sql!(v45db, "SELECT group_concat(fam || ':' || kind, ',') FROM (SELECT fam, kind FROM monthly_threshold WHERE month = '2026-05' AND kind <> 'tonnage' ORDER BY fam, kind);")) == "Ride:power,Run:pace")?
 	_ = sh!("rm -rf '${v45home}'")
+	# v47 adds the routes mirror. A v46 database has no routes table, so the
+	# migration creates it, and a sync's routes drain finds every activity
+	# owed rather than failing on a missing table.
+	v46home = Str.trim(sh!("mktemp -d"))
+	v46db = "${v46home}/.stride/db.sqlite"
+	_ = stride!(ctx.bin, v46home, ["init"])
+	_ = sql!(v46db, "DROP TABLE routes; PRAGMA user_version = 46; INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9841,'ride before routes','Ride','2026-05-04T08:00:00Z',3600,30000);")
+	_ = stride!(ctx.bin, v46home, ["config", "get", "timezone"])
+	check!("migrating a v46 database creates the routes table and owes its ride a route", Str.trim(sql!(v46db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'routes';")) == "1" and Str.trim(sh!("HOME='${v46home}' STRIDE_FORMAT=json '${ctx.bin}' doctor 2>/dev/null | jq -r '.data.pending_routes'")) == "1")?
+	_ = sh!("rm -rf '${v46home}'")
 	Ok({})
 }
 

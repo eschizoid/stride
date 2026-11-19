@@ -19,7 +19,9 @@
     "junk_filtered_pct_30d",
     "junk_worst_session_pct_30d",
     "pending_streams",
+    "pending_routes",
     "rated",
+    "routes_retry_capped",
     "scored_by",
     "sport_zone_overrides",
     "streams_retry_capped",
@@ -93,6 +95,10 @@
     "pending_streams": {
       "type": "integer"
     },
+    "pending_routes": {
+      "type": "integer",
+      "description": "activities a plain `sync` still owes a GPS route fetch: moving time and distance, outside the Virtual* sports, with no stored route, counting those whose earlier fetches failed fewer than 3 times"
+    },
     "rated": {
       "type": "integer"
     },
@@ -117,6 +123,10 @@
     },
     "sport_zone_overrides": {
       "type": "integer"
+    },
+    "routes_retry_capped": {
+      "type": "integer",
+      "description": "Activities whose GPS route failed to decode on 3 or more fetches, so a plain sync stopped asking for it and pending_routes leaves it out. `stride sync --all` fetches them again."
     },
     "streams_retry_capped": {
       "type": "integer",

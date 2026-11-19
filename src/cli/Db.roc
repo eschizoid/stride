@@ -312,7 +312,7 @@ Db :: [].{
 	# bump when the schema changes; ensure_schema! re-runs migrations when the db's
 	# PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 	# that post-date the original CREATE statements in Schema.roc.)
-	schema_version = 46
+	schema_version = 47
 
 	run_migrations! : Str => Try({}, _)
 	run_migrations! = |path| {
@@ -338,6 +338,8 @@ Db :: [].{
 		# created before the views below, which read strength_sets
 		Sql.execute!({ path: Path.utf8(path), query: Schema.strength_notes, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.strength_sets, bindings: [] })?
+		# v47: GPS routes (mirror), drained after the notes
+		Sql.execute!({ path: Path.utf8(path), query: Schema.routes, bindings: [] })?
 		# v41: a hold's seconds; the next analyze rebuilds every row with it
 		alter_add_column!(path, "ALTER TABLE strength_sets ADD COLUMN hold_s INTEGER NOT NULL DEFAULT 0")?
 		# v38: structured strength logs imported from Strava's connector (mirror)

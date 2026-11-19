@@ -14,6 +14,9 @@
     "notes_fetched",
     "notes_skipped",
     "pending_notes",
+    "routes_fetched",
+    "routes_skipped",
+    "pending_routes",
     "stopped",
     "resumable"
   ],
@@ -54,6 +57,18 @@
       "description": "strength-family activities whose description has not been asked for yet. Non-zero with `stopped` not `complete` usually means the stream drain spent the budget first; the notes wait their turn on the next run",
       "type": "integer"
     },
+    "routes_fetched": {
+      "description": "activities whose GPS route was asked for and stored this run: the `latlng` and `time` streams as Strava sent them, or an empty marker when the activity has no GPS (an indoor session), which retires it permanently, so on a backfill this counts indoor sessions too. The routes drain runs only after the streams and description drains both walked their queues, on what is left of the same 15-minute read window",
+      "type": "integer"
+    },
+    "routes_skipped": {
+      "description": "route reads whose body stride could not use: not UTF-8, not JSON, or a real position with no usable time to pair it with. A JSON object with no latlng stream is the no-GPS case, stored as a marker and counted in routes_fetched. No route was stored, only a count of the failed fetch. Below the cap of 3 failed fetches the activity stays in pending_routes and the next sync asks again; at it a plain sync stops asking, the activity leaves pending_routes and doctor counts it in routes_retry_capped (`stride sync --all` asks again)",
+      "type": "integer"
+    },
+    "pending_routes": {
+      "description": "activities a plain `sync` still owes a route fetch: those with moving time and distance, outside the Virtual* sports, with no stored route, counting those whose earlier fetches failed fewer than 3 times",
+      "type": "integer"
+    },
     "stopped": {
       "type": "string",
       "enum": [
@@ -64,11 +79,11 @@
         "list_rate_limited",
         "rate_limited"
       ],
-      "description": "Why the run ended. `complete` = both fetch queues emptied (streams, then strength descriptions); `budget_reached` = the run filled Strava's 15-minute read window; `rate_limited` = Strava returned 429 on a STREAM or description read; `daily_cap_reached` = stride's own count of today's reads reached Strava's daily allowance, which also covers the PRE-FLIGHT refusal where no request was made at all; `list_rate_limited` = Strava returned 429 on the ACTIVITY LIST, so the listing is incomplete and nothing was pruned (#235); `list_daily_cap_reached` = the ACTIVITY LIST was refused AND the day is already spent, so the listing is incomplete AND the remedy is tomorrow. The REMEDIES differ and that is the point of the distinction: `budget_reached`, `rate_limited` and `list_rate_limited` all clear when the 15-minute window rolls over, while `daily_cap_reached` and `list_daily_cap_reached` clear at UTC midnight — advising ~15 minutes there is an instruction that cannot succeed (#246). All six arrive in a SUCCESS envelope at exit 0. Do not discriminate on this token against the `rate_limited` ERROR code, which is a different thing in a different envelope shape — discriminate on the envelope. The two `list_*` tokens are the ones that mean ROWS ARE MISSING: `synced` and `pruned` describe a partial run. An earlier version folded the list-plus-spent-day case into `daily_cap_reached` and documented the lost fact here as acceptable — it was not, because the human surface then printed nothing at all, and the separate token is what carries it."
+      "description": "Why the run ended. `complete` = every fetch queue was walked (streams, then strength descriptions, then GPS routes); `budget_reached` = the run filled Strava's 15-minute read window, which the three drains share; `rate_limited` = Strava returned 429 on a stream, description or route read; `daily_cap_reached` = stride's own count of today's reads reached Strava's daily allowance, which also covers the PRE-FLIGHT refusal where no request was made at all; `list_rate_limited` = Strava returned 429 on the ACTIVITY LIST, so the listing is incomplete and nothing was pruned (#235); `list_daily_cap_reached` = the ACTIVITY LIST was refused AND the day is already spent, so the listing is incomplete AND the remedy is tomorrow. The REMEDIES differ and that is the point of the distinction: `budget_reached`, `rate_limited` and `list_rate_limited` all clear when the 15-minute window rolls over, while `daily_cap_reached` and `list_daily_cap_reached` clear at UTC midnight — advising ~15 minutes there is an instruction that cannot succeed (#246). All six arrive in a SUCCESS envelope at exit 0. Do not discriminate on this token against the `rate_limited` ERROR code, which is a different thing in a different envelope shape — discriminate on the envelope. The two `list_*` tokens are the ones that mean ROWS ARE MISSING: `synced` and `pruned` describe a partial run. An earlier version folded the list-plus-spent-day case into `daily_cap_reached` and documented the lost fact here as acceptable — it was not, because the human surface then printed nothing at all, and the separate token is what carries it."
     },
     "resumable": {
       "type": "boolean",
-      "description": "Whether anything is still missing, so the run should be repeated. Usually `pending_streams > 0 or pending_notes > 0`, re-measured from the database in every arm. It is also true when `stopped` is `list_rate_limited` or `list_daily_cap_reached` even with an empty queue, because what was left undone there is the LISTING, not the stream backlog — a run refused on page one has nothing pending and absolutely must be repeated. And true for `daily_cap_reached` reached through the pre-flight refusal, where no request was made at all: an empty queue there describes a run that never looked, not a queue that is genuinely drained. One scope caveat: under `--all` the description re-read covers the WHOLE history, and a run that stops on the read budget leaves the un-re-read remainder for the next `--all`, not the next plain sync — the plain queue is windowed, so `resumable: false` there means no work is owed, not that every old description was re-read."
+      "description": "Whether anything is still missing, so the run should be repeated. Usually `pending_streams > 0 or pending_notes > 0 or pending_routes > 0`, re-measured from the database in every arm. It is also true when `stopped` is `list_rate_limited` or `list_daily_cap_reached` even with an empty queue, because what was left undone there is the LISTING, not the stream backlog — a run refused on page one has nothing pending and absolutely must be repeated. And true for `daily_cap_reached` reached through the pre-flight refusal, where no request was made at all: an empty queue there describes a run that never looked, not a queue that is genuinely drained. One scope caveat: under `--all` the description re-read covers the WHOLE history, and a run that stops on the read budget leaves the un-re-read remainder for the next `--all`, not the next plain sync — the plain queue is windowed, so `resumable: false` there means no work is owed, not that every old description was re-read."
     }
   }
 }

@@ -194,7 +194,9 @@ ReportHealth :: [].{
 			},
 		})?
 		pending = Strava.pending_streams!(path)?
+		pending_r = Strava.pending_routes!(path)?
 		capped = Strava.capped_streams!(path)?
+		capped_r = Strava.capped_routes!(path)?
 		cfg = Sql.query!({
 			path: Path.utf8(path),
 			query: \\SELECT (SELECT COUNT(DISTINCT a.sport_family) FROM activity_metrics m
@@ -355,7 +357,9 @@ ReportHealth :: [].{
 			conf_low: conf.lo,
 			conf_none: conf.non,
 			pending_streams: pending,
+			pending_routes: pending_r,
 			streams_retry_capped: capped,
+			routes_retry_capped: capped_r,
 			# What `analyze` would recompute right now, beside `unanalyzed` (rows never scored):
 			# after a changed FTP or metrics_rev every row is due while `unanalyzed` stays 0.
 			# Shares Analyze.pending_metrics_count! with `plan` and with `analyze` itself, so
@@ -420,12 +424,18 @@ ReportHealth :: [].{
 							["  activities the engine cannot order in time: ${(p.unrankable_activities).to_str()} — a readable date with an unusable clock; `stride activities` lists them first; `stride sync --all` replaces each one Strava still lists"]
 					else
 						[]
-				# a fault count, so silent at zero like the date-health lines: streams
-				# that failed Strava.stream_attempt_cap fetches leave `pending_streams`,
-				# and this line is where they stay visible
+				# fault counts, so silent at zero like the date-health lines: streams
+				# and routes that failed Strava.stream_attempt_cap fetches leave
+				# `pending_streams` and `pending_routes`, and these lines are where they
+				# stay visible
 				capped_line =
 					if (p.streams_retry_capped > 0)
 						["  streams that would not decode after ${(Strava.stream_attempt_cap).to_str()} or more fetches: ${(p.streams_retry_capped).to_str()} — plain syncs stopped asking; `stride sync --all` fetches them again"]
+					else
+						[]
+				capped_routes_line =
+					if (p.routes_retry_capped > 0)
+						["  GPS routes that would not decode after ${(Strava.stream_attempt_cap).to_str()} or more fetches: ${(p.routes_retry_capped).to_str()} — plain syncs stopped asking; `stride sync --all` fetches them again"]
 					else
 						[]
 				Str.join_with(
@@ -467,12 +477,14 @@ ReportHealth :: [].{
 								"  would be recomputed by analyze: unknown — ${p.config_error}"
 							},
 							"  streams still pending: ${(p.pending_streams).to_str()} — run `stride sync` to keep draining them",
+							"  GPS routes still pending: ${(p.pending_routes).to_str()} — `stride sync` fetches them after the streams and descriptions",
 						],
 						# fault counts, printed only when non-zero: a zero here is the healthy case
 						# and a row of zeros on every run trains the eye to skip it
 						undateable,
 						unrankable,
 						capped_line,
+						capped_routes_line,
 						[
 							"  config: hr zones ${if (p.zones_set) "set" else "incomplete"}, ${(p.sport_zone_overrides).to_str()} per-sport zone key(s) set · ${(p.ftp_derived_sports).to_str()} sport(s) have a derived FTP (FTP is never configured — see summary)",
 							"  time: ${p.time}",
