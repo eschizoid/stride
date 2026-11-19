@@ -326,7 +326,8 @@ are in the database, which is narrower than `sync`'s coverage in the same recipe
 payload is validated in eight places across three drivers, and, as the next paragraph
 explains, `sync` carries closed record annotations that make a key change a build error,
 while `auth`'s payload literal is unannotated with a `|_|` renderer and has no such guard.
-`tte` is covered by the local recipe but not by CI. `sync` is covered by a third pass,
+`tte` and `tte pace` are validated by e2e arms that seed a fit, since the table-driven sweep
+meets only their refusals on the fixture. `sync` is covered by a third pass,
 `just e2e-sync`, which drives it against loopback mocks and now runs in CI. The recipe was
 assumed to need a token and a live API and so was left out of CI for a long time, and it
 needs neither, because the mocks bind loopback and the token is a fake row in a sandboxed

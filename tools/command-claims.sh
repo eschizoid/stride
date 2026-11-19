@@ -395,6 +395,7 @@ strength import=1
 test remove=1
 test=1,2
 top=1
+tte pace=1,2
 tte=1
 week add=1,2,3,4'
 # The three signature diffs accumulate into `sigfail` and exit once — exit-on-first
@@ -459,7 +460,8 @@ strength import=1
 test remove=1
 test=1,2
 top=1,2,3
-tte=1
+tte pace=1,2
+tte=1,2
 week add=1,2,3,4,5'
 phsig=$(awk -F'\t' '{ n = split($2, a, " "); s = ""; for (i = 1; i <= n; i++) { t = a[i]; sub(/^!/, "", t); if (t ~ /</) s = (s == "" ? i : s "," i) } if (s != "") printf "%s=%s\n", $1, s }' "$ARGS" | LC_ALL=C sort)
 if [ "$phsig" != "$EXPECTED_PLACEHOLDER_SIG" ]; then

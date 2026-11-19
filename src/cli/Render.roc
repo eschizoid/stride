@@ -1641,7 +1641,7 @@ Render :: [].{
 		record =
 			if p.demonstrated_known {
 				on = " · on record: ${fmt0(p.demonstrated_w)}W for ${hms((p.demonstrated_s).round_to_i64_try().ok_or(0))} in this window"
-				if (p.contradicts_model) "${on} — LONGER than the model predicts, so the fit understates this rider"
+				if (p.contradicts_model) "${on} — LONGER than the model predicts, so the fit understates this athlete"
 				else on
 			} else {
 				""
@@ -1649,6 +1649,31 @@ Render :: [].{
 		body =
 			if p.status == "below_cp" {
 				"  at or below CP the model has no limit — it says indefinitely, which is the model's answer and not your body's${record}"
+			} else if p.status == "outside_model" {
+				"  ~${hms((p.seconds).round_to_i64_try().ok_or(0))} — OUTSIDE the 2-20min band the model holds in, so read it as a direction rather than a number${record}"
+			} else {
+				"  ~${hms((p.seconds).round_to_i64_try().ok_or(0))}${record}"
+			}
+		"${head}\n${body}"
+	}
+
+	# the pace twin: the same three statuses and the same on-record line, every
+	# pace in the unit the caller wrote theirs in
+	tte_pace_screen = |p| {
+		pace = |s| "${mmss((s).round_to_i64_try().ok_or(0))}${p.pace_unit}"
+		quality = if (p.fit_points >= 3.I64) ", r2 ${fmt2(p.fit_r2)}" else ""
+		head = "at ${pace(p.pace_s)} against CS ${pace(p.cs_pace_s)} (${p.sport} fit, D′ ${fmt0(p.d_prime)} m from ${I64.to_str(p.fit_points)} of the 5/10/20-min speed bests over ${I64.to_str(p.window_days)}d${quality})"
+		record =
+			if p.demonstrated_known {
+				on = " · on record: ${pace(Metrics.pace_s_per_unit(p.demonstrated_speed, p.pace_unit))} for ${hms((p.demonstrated_s).round_to_i64_try().ok_or(0))} in this window"
+				if (p.contradicts_model) "${on} — LONGER than the model predicts, so the fit understates this athlete"
+				else on
+			} else {
+				""
+			}
+		body =
+			if p.status == "below_cs" {
+				"  at or slower than CS the model has no limit — it says indefinitely, which is the model's answer and not your body's${record}"
 			} else if p.status == "outside_model" {
 				"  ~${hms((p.seconds).round_to_i64_try().ok_or(0))} — OUTSIDE the 2-20min band the model holds in, so read it as a direction rather than a number${record}"
 			} else {
@@ -2633,6 +2658,39 @@ expect {
 		and Render.hms(596.I64) == "9:56"
 		and Render.hms(3600.I64) == "1:00:00"
 		and Render.hms(8405.I64) == "2:20:05"
+}
+
+# tte_pace_screen: state, never advice, on every status; every pace in the
+# caller's own unit, the on-record speed included; r2 only from three points
+expect {
+	tp = |status, dem, contra, n| Render.tte_pace_screen({
+		pace_s: 225.0,
+		pace_unit: "/km",
+		speed: 1000.0 / 225.0,
+		seconds: 540.0,
+		known: True,
+		status,
+		cs: 4.0,
+		d_prime: 240.0,
+		cs_pace_s: 250.0,
+		fit_points: n,
+		fit_r2: 0.97,
+		window_days: 90.I64,
+		sport: "Run",
+		demonstrated_s: 300.0,
+		demonstrated_speed: 4.8,
+		demonstrated_known: dem,
+		contradicts_model: contra,
+	})
+	phrases = [tp("in_model", False, False, 3.I64), tp("in_model", True, True, 3.I64), tp("outside_model", True, False, 3.I64), tp("below_cs", False, False, 3.I64)]
+	List.all(phrases, |p| !(Metrics.has_coaching_language(p)))
+		and Str.contains(tp("in_model", True, False, 3.I64), "at 3:45/km against CS 4:10/km (Run fit, D′ 240 m")
+		and Str.contains(tp("in_model", True, False, 3.I64), "~9:00 · on record: 3:28/km for 5:00")
+		and Str.contains(tp("in_model", False, False, 3.I64), "r2 0.97")
+		and !(Str.contains(tp("in_model", False, False, 2.I64), "r2"))
+		and Str.contains(tp("below_cs", False, False, 3.I64), "no limit")
+		and Str.contains(tp("outside_model", False, False, 3.I64), "OUTSIDE")
+		and Str.contains(tp("in_model", True, True, 3.I64), "LONGER than the model predicts")
 }
 
 # the HARD boundary invariant for compare: the verdict templates are a

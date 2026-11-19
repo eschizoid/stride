@@ -118,7 +118,7 @@ Everything lives in `~/.stride/db.sqlite`. Query it with `sqlite3`, back it up w
 | --- | --- |
 | Setup | `setup [key=value]`, `init`, `auth`, `config`, `config get <key>`, `config set <key> <value>`, `config unset <key>` |
 | Data | `sync [--all]`, `import <zip\|dir>`, `analyze`, `rate <activity_id\|latest> <1-10>`, `strength import <file\|->` |
-| Reading | `summary`, `stats`, `doctor`, `activities [n] [sport]`, `activity <id>`, `top <metric> [n] [sport]`, `load [days]`, `zones`, `compare [week\|month]`, `review [week\|YYYY-MM-DD]`, `season`, `strength`, `power-curve [days] [sport]`, `pace-curve [days] [sport]`, `tte <watts>`, `reps [date]`, `progress [date] [asc\|desc]`, `viz` |
+| Reading | `summary`, `stats`, `doctor`, `activities [n] [sport]`, `activity <id>`, `top <metric> [n] [sport]`, `load [days]`, `zones`, `compare [week\|month]`, `review [week\|YYYY-MM-DD]`, `season`, `strength`, `power-curve [days] [sport]`, `pace-curve [days] [sport]`, `tte <watts> [sport]`, `tte pace <pace> <sport>`, `reps [date]`, `progress [date] [asc\|desc]`, `viz` |
 | Coaching | `plan`, `week`, `week all`, `week add <date> <type> <detail> <rationale> [target]`, `complete <id> [activity_id]`, `complete latest`, `skip <id> <reason> [activity_id\|none]`, `relabel <id> <type> <detail> [rationale]`, `test <activity_id> <kind>`, `test remove <activity_id>`, `event add <date> <name>`, `event remove <id>`, `events`, `project <date> [plan]` |
 
 ## Build from source

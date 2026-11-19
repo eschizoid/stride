@@ -11,9 +11,10 @@
 # tangle.
 #
 # Two are NOT shared and stay there only by adjacency: Report.sport_exact_sql and
-# Report.sports_with_speed! serve pace-curve alone. They sit beside sport_filter_sql
-# because they are the same concern — resolving a sport word to a SQL predicate — and
-# splitting one across two files would be worse than the rule they break.
+# Report.sports_with_speed! serve this family alone (pace-curve, and tte pace through
+# speed_ladder!). They sit beside sport_filter_sql because they are the same concern —
+# resolving a sport word to a SQL predicate — and splitting one across two files would
+# be worse than the rule they break.
 import Strava
 import Report
 import Analyze
@@ -895,15 +896,17 @@ ReportHealth :: [].{
 			}
 		}
 	}
-	# Time to exhaustion at a caller-named power. NOT the same fit
-	# power-curve publishes: that one spans every power sport and includes
-	# today, this one is per-family and excludes its anchor date. They agree
-	# on an athlete whose rides dominate the curve, and only then. Every refusal is explicit:
-	# no fit, at-or-below CP, or a result outside the 2-20 minute band where the
-	# 2-parameter model holds — that last still returns the number, LABELLED,
-	# rather than hiding it or pretending it is trustworthy.
-	tte! : Str => Try({}, _)
-	tte! = |watts_arg|
+	# Time to exhaustion at a caller-named power, against the CP fit of ONE sport
+	# family: the family a sport word names (Sports.family_head, so `row`,
+	# `Rowing` and `VirtualRow` all name the rowing family), the ride family when
+	# none is named. NOT the same fit power-curve publishes: that one spans every
+	# power sport unless named, filters by sport spelling rather than family, and
+	# includes today; this one is per-family and excludes its anchor date. Every
+	# refusal is explicit: no fit, at-or-below CP, or a result outside the 2-20
+	# minute band where the 2-parameter model holds — that last still returns the
+	# number, LABELLED, rather than hiding it or pretending it is trustworthy.
+	tte! : Str, Str => Try({}, _)
+	tte! = |watts_arg, sport|
 		match Metrics.arg_f64(Str.trim(watts_arg)) {
 			Err(_) => Output.err_out!("bad_watts", "tte needs a power in watts — got '${watts_arg}'")
 			Ok(w) =>
@@ -916,16 +919,14 @@ ReportHealth :: [].{
 				} else {
 					path = Db.open_db!({})?
 					today = Metrics.days_to_date_str(Db.local_today_days!(path))
-					# tte fits the RIDE family: the CP model needs a power meter
-					# and this athlete's other families have none. Named in the
-					# payload so a caller never has to guess whose model it is.
-					fit = Report.cp_fit_as_of!(path, Sports.canonical("Ride"), today, 90.U64)?
+					family = if (Str.is_empty(Str.trim(sport))) Sports.canonical("Ride") else Sports.family_head(Str.trim(sport))
+					fit = Report.cp_fit_as_of!(path, family, today, 90.U64)?
 					if fit.cp <= 0.0 {
 						# Two different causes, one branch: too few bests, or
 						# bests that are inconsistent (a longer one above a
 						# shorter one). Saying only "not enough" sends a coach
 						# to prescribe a test the athlete has already done.
-						Output.err_out!("no_cp_fit", "could not fit a CP model from the 5/10/20-minute bests on record in the last 90 days — there may be too few, or they may be inconsistent (a longer best above a shorter one); `stride power-curve` shows what is on record")
+						Output.err_out!("no_cp_fit", "could not fit a CP model for the ${family} family from the 5/10/20-minute bests on record in the last 90 days — there may be too few, or they may be inconsistent (a longer best above a shorter one); `stride power-curve 90 ${family}` shows what is on record")
 					} else {
 						res = Metrics.time_to_exhaustion({ cp: fit.cp, w_prime: fit.w_prime }, w)
 						seconds = match res {
@@ -944,14 +945,10 @@ ReportHealth :: [].{
 							_ => True
 						}
 						# The longest effort at or above this power that the
-						# athlete has ON RECORD in the same window the fit was
-						# built from. These are the fit's own inputs, so a
-						# prediction shorter than one of them is refuted by the
-						# data it came from — the single cheapest fit-quality
-						# signal available, and it is a measurement, not a
-						# verdict (ADR 0010).
-						held = List.keep_if(fit.pts, |p| p.watts >= w)
-						best = List.fold(held, { dur_s: 0.0, watts: 0.0 }, |acc, p| if (p.dur_s > acc.dur_s) p else acc)
+						# family has ON RECORD in the same window the fit was
+						# built from: the single cheapest fit-quality signal
+						# available, and a measurement, not a verdict (ADR 0010).
+						best = Metrics.longest_at_or_above(List.map(fit.pts, |p| { dur_s: p.dur_s, value: p.watts }), w)
 						dem_known : Bool
 						dem_known = best.dur_s > 0.0
 						contradicts : Bool
@@ -969,7 +966,7 @@ ReportHealth :: [].{
 								window_days: 90,
 								sport_family: fit.family,
 								demonstrated_s: best.dur_s,
-								demonstrated_w: best.watts,
+								demonstrated_w: best.value,
 								demonstrated_known: dem_known,
 								contradicts_model: contradicts,
 							},
@@ -978,6 +975,73 @@ ReportHealth :: [].{
 					}
 				}
 		}
+
+	# Time to exhaustion at a caller-named pace, against the critical-speed fit of
+	# ONE exact sport over the same 90-day speed ladder `pace-curve 90 <sport>`
+	# fits (speed_ladder!, today included), so the CS spent here is the CS that
+	# command prints. The pace is read in the unit the caller wrote it in and
+	# turned into m/s, the model's unit; CS comes back in that same unit as
+	# `cs_pace_s`. The refusals are the power form's: no fit, at-or-below CS, or
+	# a labelled result outside the 2-20 minute band.
+	tte_pace! : Str, Str => Try({}, _)
+	tte_pace! = |pace_arg, sport_arg|
+		match Metrics.parse_pace(pace_arg) {
+			Err(_) => Output.err_out!("bad_pace", "tte pace needs a pace written m:ss with a unit, one of /km, /mi, /100m or /500m (e.g. 4:10/km) — got '${pace_arg}'")
+			Ok(target) => {
+				sport = Str.trim(sport_arg)
+				path = Db.open_db!({})?
+				ladder = speed_ladder!(path, sport, 90)?
+				fit = cs_fit(ladder)
+				if fit.cs <= 0.0 {
+					Output.err_out!("no_cs_fit", "could not fit a critical-speed model for ${sport} from the 5/10/20-minute speed bests on record in the last 90 days — there may be too few, or they may be inconsistent (a longer best faster than a shorter one); `stride pace-curve 90 ${sport}` shows what is on record")
+				} else {
+					res = Metrics.time_to_exhaustion_speed({ cs: fit.cs, d_prime: fit.d_prime }, target.speed)
+					seconds = match res {
+						Seconds(t) => t
+						OutsideModel(t) => t
+						BelowCs => 0.0
+					}
+					status = match res {
+						Seconds(_) => "in_model"
+						OutsideModel(_) => "outside_model"
+						BelowCs => "below_cs"
+					}
+					known : Bool
+					known = match res {
+						BelowCs => False
+						_ => True
+					}
+					best = Metrics.longest_at_or_above(List.map(ladder, |p| { dur_s: (p.dur_s).to_f64(), value: p.speed }), target.speed)
+					dem_known : Bool
+					dem_known = best.dur_s > 0.0
+					contradicts : Bool
+					contradicts = dem_known and known and best.dur_s > seconds
+					Output.out!(
+						{
+							pace_s: target.pace_s,
+							pace_unit: target.unit,
+							speed: target.speed,
+							seconds,
+							known,
+							status,
+							cs: fit.cs,
+							d_prime: fit.d_prime,
+							cs_pace_s: Metrics.pace_s_per_unit(fit.cs, target.unit),
+							fit_points: fit.points,
+							fit_r2: fit.r2,
+							window_days: 90,
+							sport,
+							demonstrated_s: best.dur_s,
+							demonstrated_speed: best.value,
+							demonstrated_known: dem_known,
+							contradicts_model: contradicts,
+						},
+						Render.tte_pace_screen,
+					)
+				}
+			}
+		}
+
 	# power-duration curve: the best mean-max power sustained for each ladder duration,
 	# taken as the MAX across a window (per sport), plus a Critical Power / W' fit over the
 	# aerobic points. Reads the stored best_<dur>_w columns — no stream re-read. 0-power
@@ -1139,50 +1203,8 @@ ReportHealth :: [].{
 		# refusal signal. Skipping the aggregate matters because this is the DEFAULT
 		# invocation — `stride pace-curve` and `cs` both land here — so the query would run,
 		# scan the window, and have its result discarded on the most common call.
-		points =
-			if Str.is_empty(sport) {
-				[]
-			} else {
-				cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - (days).to_i64_wrap())
-				r = Sql.query!({
-					path: Path.utf8(path),
-					query: \\-- the speed ladder (columns, 0-means-unrecorded) is the
-						\\-- activity_pace_ladder view's; this only re-pivots per window.
-						\\SELECT
-						\\  CAST(COALESCE(MAX(CASE WHEN a.rung = '5min' THEN a.speed END), 0) AS REAL) AS d300,
-						\\  CAST(COALESCE(MAX(CASE WHEN a.rung = '10min' THEN a.speed END), 0) AS REAL) AS d600,
-						\\  CAST(COALESCE(MAX(CASE WHEN a.rung = '20min' THEN a.speed END), 0) AS REAL) AS d1200
-						\\FROM activity_pace_ladder a
-						\\WHERE a.start_local >= :cutoff${sx.frag}
-					,
-					bindings: List.concat([{ name: ":cutoff", value: String(cutoff) }], sx.binds),
-					row: |cols| |stmt| {
-						d300 = Sql.f64("d300")(cols)(stmt)?
-						d600 = Sql.f64("d600")(cols)(stmt)?
-						d1200 = Sql.f64("d1200")(cols)(stmt)?
-						Ok({ d300, d600, d1200 })
-					},
-				})?
-				raw : List({ dur_s : U64, speed : F64 })
-				raw = [
-					{ dur_s: 300, speed: r.d300 },
-					{ dur_s: 600, speed: r.d600 },
-					{ dur_s: 1200, speed: r.d1200 },
-				]
-				List.keep_if(raw, |p| p.speed > 0.0)
-			}
-		fit_points = List.map(points, |p| { dur_s: (p.dur_s).to_f64(), speed: p.speed })
-		csfit =
-			match Metrics.critical_speed(fit_points) {
-				# The `> 0.0` checks mirror the power gate above and cannot fire for the same
-				# reason. The values here are `cs`/`d_prime`, and the guard on a relaxed fit is
-				# the Metrics expect headed "critical_speed refuses a physically meaningless
-				# fit".
-				# fit_points counts the bests AVAILABLE to the fit; `cs` of 0 is the refusal
-				# signal, so the key means one thing across commands, exactly as `cp` does.
-				Ok(c) => (if (c.cs > 0.0 and c.d_prime > 0.0) { cs: c.cs, d_prime: c.d_prime, r2: c.r2, points: (List.len(fit_points)).to_i64_wrap() } else { cs: 0.0, d_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() })
-				Err(_) => { cs: 0.0, d_prime: 0.0, r2: 0.0, points: (List.len(fit_points)).to_i64_wrap() }
-			}
+		points = if (Str.is_empty(sport)) [] else speed_ladder!(path, sport, days)?
+		csfit = cs_fit(points)
 		# a marked pace test in force for the sport's family (ADR 0020)
 		test = if (Str.is_empty(sport)) ({ value: 0.0, date: "none", kind: "none", activity_id: 0 }) else Db.test_in_force_today!(path, "pace", Sports.canonical(sport))?
 		test_known : Bool
@@ -1231,5 +1253,59 @@ ReportHealth :: [].{
 			{ window_days: days, sport, points, cs: csfit.cs, d_prime: csfit.d_prime, fit_r2: csfit.r2, fit_points: csfit.points, available_sports: avail, test_known, test_value: test.value, test_kind: if (test_known) test.kind else "", test_date: if (test_known) test.date else "", durability },
 			|p| Render.pace_curve_screen(units, { window_days: p.window_days, sport: p.sport, points: p.points, cs: p.cs, d_prime: p.d_prime, fit_r2: p.fit_r2, fit_points: p.fit_points, available_sports: p.available_sports }),
 		)
+	}
+
+	# The window's grade-adjusted speed ladder for ONE exact sport: the 5, 10 and
+	# 20-minute bests MAXed over the last `days` days, today included, with an
+	# unrecorded rung dropped. `pace-curve` and `tte pace` both fit this, so the
+	# CS a `tte pace` answer spends is the one `pace-curve` prints for the same
+	# sport and window. The sport filter is EXACT (sport_exact_sql) because speed
+	# populations do not pool across a family the way power does.
+	speed_ladder! : Str, Str, U64 => Try(List({ dur_s : U64, speed : F64 }), _)
+	speed_ladder! = |path, sport, days| {
+		sx = Report.sport_exact_sql(sport)
+		cutoff = Metrics.days_to_date_str(Db.local_today_days!(path) - (days).to_i64_wrap())
+		r = Sql.query!({
+			path: Path.utf8(path),
+			query: \\-- the speed ladder (columns, 0-means-unrecorded) is the
+				\\-- activity_pace_ladder view's; this only re-pivots per window.
+				\\SELECT
+				\\  CAST(COALESCE(MAX(CASE WHEN a.rung = '5min' THEN a.speed END), 0) AS REAL) AS d300,
+				\\  CAST(COALESCE(MAX(CASE WHEN a.rung = '10min' THEN a.speed END), 0) AS REAL) AS d600,
+				\\  CAST(COALESCE(MAX(CASE WHEN a.rung = '20min' THEN a.speed END), 0) AS REAL) AS d1200
+				\\FROM activity_pace_ladder a
+				\\WHERE a.start_local >= :cutoff${sx.frag}
+			,
+			bindings: List.concat([{ name: ":cutoff", value: String(cutoff) }], sx.binds),
+			row: |cols| |stmt| {
+				d300 = Sql.f64("d300")(cols)(stmt)?
+				d600 = Sql.f64("d600")(cols)(stmt)?
+				d1200 = Sql.f64("d1200")(cols)(stmt)?
+				Ok({ d300, d600, d1200 })
+			},
+		})?
+		raw : List({ dur_s : U64, speed : F64 })
+		raw = [
+			{ dur_s: 300, speed: r.d300 },
+			{ dur_s: 600, speed: r.d600 },
+			{ dur_s: 1200, speed: r.d1200 },
+		]
+		Ok(List.keep_if(raw, |p| p.speed > 0.0))
+	}
+
+	# Critical speed over a speed ladder, refused to all zeros when the fit is.
+	# `cs` of 0 is the refusal signal, so the key means one thing across commands,
+	# exactly as `cp` does, and `points` counts the bests AVAILABLE to the fit.
+	# The `> 0.0` checks mirror the power gate in power_curve! and cannot fire for
+	# the same reason: the guard on a relaxed fit is the Metrics expect headed
+	# "critical_speed refuses a physically meaningless fit".
+	cs_fit : List({ dur_s : U64, speed : F64 }) -> { cs : F64, d_prime : F64, r2 : F64, points : I64 }
+	cs_fit = |points| {
+		fit_points = List.map(points, |p| { dur_s: (p.dur_s).to_f64(), speed: p.speed })
+		n = (List.len(fit_points)).to_i64_wrap()
+		match Metrics.critical_speed(fit_points) {
+			Ok(c) => (if (c.cs > 0.0 and c.d_prime > 0.0) { cs: c.cs, d_prime: c.d_prime, r2: c.r2, points: n } else { cs: 0.0, d_prime: 0.0, r2: 0.0, points: n })
+			Err(_) => { cs: 0.0, d_prime: 0.0, r2: 0.0, points: n }
+		}
 	}
 }

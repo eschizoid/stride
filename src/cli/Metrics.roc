@@ -1291,28 +1291,82 @@ Metrics :: [].{
 	e_const : F64
 	e_const = 2.718281828459045
 
-	# ── spending the CP model ───────────────────────────────────────────
+	# ── spending the CP and CS models ───────────────────────────────────
 	#
-	# Time to exhaustion at a power ABOVE CP: the model says the finite capacity
-	# W' drains at (P - CP) watts, so it lasts W'/(P - CP) seconds. Two honest
-	# refusals rather than a number:
-	#   - at or below CP the model divides by zero or goes negative, which reads
-	#     as "forever". The model believes that; bodies do not. BelowCp says so.
+	# Time to exhaustion ABOVE the ceiling of a two-parameter hyperbolic model:
+	# the finite capacity (W' in joules, D' in metres) drains at the excess
+	# over the ceiling (CP in watts, CS in m/s), so it lasts capacity / excess
+	# seconds. Both models are the same line, P(t) = W'/t + CP and
+	# S(t) = D'/t + CS, so one walk answers both and two honest refusals hold
+	# for both:
+	#   - at or below the ceiling the model divides by zero or goes negative,
+	#     which reads as "forever". The model believes that; bodies do not.
 	#   - the 2-parameter model is only meaningful over roughly 2-20 minutes.
 	#     Outside that it overshoots badly (anaerobic capacity dominates below,
 	#     unmodelled fatigue above), so a result outside the window is returned
 	#     as OutsideModel WITH the number, letting a caller show it labelled
 	#     rather than silently trusting it.
-	time_to_exhaustion : { cp : F64, w_prime : F64 }, F64 -> [Seconds(F64), OutsideModel(F64), BelowCp]
-	time_to_exhaustion = |fit, watts| {
-		over = watts - fit.cp
+	hyperbolic_hold : F64, F64, F64 -> [Seconds(F64), OutsideModel(F64), Below]
+	hyperbolic_hold = |ceiling, capacity, target| {
+		over = target - ceiling
 		if over <= 0.0 {
-			BelowCp
+			Below
 		} else {
-			t = fit.w_prime / over
+			t = capacity / over
 			if (t < 120.0 or t > 1200.0) OutsideModel(t) else Seconds(t)
 		}
 	}
+
+	time_to_exhaustion : { cp : F64, w_prime : F64 }, F64 -> [Seconds(F64), OutsideModel(F64), BelowCp]
+	time_to_exhaustion = |fit, watts|
+		match hyperbolic_hold(fit.cp, fit.w_prime, watts) {
+			Seconds(t) => Seconds(t)
+			OutsideModel(t) => OutsideModel(t)
+			Below => BelowCp
+		}
+
+	# the critical-speed twin: a target speed in m/s against CS and D'
+	time_to_exhaustion_speed : { cs : F64, d_prime : F64 }, F64 -> [Seconds(F64), OutsideModel(F64), BelowCs]
+	time_to_exhaustion_speed = |fit, speed|
+		match hyperbolic_hold(fit.cs, fit.d_prime, speed) {
+			Seconds(t) => Seconds(t)
+			OutsideModel(t) => OutsideModel(t)
+			Below => BelowCs
+		}
+
+	# The longest of a fit's own points held at or above a target, or a zero
+	# point when none was. These are the bests the fit was built from, so a
+	# prediction shorter than the point returned is refuted by its own inputs.
+	longest_at_or_above : List({ dur_s : F64, value : F64 }), F64 -> { dur_s : F64, value : F64 }
+	longest_at_or_above = |points, target|
+		List.fold(
+			List.keep_if(points, |p| p.value >= target),
+			{ dur_s: 0.0, value: 0.0 },
+			|acc, p| if (p.dur_s > acc.dur_s) p else acc,
+		)
+
+	# A pace the athlete names, `m:ss/<unit>` in one of the units a pace target
+	# is written in (`4:10/km`, `6:45/mi`, `1:40/100m`, `1:55/500m`), as the
+	# speed in m/s the critical-speed model reads. The same bounds as a pace
+	# target: under 10 s or over an hour per unit is a typo, not a pace.
+	parse_pace : Str -> Try({ pace_s : F64, unit : Str, speed : F64 }, [BadPace])
+	parse_pace = |lit|
+		match Str.split_first(Str.trim(lit), "/") {
+			Err(_) => Err(BadPace)
+			Ok({ before: pace_str, after: unit_s }) => {
+				unit = "/${unit_s}"
+				m = pace_unit_m(unit)
+				match mmss_seconds(pace_str) {
+					Ok(s) =>
+						if m <= 0.0 or s < 10 or s > 3600 {
+							Err(BadPace)
+						} else {
+							Ok({ pace_s: (s).to_f64(), unit, speed: m / (s).to_f64() })
+						}
+					Err(_) => Err(BadPace)
+				}
+			}
+		}
 
 	# W' balance through a ride: what is left of the anaerobic capacity at each
 	# moment. Above CP it drains at (P - CP); below CP it reconstitutes toward
@@ -5697,6 +5751,83 @@ expect {
 		_ => False
 	}
 	at300 and at_cp and below and sprint and long
+}
+
+# TTE on critical speed: CS 4.0 m/s and D' 240 m. 3:45/km is 4.4444 m/s,
+# 0.4444 over CS, so D' lasts 240/0.4444 = 540 s, inside the band; 4:00/km is
+# 4.1667 m/s, 0.1667 over, so 1440 s, past twenty minutes; at and below CS
+# the model has no limit.
+expect {
+	fit = { cs: 4.0, d_prime: 240.0 }
+	inside = match Metrics.time_to_exhaustion_speed(fit, 1000.0 / 225.0) {
+		Seconds(t) => (t - 540.0).abs() < 0.001
+		_ => False
+	}
+	long = match Metrics.time_to_exhaustion_speed(fit, 1000.0 / 240.0) {
+		OutsideModel(t) => (t - 1440.0).abs() < 0.001
+		_ => False
+	}
+	# 8.0 m/s is 4.0 over: 60 s, real arithmetic below the band
+	sprint = match Metrics.time_to_exhaustion_speed(fit, 8.0) {
+		OutsideModel(t) => (t - 60.0).abs() < 0.001
+		_ => False
+	}
+	inside and long and sprint and Metrics.time_to_exhaustion_speed(fit, 4.0) == BelowCs and Metrics.time_to_exhaustion_speed(fit, 3.0) == BelowCs
+}
+
+# the 120 s and 1200 s edges are inside the band on both models
+expect {
+	short_edge = match Metrics.time_to_exhaustion_speed({ cs: 4.0, d_prime: 240.0 }, 6.0) {
+		Seconds(t) => (t - 120.0).abs() < 0.001
+		_ => False
+	}
+	long_edge = match Metrics.time_to_exhaustion({ cp: 250.0, w_prime: 12000.0 }, 260.0) {
+		Seconds(t) => (t - 1200.0).abs() < 0.001
+		_ => False
+	}
+	short_edge and long_edge
+}
+
+# the longest point at or above a target, from the points given and no others
+expect {
+	pts = [{ dur_s: 300.0, value: 4.8 }, { dur_s: 600.0, value: 4.4 }, { dur_s: 1200.0, value: 4.2 }]
+	a = Metrics.longest_at_or_above(pts, 4.4)
+	b = Metrics.longest_at_or_above(pts, 4.5)
+	c = Metrics.longest_at_or_above(pts, 5.0)
+	(a.dur_s - 600.0).abs() < 0.001 and (a.value - 4.4).abs() < 0.001
+		and (b.dur_s - 300.0).abs() < 0.001
+		and (c.dur_s).abs() < 0.001 and (c.value).abs() < 0.001
+}
+
+# a pace literal reads as metres per second in its own unit, and refuses the rest
+expect {
+	km = Metrics.parse_pace("4:10/km")
+	swim = Metrics.parse_pace("1:40/100m")
+	row = Metrics.parse_pace("2:05/500m")
+	mi = Metrics.parse_pace("6:45/mi")
+	ok_km = match km {
+		Ok(p) => p.unit == "/km" and (p.pace_s - 250.0).abs() < 0.001 and (p.speed - 4.0).abs() < 0.001
+		Err(_) => False
+	}
+	ok_swim = match swim {
+		Ok(p) => p.unit == "/100m" and (p.speed - 1.0).abs() < 0.001
+		Err(_) => False
+	}
+	ok_row = match row {
+		Ok(p) => (p.speed - 4.0).abs() < 0.001
+		Err(_) => False
+	}
+	ok_mi = match mi {
+		Ok(p) => (p.speed - 1609.344 / 405.0).abs() < 0.001
+		Err(_) => False
+	}
+	refused = |s|
+		match Metrics.parse_pace(s) {
+			Err(BadPace) => True
+			Ok(_) => False
+		}
+	ok_km and ok_swim and ok_row and ok_mi
+		and List.all(["4:10", "4:10/furlong", "4:1/km", "0:05/km", "300", "1", "60:01/km"], refused)
 }
 
 # W' balance: drains above CP, reconstitutes below it, is ALLOWED to go
