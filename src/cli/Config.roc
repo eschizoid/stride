@@ -219,13 +219,15 @@ Config :: [].{
 			or host_ok(b, "http://localhost")
 			or host_ok(b, "http://127.0.0.1")
 
-	# STRIDE_OVERPASS_BASE is the same seam for `basemap`: the public Overpass
-	# server, or http to loopback for the e2e mock. Nothing secret rides on the
+	# STRIDE_OVERPASS_BASE is the same seam for `basemap`: one of the public
+	# Overpass servers, or http to loopback for the e2e mock. Nothing secret rides on the
 	# request, but an open override would send the athlete's route area to any
 	# host a copied command line names.
 	overpass_base_allowed : Str -> Bool
 	overpass_base_allowed = |b|
 		host_ok(b, "https://overpass-api.de")
+			or host_ok(b, "https://overpass.private.coffee")
+			or host_ok(b, "https://overpass.kumi.systems")
 			or host_ok(b, "http://localhost")
 			or host_ok(b, "http://127.0.0.1")
 
@@ -658,6 +660,8 @@ expect Config.api_base_allowed("http://localhost:8x") == False
 expect Config.api_base_allowed("http://localhost:8799/mock/v3") == True
 expect Config.api_base_allowed("https://www.strava.com:443") == True
 expect Config.overpass_base_allowed("https://overpass-api.de") == True
+expect Config.overpass_base_allowed("https://overpass.private.coffee") == True
+expect Config.overpass_base_allowed("https://overpass.kumi.systems") == True
 expect Config.overpass_base_allowed("http://127.0.0.1:8791") == True
 expect Config.overpass_base_allowed("http://overpass-api.de") == False
 expect Config.overpass_base_allowed("https://overpass-api.de.attacker.tld") == False

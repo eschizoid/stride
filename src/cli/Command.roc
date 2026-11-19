@@ -17,8 +17,9 @@ Command := [
 	## normal use never needs it, because a plain `sync` converges on its own (#232).
 	Sync(Bool),
 
-	## fetch the base map's roads and water from Overpass for the cells the stored
-	## routes pass through that no earlier run fetched
+	## fetch the map view's roads and water from Overpass for every 0.1-degree
+	## block a stored route passes through, and each block next to one, that no
+	## earlier run fetched
 	Basemap,
 	Analyze,
 	Summary,
@@ -371,7 +372,7 @@ Command := [
 	##   network      — the declared set is pinned as a value, and `Http.send!` is pinned to
 	##                  its call sites: two in Strava.roc, one in Basemap.roc, none
 	##                  elsewhere. Nothing walks the call graph, so a command that newly
-	##                  reaches those functions keeps every check green while declaring
+	##                  reaches `Http.send!` keeps every check green while declaring
 	##                  `network: false`.
 	##   interactive  — the same three-check shape, against `Stdin`, with the same gap.
 	##   args         — enforced in both arity directions AND in order: filling every

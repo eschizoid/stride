@@ -33,7 +33,7 @@
         "complete",
         "overpass_busy"
       ],
-      "description": "complete: every pending block was fetched. overpass_busy: the server answered 429, 502, 503 or 504 to a block three times running, after at least one block was stored; a run that stores nothing on a busy server is the overpass_busy error instead, at exit 1"
+      "description": "complete: every pending block was fetched. overpass_busy: every server still answered 429, 502, 503 or 504, or a query cut short by a remark, to a block after its retries, with at least one block stored; a run that stores nothing on a busy server is the overpass_busy error instead, at exit 1"
     }
   }
 }

@@ -105,7 +105,7 @@ reason `--json` and still answers in JSON).
      `{blocks_fetched, blocks_pending, ways_stored, map_ways, stopped}`. It is never
      needed for a metric, so run it only when the athlete wants the map. `stopped:
      overpass_busy` (or the `overpass_busy` error, when nothing was fetched) means
-     the server was too busy even after waiting: run it again in a few minutes.
+     every server was too busy even after waiting: run it again in a few minutes.
    - Stride counts its own daily reads in config rows `strava_reads_today` and
      `strava_reads_day` (a UTC day number; a stale stamp is the reset). Do not touch
      them unless Stride itself names `stride config set strava_reads_today 0` as the

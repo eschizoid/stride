@@ -148,8 +148,8 @@ Schema :: [].{
 
 	# mirror tier: the 0.1-degree blocks `basemap` has asked Overpass for,
 	# named by the integer tenths of their south-west corner. A row means the
-	# block's ways are in map_ways, so the next run asks only for blocks a new
-	# route reaches. Deleting a row fetches that block again.
+	# block's ways are in map_ways, so the next run asks only for the area's
+	# blocks with no row. Deleting a row fetches that block again.
 	map_blocks =
 		\\CREATE TABLE IF NOT EXISTS map_blocks (
 		\\  lat_block  INTEGER NOT NULL,
