@@ -11,6 +11,7 @@ activity.json	easy_s,hard_s,moderate_s	easy_s,hard_s,moderate_s	-	properties.pow
 activity.json	w1200,w180,w300,w60	w1200,w180,w300,w60	-	properties.power_bests
 analyze.json	computed,converged,form_delta_7d,form_delta_known,form_state,form_tsb,form_tsb_known,stream_errors,stream_errors_capped	computed,converged,form_delta_7d,form_delta_known,form_state,form_tsb,form_tsb_known,stream_errors,stream_errors_capped	doc	$
 auth.json	authorized,expires_at	authorized,expires_at	-	$
+basemap.json	blocks_fetched,blocks_pending,map_ways,stopped,ways_stored	blocks_fetched,blocks_pending,map_ways,stopped,ways_stored	doc	$
 commands.json	args,error_codes,interactive,mutates,name,network,schema	args,error_codes,interactive,mutates,name,network,schema	-	properties.commands.items
 commands.json	commands,flags,universal_error_codes	commands,flags,universal_error_codes	-	$
 commands.json	example,name,required	example,name,required	-	properties.commands.items.properties.args.items

@@ -16,6 +16,11 @@ Command := [
 	## re-listed and old deletions propagate. Mostly a dev-mode start-from-scratch;
 	## normal use never needs it, because a plain `sync` converges on its own (#232).
 	Sync(Bool),
+
+	## fetch the map view's roads and water from Overpass for every 0.1-degree
+	## block a stored route passes through, and each block next to one, that no
+	## earlier run fetched
+	Basemap,
 	Analyze,
 	Summary,
 	Stats,
@@ -145,6 +150,8 @@ Command := [
 			["setup", ..] => Err(Usage("setup [key=value] — one value per call"))
 			["sync"] => Ok(Sync(False))
 			["sync", "--all"] => Ok(Sync(True))
+			["basemap"] => Ok(Basemap)
+			["basemap", ..] => Err(Usage("basemap"))
 
 			## `backfill` is a retired verb whose work `sync` does: it answers with a pointer
 			## to its replacement rather than a bare unknown_command.
@@ -363,9 +370,10 @@ Command := [
 	##                  names. A wrong-but-existing filename looks exactly like a right one.
 	##   mutates      — run against a fixture copy; the database contents must not move.
 	##   network      — the declared set is pinned as a value, and `Http.send!` is pinned to
-	##                  two functions in one module. NOT a derivation: nothing walks the
-	##                  call graph, so a command that newly reaches those functions would
-	##                  keep all three checks green while declaring `network: false`.
+	##                  its call sites: two in Strava.roc, one in Basemap.roc, none
+	##                  elsewhere. Nothing walks the call graph, so a command that newly
+	##                  reaches `Http.send!` keeps every check green while declaring
+	##                  `network: false`.
 	##   interactive  — the same three-check shape, against `Stdin`, with the same gap.
 	##   args         — enforced in both arity directions AND in order: filling every
 	##                  declared argument is never a usage error, one short of the required
@@ -384,7 +392,8 @@ Command := [
 		## WAL means a committed write can leave db.sqlite untouched.
 		mutates : Bool,
 
-		## talks to Strava. Since #232 that is `auth` and `sync` and nothing else.
+		## reaches the network: Strava for `auth`, `setup` and `sync`, and the Overpass
+		## API for `basemap`.
 		network : Bool,
 
 		## blocks on a human. `auth` opens a browser and waits for a paste, so it is the
@@ -491,6 +500,7 @@ Command := [
 		## tokens, and the bare walk runs the first sync.
 		errs({ ..writes("setup", [opt_ex("<key=value>", "timezone=UTC")], "setup.json"), network: True, interactive: True }, ["bad_value", "missing_client_creds", "missing_config", "network_unreachable", "not_authenticated", "rate_limited", "stdin_closed", "strava_error", "unknown_key", "unreadable_config"]),
 		errs({ ..writes("sync", [opt("--all")], "sync.json"), network: True }, ["missing_client_creds", "network_unreachable", "not_authenticated", "rate_limited", "strava_error", "unreadable_config"]),
+		errs({ ..writes("basemap", [], "basemap.json"), network: True }, ["network_unreachable", "overpass_busy", "overpass_error"]),
 		errs(writes("analyze", [], "analyze.json"), ["missing_config", "unreadable_activity_date", "unreadable_config"]),
 		errs(writes("import", [req_ex("<export.zip|dir>", "")], "import.json"), ["empty_csv", "no_activities_csv", "unzip_failed"]),
 		errs(writes("rate", [req("<activity_id|latest>"), req("<1-10>")], "rate.json"), ["activity_not_found", "bad_id", "bad_rpe", "no_activities", "unreadable_activity_date"]),
@@ -953,6 +963,14 @@ expect match Command.parse(["sync"]) {
 }
 expect match Command.parse(["sync", "--all"]) {
 	Ok(Sync(True)) => True
+	_ => False
+}
+expect match Command.parse(["basemap"]) {
+	Ok(Basemap) => True
+	_ => False
+}
+expect match Command.parse(["basemap", "now"]) {
+	Err(Usage(u)) => u == "basemap"
 	_ => False
 }
 expect match Command.parse(["analyze"]) {

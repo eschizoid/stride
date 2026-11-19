@@ -135,6 +135,29 @@ Schema :: [].{
 		\\  attempts    INTEGER NOT NULL DEFAULT 0
 		\\)
 
+	# mirror tier: the base map's roads and water, OpenStreetMap data from the
+	# Overpass API that `basemap` stores for the map view. One row per OSM way;
+	# `kind` is the line class the map draws it as (see Overpass.kind_of) and
+	# `points` its coordinates as a JSON array [lat0,lng0,lat1,lng1,...].
+	map_ways =
+		\\CREATE TABLE IF NOT EXISTS map_ways (
+		\\  way_id INTEGER PRIMARY KEY,
+		\\  kind   TEXT NOT NULL,
+		\\  points TEXT NOT NULL
+		\\)
+
+	# mirror tier: the 0.1-degree blocks `basemap` has asked Overpass for,
+	# named by the integer tenths of their south-west corner. A row means the
+	# block's ways are in map_ways, so the next run asks only for the area's
+	# blocks with no row. Deleting a row fetches that block again.
+	map_blocks =
+		\\CREATE TABLE IF NOT EXISTS map_blocks (
+		\\  lat_block  INTEGER NOT NULL,
+		\\  lng_block  INTEGER NOT NULL,
+		\\  fetched_at TEXT NOT NULL,
+		\\  PRIMARY KEY (lat_block, lng_block)
+		\\)
+
 	# mirror tier, the streams pattern: one row per strength-family activity
 	# whose DESCRIPTION sync has fetched. Row presence retires the id from the
 	# notes drain queue, so an activity with no description stores '' the way

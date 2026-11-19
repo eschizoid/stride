@@ -27,8 +27,8 @@ cd "$(dirname "$0")/.."
 
 layer_of() {
   case "$1" in
-    Sports|Metrics|Csv|Streams|Strength|Config|Drain|Schema|Render) echo core ;;
-    Db|Strava|Output|Sql)                                  echo io ;;
+    Sports|Metrics|Csv|Streams|Strength|Config|Drain|Schema|Render|Overpass) echo core ;;
+    Db|Strava|Output|Sql|Basemap)                                echo io ;;
     Analyze|Plan|Report|ReportHealth|ReportReview|ReportSeason|ReportSessions|ReportStrength|Setup|ThresholdTest) echo analytics ;;
     main|Command|Import)                                   echo app ;;
     *) echo UNKNOWN ;;

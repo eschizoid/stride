@@ -253,6 +253,41 @@ respond! = |req, _ctx| {
 		# hold the id in pending forever with no error anywhere.
 		body = "{\"id\":505,\"description\":null}"
 		Ok(mock_json(body))
+	} else if Str.contains(uri, "/api/interpreter") {
+		# the Overpass API. The answer depends on the block the query names, so
+		# a route planted at a marker latitude picks it, for the route's block
+		# and its neighbours: 45 is a server that stays busy, 46 one that
+		# refuses the query with an HTML error page, 47 one that answers with a
+		# page that is not map JSON, 48 one that is busy once and then answers,
+		# 49 one whose query runs out of time (a 200 carrying a remark), and 51
+		# a place with no roads or water. A base whose path holds /busy/ is a
+		# server that is always busy, whatever it is asked. Any other query
+		# gets the five-way fixture: an arterial ramp, a shoreline and a
+		# motorway the map draws, a footway it does not, and a street with a
+		# single coordinate.
+		form = Str.from_utf8_lossy(req.body().with_limit(1024 * 1024).read_all!() ?? [])
+		if Str.contains(uri, "/busy/") or names_lat(form, 45) {
+			Ok(Server.respond(Response.from_status(504).with_body(Str.to_utf8("busy"))))
+		} else if names_lat(form, 46) {
+			Ok(Server.respond(Response.from_status(400).with_body(Str.to_utf8("<?xml version=\"1.0\"?>\n<!DOCTYPE html>\n<html><body>\n<p>The data included in this document is from www.openstreetmap.org.</p>\n<p><strong style=\"color:#FF0000\">Error</strong>: line 1: parse error: Unknown type \"wey\" </p>\n</body></html>"))))
+		} else if names_lat(form, 47) {
+			Ok(mock_json("<html><body>The server is probably too busy</body></html>"))
+		} else if names_lat(form, 49) {
+			Ok(mock_json("{\"elements\":[],\"remark\":\"runtime error: Query timed out in \\\"query\\\" at line 1 after 181 seconds.\"}"))
+		} else if names_lat(form, 51) {
+			Ok(mock_json("{\"elements\":[]}"))
+		} else if names_lat(form, 48) {
+			# busy for one request, then the fixture: the flag file is the state,
+			# and answering clears it so the next pair starts busy again
+			flag = "${env_or!("TMPDIR", "/tmp")}/stride-e2e-overpass-once-${env_or!("MOCK_PORT", "8799")}"
+			if Str.trim(sh!("if [ -f '${flag}' ]; then rm -f '${flag}'; echo answer; else touch '${flag}'; echo busy; fi")) == "busy" {
+				Ok(Server.respond(Response.from_status(504).with_body(Str.to_utf8("busy"))))
+			} else {
+				Ok(mock_json(overpass_fixture))
+			}
+		} else {
+			Ok(mock_json(overpass_fixture))
+		}
 	} else if Str.contains(uri, "/api/v3/athlete") {
 		# PUT ftp update (and GET athlete) — echo success
 		body =
@@ -372,7 +407,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1449)?
+	checks_ran_exactly!(1451)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -772,11 +807,13 @@ run_sync! = || {
 	check!("an unreadable strava_expires_at is named, not internal_error", Str.contains(bad_exp, "unreadable_config") and Str.contains(bad_exp, "strava_expires_at"))?
 	check!("...and never tells the athlete to open an issue", !(Str.contains(bad_exp, "please open an issue")))?
 
+	run_basemap!(bin, base)?
+
 	check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_at_least!(84)?
+	checks_ran_at_least!(108)?
 	Stdout.line!("SYNC E2E CHECKS PASS")
 }
 
@@ -1534,6 +1571,109 @@ page_is = |uri, n| {
 	Str.contains(uri, "${tok}&") or Str.ends_with(uri, tok)
 }
 
+overpass_fixture : Str
+overpass_fixture = "{\"version\":0.6,\"elements\":[{\"type\":\"way\",\"id\":11,\"bounds\":{\"minlat\":41.88},\"nodes\":[1,2],\"geometry\":[{\"lat\":41.88,\"lon\":-87.63},{\"lat\":41.89,\"lon\":-87.64}],\"tags\":{\"highway\":\"secondary_link\",\"name\":\"N Clark St\"}},{\"type\":\"way\",\"id\":12,\"geometry\":[{\"lat\":41.9,\"lon\":-87.6},{\"lat\":41.91,\"lon\":-87.61}],\"tags\":{\"natural\":\"coastline\"}},{\"type\":\"way\",\"id\":13,\"geometry\":[{\"lat\":41.9,\"lon\":-87.6},{\"lat\":41.91,\"lon\":-87.61}],\"tags\":{\"highway\":\"footway\"}},{\"type\":\"way\",\"id\":14,\"geometry\":[{\"lat\":41.9,\"lon\":-87.6}],\"tags\":{\"highway\":\"residential\"}},{\"type\":\"way\",\"id\":15,\"geometry\":[{\"lat\":41.95,\"lon\":-87.7},{\"lat\":41.96,\"lon\":-87.71},{\"lat\":41.97,\"lon\":-87.72}],\"tags\":{\"highway\":\"motorway\"}}]}"
+
+# ── basemap against the mock's Overpass endpoint ────────────────
+# A fresh database with routes planted by hand, so each block is known. The
+# first route's points lie in the block whose south-west corner is
+# 41.8,-87.7, which a floor that truncated toward zero would name
+# 41.8,-87.6; the map's area is that block and its eight neighbours. Routes at
+# the mock's marker latitudes (45 to 48) drive its failure answers.
+run_basemap! : Str, Str => Try({}, _)
+run_basemap! = |bin, base| {
+	home = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+	db = "${home}/.stride/db.sqlite"
+	_ = sync_stride!(bin, home, base, ["init"])
+	run = "HOME='${home}' STRIDE_FORMAT=json STRIDE_OVERPASS_BASE='${base}' STRIDE_OVERPASS_BACKOFF_MS=1 '${bin}' basemap 2>/dev/null"
+	human = "HOME='${home}' STRIDE_OVERPASS_BASE='${base}' STRIDE_OVERPASS_BACKOFF_MS=1 '${bin}' basemap 2>/dev/null"
+	q! = |filter| Str.trim(sh!("${run} | jq -r '${filter}'"))
+	counts! = || q!("[.data.blocks_fetched, .data.blocks_pending, .data.ways_stored, .data.map_ways, .data.stopped] | map(tostring) | join(\"/\")")
+	place! = |id, lat| sql!(db, "UPDATE routes SET raw_json = '{\"latlng\":{\"data\":[[${lat},10.05]]}}' WHERE activity_id = ${id};")
+
+	check!("basemap with no routes asks for nothing and says sync comes first", counts!() == "0/0/0/0/complete" and Str.contains(sh!(human), "no GPS routes to map yet"))?
+
+	# a route where the map has nothing: its blocks are fetched and marked, and
+	# the human line says the area is empty rather than that routes are missing
+	_ = sql!(db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (700,'r0','Ride','2026-05-31T08:00:00Z',3600,30000); INSERT INTO routes (activity_id, raw_json) VALUES (700, '{}');")
+	_ = place!("700", "51.05")
+	check!("a route over empty blocks fetches them and says the area holds no roads or water", counts!() == "9/0/0/0/complete" and Str.contains(sh!(human), "the map's area holds no roads or water"))?
+	_ = sql!(db, "DELETE FROM routes WHERE activity_id = 700; DELETE FROM map_blocks;")
+
+	_ = sql!(db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (701,'r1','Ride','2026-06-01T08:00:00Z',3600,30000),(702,'r2','Ride','2026-06-02T08:00:00Z',3600,30000),(703,'r3','Rowing','2026-06-03T08:00:00Z',1800,5000),(704,'r4','Ride','2026-06-04T08:00:00Z',3600,30000);")
+	_ = sql!(db, "INSERT INTO routes (activity_id, raw_json) VALUES (701, '{\"latlng\":{\"data\":[[41.875,-87.625],[41.876,-87.624],[200.0,10.0]]},\"time\":{\"data\":[0,5,10]}}'), (702, 'not json at all'), (703, '{}');")
+	first = Str.trim(sh!(run))
+	check!("basemap's payload conforms to its schema", Str.trim(sh!("printf '%s' '${first}' | jq '.data' 2>&1 | jq -r --slurpfile schema schemas/v3/basemap.json -f tools/validate.jq 2>&1")) == "")?
+	check!("...fetching the route's block and its eight neighbours, off-globe points and unreadable bodies aside", Str.trim(sh!("printf '%s' '${first}' | jq -r '[.data.blocks_fetched, .data.blocks_pending, .data.stopped] | map(tostring) | join(\"/\")'")) == "9/0/complete")?
+	check!("...around the block named by the floor of its corner, west of the point at a negative longitude", Str.trim(sql!(db, "SELECT MIN(lat_block) || ',' || MAX(lat_block) || ',' || MIN(lng_block) || ',' || MAX(lng_block) || ',' || COUNT(*) FROM map_blocks;")) == "417,419,-878,-876,9")?
+	check!("...storing the three ways the map draws, each as its kind, once however many blocks carried them", Str.trim(sql!(db, "SELECT group_concat(way_id || ':' || kind, ' ') FROM (SELECT * FROM map_ways ORDER BY way_id);")) == "11:arterial 12:water 15:motorway" and Str.trim(sh!("printf '%s' '${first}' | jq -r '[.data.ways_stored, .data.map_ways] | map(tostring) | join(\"/\")'")) == "27/3")?
+	check!("...with its coordinates as a flat lat,lng array", Str.trim(sql!(db, "SELECT points FROM map_ways WHERE way_id = 11;")) == "[41.88,-87.63,41.89,-87.64]")?
+	check!("a second run fetches nothing and says the map is complete", counts!() == "0/0/0/3/complete" and Str.contains(sh!(human), "the map already covers every stored route"))?
+
+	# a server that stays busy: with nothing stored the run is an error, and
+	# with a block stored first it is a partial success. A route at 30 sorts
+	# its nine blocks ahead of the busy marker's nine.
+	_ = sql!(db, "INSERT INTO routes (activity_id, raw_json) VALUES (704, '{}');")
+	_ = place!("704", "45.05")
+	check!("a busy server with nothing stored is the overpass_busy error at exit 1", q!(".error.code") == "overpass_busy" and Str.trim(sh!("${run} >/dev/null; echo $?")) == "1")?
+	check!("...and marks no block fetched", Str.trim(sql!(db, "SELECT COUNT(*) FROM map_blocks;")) == "9")?
+	_ = place!("703", "30.05")
+	partial = Str.trim(sh!("${run}; echo \" rc=$?\""))
+	check!("a busy server after a stored block keeps it and stops as busy at exit 0", Str.contains(partial, "\"blocks_fetched\":9,") and Str.contains(partial, "\"blocks_pending\":9,") and Str.contains(partial, "\"stopped\":\"overpass_busy\"") and Str.ends_with(partial, "rc=0"))?
+	check!("...with the stored blocks marked and the busy ones not", Str.trim(sql!(db, "SELECT COUNT(*) || '/' || SUM(lat_block BETWEEN 449 AND 451) FROM map_blocks;")) == "18/0")?
+	# the same partial run in human form: forgetting the stored blocks makes
+	# them fetchable once more
+	_ = sql!(db, "DELETE FROM map_blocks WHERE lat_block BETWEEN 299 AND 301;")
+	check!("...and the human line says to run it again", Str.contains(sh!(human), "the Overpass server is busy, 9 blocks to go"))?
+
+	# a server busy for one request is asked again, block by block
+	_ = sql!(db, "UPDATE routes SET raw_json = '{}' WHERE activity_id IN (703, 704);")
+	_ = place!("703", "48.05")
+	check!("a block refused as busy once is asked again and stored", counts!() == "9/0/27/3/complete")?
+
+	# a refused query and an unreadable answer are overpass_error, and an
+	# error after stored blocks says they are kept. A route at 20 sorts its
+	# nine blocks ahead of the refusing marker's.
+	_ = sql!(db, "UPDATE routes SET raw_json = '{\"latlng\":{\"data\":[[20.05,10.05]]}}' WHERE activity_id = 702;")
+	_ = place!("703", "46.05")
+	refused = Str.trim(sh!(run))
+	check!("a refused query is overpass_error with the server's own message", Str.contains(refused, "\"overpass_error\"") and Str.contains(refused, "HTTP 400: Error: line 1: parse error: Unknown type"))?
+	check!("...saying the blocks fetched before it are kept", Str.contains(refused, "the 9 blocks fetched before it are kept"))?
+	_ = place!("703", "47.05")
+	check!("...and an answer that is not map JSON is overpass_error too", q!(".error.code") == "overpass_error" and Str.trim(sql!(db, "SELECT COUNT(*) FROM map_blocks WHERE lat_block BETWEEN 459 AND 471;")) == "0")?
+
+	# a query that ran out of time answers 200 with a remark: never a block's
+	# ways, so it is asked again like a busy answer and nothing is marked
+	_ = place!("703", "49.05")
+	check!("an answer cut short by a remark is never stored as the block's ways", q!(".error.code") == "overpass_busy" and Str.trim(sql!(db, "SELECT COUNT(*) FROM map_blocks WHERE lat_block BETWEEN 489 AND 491;")) == "0")?
+
+	# a busy main server sends each block to the next server in the list
+	_ = place!("703", "50.05")
+	mirrored = Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_OVERPASS_BASE='${base}/busy,${base}' STRIDE_OVERPASS_BACKOFF_MS=1 '${bin}' basemap 2>/dev/null | jq -r '[.data.blocks_fetched, .data.stopped] | map(tostring) | join(\"/\")'"))
+	check!("a busy server's blocks are fetched from the next server", mirrored == "9/complete")?
+
+	# the ring stops at the poles and wraps at the antimeridian, and an element
+	# that is not a pair of numbers adds no block
+	_ = sql!(db, "UPDATE routes SET raw_json = '{\"latlng\":{\"data\":[[10.05,179.95]]}}' WHERE activity_id = 703;")
+	_ = sql!(db, "UPDATE routes SET raw_json = '{\"latlng\":{\"data\":[[89.95,10.05]]}}' WHERE activity_id = 702;")
+	check!("blocks at the antimeridian and the pole are real boxes and fetch cleanly", counts!() == "15/0/45/3/complete")?
+	check!("...the ring wrapping from 179.9 to -180.0", Str.trim(sql!(db, "SELECT COUNT(*) || '/' || SUM(lng_block = -1800) || '/' || MAX(lng_block) FROM map_blocks WHERE lat_block BETWEEN 99 AND 101;")) == "9/3/1799")?
+	check!("...and stopping at the pole", Str.trim(sql!(db, "SELECT COUNT(*) || '/' || MAX(lat_block) FROM map_blocks WHERE lat_block >= 898;")) == "6/899")?
+	_ = sql!(db, "UPDATE routes SET raw_json = '{\"latlng\":{\"data\":[\"x\",{\"a\":1},[true,1],[\"1\",\"2\"],[60.05,10.05]]}}' WHERE activity_id = 703;")
+	check!("an element that is not a pair of numbers adds no block and fails nothing", counts!() == "9/0/27/3/complete")?
+
+	_ = place!("703", "62.05")
+	gone = Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_OVERPASS_BASE='http://127.0.0.1:1' '${bin}' basemap 2>/dev/null"))
+	check!("an unreachable Overpass is network_unreachable, readable and naming Overpass", Str.contains(gone, "\"network_unreachable\"") and Str.contains(gone, "Overpass server") and !(Str.contains(gone, "Strava")) and !(Str.contains(gone, "HttpErr")))?
+	_ = sh!("rm -rf '${home}'")
+	Ok({})
+}
+
+# whether an Overpass query names a block whose south edge is `lat` (whole
+# degrees) or a tenth either side, the rows a route at lat.05 reaches
+names_lat : Str, I64 -> Bool
+names_lat = |form, lat| List.any([lat * 10 - 1, lat * 10, lat * 10 + 1], |t| Str.contains(form, "%28${(t // 10).to_str()}.${(t % 10).to_str()}%2C"))
+
 # Two pages of 100 — each exactly per_page, so fetch_pages! sees a full page and asks for
 # the next one, and the sum (200) is a number no single page and no constant can produce.
 # Ids 20001+ are clear of every fixture range. Generated rather than written out because
@@ -1729,14 +1869,10 @@ b_init_config! = |ctx| {
 	check!("the parser accepts nothing the table omits, beyond deliberately retired names (got: ${undescribed})", undescribed == "backfill")?
 	unparsed = Str.trim(sh!("LC_ALL=C comm -13 '${verbs_dir}/parser' '${verbs_dir}/spec' | tr '\\n' ' '"))
 	check!("...and every described command is one the parser accepts (extra: ${unparsed})", unparsed == "")?
-	# This pins the SIZE of the command set, and that is now its only unique job. It was
-	# added as the non-vacuity guard — pinning the two inputs was the mistake that let a
-	# silently-broken `comm` through — but once `undescribed` became a pin on a VALUE
-	# rather than on emptiness, it catches every vacuity mode on its own. What survives
-	# here is the deliberate-bump discipline: adding a properly described command still
-	# has to change a number a reader sees.
+	# The size of the command set: adding a described command changes a number a
+	# reader sees. The value pin on `undescribed` already fails on an empty or broken `comm`.
 	overlap = Str.trim(sh!("LC_ALL=C comm -12 '${verbs_dir}/parser' '${verbs_dir}/spec' | wc -l | tr -d ' '"))
-	check!("...and the two lists genuinely overlap on all 38 verbs (got ${overlap})", overlap == "38")?
+	check!("...and the two lists genuinely overlap on all 39 verbs (got ${overlap})", overlap == "39")?
 	_ = sh!("rm -rf '${verbs_dir}'")
 
 	# ...and the HUMAN help names every command the table declares. `help_text`
@@ -1754,7 +1890,7 @@ b_init_config! = |ctx| {
 	_ = sh!("rm -rf '${help_dir}' && mkdir -p '${help_dir}' && ${spec_names} > '${help_dir}/spec' && ${human_help} > '${help_dir}/human'")
 	# Fail-closed: an empty extraction on either side would make the loop below vacuous.
 	help_sizes = Str.trim(sh!("wc -l < '${help_dir}/spec' | tr -d ' '"))
-	check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "47")?
+	check!("the help-name probe read a non-empty command table (got ${help_sizes})", help_sizes == "48")?
 	missing_from_help = Str.trim(sh!("while IFS= read -r c; do grep -qw -- \"\$c\" '${help_dir}/human' || printf '%s ' \"\$c\"; done < '${help_dir}/spec'"))
 	check!("every command in the table is named in `stride --help` (missing: ${missing_from_help})", missing_from_help == "")?
 	_ = sh!("rm -rf '${help_dir}'")
@@ -1863,14 +1999,16 @@ b_init_config! = |ctx| {
 	check!("...with ${declared_ro} of them declared, and at least one to sweep", declared_ro != "0")?
 
 	# COMMENTS STRIPPED FIRST: these grep the source, and a doc comment naming
-	# `Http.send!` would make a module read as one that reaches Strava.
+	# `Http.send!` would make a module read as one that reaches the network.
 	# `network` against the SOURCE, not against itself: Http.send! is the only way
-	# out to Strava and lives in exactly two functions (token exchange, bearer GET),
-	# both in Strava.roc, reachable from auth, setup (a code exchange, and the bare
-	# walk's first sync) and sync — so that is what the table must say.
-	check!("the network set is exactly auth, setup and sync", cmdq!("[.data.commands[] | select(.network) | .name] | sort") == "[\n  \"auth\",\n  \"setup\",\n  \"sync\"\n]")?
+	# out of the machine. It lives in exactly two functions in Strava.roc (token
+	# exchange, bearer GET), reachable from auth, setup (a code exchange, and the
+	# bare walk's first sync) and sync, and in one in Basemap.roc (the Overpass
+	# query), reachable from basemap — so that is what the table must say.
+	check!("the network set is exactly auth, basemap, setup and sync", cmdq!("[.data.commands[] | select(.network) | .name] | sort") == "[\n  \"auth\",\n  \"basemap\",\n  \"setup\",\n  \"sync\"\n]")?
 	check!("...and Strava is still reachable from exactly two call sites", Str.trim(sh!("sed 's/#.*//' src/cli/Strava.roc | grep -c 'Http.send!'")) == "2")?
-	check!("...with no other module able to reach one", Str.trim(sh!("for f in src/cli/*.roc; do sed 's/#.*//' $f | grep -q 'Http.send!' && printf '%s' $f; done")) == "src/cli/Strava.roc")?
+	check!("...and Overpass from exactly one", Str.trim(sh!("sed 's/#.*//' src/cli/Basemap.roc | grep -c 'Http.send!'")) == "1")?
+	check!("...with no other module able to reach one", Str.trim(sh!("for f in src/cli/*.roc; do sed 's/#.*//' $f | grep -q 'Http.send!' && printf '%s ' $f; done")) == "src/cli/Basemap.roc src/cli/Strava.roc")?
 	# `interactive` the same way: Stdin is what blocking on a human looks like. It is
 	# read in three places. The auth flow reads a pasted code from whoever is at the
 	# terminal, and bare `setup` reads its prompts the same way. `strength import -`
@@ -4983,11 +5121,12 @@ b_command_schemas! = |ctx| {
 	check!("...with forms on both sides of that, so neither swept nothing", Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select([.args[] | select(.required)] | length > 0) | select([.args[] | select(.required) | select(.example == \"\")] | length == 0)] | length'")) != "0")?
 	# The NETWORK forms, which both probes skip, are pinned as a value rather than probed:
 	# reaching them couples this check to the mock and loses the purely-offline property.
-	# `sync --all` is a parser path the literal-argument check above verifies, `auth` takes
-	# nothing, and `setup`'s one placeholder (`<key=value>`) is walked against the mock by
-	# the sync driver. A new placeholder on any of them changes this string.
+	# `sync --all` is a parser path the literal-argument check above verifies, `auth`
+	# and `basemap` take nothing, and `setup`'s one placeholder (`<key=value>`) is
+	# walked against the mock by the sync driver. A new placeholder on any of them
+	# changes this string.
 	netargs = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' 2>/dev/null | jq -r '[.data.commands[] | select(.network) | \"\\(.name)[\\([.args[].name] | join(\",\"))]\"] | sort | join(\"|\")'"))
-	check!("the networked forms declare exactly their pinned arguments (got: ${netargs})", netargs == "auth[]|setup[<key=value>]|sync[--all]")?
+	check!("the networked forms declare exactly their pinned arguments (got: ${netargs})", netargs == "auth[]|basemap[]|setup[<key=value>]|sync[--all]")?
 	# ORDERING: required arguments must form a PREFIX. Both probes verify the
 	# required COUNT, neither its position, so swapping a required and an optional
 	# preserves both counts and passes. Not only a contract lie:
@@ -8646,6 +8785,15 @@ b_migration! = |ctx| {
 	_ = stride!(ctx.bin, v46home, ["config", "get", "timezone"])
 	check!("migrating a v46 database creates the routes table and owes its ride a route", Str.trim(sql!(v46db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'routes';")) == "1" and Str.trim(sh!("HOME='${v46home}' STRIDE_FORMAT=json '${ctx.bin}' doctor 2>/dev/null | jq -r '.data.pending_routes'")) == "1")?
 	_ = sh!("rm -rf '${v46home}'")
+	# v49 adds the base map's tables. A v48 database has neither, so the
+	# migration creates both.
+	v48home = Str.trim(sh!("mktemp -d"))
+	v48db = "${v48home}/.stride/db.sqlite"
+	_ = stride!(ctx.bin, v48home, ["init"])
+	_ = sql!(v48db, "DROP TABLE map_ways; DROP TABLE map_blocks; PRAGMA user_version = 48;")
+	_ = stride!(ctx.bin, v48home, ["config", "get", "timezone"])
+	check!("migrating a v48 database creates the base map's two tables", Str.trim(sql!(v48db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('map_ways', 'map_blocks');")) == "2" and Str.trim(sql!(v48db, "PRAGMA user_version;")) == "49")?
+	_ = sh!("rm -rf '${v48home}'")
 	Ok({})
 }
 
