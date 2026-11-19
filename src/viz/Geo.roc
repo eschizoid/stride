@@ -185,8 +185,8 @@ Geo :: [].{
 	cell_key = |c| c.cx * 1048576 + c.cy
 
 	# The starts are counted per cell in one pass and the best cell found in
-	# a second, so the cost grows with the number of lines, not its square:
-	# a base map alone holds hundreds of thousands of them.
+	# a second, so the cost grows with the number of lines, not its square;
+	# a base map can hold hundreds of thousands.
 	focus : List({ start : Pt, box : Bounds }) -> Focus
 	focus = |items| {
 		cells = List.map(items, |it| cell_of(it.start))
