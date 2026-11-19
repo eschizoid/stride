@@ -1301,15 +1301,6 @@ ReportHealth :: [].{
 		Ok(List.keep_if(raw, |p| p.speed > 0.0))
 	}
 
-	# Critical speed over a speed ladder, refused to all zeros when the fit is.
-	# `cs` of 0 is the refusal signal, so the key means one thing across commands,
-	# exactly as `cp` does, and `points` counts the bests AVAILABLE to the fit.
-	#
-	# The `> 0.0` checks cannot fire: Metrics.critical_speed returns Ok only when
-	# CS and D' are both positive. If that fit were relaxed, these checks would
-	# turn its bad values into the documented refusal rather than publish them,
-	# and the expect that fails on such a relaxation is the Metrics one headed
-	# "critical_speed refuses a physically meaningless fit".
 	# The family as activities.sport_family stores it, matched without regard to
 	# case, with whether any session carries it at all. The fit compares the
 	# stored column exactly, so a word typed in another case than Strava's
@@ -1335,6 +1326,15 @@ ReportHealth :: [].{
 		}
 	}
 
+	# Critical speed over a speed ladder, refused to all zeros when the fit is.
+	# `cs` of 0 is the refusal signal, so the key means one thing across commands,
+	# exactly as `cp` does, and `points` counts the bests AVAILABLE to the fit.
+	#
+	# The `> 0.0` checks cannot fire: Metrics.critical_speed returns Ok only when
+	# CS and D' are both positive. If that fit were relaxed, these checks would
+	# turn its bad values into the documented refusal rather than publish them,
+	# and the expect that fails on such a relaxation is the Metrics one headed
+	# "critical_speed refuses a physically meaningless fit".
 	cs_fit : List({ dur_s : U64, speed : F64 }) -> { cs : F64, d_prime : F64, r2 : F64, points : I64 }
 	cs_fit = |points| {
 		fit_points = List.map(points, |p| { dur_s: (p.dur_s).to_f64(), speed: p.speed })
