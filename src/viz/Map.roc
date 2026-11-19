@@ -9,11 +9,10 @@ import Theme
 import Ui
 
 Map :: [].{
-	# The map view: every GPS session drawn over the street map the
-	# engine fetched, in Web Mercator, north up. Drag pans, the wheel zooms
-	# at the cursor, and `0` fits the routes again (the street map when no route
-	# has GPS). The streets come from
-	# OpenStreetMap, and the view credits it on the map itself.
+	# The map view: every GPS session drawn over the street map the engine
+	# fetched, in Web Mercator, north up. Drag pans, the wheel zooms at the
+	# cursor, and `0` returns to the opening view (Geo.opening). The streets
+	# come from OpenStreetMap, and the view credits it on the map itself.
 
 	title_text : Str
 	title_text = "routes - every GPS session on the street map"
@@ -51,9 +50,10 @@ Map :: [].{
 	rect = |win| { x: 36.0, y: 96.0, w: win.w - 72.0, h: win.h - 96.0 - 48.0 }
 
 	# the camera the view shows: the athlete's own once they have moved it,
-	# else the fit to the routes, which follows the window as it resizes
+	# else the opening Geo.opening picks, which follows the window as it
+	# resizes
 	cam : Ui.Model -> Geo.Cam
-	cam = |model| if (model.map_moved) model.map_cam else Geo.fit(model.map.fit, rect(model.win))
+	cam = |model| if (model.map_moved) model.map_cam else Geo.opening(model.map.fit, model.map.focus, rect(model.win))
 
 	# how each kind draws, by Db.way_kinds' codes: its colour and opacity,
 	# its width in logical pixels, and the zooms, in metres per pixel, where

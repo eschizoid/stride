@@ -462,6 +462,7 @@ Gate :: [].{
 			map: Db.no_map,
 			map_load: Loaded,
 			map_gen: 0,
+			map_stale: Bool.False,
 			map_cam: Map.unpainted,
 			map_moved: Bool.False,
 			map_drag: Idle,
@@ -872,14 +873,31 @@ Gate :: [].{
 			routes: [{ kind: Db.route_kind, pts: route, far: route, box: Geo.box_of(route) }],
 			ways: [{ kind: 1, pts: street, far: street, box: Geo.box_of(street) }],
 			fit: Geo.box_of(route),
+			focus: Geo.focus([{ start: { x: 0.0, y: 0.0 }, box: Geo.box_of(route) }]),
+			err: "",
+		}
+	}
+
+	# the same home route with one more in Madrid, about 9,350 km east and
+	# 230 km south of it in projected metres
+	madrid_fixture : Db.MapData
+	madrid_fixture = {
+		home = [{ x: 0.0, y: 0.0 }, { x: 1200.0, y: 400.0 }, { x: 2600.0, y: -300.0 }]
+		away = [{ x: 9350000.0, y: -230000.0 }, { x: 9351000.0, y: -229500.0 }]
+		lines = [{ kind: Db.route_kind, pts: home, far: home, box: Geo.box_of(home) }, { kind: Db.route_kind, pts: away, far: away, box: Geo.box_of(away) }]
+		{
+			routes: lines,
+			ways: [],
+			fit: List.fold(lines, Geo.no_box, |b, l| Geo.union(b, l.box)),
+			focus: Geo.focus(List.keep_oks(lines, |l| (List.first(l.pts)).map_ok(|p| { start: p, box: l.box }))),
 			err: "",
 		}
 	}
 
 	# the map with routes and streets, with routes before the streets are
-	# fetched, with no route at all, while it loads, and with a read that
-	# failed whose message is longer than the map is wide, for every athlete
-	# at every size
+	# fetched, with a route an ocean from the rest, with no route at all,
+	# while it loads, and with a read that failed whose message is longer
+	# than the map is wide, for every athlete at every size
 	map_models : List({ name : Str, model : Ui.Model })
 	map_models =
 		List.join(
@@ -894,6 +912,7 @@ Gate :: [].{
 								{ name: "${a.name} map at ${size_name(sz)}", model: base },
 								{ name: "${a.name} map without streets at ${size_name(sz)}", model: { ..base, map: { ..map_fixture, ways: [] } } },
 								{ name: "${a.name} map without routes at ${size_name(sz)}", model: { ..base, map: Db.no_map } },
+								{ name: "${a.name} map with a route an ocean away at ${size_name(sz)}", model: { ..base, map: madrid_fixture } },
 								{ name: "${a.name} map loading at ${size_name(sz)}", model: { ..base, map: Db.no_map, map_load: Loading } },
 								{ name: "${a.name} map with a failed read at ${size_name(sz)}", model: { ..base, map: { ..Db.no_map, err: Str.repeat("could not read the routes: ", 8) } } },
 							]
@@ -1203,3 +1222,21 @@ expect {
 		Err(_) => Bool.False
 	}
 }
+
+# a route an ocean from the rest leaves the map opening on the rest: every
+# point of the home route lies inside the map at every size
+expect List.all(
+	Gate.sizes,
+	|sz| {
+		m = { ..Gate.empty_model(sz), view: 10, map: Gate.madrid_fixture }
+		r = Map.rect(m.win)
+		c = Map.cam(m)
+		List.all(
+			[{ x: 0.0, y: 0.0 }, { x: 1200.0, y: 400.0 }, { x: 2600.0, y: -300.0 }],
+			|p| {
+				s = Geo.to_screen(c, r, p)
+				s.x >= r.x and s.x <= r.x + r.w and s.y >= r.y and s.y <= r.y + r.h
+			},
+		)
+	},
+)

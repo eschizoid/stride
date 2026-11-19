@@ -505,6 +505,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		map: Db.no_map,
 		map_load: Unloaded,
 		map_gen: 0,
+		map_stale: Bool.False,
 		map_cam: Map.unpainted,
 		map_moved: Bool.False,
 		map_drag: Idle,
@@ -644,6 +645,37 @@ ghost_task! = |acc, ids, gsel, gen|
 				}
 		}
 	}
+
+# whether the map has yet to land: its load waiting to start or running
+map_unread : [Unloaded, Loading, Loaded] -> Bool
+map_unread = |l|
+	match l {
+		Loaded => Bool.False
+		_ => Bool.True
+	}
+
+# What R does to the map's load. One map load runs at a time: a map at rest
+# is read again, and one still being read is marked stale rather than read
+# a second time beside it.
+map_on_reload : [Unloaded, Loading, Loaded] -> { load : [Unloaded, Loading, Loaded], stale : Bool }
+map_on_reload = |l|
+	match l {
+		Loading => { load: Loading, stale: Bool.True }
+		_ => { load: Unloaded, stale: Bool.False }
+	}
+
+# what a landing load leaves: a map marked stale while it was read is read
+# once more, any other is loaded
+map_on_landing : Bool -> [Unloaded, Loading, Loaded]
+map_on_landing = |stale| if (stale) Unloaded else Loaded
+
+# R during a read never starts a second one; the read that lands then
+# starts exactly one more, and a map at rest is read again at once
+expect map_on_reload(Loading) == { load: Loading, stale: Bool.True } and map_on_reload(Loaded) == { load: Unloaded, stale: Bool.False } and map_on_reload(Unloaded) == { load: Unloaded, stale: Bool.False } and map_on_landing(Bool.True) == Unloaded and map_on_landing(Bool.False) == Loaded
+
+# a capture on the map waits for the map to land, and one on another view
+# does not wait on it
+expect !(view_settled({ view: 10, view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: map_unread(Loading) })) and view_settled({ view: 10, view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: map_unread(Loaded) }) and view_settled({ view: 0, view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: map_unread(Loading) })
 
 # Every route and base-map way, read off the main loop: a full backfill is
 # hundreds of megabytes of stored answers to decode, which would hold every
@@ -1352,15 +1384,24 @@ capture_path = |here, name| {
 capture_timeout_ticks : U64
 capture_timeout_ticks = 10 * ticks_per_second
 
+# A PNG waits for its view to settle before the host is asked, and a view
+# waiting on a load (the map's runs tens of seconds on a full backfill)
+# settles late, so the armed wait has its own, longer limit and its own
+# reason; the host's ten seconds start when the shot is asked for.
+settle_timeout_ticks : U64
+settle_timeout_ticks = 180 * ticks_per_second
+
 # what one frame does about a pending capture: the host's screenshot answer
 # for the directive (not the S key's), the recorder's status, whether the
 # view has settled, and the frame's tick decide the next state and the one
 # effect the frame runs. A PNG is armed until the view has settled (a view
-# switch's crossfade and draw-in have finished, no trace fetch is in
-# flight) so the file shows the view and not the transition; a start closes
-# once the recorder reads Active, and a refusal the host latched for the
-# next input closes it with the reason; a stop closes on Finished or Failed.
-# Every wait ends by the timeout, with no result
+# switch's crossfade and draw-in have finished, no trace fetch is in flight,
+# and on the map view the map has landed) so the file shows the view and not
+# the transition; a start closes once the recorder reads Active, and a
+# refusal the host latched for the next input closes it with the reason; a
+# stop closes on Finished or Failed. The armed wait ends at
+# settle_timeout_ticks and every wait on the host at capture_timeout_ticks,
+# each with no result
 CaptureEvent : { shot : [NoShot, ShotDone(I64, Try({}, Capture.ScreenshotError))], rec : Capture.Status, settled : Bool, tick : U64 }
 
 CaptureAction : [Nothing, TakeShot({ id : I64, name : Str }), Mark({ id : I64, refused : Str, result : Str })]
@@ -1372,7 +1413,7 @@ capture_step = |p, ev| {
 	match p {
 		NoCapture => { next: NoCapture, act: Nothing }
 		ArmedShot(c) =>
-			if (timed_out(c)) (give_up(c, "png"))
+			if (ev.tick - c.since >= settle_timeout_ticks) ({ next: NoCapture, act: Mark({ id: c.id, refused: join_refusal(c.refused, "capture png failed: the view was still loading after 180 seconds"), result: "" }) })
 			else if (ev.settled) ({ next: AwaitingShot({ ..c, since: ev.tick }), act: TakeShot({ id: c.id, name: c.name }) })
 			else { next: p, act: Nothing }
 		AwaitingShot(c) =>
@@ -1453,9 +1494,10 @@ rec_failure_text = |r|
 	}
 
 # the view has settled when its arrival animation is over (settle_ticks),
-# no trace or ghost fetch is in flight, and no reload is
-view_settled : { view : U8, view_anim : U64, tick : U64, trace_loading : Bool, ghost_loading : Bool, reloading : Bool } -> Bool
-view_settled = |m| (m.view_anim == 0 or m.tick - m.view_anim >= settle_ticks(m.view)) and !m.trace_loading and !m.ghost_loading and !m.reloading
+# no trace or ghost fetch is in flight, no reload is, and on the map view
+# the map has landed
+view_settled : { view : U8, view_anim : U64, tick : U64, trace_loading : Bool, ghost_loading : Bool, reloading : Bool, map_loading : Bool } -> Bool
+view_settled = |m| (m.view_anim == 0 or m.tick - m.view_anim >= settle_ticks(m.view)) and !m.trace_loading and !m.ghost_loading and !m.reloading and !(m.view == 10 and m.map_loading)
 
 # how long a view animates after it arrives: the career view's sweep
 # (Career.sweep_ticks), and the crossfade and the form board's draw-in, half
@@ -1568,6 +1610,16 @@ expect {
 		and other == { next: AwaitingShot(c), act: Nothing }
 		and late == { next: NoCapture, act: Mark({ id: 3, refused: "capture png failed: no answer from the host within 10 seconds", result: "" }) }
 }
+
+# an armed PNG outlasts the host's ten seconds while its view loads, and
+# gives up at the settle limit naming the load, not the host
+expect {
+	c = { id: 7, refused: "", path: "/h/captures/map.png", name: "map.png", since: 100 }
+	ev = { shot: NoShot, rec: Idle, settled: Bool.False, tick: 100 + capture_timeout_ticks + 1 }
+	capture_step(ArmedShot(c), ev) == { next: ArmedShot(c), act: Nothing }
+		and capture_step(ArmedShot(c), { ..ev, tick: 100 + settle_timeout_ticks }) == { next: NoCapture, act: Mark({ id: 7, refused: "capture png failed: the view was still loading after 180 seconds", result: "" }) }
+		and settle_timeout_ticks == 180 * ticks_per_second
+}
 # a start marks on Active with the file, a Failed read at the tick the wait
 # began (the frame after the start, which is when the step first runs)
 # marks the host's reason; a stop marks on Finished or Failed and waits on
@@ -1590,15 +1642,15 @@ expect {
 		and gone == { next: NoCapture, act: Mark({ id: 5, refused: "capture webm_start failed: no answer from the host within 10 seconds", result: "" }) }
 		and capture_is_pending(AwaitingStop(c)) and !capture_is_pending(NoCapture)
 		and capture_path("", "power.png") == "captures/power.png" and capture_path("/h", "power.png") == "/h/captures/power.png"
-		and view_settled({ view: 0, view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
-		and !view_settled({ view: 0, view_anim: 100, tick: 129, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
-		and view_settled({ view: 0, view_anim: 100, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
-		and !view_settled({ view: 0, view_anim: 100, tick: 130, trace_loading: Bool.True, ghost_loading: Bool.False, reloading: Bool.False })
-		and !view_settled({ view: 0, view_anim: 100, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.True, reloading: Bool.False })
-		and !view_settled({ view: 0, view_anim: 0, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.True })
-		and !view_settled({ view: 8, view_anim: 100, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
-		and !view_settled({ view: 8, view_anim: 100, tick: 100 + Career.sweep_ticks - 1, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
-		and view_settled({ view: 8, view_anim: 100, tick: 100 + Career.sweep_ticks, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False })
+		and view_settled({ view: 0, view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: Bool.False })
+		and !view_settled({ view: 0, view_anim: 100, tick: 129, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: Bool.False })
+		and view_settled({ view: 0, view_anim: 100, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: Bool.False })
+		and !view_settled({ view: 0, view_anim: 100, tick: 130, trace_loading: Bool.True, ghost_loading: Bool.False, reloading: Bool.False, map_loading: Bool.False })
+		and !view_settled({ view: 0, view_anim: 100, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.True, reloading: Bool.False, map_loading: Bool.False })
+		and !view_settled({ view: 0, view_anim: 0, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.True, map_loading: Bool.False })
+		and !view_settled({ view: 8, view_anim: 100, tick: 130, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: Bool.False })
+		and !view_settled({ view: 8, view_anim: 100, tick: 100 + Career.sweep_ticks - 1, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: Bool.False })
+		and view_settled({ view: 8, view_anim: 100, tick: 100 + Career.sweep_ticks, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: Bool.False })
 }
 
 # Reports a directive's terminal outcome from the task lane.
@@ -1899,7 +1951,7 @@ update! = |model0, program_input, io| {
 							}
 					}
 				Reloaded(fresh) => {
-					merged = { ..fresh, map: acc.map, map_gen: acc.map_gen, map_cam: acc.map_cam, map_moved: acc.map_moved, map_rt: acc.map_rt, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_active: acc.last_active, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending, flame: acc.flame }
+					merged = { ..fresh, map: acc.map, map_gen: acc.map_gen, map_load: (map_on_reload(acc.map_load)).load, map_stale: (map_on_reload(acc.map_load)).stale, map_cam: acc.map_cam, map_moved: acc.map_moved, map_rt: acc.map_rt, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_active: acc.last_active, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending, flame: acc.flame }
 					# R reads the curve it was pressed on, and it is the slow path.
 					# A chip clicked while it ran has since moved curve_days or
 					# curve_family and landed its own curve; when the two disagree
@@ -1919,8 +1971,9 @@ update! = |model0, program_input, io| {
 				# since the fetch read its index; the samples are still that
 				# session's, so they land under whatever index it holds now.
 				TraceSwitched(sw) => if (sw.gen != acc.trace_gen) acc else { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_day: sw.day, trace_unit: sw.un, trace_splits: sw.sp, trace_sets: sw.st, trace_loading: Bool.False }
-				# the map lands only from the newest load; a fresh map is repainted
-				MapLoaded(ml) => if (ml.gen != acc.map_gen) acc else { ..acc, map: ml.map, map_load: Loaded, map_painted: Map.unpainted }
+				# the map lands only from the newest load and is repainted; one R
+				# marked stale while it was read is read once more (map_on_landing)
+				MapLoaded(ml) => if (ml.gen != acc.map_gen) acc else { ..acc, map: ml.map, map_load: map_on_landing(acc.map_stale), map_stale: Bool.False, map_painted: Map.unpainted }
 			},
 	)
 	# the coach's word arrives beside the human's input and steers only what
@@ -1961,7 +2014,7 @@ update! = |model0, program_input, io| {
 			_ => acc9
 		},
 	)
-	cap_step = capture_step(model.pending_capture, { shot: shot_done, rec: program_input.capture, settled: view_settled({ view: model.view, view_anim: model.view_anim, tick, trace_loading: model.trace_loading, ghost_loading: model.ghost_loading, reloading: model.reloading }), tick })
+	cap_step = capture_step(model.pending_capture, { shot: shot_done, rec: program_input.capture, settled: view_settled({ view: model.view, view_anim: model.view_anim, tick, trace_loading: model.trace_loading, ghost_loading: model.ghost_loading, reloading: model.reloading, map_loading: map_unread(model.map_load) }), tick })
 	pending1 = cap_step.next
 	_ = match cap_step.act {
 		Nothing => {}
@@ -2614,9 +2667,9 @@ update! = |model0, program_input, io| {
 			Task.spawn!(program_input, || MarkDone(mark_task!(accm, did, refm, "")))
 		}
 		# the map camera: the wheel zooms at the cursor, a left drag that
-		# began on the map carries the map with it, and 0 fits the routes
-		# again. A UI resize moves every logical point, so a drag spanning
-		# one is not carried.
+		# began on the map carries the map with it, and 0 returns to the
+		# opening view. A UI resize moves every logical point, so a drag
+		# spanning one is not carried.
 		map_r = Map.rect(win)
 		map_cam0 = Map.cam({ ..model, win })
 		on_map = m.x >= map_r.x and m.x <= map_r.x + map_r.w and m.y >= map_r.y and m.y <= map_r.y + map_r.h

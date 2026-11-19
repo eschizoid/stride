@@ -195,8 +195,13 @@ database without `map_ways` draws the routes on a bare ground and says the
 street map is missing.
 
 The map opens fitted to the routes, or to the street map when no route has
-GPS. A drag that begins on the map pans it, the wheel zooms at the cursor,
-and `0` fits the routes again. The window keeps the map as an offscreen
+GPS. When they span more than the widest zoom shows, as a single trip abroad
+makes them, it opens on where they gather instead: the routes starting in the
+100 km cell that holds the most route starts or in a cell beside it, and,
+should even those not fit, on the first of those starts at the widest zoom.
+A route that crosses the antimeridian is carried across the seam rather than
+drawn back across the whole map. A drag that begins on the map pans it, the
+wheel zooms at the cursor, and `0` returns to the opening view. The window keeps the map as an offscreen
 picture, repainted only when the camera, the window or the data changes;
 mid-drag the picture slides with the cursor and the release repaints it.
 Each line keeps a dense point list for close zooms and a sparse one for wide
@@ -205,7 +210,10 @@ walks the list it draws.
 
 The map loads in a task beside the other views, which open without waiting
 for it; on the first load the map says it is being read until it lands, and it
-names a read that failed. The window's SQLite binding refuses a query whose
+names a read that failed. One map load runs at a time: R pressed while one
+runs reads the map once more after it lands, and a capture of the map view
+waits for the map. A database with no routes table reads as having no routes
+yet. The window's SQLite binding refuses a query whose
 result passes a byte budget rather than returning part of it, so routes and
 ways are read in pages. The credit, ©
 OpenStreetMap contributors, sits on the title row over the map's right edge;
@@ -232,7 +240,7 @@ the street data is OpenStreetMap's, under the ODbL.
 | `C` (trace view) | clear the ghost in one press, from any state |
 | `X` (trace view) | cycle the picker's sport filter (all / each sport the menu holds); the header names the active filter |
 | wheel / drag / `0` (trace view) | zoom anchored at the cursor's moment, pan while held, reset - the window is [pan, pan+1/zoom] of the session |
-| wheel / drag / `0` (map view) | zoom at the cursor, pan while a drag that began on the map is held, fit the routes again |
+| wheel / drag / `0` (map view) | zoom at the cursor, pan while a drag that began on the map is held, return to the opening view |
 | `[` / `]` (trace view) | older / newer session among those the active sport filter admits - every one is cached at load, so a switch is a memory read, not a query |
 | `←` / `→` (table view) | scroll the window through the whole series (rows fill the window height) |
 | click a date (table view) | open that day's detail panel: sessions, minutes, km, TSS, NP |

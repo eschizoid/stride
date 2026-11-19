@@ -158,6 +158,79 @@ Geo :: [].{
 		)
 	}
 
+	# whether a box can be shown whole in the rectangle at the widest zoom,
+	# with the tenth to spare fit keeps
+	fits : Bounds, Rect -> Bool
+	fits = |b, r| b.x1 - b.x0 <= r.w * 0.9 * max_mpp and b.y1 - b.y0 <= r.h * 0.9 * max_mpp
+
+	# where the routes gather, for when they cannot all be shown at once: the
+	# square cell, focus_cell metres on a side, holding the most route
+	# starts, a tie going to the cell met first; the extent of every route
+	# starting in that cell or the eight around it, so a metro a cell edge
+	# runs through stays whole; and the first of those starts, the point a
+	# cluster too wide to fit is centred on
+	Focus : { box : Bounds, anchor : Pt }
+
+	focus_cell : F32
+	focus_cell = 100000.0
+
+	cell_of : Pt -> { cx : F32, cy : F32 }
+	cell_of = |p| { cx: F32.div_floor_by(p.x, focus_cell), cy: F32.div_floor_by(p.y, focus_cell) }
+
+	same_cell : { cx : F32, cy : F32 }, { cx : F32, cy : F32 }, F32 -> Bool
+	same_cell = |a, b, reach| (a.cx - b.cx).abs() <= reach and (a.cy - b.cy).abs() <= reach
+
+	focus : List({ start : Pt, box : Bounds }) -> Focus
+	focus = |items| {
+		cells = List.map(items, |it| cell_of(it.start))
+		best = List.fold(
+			List.map_with_index(cells, |c, i| { c, i, n: List.count_if(cells, |o| same_cell(o, c, 0.5)) }),
+			{ c: { cx: 0.0, cy: 0.0 }, i: 0, n: 0 },
+			|acc, x| if (x.n > acc.n) x else acc,
+		)
+		near = List.keep_if(items, |it| same_cell(cell_of(it.start), best.c, 1.5))
+		{
+			box: List.fold(near, no_box, |b, it| union(b, it.box)),
+			anchor: (List.get(items, best.i)).map_ok(|it| it.start).ok_or({ x: 0.0, y: 0.0 }),
+		}
+	}
+
+	# the camera that opens the map: the whole extent when it fits, else the
+	# cluster's extent when that fits, else the widest zoom centred on the
+	# cluster's first start, so the opening view always holds a route
+	opening : Bounds, Focus, Rect -> Cam
+	opening = |all, f, r|
+		if fits(all, r) {
+			fit(all, r)
+		} else if fits(f.box, r) {
+			fit(f.box, r)
+		} else {
+			{ cx: f.anchor.x, cy: f.anchor.y, mpp: max_mpp }
+		}
+
+	# A route's longitudes made continuous: a step of more than half the
+	# globe between two samples is a crossing of the antimeridian, not a
+	# flight round the world, so every longitude after it is carried on past
+	# 180 (or below -180) and the line draws across the seam instead of
+	# across the whole map.
+	unwrap : List({ lat : F64, lng : F64 }) -> List({ lat : F64, lng : F64 })
+	unwrap = |coords| {
+		walk = List.fold(
+			coords,
+			{ shift: 0.0, prev: [], out: [] },
+			|acc, c| {
+				raw = c.lng + acc.shift
+				shift = match acc.prev {
+					[p] => if (raw - p > 180.0) acc.shift - 360.0 else if (raw - p < -180.0) acc.shift + 360.0 else acc.shift
+					_ => acc.shift
+				}
+				lng = c.lng + shift
+				{ shift, prev: [lng], out: List.append(acc.out, { lat: c.lat, lng }) }
+			},
+		)
+		walk.out
+	}
+
 	near64 : F64, F64, F64 -> Bool
 	near64 = |a, b, tol| (a - b).abs() <= tol
 
@@ -257,6 +330,60 @@ Geo :: [].{
 	# thinning keeps the first and last points and every point a full step
 	# from the last kept one
 	expect List.map(thin([{ x: 0.0, y: 0.0 }, { x: 1.0, y: 0.0 }, { x: 3.0, y: 0.0 }, { x: 3.5, y: 0.0 }, { x: 3.6, y: 0.0 }], 2.0), |p| p.x) == [0.0, 3.0, 3.6]
+
+	# thirty routes round a home and one in Madrid, about 9,350 km east: the
+	# whole extent cannot fit, so the map opens on the home cluster with every
+	# home route inside the rectangle and Madrid left out
+	expect {
+		r = { x: 36.0, y: 96.0, w: 908.0, h: 456.0 }
+		home = List.map_with_index(List.repeat(0, 30), |_, i| { start: { x: U64.to_f32(i) * 1000.0, y: U64.to_f32(i) * 500.0 }, box: { x0: U64.to_f32(i) * 1000.0 - 5000.0, y0: U64.to_f32(i) * 500.0 - 5000.0, x1: U64.to_f32(i) * 1000.0 + 5000.0, y1: U64.to_f32(i) * 500.0 + 5000.0 } })
+		madrid = { start: { x: 9350000.0, y: -230000.0 }, box: { x0: 9349000.0, y0: -231000.0, x1: 9351000.0, y1: -229000.0 } }
+		items = List.append(home, madrid)
+		all = List.fold(items, no_box, |b, it| union(b, it.box))
+		f = focus(items)
+		cam = opening(all, f, r)
+		lo = to_screen(cam, r, { x: -5000.0, y: -5000.0 })
+		hi = to_screen(cam, r, { x: 34000.0, y: 19500.0 })
+		!(fits(all, r)) and f.box.x1 < 100000.0 and lo.x >= r.x and hi.x <= r.x + r.w and hi.y >= r.y and lo.y <= r.y + r.h
+	}
+
+	# routes that fit together open on all of them, the far one included
+	expect {
+		r = { x: 0.0, y: 0.0, w: 908.0, h: 456.0 }
+		items = [{ start: { x: 0.0, y: 0.0 }, box: { x0: 0.0, y0: 0.0, x1: 10.0, y1: 10.0 } }, { start: { x: 300000.0, y: 0.0 }, box: { x0: 300000.0, y0: 0.0, x1: 300010.0, y1: 10.0 } }]
+		all = List.fold(items, no_box, |b, it| union(b, it.box))
+		cam = opening(all, focus(items), r)
+		near32(cam.cx, 150005.0, 0.5)
+	}
+
+	# a metro a cell edge runs through stays whole, and a tie goes to the
+	# cell met first
+	expect {
+		edge = focus([{ start: { x: 99000.0, y: 10.0 }, box: { x0: 99000.0, y0: 0.0, x1: 99500.0, y1: 20.0 } }, { start: { x: 101000.0, y: 10.0 }, box: { x0: 100500.0, y0: 0.0, x1: 101000.0, y1: 20.0 } }])
+		tie = focus([{ start: { x: 0.0, y: 0.0 }, box: { x0: 0.0, y0: 0.0, x1: 1.0, y1: 1.0 } }, { start: { x: 5000000.0, y: 0.0 }, box: { x0: 5000000.0, y0: 0.0, x1: 5000001.0, y1: 1.0 } }])
+		near32(edge.box.x0, 99000.0, 0.5) and near32(edge.box.x1, 101000.0, 0.5) and near32(tie.anchor.x, 0.0, 0.5) and near32(tie.box.x1, 1.0, 0.01)
+	}
+
+	# a cluster too tall to fit, a route run toward a pole, opens at the
+	# widest zoom centred on its start
+	expect {
+		r = { x: 0.0, y: 0.0, w: 908.0, h: 456.0 }
+		polar = [{ start: { x: 10.0, y: 20.0 }, box: { x0: 0.0, y0: 0.0, x1: 50.0, y1: 12000000.0 } }]
+		all = List.fold(polar, no_box, |b, it| union(b, it.box))
+		cam = opening(all, focus(polar), r)
+		near32(cam.cx, 10.0, 0.01) and near32(cam.cy, 20.0, 0.01) and cam.mpp == max_mpp
+	}
+
+	# crossing the antimeridian eastward carries on past 180, westward past
+	# -180, and a route that never crosses keeps its longitudes
+	expect {
+		east = List.map(unwrap([{ lat: 0.0, lng: 179.9 }, { lat: 0.0, lng: -179.9 }, { lat: 0.0, lng: -179.8 }]), |c| c.lng)
+		west = List.map(unwrap([{ lat: 0.0, lng: -179.9 }, { lat: 0.0, lng: 179.9 }]), |c| c.lng)
+		plain = List.map(unwrap([{ lat: 41.9, lng: -87.6 }, { lat: 41.9, lng: -87.7 }]), |c| c.lng)
+		List.all(List.map2(east, [179.9, 180.1, 180.2], |a, b| near64(a, b, 1.0e-9)), |ok| ok)
+			and List.all(List.map2(west, [-179.9, -180.1], |a, b| near64(a, b, 1.0e-9)), |ok| ok)
+			and plain == [-87.6, -87.7]
+	}
 	# the box of a list is its extremes, and a union holds both
 	expect box_of([{ x: 1.0, y: 5.0 }, { x: -2.0, y: 3.0 }]) == { x0: -2.0, y0: 3.0, x1: 1.0, y1: 5.0 } and union({ x0: 0.0, y0: 0.0, x1: 1.0, y1: 1.0 }, { x0: -1.0, y0: 0.5, x1: 0.5, y1: 2.0 }) == { x0: -1.0, y0: 0.0, x1: 1.0, y1: 2.0 }
 }

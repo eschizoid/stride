@@ -1965,17 +1965,19 @@ Db :: [].{
 	# one line the map draws: a base-map way of one kind, or one session's
 	# route, in metres from the map's origin, with its extent for culling.
 	# `pts` keeps no two points closer than two metres, `far` none closer
-	# than forty, for the zooms where forty metres is a few pixels: a full backfill holds
-	# millions of points, and every repaint walks the list it draws.
+	# than forty, for the zooms where forty metres is a few pixels: a full
+	# backfill holds millions of points, and every repaint walks the list it
+	# draws.
 	MapLine : { kind : U8, pts : List(Geo.Pt), far : List(Geo.Pt), box : Geo.Bounds }
 
 	# every route and base-map way, all relative to one origin; the extent
-	# the view fits to, the routes' or, when no route has GPS, the base
-	# map's; and why a read failed, empty when none did
-	MapData : { routes : List(MapLine), ways : List(MapLine), fit : Geo.Bounds, err : Str }
+	# of everything the map opens on, the routes' or, when no route has GPS,
+	# the base map's; where the routes gather, for when that extent is too
+	# wide to show (Geo.opening); and why a read failed, empty when none did
+	MapData : { routes : List(MapLine), ways : List(MapLine), fit : Geo.Bounds, focus : Geo.Focus, err : Str }
 
 	no_map : MapData
-	no_map = { routes: [], ways: [], fit: Geo.no_box, err: "" }
+	no_map = { routes: [], ways: [], fit: Geo.no_box, focus: { box: Geo.no_box, anchor: { x: 0.0, y: 0.0 } }, err: "" }
 
 	# the base map's kinds as the engine stores them, in the order the view
 	# draws them, bottom first; a kind outside the list is not drawn
@@ -2095,19 +2097,22 @@ Db :: [].{
 				}
 		}
 
-	# A database from before the base map has no map_ways table, and the
-	# map then draws routes on a bare ground; any other failed read is named
-	# on the map. The origin is the first route point, else the first way
-	# point: anything near the data keeps the F32 metres small.
+	# A database without the routes table holds no route yet, and one
+	# without the map_ways table no base map; either draws what it has, the
+	# routes on a bare ground or the empty-map note. Any other failed read is
+	# named on the map. The origin is the first route point, else the first
+	# way point: anything near the data keeps the F32 metres small. A route
+	# is unwrapped across the antimeridian before it is projected.
 	load_map! : Sqlite.Db => MapData
 	load_map! = |db| {
-		has_ways = match db.query!("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'map_ways'", []) {
-			Ok(rs) => (List.first(rs)).map_ok(|r| r.i64("n") ?? 0).ok_or(0) > 0
-			Err(_) => Bool.False
-		}
-		tracks = route_pages!(db, -9223372036854775807, [])
-		raw_ways = if (has_ways) way_pages!(db, -9223372036854775807, []) else Ok([])
-		ts = tracks ?? []
+		has_table! = |name|
+			match db.query!("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = :t", [{ name: ":t", value: String(name) }]) {
+				Ok(rs) => (List.first(rs)).map_ok(|r| r.i64("n") ?? 0).ok_or(0) > 0
+				Err(_) => Bool.False
+			}
+		tracks = if (has_table!("routes")) route_pages!(db, -9223372036854775807, []) else Ok([])
+		raw_ways = if (has_table!("map_ways")) way_pages!(db, -9223372036854775807, []) else Ok([])
+		ts = List.map(tracks ?? [], Geo.unwrap)
 		ws = raw_ways ?? []
 		first_of = |lists|
 			match List.first(lists) {
@@ -2133,13 +2138,19 @@ Db :: [].{
 				},
 			),
 		)
-		fit_of = |ls| List.fold(ls, Geo.no_box, |b, l| Geo.union(b, l.box))
+		shown = if (List.is_empty(routes)) ways else routes
 		err = match (tracks, raw_ways) {
 			(Err(e), _) => e
 			(_, Err(e)) => e
 			_ => ""
 		}
-		{ routes, ways, fit: if (List.is_empty(routes)) fit_of(ways) else fit_of(routes), err }
+		{
+			routes,
+			ways,
+			fit: List.fold(shown, Geo.no_box, |b, l| Geo.union(b, l.box)),
+			focus: Geo.focus(List.keep_oks(shown, |l| (List.first(l.pts)).map_ok(|p| { start: p, box: l.box }))),
+			err,
+		}
 	}
 }
 
