@@ -45,7 +45,7 @@ Chrome :: [].{
 
 	# the views the nav offers, left to right, and each pill's label
 	nav_views : List(U8)
-	nav_views = [0, 1, 2, 4, 9, 6, 8]
+	nav_views = [0, 1, 2, 4, 9, 6, 8, 10]
 
 	nav_name : U8 -> Str
 	nav_name = |v|
@@ -56,6 +56,7 @@ Chrome :: [].{
 		else if (v == 9) "lifts"
 		else if (v == 6) "weeks"
 		else if (v == 8) "career"
+		else if (v == 10) "map"
 		else ""
 
 	# the left edge of the i-th of n pills, right-anchored to the window

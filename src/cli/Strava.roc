@@ -12,6 +12,7 @@ import http.Request
 import http.Method
 import http.Response
 import Streams
+import core.Route
 import Drain
 import Metrics
 import Config
@@ -656,7 +657,7 @@ Strava :: [].{
 		} else if Response.status(resp) < 300 {
 			match Str.from_utf8(Response.body(resp)) {
 				Ok(text) =>
-					match Streams.decode_route(text) {
+					match Route.decode_route(text) {
 						Points(_) => {
 							store_route!(path, id, text)?
 							Ok(Stored)
