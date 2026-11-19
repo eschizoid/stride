@@ -219,6 +219,16 @@ Config :: [].{
 			or host_ok(b, "http://localhost")
 			or host_ok(b, "http://127.0.0.1")
 
+	# STRIDE_OVERPASS_BASE is the same seam for `basemap`: the public Overpass
+	# server, or http to loopback for the e2e mock. Nothing secret rides on the
+	# request, but an open override would send the athlete's route area to any
+	# host a copied command line names.
+	overpass_base_allowed : Str -> Bool
+	overpass_base_allowed = |b|
+		host_ok(b, "https://overpass-api.de")
+			or host_ok(b, "http://localhost")
+			or host_ok(b, "http://127.0.0.1")
+
 	# b is exactly `hp` (scheme+host), or `hp` + a '/path', or `hp:` + a strictly numeric
 	# port (then optional '/path'). The numeric-port rule blocks the userinfo bypass
 	# `http://localhost:8799@attacker.tld` — it starts with `http://localhost:`, but a URL
@@ -647,6 +657,11 @@ expect Config.api_base_allowed("http://localhost:8x") == False
 # a numeric port, optionally with a path, is still allowed
 expect Config.api_base_allowed("http://localhost:8799/mock/v3") == True
 expect Config.api_base_allowed("https://www.strava.com:443") == True
+expect Config.overpass_base_allowed("https://overpass-api.de") == True
+expect Config.overpass_base_allowed("http://127.0.0.1:8791") == True
+expect Config.overpass_base_allowed("http://overpass-api.de") == False
+expect Config.overpass_base_allowed("https://overpass-api.de.attacker.tld") == False
+expect Config.overpass_base_allowed("https://www.strava.com") == False
 
 # setup walks its steps in order and resumes at the first unmet one
 expect {

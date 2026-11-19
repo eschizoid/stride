@@ -389,8 +389,8 @@ These are measured toolchain behaviors, not style opinions.
   delete). Rest days complete WITHOUT an activity id; every other type requires
   one — done means evidence.
 - **Four data tiers, four recovery stories**: mirror tables (`activities`,
-  `streams`, `routes`) are re-pullable: sync rewrites an activity each time it is
-  listed, and a deleted stream or route row is fetched again — design freely (`stream_retries`,
+  `streams`, `routes`, `map_ways`, `map_blocks`) are re-pullable: sync rewrites an activity each time it is
+  listed, a deleted stream or route row is fetched again, and `basemap` fetches a block again once its `map_blocks` row is deleted — design freely (`stream_retries`,
   sync's count of stream fetches that would not decode, is deletable too: deleting
   it costs at most three more reads per id); computed tables
   (`activity_metrics`, `activity_segments`, `daily_load`) rebuild from `analyze`; judgment tables

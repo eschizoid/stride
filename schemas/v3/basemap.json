@@ -1,0 +1,39 @@
+{
+  "title": "basemap",
+  "description": "One `stride basemap` run: the map view's roads and water fetched from OpenStreetMap through the Overpass API, for every 0.1-degree block a stored GPS route passes through and every block next to one, that no earlier run fetched. A busy server stops the run with the blocks already fetched kept; run it again to fetch the rest.",
+  "type": "object",
+  "additionalKeys": false,
+  "required": [
+    "blocks_fetched",
+    "blocks_pending",
+    "ways_stored",
+    "map_ways",
+    "stopped"
+  ],
+  "properties": {
+    "blocks_fetched": {
+      "type": "integer",
+      "description": "blocks this run fetched and stored"
+    },
+    "blocks_pending": {
+      "type": "integer",
+      "description": "blocks of the map's area still not fetched; 0 unless the run stopped on a busy server"
+    },
+    "ways_stored": {
+      "type": "integer",
+      "description": "roads and water lines this run's answers carried, counting a way that crosses a block edge once per block"
+    },
+    "map_ways": {
+      "type": "integer",
+      "description": "roads and water lines the map holds after this run"
+    },
+    "stopped": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "overpass_busy"
+      ],
+      "description": "complete: every pending block was fetched. overpass_busy: the server answered 429, 502, 503 or 504 to a block three times running, after at least one block was stored; a run that stores nothing on a busy server is the overpass_busy error instead, at exit 1"
+    }
+  }
+}

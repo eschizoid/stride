@@ -47,6 +47,10 @@ Pulls new activities + the next batch of HR/power streams. Re-pulls a rolling 30
 
 `--all` forces a full re-list from scratch rather than the rolling window — a dev escape hatch, not part of the daily loop.
 
+### `stride basemap`
+
+Fetches the map view's roads and water from OpenStreetMap through the public Overpass API, for the area around the stored GPS routes: every 0.1-degree block (about 10 km) a route passes through and every block next to one, so places ridden a few blocks apart join into one map. Only blocks no earlier run fetched are asked for, so a run after a sync that brought routes somewhere new asks only for the new blocks. A busy server is asked again after a wait; if it stays busy the run stops with what it fetched kept, and running it again fetches the rest. Not needed for any metric. Map data © OpenStreetMap contributors, available under the Open Database License.
+
 ### `stride rate <activity_id|latest> <1-10>`
 
 _How hard did it feel?_ Session-RPE (Borg): you are the sensor for strength, HIIT, and yoga. `load = hours × RPE × 10`, so an hour at RPE 10 = 100, TSS-comparable. For strength-class sports your rating outranks HR; for endurance, measured power/HR always win.

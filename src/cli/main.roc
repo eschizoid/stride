@@ -48,6 +48,7 @@ import Drain
 import Db
 import Output
 import Strava
+import Basemap
 import Analyze
 import Report
 import ReportHealth
@@ -90,6 +91,8 @@ help_text =
 	\\GET DATA
 	\\    sync                        pull new activities + streams (rolling 30d self-heal)
 	\\    sync --all                  force a full re-list from scratch (dev escape hatch)
+	\\    basemap                     fetch the map view's roads and water from OpenStreetMap
+	\\                                for the area the synced GPS routes cover
 	\\    import <zip|dir>            load a Strava account export — no API creds needed
 	\\    strength import <file|->    store strength sets from the JSON Strava's connector
 	\\                                returned (`-` reads stdin)
@@ -408,6 +411,7 @@ dispatch! = |cmd|
 		Command.Setup => Setup.setup!(None)
 		Command.SetupWith(key, val) => Setup.setup!(Pair(key, val))
 		Command.Sync(all) => Strava.sync!(all)
+		Command.Basemap => Basemap.basemap!({})
 		Command.Analyze => Analyze.analyze!(Plan.refresh_all_target_results!)
 		Command.Summary => Report.summary!({})
 		Command.Stats => ReportHealth.stats!({})
