@@ -32,6 +32,21 @@ Motion :: [].{
 		t - cycle * F32.div_floor_by(t, cycle)
 	}
 
+	# playback's clock after one frame: it starts at 0 each time the mode
+	# opens, holds until the map has landed, so a capture made as the window
+	# opens reads the same time on every run, and otherwise runs by the
+	# frame's seconds unless paused; `toggle` is P, which pauses and resumes
+	Clock : { secs : F32, paused : Bool }
+
+	step_clock : Clock, { opening : Bool, landed : Bool, toggle : Bool, dt : F32 } -> Clock
+	step_clock = |c, e|
+		if e.opening {
+			{ secs: 0.0, paused: Bool.False }
+		} else {
+			paused = if (e.toggle) !(c.paused) else c.paused
+			{ secs: if (paused or !(e.landed)) c.secs else c.secs + e.dt, paused }
+		}
+
 	# where a route is at route time t: between the last sample at or before
 	# t and the next, in proportion to the time between them; before the
 	# first sample at the first point, after the last at the last
@@ -150,29 +165,37 @@ Motion :: [].{
 		else if (b == 3) Theme.gold_c
 		else Theme.ember_c
 
-	# a route split into runs of one band each; a run starts on the point the
-	# one before it ends on, so the line stays unbroken
+	# the samples either side of a segment its speed is smoothed over
+	speed_reach : U64
+	speed_reach = 3
+
+	# each segment's band against `ref`, the route's moving speed; the map
+	# load works these out once per list and groups them into runs, so a
+	# repaint only draws
+	bands_of : List(Geo.Pt), List(F32), F32 -> List(U8)
+	bands_of = |pts, ts, ref| List.map(speeds(pts, ts, speed_reach), |v| band(v, ref))
+
+	# a route split into runs of one band each, from its points and each
+	# segment's band; a run starts on the point the one before it ends on,
+	# so the line stays unbroken. The band changes are found in one pass and
+	# each run is sliced out of the points whole, so the cost grows with the
+	# route's length, never with a run's.
 	Run : { band : U8, pts : List(Geo.Pt) }
 
-	runs : List(Geo.Pt), List(F32), F32 -> List(Run)
-	runs = |pts, vs, ref| {
-		walk = List.fold(
-			List.map_with_index(vs, |v, j| { v, j }),
-			{ done: [], cur: { band: 255, pts: [] } },
-			|acc, s| {
-				b = band(s.v, ref)
-				p0 = (List.get(pts, s.j)) ?? { x: 0.0, y: 0.0 }
-				p1 = (List.get(pts, s.j + 1)) ?? p0
-				if acc.cur.band == b {
-					{ ..acc, cur: { ..acc.cur, pts: List.append(acc.cur.pts, p1) } }
-				} else if List.is_empty(acc.cur.pts) {
-					{ ..acc, cur: { band: b, pts: [p0, p1] } }
-				} else {
-					{ done: List.append(acc.done, acc.cur), cur: { band: b, pts: [p0, p1] } }
-				}
+	runs : List(Geo.Pt), List(U8) -> List(Run)
+	runs = |pts, bands| {
+		n = List.len(bands)
+		starts = List.keep_oks(
+			List.map_with_index(bands, |b, j| if (j == 0) Ok({ j, b }) else if (((List.get(bands, j - 1)) ?? 255) != b) Ok({ j, b }) else Err(SameBand)),
+			|s| s,
+		)
+		List.map_with_index(
+			starts,
+			|s, k| {
+				end = ((List.get(starts, k + 1)).map_ok(|t| t.j)) ?? n
+				{ band: s.b, pts: List.sublist(pts, { start: s.j, len: end - s.j + 1 }) }
 			},
 		)
-		if (List.is_empty(walk.cur.pts)) walk.done else List.append(walk.done, walk.cur)
 	}
 
 	# ── heat ────────────────────────────────────────────────────────────────
@@ -270,6 +293,18 @@ Motion :: [].{
 	# again
 	expect near(play_time(0.0, 3600.0), 0.0, 0.001) and near(play_time(30.0, 3600.0), 3600.0, 0.01) and near(play_time(40.0, 3600.0), 600.0, 0.01)
 
+	# the clock opens at 0, holds there while the map loads, runs once it has
+	# landed, and stops and restarts with P
+	expect {
+		e = { opening: Bool.False, landed: Bool.True, toggle: Bool.False, dt: 0.5 }
+		opened = step_clock({ secs: 9.0, paused: Bool.True }, { ..e, opening: Bool.True })
+		held = step_clock(opened, { ..e, landed: Bool.False })
+		ran = step_clock(held, e)
+		paused = step_clock(ran, { ..e, toggle: Bool.True })
+		resumed = step_clock(step_clock(paused, e), { ..e, toggle: Bool.True })
+		opened == { secs: 0.0, paused: Bool.False } and held == opened and near(ran.secs, 0.5, 0.0001) and paused.paused and near(step_clock(paused, e).secs, 0.5, 0.0001) and !(resumed.paused) and near(resumed.secs, 1.0, 0.0001)
+	}
+
 	# a route between two samples sits in proportion to the time between
 	# them, and before its start or after its end at its ends
 	expect {
@@ -301,10 +336,18 @@ Motion :: [].{
 	# speed, and a route that never moved reads as at its speed
 	expect List.map([0.69, 0.71, 0.89, 0.91, 1.09, 1.11, 1.29, 1.31], |q| band(q * 6.0, 6.0)) == [0, 1, 1, 2, 2, 3, 3, 4] and band(3.0, 0.0) == 2
 
+	# a steady route bands at its own speed everywhere, and the same route
+	# read against half that speed bands well above it
+	expect {
+		pts = [{ x: 0.0, y: 0.0 }, { x: 5.0, y: 0.0 }, { x: 10.0, y: 0.0 }, { x: 15.0, y: 0.0 }]
+		ts = [0.0, 1.0, 2.0, 3.0]
+		bands_of(pts, ts, 5.0) == [2, 2, 2] and bands_of(pts, ts, 2.5) == [4, 4, 4]
+	}
+
 	# runs change at each band change, each starting where the last ended
 	expect {
 		pts = [{ x: 0.0, y: 0.0 }, { x: 1.0, y: 0.0 }, { x: 2.0, y: 0.0 }, { x: 3.0, y: 0.0 }]
-		rs = runs(pts, [1.0, 1.0, 2.0], 1.0)
+		rs = runs(pts, [2, 2, 4])
 		List.map(rs, |r| r.band) == [2, 4] and List.map(rs, |r| List.len(r.pts)) == [3, 2] and ((List.get(rs, 1)) ?? { band: 0, pts: [] }).pts == [{ x: 2.0, y: 0.0 }, { x: 3.0, y: 0.0 }]
 	}
 

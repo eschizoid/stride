@@ -2774,16 +2774,12 @@ update! = |model0, program_input, io| {
 			(_, Ready(_)) => Bool.True
 			_ => Bool.False
 		}
-		# playback's clock runs while the play mode shows and is not paused, P
-		# pauses and resumes it, and it starts over each time the mode opens
+		# playback's clock steps only while the play mode shows (Motion.step_clock)
 		map_play2 =
 			if view2 != 12 {
 				model.map_play
-			} else if model.view != 12 {
-				{ secs: 0.0, paused: Bool.False }
 			} else {
-				paused = if (d.key_pressed(KeyP)) !(model.map_play.paused) else model.map_play.paused
-				{ secs: if (paused) model.map_play.secs else model.map_play.secs + U64.to_f32(tick - model.tick) / U64.to_f32(ticks_per_second), paused }
+				Motion.step_clock(model.map_play, { opening: model.view != 12, landed: !(map_unread(model.map_load)), toggle: d.key_pressed(KeyP), dt: U64.to_f32(tick - model.tick) / U64.to_f32(ticks_per_second) })
 			}
 		map_paint2 = Map.is_map(view2) and (map_fresh or map_heat_fresh or view2 != model.map_painted_view or map_zoomed or map_resized or (map_idle and !(same_cam(map_shown, model.map_painted))))
 		glow2 =

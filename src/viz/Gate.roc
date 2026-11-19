@@ -873,8 +873,8 @@ Gate :: [].{
 		route = [{ x: 0.0, y: 0.0 }, { x: 1200.0, y: 400.0 }, { x: 2600.0, y: -300.0 }]
 		street = [{ x: -500.0, y: 200.0 }, { x: 3000.0, y: 200.0 }]
 		{
-			routes: [{ kind: Db.route_kind, pts: route, ts: [0.0, 300.0, 600.0], far: route, fts: [0.0, 300.0, 600.0], box: Geo.box_of(route) }],
-			ways: [{ kind: 1, pts: street, ts: [], far: street, fts: [], box: Geo.box_of(street) }],
+			routes: [{ kind: Db.route_kind, pts: route, ts: [0.0, 300.0, 600.0], far: route, fts: [0.0, 300.0, 600.0], runs: [{ band: 2, pts: List.take_first(route, 2) }, { band: 3, pts: List.drop_first(route, 1) }], fruns: [], box: Geo.box_of(route) }],
+			ways: [{ kind: 1, pts: street, ts: [], far: street, fts: [], runs: [], fruns: [], box: Geo.box_of(street) }],
 			fit: Geo.box_of(route),
 			focus: Geo.focus([{ start: { x: 0.0, y: 0.0 }, box: Geo.box_of(route) }]),
 			err: "",
@@ -887,7 +887,7 @@ Gate :: [].{
 	madrid_fixture = {
 		home = [{ x: 0.0, y: 0.0 }, { x: 1200.0, y: 400.0 }, { x: 2600.0, y: -300.0 }]
 		away = [{ x: 9389000.0, y: -250000.0 }, { x: 9390000.0, y: -249500.0 }]
-		lines = [{ kind: Db.route_kind, pts: home, ts: [0.0, 300.0, 600.0], far: home, fts: [0.0, 300.0, 600.0], box: Geo.box_of(home) }, { kind: Db.route_kind, pts: away, ts: [0.0, 400.0], far: away, fts: [0.0, 400.0], box: Geo.box_of(away) }]
+		lines = [{ kind: Db.route_kind, pts: home, ts: [0.0, 300.0, 600.0], far: home, fts: [0.0, 300.0, 600.0], runs: [{ band: 2, pts: home }], fruns: [{ band: 2, pts: home }], box: Geo.box_of(home) }, { kind: Db.route_kind, pts: away, ts: [0.0, 400.0], far: away, fts: [0.0, 400.0], runs: [{ band: 2, pts: away }], fruns: [{ band: 2, pts: away }], box: Geo.box_of(away) }]
 		{
 			routes: lines,
 			ways: [],

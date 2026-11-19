@@ -221,12 +221,8 @@ Map :: [].{
 		)
 	}
 
-	# the samples either side of a segment its speed is smoothed over
-	speed_reach : U64
-	speed_reach = 3
-
-	# every route the camera shows, in runs of its speed bands against its own
-	# moving speed
+	# every route the camera shows, in the speed runs the map load worked
+	# out for the list this zoom draws
 	paint_speed! : Ui.Model, Geo.Cam, Draw.Frame => {}
 	paint_speed! = |model, c, frame| {
 		r = rect(model.win)
@@ -235,9 +231,7 @@ Map :: [].{
 			|l|
 				if Geo.visible(c, r, l.box) {
 					wide = c.mpp > far_mpp
-					pts = if (wide) l.far else l.pts
-					ts = if (wide) l.fts else l.ts
-					runs = Motion.runs(pts, Motion.speeds(pts, ts, speed_reach), Motion.moving_speed(l.far, l.fts))
+					runs = if (wide) l.fruns else l.runs
 					List.for_each!(runs, |run| frame.line_strip!({ points: Geo.strip(c, r, run.pts, 1.0), stroke: Draw.stroke(Color.with_alpha(Motion.band_colour(run.band), 220), 2.0) }))
 				},
 		)

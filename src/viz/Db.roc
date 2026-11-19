@@ -7,6 +7,7 @@ import core.Units
 import rr.Sqlite
 import rr.Cmd
 import Geo
+import Motion
 
 Db :: [].{
 	CurvePt : { dur_s : I64, watts : F32, aid : I64, name : Str, day : Str, ago : I64 }
@@ -1968,9 +1969,11 @@ Db :: [].{
 	# than forty, for the zooms where forty metres is a few pixels: a full
 	# backfill holds millions of points, and every repaint walks the list it
 	# draws. A route keeps each kept point's seconds since its start in `ts`
-	# and `fts`, aligned with `pts` and `far`, for playback and speed; a way
-	# keeps none.
-	MapLine : { kind : U8, pts : List(Geo.Pt), ts : List(F32), far : List(Geo.Pt), fts : List(F32), box : Geo.Bounds }
+	# and `fts`, aligned with `pts` and `far`, for playback, and both lists
+	# split into runs of one speed band in `runs` and `fruns` (Motion.runs),
+	# worked out once when the map loads so a playback repaint only draws; a
+	# way keeps none of these.
+	MapLine : { kind : U8, pts : List(Geo.Pt), ts : List(F32), far : List(Geo.Pt), fts : List(F32), runs : List(Motion.Run), fruns : List(Motion.Run), box : Geo.Bounds }
 
 	# every route and base-map way, all relative to one origin; the extent
 	# of everything the map opens on, the routes' or, when no route has GPS,
@@ -2021,11 +2024,12 @@ Db :: [].{
 			Err(TooShort)
 		} else if List.is_empty(times) {
 			pts = Geo.thin(List.map(coords, |c| Geo.rel(origin, c.lat, c.lng)), near_step)
-			Ok({ kind, pts, ts: [], far: Geo.thin(pts, far_step), fts: [], box: Geo.box_of(pts) })
+			Ok({ kind, pts, ts: [], far: Geo.thin(pts, far_step), fts: [], runs: [], fruns: [], box: Geo.box_of(pts) })
 		} else {
 			near = Geo.thin_timed(List.map(coords, |c| Geo.rel(origin, c.lat, c.lng)), times, near_step)
 			far = Geo.thin_timed(near.pts, near.ts, far_step)
-			Ok({ kind, pts: near.pts, ts: near.ts, far: far.pts, fts: far.ts, box: Geo.box_of(near.pts) })
+			ref = Motion.moving_speed(far.pts, far.ts)
+			Ok({ kind, pts: near.pts, ts: near.ts, far: far.pts, fts: far.ts, runs: Motion.runs(near.pts, Motion.bands_of(near.pts, near.ts, ref)), fruns: Motion.runs(far.pts, Motion.bands_of(far.pts, far.ts, ref)), box: Geo.box_of(near.pts) })
 		}
 
 	# a failed read, named for the athlete
@@ -2272,14 +2276,15 @@ expect {
 	}
 }
 
-# a route's line keeps each kept point's time beside it, in both lists, and
-# a way's keeps none
+# a route's line keeps each kept point's time beside it and its speed runs,
+# in both lists (a steady route is one run at its own speed), and a way's
+# keeps neither
 expect {
 	o = Geo.merc(41.88, -87.63)
 	coords = List.map_with_index(List.repeat(0, 50), |_, i| { lat: 41.88 + U64.to_f64(i) * 0.0001, lng: -87.63 })
 	times = List.map_with_index(coords, |_, i| U64.to_f32(i) * 3.0)
 	match (Db.map_line(o, Db.route_kind, coords, times), Db.map_line(o, 1, coords, [])) {
-		(Ok(r), Ok(w)) => r.ts == times and List.len(r.fts) == List.len(r.far) and List.first(r.fts) == Ok(0.0) and List.last(r.fts) == Ok(147.0) and List.get(r.fts, 1) == Ok(9.0) and List.is_empty(w.ts) and List.is_empty(w.fts)
+		(Ok(r), Ok(w)) => r.ts == times and List.len(r.fts) == List.len(r.far) and List.first(r.fts) == Ok(0.0) and List.last(r.fts) == Ok(147.0) and List.get(r.fts, 1) == Ok(9.0) and List.map(r.runs, |x| x.band) == [2] and List.map(r.runs, |x| x.pts) == [r.pts] and List.map(r.fruns, |x| x.pts) == [r.far] and List.is_empty(w.ts) and List.is_empty(w.fts) and List.is_empty(w.runs) and List.is_empty(w.fruns)
 		_ => Bool.False
 	}
 }
