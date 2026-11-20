@@ -438,10 +438,13 @@ event tile), the trace footer's shared keys (every other view's footer
 carries them), and the top value of the weeks tab's scale (the focus line
 reads any week). The view's own placement rules are the candidate lists: a
 delta tries between its dots on the right, then the left, then above and
-below; a strip name tries under its segment, then beside the strip's end;
-the zero rule's caption tries the rule's right end, its left end, steps
-inward from the right, the column past the rule's end, and last the same
-row lifted to just above the tallest load bar.
+below; a planned ring's label tries under the ring, over it, beside it on
+the right and then the left, and last over it lifted a label row at a
+time, so a ring near the axis floor under a rung's name and dots still
+finds a spot; a strip name tries under its segment, then beside the
+strip's end; the zero rule's caption tries the rule's right end, its left
+end, steps inward from the right, the column past the rule's end, and last
+the same row lifted to just above the tallest load bar.
 
 Hover cards and tooltips (the power view's rung and ring cards, the form
 board's day card, the year's day line, the XP rail's sheet) draw over

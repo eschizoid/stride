@@ -523,7 +523,9 @@ Curve :: [].{
 		# a planned ring's labels, one per distinct target (ring_labels): its
 		# days and the share of this window's best at that duration, stacked
 		# under the ring from its label row, else over it, else beside it on the
-		# right or the left
+		# right or the left, else over it lifted a label row at a time, up to
+		# ring_lift_rows rows, past the rung name and the dots stacked over a
+		# ring that sits near the axis floor
 		rings = List.join(
 			List.map(
 				g.rings,
@@ -537,7 +539,9 @@ Curve :: [].{
 							under = rg.y + 10.0 + (rg.base + U64.to_f32(k)) * 12.0
 							over = rg.y - 20.0 - U64.to_f32(n - 1 - k) * 12.0
 							beside = rg.y - 6.0 + (U64.to_f32(k) - U64.to_f32(n - 1) / 2.0) * 12.0
-							Scene.free(measure, Scene.data(lbl, 10.0, Theme.gold_c), [{ x, y: under, align: Center }, { x, y: over, align: Center }, { x: rg.x + ring_r + 6.0, y: beside, align: Left }, { x: rg.x - ring_r - 6.0, y: beside, align: Right }], prio_ring, plot)
+							near = [{ x, y: under, align: Center }, { x, y: over, align: Center }, { x: rg.x + ring_r + 6.0, y: beside, align: Left }, { x: rg.x - ring_r - 6.0, y: beside, align: Right }]
+							lifted = List.map_with_index(List.repeat({}, ring_lift_rows), |_u, j| { x, y: over - U64.to_f32(j + 1) * 12.0, align: Center })
+							Scene.free(measure, Scene.data(lbl, 10.0, Theme.gold_c), List.concat(near, lifted), prio_ring, plot)
 						},
 					)
 				},
@@ -644,6 +648,11 @@ Curve :: [].{
 	# the planned ring's radius
 	ring_r : F32
 	ring_r = 5.5
+
+	# how many label rows a ring's label may rise above its over spot when
+	# every spot beside the ring is taken
+	ring_lift_rows : U64
+	ring_lift_rows = 3
 
 	hint_text : Str
 	hint_text = "1/2/3 or chips  window      hover a rung      TAB  session trace      R  reload      S  screenshot      V  record      ESC quit"

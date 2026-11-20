@@ -1270,6 +1270,34 @@ expect {
 	}
 }
 
+# a target at the threshold on the 20min rung at the default window, where
+# its ring sits on the threshold line near the axis floor, under the rung's
+# name and dots: just under the threshold and on it, each target alone gets
+# its label, centred on its ring's column, in a scene the gate passes
+expect {
+	power = List.keep_if(Gate.curve_models, |c| Str.contains(c.name, " power ") and Str.contains(c.name, "90d") and Str.contains(c.name, "folded") and Str.contains(c.name, "at 980x600"))
+	match List.first(power) {
+		Ok(c) =>
+			List.all(
+				[230, 238],
+				|w| {
+					m = { ..c.model, plan_targets: [{ day: "2026-11-24", typ: "threshold", reps: 3, dur_s: 1200, watts: w }], pace_targets: [] }
+					g = Curve.geom(m)
+					on_line = match (List.first(g.rings), Curve.cp_y(m, g)) {
+						(Ok(rg), Ok(cy)) => (rg.y - cy).abs() <= Curve.ring_r
+						_ => Bool.False
+					}
+					labelled = match (List.first(g.rings), List.find_first(Curve.scene(m, Gate.measure), |p| Str.starts_with(p.item.text, "planned 11-24 ${I64.to_str(w)}W"))) {
+						(Ok(rg), Ok(p)) => (p.box.x + p.box.w / 2.0 - rg.x).abs() < 0.5
+						_ => Bool.False
+					}
+					on_line and labelled and Gate.judge(Curve.owned(m, Gate.measure), Curve.marks(m, Gate.measure)) == []
+				},
+			)
+		Err(_) => Bool.False
+	}
+}
+
 # a route an ocean from the rest leaves the map opening on the rest: every
 # point of the home route lies inside the map at every size
 expect List.all(
