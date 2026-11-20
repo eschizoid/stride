@@ -234,13 +234,12 @@ that fails, is still drawn, and the map names the failure in the colour of a
 failed read until a later store succeeds. The window creates the table, is
 its only reader
 and writer, and fetches nothing but these tiles and that document, from the
-one origin it declares. While no tile of the view can be drawn, the ways
-`stride basemap` stored in `map_ways` draw instead, if there are any; with
-neither, the map says the street map is on its way while its tiles are
-fetched, and that there is none here yet once nothing more is coming.
+one origin it declares. While no tile of the view can be drawn, the map
+says the street map is on its way while its tiles are fetched, and that
+there is none here yet once nothing more is coming.
 
-The map opens fitted to the routes, or to the street map when no route has
-GPS. When they span more than the widest zoom shows, as a single trip abroad
+The map opens fitted to the routes. When they span more than the widest zoom
+shows, as a single trip abroad
 makes them, it opens on where they gather instead: the routes starting in the
 100 km cell (in projected metres, about 75 km on the ground at Chicago's
 latitude) that holds the most route starts or in a cell beside it, and, should
@@ -263,7 +262,7 @@ drawn. A capture of the map view waits for the map and for its tiles: each on
 screen drawn, failed, or waiting on a TileJSON that cannot be read. A database
 with no routes table reads as having no routes yet. The window's SQLite
 binding refuses a query whose result passes a byte budget rather than
-returning part of it, so routes and ways are read in pages.
+returning part of it, so routes are read in pages.
 
 The window currently shows no attribution for its street map. OpenStreetMap's
 data is licensed under the Open Database Licence (ODbL), which requires

@@ -96,16 +96,9 @@ reason `--json` and still answers in JSON).
      asked again; the first backfill spends one read on each such activity. A route
      body that does not decode follows the stream rule: counted, asked again up to 3
      failed fetches, then left to `stride sync --all` and counted by `stride doctor` in
-     `routes_retry_capped`. Routes are stored for the map view: `stride basemap`
-     reads them to learn which area to fetch, and nothing scored ever will.
-   - `stride basemap --json` fetches the map view's roads and water from
-     OpenStreetMap through the public Overpass API, for every 0.1-degree block
-     the stored routes pass through and every block next to one, skipping blocks
-     an earlier run fetched:
-     `{blocks_fetched, blocks_pending, ways_stored, map_ways, stopped}`. It is never
-     needed for a metric, so run it only when the athlete wants the map. `stopped:
-     overpass_busy` (or the `overpass_busy` error, when nothing was fetched) means
-     every server was too busy even after waiting: run it again in a few minutes.
+     `routes_retry_capped`. Routes are stored for the window's map tab, which
+     fetches its own street map; no command uses their coordinates, and nothing
+     scored ever will.
    - Stride counts its own daily reads in config rows `strava_reads_today` and
      `strava_reads_day` (a UTC day number; a stale stamp is the reset). Do not touch
      them unless Stride itself names `stride config set strava_reads_today 0` as the

@@ -64,7 +64,6 @@ test:
     {{roc}} test --main=src/cli/main.roc src/cli/Command.roc
     {{roc}} test --main=src/cli/main.roc src/cli/Config.roc
     {{roc}} test --main=src/cli/main.roc src/cli/Streams.roc
-    {{roc}} test --main=src/cli/main.roc src/cli/Overpass.roc
     {{roc}} test --main=src/cli/main.roc src/cli/Sql.roc
     # Strength carries the src/strength package's expects too: a package
     # module that imports core resolves only through an app declaring both,

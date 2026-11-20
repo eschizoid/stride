@@ -262,7 +262,7 @@ Ui :: [].{
 		glow_on : Bool,
 		mouse_in : Bool,
 		cursor : I64,
-		# the map view: every route and base-map way
+		# the map view: every route
 		map : Db.MapData,
 		# Unloaded until a load task is spawned, Loading while it runs, and
 		# Loaded once its map has landed; a finished reload (R) sets a loaded
