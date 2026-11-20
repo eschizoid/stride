@@ -288,11 +288,11 @@ Play runs every route at once, each on its own clock from its own start, an
 hour of session in thirty seconds of play (`Motion.speedup`), so a faster
 session's marker outruns a slower one's. Each route is coloured by its speed
 against its own moving speed, slowest blue through the accent to ember, so a
-run and a ride share one ramp; a stretch of one colour only a few samples
-long takes a neighbour's colour (`Motion.min_run`), so a wide view is not
-flecked with single samples. The colours are worked out the first time play
-shows a landed map, so the routes and the heat never pay for them, and the
-clock holds at 0 until they are. The cycle starts over a little after the
+run and a ride share one ramp; a stretch of one colour fewer than four
+segments long takes a neighbour's colour (`Motion.min_run`), so a wide view is
+not flecked with single samples. The colours are worked out the first time
+play shows a landed map, so the routes and the heat never pay for them, and
+the clock holds until they are. The cycle starts over a little after the
 longest route ends. The coloured routes are the cached picture, and only the
 markers are drawn each frame, so playback never repaints the map; `P` pauses
 and resumes, and the clock starts over each time the mode opens.

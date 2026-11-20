@@ -202,11 +202,12 @@ Motion :: [].{
 	min_run = 4
 
 	# Each segment's band with the short runs merged away: a run of one band
-	# fewer than `least` segments long takes the band of the run before it,
-	# and a short run at the start the band of the first run long enough to
-	# keep its own. A short run costs a draw call of its own and reads as a
-	# speck of colour at a wide zoom. The list keeps its length, so it stays
-	# aligned with the segments it bands.
+	# fewer than `least` segments long takes the band of the run before it.
+	# Short runs at the start take the band of the first long run, unless
+	# together they already reach `least`, when they keep the first band. A
+	# short run costs a draw call of its own and reads as a speck of colour at
+	# a wide zoom. The list keeps its length, so it stays aligned with the
+	# segments it bands.
 	merged : List(U8), U64 -> List(U8)
 	merged = |bands, least| {
 		n = List.len(bands)
@@ -456,6 +457,9 @@ Motion :: [].{
 	# enough to keep, a route of short runs alone the first band, and the
 	# list keeps its length
 	expect merged([2, 2, 2, 2, 2, 3, 2, 3, 3, 3, 3, 3], 4) == [2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3]
+	# short runs at the start join the first long run, unless together they
+	# already reach the threshold, when they keep the first band
+	expect merged([0, 1, 4, 4, 4, 4], 4) == [4, 4, 4, 4, 4, 4] and merged([0, 1, 0, 1, 4, 4, 4, 4], 4) == [0, 0, 0, 0, 4, 4, 4, 4]
 		and merged([2, 2, 2, 2, 4, 4, 4, 2, 2, 2, 2], 4) == List.repeat(2, 11)
 		and merged([1, 3, 3, 3, 3, 0, 0, 0, 0], 4) == [3, 3, 3, 3, 3, 0, 0, 0, 0]
 		and merged([0, 1, 0, 1, 4, 4], 4) == List.repeat(0, 6)
