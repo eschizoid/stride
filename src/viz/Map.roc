@@ -1,5 +1,7 @@
+import rr.Camera
 import rr.Color
 import rr.Draw
+import rr.Text
 import core.Fmt
 import core.Sports
 import core.Units
@@ -7,6 +9,7 @@ import Chrome
 import Db
 import Geo
 import Labels
+import MapNames
 import Motion
 import Mvt
 import Scene
@@ -328,14 +331,84 @@ Map :: [].{
 	}
 
 	# what each mode paints into the cached picture. The street map goes
-	# first, the view's tiles. Routes mode draws the routes over it in the
-	# accent; play draws them in strips coloured by speed band
+	# first, the view's tiles, then the street map's names over them
+	# (names), then the routes over both. Routes mode draws the routes in
+	# the accent; play draws them in strips coloured by speed band
 	# (paint_speed!); heat draws none here, its passes being summed into a
-	# texture of their own (paint_heat!), unless the window could not build
-	# that texture, when it draws them as routes mode does.
+	# texture of their own (paint_heat!) and drawn over the picture, unless
+	# the window could not build that texture, when it draws them as routes
+	# mode does.
 	paint! : Ui.Model, Geo.Cam, Bool, Draw.Frame => {}
 	paint! = |model, c, squared, frame| {
 		paint_tiles!(model, c, squared, frame)
+		draw_names!(frame, model, names(model, c, Scene.measure_of(model)))
+		paint_over!(model, c, frame)
+	}
+
+	# The picture itself: the same three layers, the tiles and the routes
+	# each under the UI scale's camera and each name under a camera of its
+	# own that turns it about its centre at that scale, so no camera is
+	# opened inside another. The picture starts transparent and is laid
+	# over the map's ground, so a glyph's edge covering a share a of a
+	# pixel, blended the usual way, would land in it as its colour times a
+	# with alpha a squared and show at a cubed, far dimmer than the same
+	# text drawn on the ground. Through the picture's text shader the names
+	# are blended with premultiplied alpha instead: each pixel is stored as
+	# its colour times a with alpha a over the transparent ground, and
+	# blended the usual way over a fill, so a name shows as the window's
+	# other text does.
+	paint_picture! : Ui.Model, Draw.Frame => {}
+	paint_picture! = |model, frame| {
+		zoom = Camera.default.with_zoom(model.ui_scale)
+		c = model.map_painted
+		_ = frame.with_camera!(zoom, |g| Ok(paint_tiles!(model, c, Bool.True, g)))
+		placed = names(model, c, Scene.measure_of(model))
+		text = match model.map_rt {
+			Target(t) => t.text
+			_ => NoText
+		}
+		match text {
+			Text(shader) => {
+				_ = frame.with_blend_mode!(
+					AlphaPremultiply,
+					|g| g.with_shader!(
+						shader,
+						|k| {
+							draw_names!(k, model, placed)
+							Ok({})
+						},
+					),
+				)
+				{}
+			}
+			NoText => draw_names!(frame, model, placed)
+		}
+		_ = frame.with_camera!(zoom, |g| Ok(paint_over!(model, c, g)))
+		{}
+	}
+
+	# the fragment shader that premultiplies a name's colour by its
+	# coverage, scaled by `gain`
+	text_frag : Str
+	text_frag = Str.join_with(
+		[
+			"#version 330",
+			"in vec2 fragTexCoord;",
+			"in vec4 fragColor;",
+			"uniform sampler2D texture0;",
+			"uniform float gain;",
+			"out vec4 finalColor;",
+			"void main() {",
+			"    vec4 t = texture(texture0, fragTexCoord) * fragColor;",
+			"    float a = t.a * gain;",
+			"    finalColor = vec4(t.rgb * a, a);",
+			"}",
+		],
+		"\n",
+	)
+
+	paint_over! : Ui.Model, Geo.Cam, Draw.Frame => {}
+	paint_over! = |model, c, frame| {
 		if model.view == 12 {
 			paint_speed!(model, c, frame)
 		} else if model.view != 11 or !(heat_ready(model)) {
@@ -343,6 +416,82 @@ Map :: [].{
 			paint_routes!(model, c, Color.with_alpha(s.color, 190), s.width, frame)
 		}
 	}
+
+	# ── the street map's names ─────────────────────────────────────────────
+	# Every name of the tiles the view shows (each tile once, a coarse
+	# stand-in included) that its zoom shows, on screen, placed by
+	# MapNames clear of the routes and held off everything the view writes:
+	# the chrome, the title, the chips, the hint and the note in the map's
+	# corner, which in playback is the clock at the longest it reads, since
+	# the clock ticks while the picture holds still.
+	names : Ui.Model, Geo.Cam, Scene.Measure -> List(Labels.Placed(MapNames.Item))
+	names = |model, c, measure| {
+		runs = name_runs(model, c)
+		if List.is_empty(runs) {
+			[]
+		} else {
+			r = rect(model.win)
+			g = MapNames.grid(r, route_lines(model, c), |p| Geo.to_screen(c, r, p))
+			clock = if (model.view == 12) [{ x: r.x + 14.0, y: r.y + 14.0, w: measure(clock_text(longest(model)), 12.0, Data), h: 12.0 }] else []
+			held = List.join([Chrome.boxes(model, measure), List.map(scene(model, measure), |p| p.box), clock])
+			MapNames.place(runs, c.mpp, measure, r, g, { boxes: held, segs: [] })
+		}
+	}
+
+	name_runs : Ui.Model, Geo.Cam -> List(MapNames.Run)
+	name_runs = |model, c| {
+		r = rect(model.win)
+		o = model.map.origin
+		shown = List.keep_oks(cells(model, c), |cell| Tiles.shown(model.map_tiles, cell))
+		once = List.fold(shown, [], |acc, s| if (List.any(acc, |x| x.z == s.z and x.col == s.col and x.row == s.row)) acc else List.append(acc, s))
+		List.join(
+			List.map(
+				once,
+				|s| {
+					at = Tiles.place(c, r, o, s.z, s.col, s.row)
+					List.keep_oks(s.tile.names, |n| if (MapNames.shows(n.kind, c.mpp)) Ok({ kind: n.kind, rank: n.rank, text: n.text, pts: List.map(n.pts, |p| { x: at.x + p.x * at.k, y: at.y + p.y * at.k }) }) else Err(Hidden))
+				},
+			),
+		)
+	}
+
+	# every route the camera shows, in projected metres, from the list a
+	# repaint at this zoom draws
+	route_lines : Ui.Model, Geo.Cam -> List(List(Geo.Pt))
+	route_lines = |model, c| {
+		r = rect(model.win)
+		List.keep_oks(model.map.routes, |l| if (Geo.visible(c, r, l.box)) Ok(if (c.mpp > far_mpp) l.far else l.pts) else Err(Hidden))
+	}
+
+	# each name centred in its placed box and turned about its centre, over
+	# a halo of the map's ground, the text drawn a pixel off each way, so
+	# the streets under it do not run through its letters
+	draw_names! : Draw.Frame, Ui.Model, List(Labels.Placed(MapNames.Item)) => {}
+	draw_names! = |frame, model, placed| {
+		sc = model.ui_scale
+		List.for_each!(
+			placed,
+			|p| {
+				at = { x: p.box.x + p.box.w / 2.0, y: p.box.y + p.box.h / 2.0 }
+				turn = Camera.default.with_target(at).with_offset({ x: at.x * sc, y: at.y * sc }).with_rotation(p.item.angle).with_zoom(sc)
+				x = at.x - p.item.w / 2.0
+				y = at.y - p.item.item.size / 2.0
+				t = Text.from(p.item.item.text, model.prose).size(p.item.item.size)
+				_ = frame.with_camera!(
+					turn,
+					|f| {
+						List.for_each!(halo, |d| t.draw!(f, { pos: { x: x + d.x, y: y + d.y }, color: Theme.card, align: (Top, Left) }))
+						t.draw!(f, { pos: { x, y }, color: p.item.item.color, align: (Top, Left) })
+						Ok({})
+					},
+				)
+				{}
+			},
+		)
+	}
+
+	halo : List({ x : F32, y : F32 })
+	halo = [{ x: -1.0, y: 0.0 }, { x: 1.0, y: 0.0 }, { x: 0.0, y: -1.0 }, { x: 0.0, y: 1.0 }]
 
 	# every route the camera shows in one colour and width
 	paint_routes! : Ui.Model, Geo.Cam, Color.Rgba, F32, Draw.Frame => {}
@@ -798,7 +947,7 @@ Map :: [].{
 
 	# the view's text and the chrome's, as the gate judges them
 	owned : Ui.Model, Scene.Measure -> List(Labels.Owned)
-	owned = |model, measure| List.concat(Scene.owned(Chrome.placed(model, measure)), Scene.owned(scene(model, measure)))
+	owned = |model, measure| List.join([Scene.owned(Chrome.placed(model, measure)), Scene.owned(scene(model, measure)), MapNames.owned(names(model, cam(model), measure))])
 
 	texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
 	texts = |model, measure| {
@@ -839,10 +988,11 @@ Map :: [].{
 	}
 
 	# The cached picture when the window holds one, shifted by however far
-	# the camera has moved since it was painted, else every line drawn
-	# straight to the frame. In heat mode the summed passes follow, through
-	# the tone-mapping shader, with the same shift; then the route a card is
-	# up for, highlighted; in play the markers follow, placed this frame. The
+	# the camera has moved since it was painted, else its layers drawn
+	# straight to the frame (paint!), each name under its own camera inside
+	# the view's. In heat mode the summed passes follow, through the
+	# tone-mapping shader, with the same shift; then the route a card is up
+	# for, highlighted; in play the markers follow, placed this frame. The
 	# scissor keeps all of it inside the map's rectangle; it takes screen
 	# pixels, so the logical rectangle is scaled by the UI size. The card
 	# draws last, over the view's text.

@@ -292,10 +292,12 @@ Ui :: [].{
 		# the card a click on a route opened (Map.act)
 		map_card : MapCard,
 		# the map's offscreen picture, sized to the window's pixels and
-		# allocated the first time the view shows. Refused remembers the size
-		# the GPU refused at, so a resize earns one fresh attempt; without a
-		# picture the view draws every line straight to the frame
-		map_rt : [NoTarget, Refused({ w : F32, h : F32 }), Target({ rt : Draw.RenderTexture, w : F32, h : F32 })],
+		# allocated the first time the view shows, with the shader its names
+		# are blended in through (Map.text_frag), NoText when the GPU refused
+		# it. Refused remembers the size the GPU refused at, so a resize earns
+		# one fresh attempt; without a picture the view draws every line
+		# straight to the frame
+		map_rt : [NoTarget, Refused({ w : F32, h : F32 }), Target({ rt : Draw.RenderTexture, w : F32, h : F32, text : [NoText, Text(Shader({ gain : F32 }))] })],
 		# whether this frame's render repaints the picture, and the camera the
 		# picture holds once it has
 		map_paint : Bool,

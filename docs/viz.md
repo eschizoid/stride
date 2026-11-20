@@ -238,6 +238,31 @@ one origin it declares. While no tile of the view can be drawn, the map
 says the street map is on its way while its tiles are fetched, and that
 there is none here yet once nothing more is coming.
 
+The street map names its places and streets from the tiles' `place` and
+`transportation_name` layers, read from the same cached bytes, so names
+need no fetch of their own. Cities, towns, villages, suburbs and
+neighbourhoods are named at the wide and middle zooms and the streets close
+in, each kind between zooms of its own (`MapNames.look`): cities and towns
+give way to the streets at street level, and motorways, arterials, tertiary
+and minor roads come in one after another as the view closes in. Larger
+places go before smaller and major roads before minor, in the theme's muted
+inks over a halo of the map's ground. A name takes its text from the first
+of `name`, `name:latin`, `name_en` and `name_int` that is printable ASCII,
+the range the fonts draw, and a feature with none is not named. A place
+tries its point, then above, below and beside it. A street is named on the
+part of it the view shows, along the stretch nearest that part's middle
+that reads as straight, turned to the road's direction and kept upright
+(near-vertical names all read top to bottom); a road bent at every stretch
+long enough for its name is not named there. A name repeats along a long
+road only once the view has moved `MapNames.repeat_px` along it from its
+last placing, so a road crossing the view is named a few times and the
+grid does not fill with one word. Names go through the window's one label
+placer, larger kinds first, held off every other name, the view's own text
+and the chrome; no spot is taken where a route is drawn. They are part of
+the cached picture, painted between the tiles and the routes, so they cost
+nothing between repaints, slide with the picture mid-drag, and sit under
+the routes, heat and play's markers.
+
 The map opens fitted to the routes. When they span more than the widest zoom
 shows, as a single trip abroad
 makes them, it opens on where they gather instead: the routes starting in the
@@ -469,7 +494,9 @@ planned-ring labels (the ring's card), the career view's year names and
 strip names (the strip's tooltip), the form board's event marker name (the
 event tile), the trace footer's shared keys (every other view's footer
 carries them), and the top value of the weeks tab's scale (the focus line
-reads any week). The view's own placement rules are the candidate lists: a
+reads any week). The map's place and street names may drop too, being the
+street map's own detail rather than anything stride measured. The view's
+own placement rules are the candidate lists: a
 delta tries between its dots on the right, then the left, then above and
 below; a planned ring's label tries under the ring, over it, then beside
 it on the right and the left, and the labels of a ring that find none of
@@ -537,6 +564,11 @@ sport no family holds. The fixtures per view:
 - lifts: more lifts than the widest window holds and the latest session's
   sets, in kilograms and scrolled in pounds, for every athlete who lifts,
   and the empty tab for every athlete who does not;
+- map: routes with their tiles on the way, drawn and offline, a route an
+  ocean from the rest, heat, playback with and without routes and with a
+  cache it cannot write, no routes, loading and a failed read; and a tile
+  of names drawn on every cell of the view, at the opening, wide, at
+  street level and in playback;
 - the map's route card, at the default window in both faces: up for a
   route of each family's longest sport type and of a sport no family holds,
   its name as long as the cap lets one be, with a measured power and without,

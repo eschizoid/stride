@@ -18,8 +18,9 @@ Mvt :: [].{
 	# tile's edge, into the buffer neighbouring tiles also carry.
 	#
 	# The window draws the OpenMapTiles schema: water and parks filled,
-	# rivers and roads as lines. Everything else a tile carries (buildings,
-	# labels, boundaries) is skipped without being decoded.
+	# rivers and roads as lines, and the names of places and streets.
+	# Everything else a tile carries (buildings, boundaries, points of
+	# interest) is skipped without being decoded.
 
 	Feature : { kind : U64, tags : List(U64), geometry : List(U64) }
 
@@ -42,8 +43,10 @@ Mvt :: [].{
 		)
 	}
 
-	# One layer, decoded. A value that is not text (a number or a flag) is
-	# kept as "", since the window reads only text values.
+	# One layer, decoded. A whole number (an int, uint or zigzagged sint
+	# value) is kept as its decimal text, so a place's rank reads like any
+	# other tag; any other value that is not text (a float or a flag) is
+	# kept as "".
 	layer : List(U8), Pbf.Field -> Try(Layer, [Malformed])
 	layer = |bytes, lf| {
 		fs = Pbf.fields(bytes, lf.start, lf.len)?
@@ -62,15 +65,9 @@ Mvt :: [].{
 				$keys = List.append($keys, Pbf.text(bytes, f))
 			} else if f.num == 4 and f.wire == 2 {
 				match Pbf.fields(bytes, f.start, f.len) {
-					Ok(vs) =>
-						match List.find_first(vs, |v| v.num == 1 and v.wire == 2) {
-							Ok(v) => {
-								$values = List.append($values, Pbf.text(bytes, v))
-							}
-							Err(_) => {
-								$values = List.append($values, "")
-							}
-						}
+					Ok(vs) => {
+						$values = List.append($values, value_text(bytes, vs))
+					}
 					Err(_) => {
 						$bad = Bool.True
 					}
@@ -88,6 +85,19 @@ Mvt :: [].{
 		}
 		if ($bad) Err(Malformed) else Ok({ name: $name, extent: $extent, keys: $keys, values: $values, features: $features })
 	}
+
+	# a value message's text: its string (field 1), else its whole number
+	# (4 int, 5 uint, 6 sint) in decimal, else ""
+	value_text : List(U8), List(Pbf.Field) -> Str
+	value_text = |bytes, vs|
+		match List.find_first(vs, |v| v.num == 1 and v.wire == 2) {
+			Ok(v) => Pbf.text(bytes, v)
+			Err(_) =>
+				match List.find_first(vs, |v| v.wire == 0 and (v.num == 4 or v.num == 5 or v.num == 6)) {
+					Ok(v) => if (v.num == 6) I64.to_str(Pbf.zigzag(v.value)) else U64.to_str(v.value)
+					Err(_) => ""
+				}
+		}
 
 	feature : List(U8), Pbf.Field -> Try(Feature, [Malformed])
 	feature = |bytes, ff| {
@@ -200,18 +210,23 @@ Mvt :: [].{
 	}
 
 	# ── what the window draws of a tile ────────────────────────────────────
-	# Fills, then lines, each in tile units scaled to `extent_units`
-	# whatever extent a layer declares. A fill is every triangle of one kind
-	# in one list, three points apiece, so a kind draws in one call; a line
-	# is one run of one kind.
+	# Fills, then lines, then names, each in tile units scaled to
+	# `extent_units` whatever extent a layer declares. A fill is every
+	# triangle of one kind in one list, three points apiece, so a kind draws
+	# in one call; a line is one run of one kind. A name is a place's point
+	# or one run of a named street, with its kind (by name_kinds' codes),
+	# the place's rank (OpenMapTiles ranks the larger places of a class
+	# first, from 1; 0 for a street, which has none) and its text.
 	Fill : { kind : U8, tris : List(Geo.Pt) }
 
 	Line : { kind : U8, pts : List(Geo.Pt) }
 
-	Tile : { fills : List(Fill), lines : List(Line) }
+	Name : { kind : U8, rank : U64, text : Str, pts : List(Geo.Pt) }
+
+	Tile : { fills : List(Fill), lines : List(Line), names : List(Name) }
 
 	empty : Tile
-	empty = { fills: [], lines: [] }
+	empty = { fills: [], lines: [], names: [] }
 
 	extent_units : F32
 	extent_units = 4096.0
@@ -271,17 +286,70 @@ Mvt :: [].{
 			Err(NotDrawn)
 		}
 
+	# The name kinds, each coded by its place here: the places, larger
+	# first, then the streets, major first. The first `street_kind` codes
+	# are places.
+	name_kinds : List(Str)
+	name_kinds = ["city", "town", "village", "suburb", "neighbourhood", "motorway", "arterial", "street", "minor"]
+
+	street_kind : U8
+	street_kind = 5
+
+	is_street : U8 -> Bool
+	is_street = |kind| kind >= street_kind
+
+	# A place point's kind by its class: cities, towns, villages, suburbs,
+	# and the neighbourhoods and quarters inside them; hamlets, islands,
+	# states and the rest are not named.
+	place_of : Str -> Try(U8, [NotNamed])
+	place_of = |class|
+		if (class == "city") Ok(0)
+		else if (class == "town") Ok(1)
+		else if (class == "village") Ok(2)
+		else if (class == "suburb") Ok(3)
+		else if (class == "neighbourhood" or class == "quarter") Ok(4)
+		else Err(NotNamed)
+
+	# A named street's kind by its class, among the road classes line_of
+	# draws: motorways and trunk roads; primary and secondary roads as
+	# arterials; tertiary roads; and minor roads. Service roads, tracks,
+	# paths and railways are not named.
+	street_of : Str -> Try(U8, [NotNamed])
+	street_of = |class|
+		if (class == "motorway" or class == "trunk") Ok(5)
+		else if (class == "primary" or class == "secondary") Ok(6)
+		else if (class == "tertiary") Ok(7)
+		else if (class == "minor") Ok(8)
+		else Err(NotNamed)
+
+	# A name's text: the first of its name tags that is printable ASCII,
+	# the range the window's fonts carry glyphs for, so a name the fonts
+	# cannot draw is never drawn as fallback boxes. OpenMapTiles' `name` is
+	# the local name, `name:latin` and `name_en` its Latin and English
+	# forms, and `name_int` its international one.
+	name_of : Layer, Feature -> Str
+	name_of = |l, ft| {
+		found = List.find_first(List.map(["name", "name:latin", "name_en", "name_int"], |k| tag(l, ft, k)), printable)
+		found ?? ""
+	}
+
+	printable : Str -> Bool
+	printable = |s| !(Str.is_empty(s)) and List.all(Str.to_utf8(s), |b| b >= 32 and b < 127)
+
 	drawn_layers : List(Str)
-	drawn_layers = ["water", "waterway", "park", "landcover", "landuse", "transportation"]
+	drawn_layers = ["water", "waterway", "park", "landcover", "landuse", "transportation", "place", "transportation_name"]
 
 	to_pt : Earcut.P, F32 -> Geo.Pt
 	to_pt = |p, s| { x: I64.to_f32(p.x) * s, y: I64.to_f32(p.y) * s }
 
 	# The tile as the window draws it. A layer the window does not draw is
 	# never decoded, and a tile that is not a well-formed vector tile is
-	# refused whole rather than drawn in part. Each fill's triangles and the
-	# lines are gathered into lists that only grow at their end; the lines
-	# are then put in kind order, each kind keeping the order the tile gave.
+	# refused whole rather than drawn in part. Each fill's triangles, the
+	# lines and the names are gathered into lists that only grow at their
+	# end; the lines are then put in kind order, each kind keeping the order
+	# the tile gave. A place is named at its point, the first a feature
+	# gives, and a street along each run of two points or more; a feature
+	# with no printable name is skipped.
 	drawable : List(U8) -> Try(Tile, [Malformed])
 	drawable = |bytes| {
 		lfs = layer_fields(bytes)?
@@ -290,10 +358,32 @@ Mvt :: [].{
 		var $park = []
 		var $water = []
 		var $lines = []
+		var $names = []
 		for l in layers {
 			s = if (l.extent == 0) 1.0 else extent_units / U64.to_f32(l.extent)
 			for ft in l.features {
-				if ft.kind == 3 {
+				if l.name == "place" or l.name == "transportation_name" {
+					text = name_of(l, ft)
+					coded = if (l.name == "place") place_of(tag(l, ft, "class")) else street_of(tag(l, ft, "class"))
+					match coded {
+						Ok(k) if text != "" =>
+							if l.name == "place" and ft.kind == 1 {
+								match List.first(List.join(parts(ft.geometry))) {
+									Ok(p) => {
+										$names = List.append($names, { kind: k, rank: U64.from_str(tag(l, ft, "rank")) ?? 0, text, pts: [to_pt(p, s)] })
+									}
+									Err(_) => {}
+								}
+							} else if l.name == "transportation_name" and ft.kind == 2 {
+								for r in parts(ft.geometry) {
+									if List.len(r) >= 2 {
+										$names = List.append($names, { kind: k, rank: 0, text, pts: List.map(r, |q| to_pt(q, s)) })
+									}
+								}
+							}
+						_ => {}
+					}
+				} else if ft.kind == 3 {
 					match fill_of(l.name, tag(l, ft, "class"), tag(l, ft, "subclass")) {
 						Ok(k) => {
 							for p in polygons(parts(ft.geometry)) {
@@ -323,7 +413,7 @@ Mvt :: [].{
 		}
 		fills = List.keep_if([{ kind: park_fill, tris: $park }, { kind: water_fill, tris: $water }], |f| !(List.is_empty(f.tris)))
 		lines = List.join(List.map_with_index(line_kinds, |_, i| List.keep_if($lines, |ln| U8.to_u64(ln.kind) == i)))
-		Ok({ fills, lines })
+		Ok({ fills, lines, names: $names })
 	}
 }
 
@@ -407,3 +497,91 @@ expect {
 # street map's road classes; anything else is not drawn
 expect Mvt.fill_of("water", "river", "") == Ok(Mvt.water_fill) and Mvt.fill_of("water", "swimming_pool", "") == Err(NotDrawn) and Mvt.fill_of("park", "national_park", "") == Ok(Mvt.park_fill) and Mvt.fill_of("landcover", "grass", "park") == Ok(Mvt.park_fill) and Mvt.fill_of("landcover", "grass", "garden") == Err(NotDrawn) and Mvt.fill_of("landuse", "park", "") == Ok(Mvt.park_fill) and Mvt.fill_of("landuse", "residential", "") == Err(NotDrawn) and Mvt.fill_of("landcover", "farmland", "") == Err(NotDrawn) and Mvt.fill_of("building", "", "") == Err(NotDrawn)
 expect Mvt.line_of("transportation", "trunk", "") == Ok(4) and Mvt.line_of("transportation", "secondary", "") == Ok(3) and Mvt.line_of("transportation", "minor", "") == Ok(1) and Mvt.line_of("transportation", "path", "cycleway") == Ok(2) and Mvt.line_of("transportation", "path", "footway") == Err(NotDrawn) and Mvt.line_of("transportation", "service", "") == Err(NotDrawn) and Mvt.line_of("waterway", "stream", "") == Ok(0) and Mvt.line_of("waterway", "ditch", "") == Err(NotDrawn)
+
+# ── a tile written out field by field, for the name layers' expects ──────
+enc_varint : U64 -> List(U8)
+enc_varint = |n| if (n < 128) [U64.to_u8_wrap(n)] else List.concat([U64.to_u8_wrap(n % 128 + 128)], enc_varint(n // 128))
+
+enc_len : U64, List(U8) -> List(U8)
+enc_len = |num, payload| List.join([enc_varint(num * 8 + 2), enc_varint(List.len(payload)), payload])
+
+enc_num : U64, U64 -> List(U8)
+enc_num = |num, v| List.concat(enc_varint(num * 8), enc_varint(v))
+
+# a layer of extent 4096 from its keys, its values (each already a value
+# message) and its features, each a geometry type, packed tags and packed
+# geometry commands
+enc_layer : Str, List(Str), List(List(U8)), List({ kind : U64, tags : List(U64), cmds : List(U64) }) -> List(U8)
+enc_layer = |name, keys, values, features|
+	enc_len(
+		3,
+		List.join([
+			enc_len(1, Str.to_utf8(name)),
+			List.join(List.map(features, |f| enc_len(2, List.join([enc_len(2, List.join(List.map(f.tags, enc_varint))), enc_num(3, f.kind), enc_len(4, List.join(List.map(f.cmds, enc_varint)))])))),
+			List.join(List.map(keys, |k| enc_len(3, Str.to_utf8(k)))),
+			List.join(List.map(values, |v| enc_len(4, v))),
+			enc_num(5, 4096),
+		]),
+	)
+
+str_value : Str -> List(U8)
+str_value = |s| enc_len(1, Str.to_utf8(s))
+
+# a sint value, zigzagged as OpenMapTiles' tiles store a place's rank
+sint_value : U64 -> List(U8)
+sint_value = |n| enc_num(6, 2 * n)
+
+# A place layer of a city ranked 1, a neighbourhood with no rank, a hamlet,
+# and a town whose local name is not ASCII but whose Latin one is; and a
+# street layer of a minor road in one run of three points, and a service
+# road.
+names_tile : List(U8)
+names_tile = List.concat(
+	enc_layer(
+		"place",
+		["name", "class", "rank", "name:latin"],
+		[str_value("Chicago"), str_value("city"), sint_value(1), str_value("Pilsen"), str_value("neighbourhood"), str_value("Nowhere"), str_value("hamlet"), str_value("Łódź"), str_value("Lodz"), str_value("town"), sint_value(4)],
+		[
+			{ kind: 1, tags: [0, 0, 1, 1, 2, 2], cmds: [9, 200, 400] },
+			{ kind: 1, tags: [0, 3, 1, 4], cmds: [9, 20, 40] },
+			{ kind: 1, tags: [0, 5, 1, 6], cmds: [9, 60, 60] },
+			{ kind: 1, tags: [0, 7, 3, 8, 1, 9, 2, 10], cmds: [9, 2, 2] },
+		],
+	),
+	enc_layer(
+		"transportation_name",
+		["name", "class"],
+		[str_value("West 18th Street"), str_value("minor"), str_value("Alley"), str_value("service")],
+		[
+			{ kind: 2, tags: [0, 0, 1, 1], cmds: [9, 0, 0, 18, 200, 0, 200, 20] },
+			{ kind: 2, tags: [0, 2, 1, 3], cmds: [9, 0, 0, 10, 50, 50] },
+		],
+	),
+)
+
+# the name layers decode to one name per named place and street run, the
+# hamlet and the service road skipped, a rank read from its sint value, and
+# a name the fonts cannot draw replaced by its Latin form
+expect {
+	match Mvt.drawable(names_tile) {
+		Err(_) => Bool.False
+		Ok(t) => {
+			ints = |pts| List.map(pts, |p| ((F32.round_to_u64_try(p.x)) ?? 9999, (F32.round_to_u64_try(p.y)) ?? 9999))
+			List.map(t.names, |n| (n.kind, n.rank, n.text, ints(n.pts))) == [(0, 1, "Chicago", [(100, 200)]), (4, 0, "Pilsen", [(10, 20)]), (1, 4, "Lodz", [(1, 1)]), (8, 0, "West 18th Street", [(0, 0), (100, 0), (200, 10)])]
+				and List.is_empty(t.fills) and List.is_empty(t.lines)
+		}
+	}
+}
+
+# a whole-number value reads as its decimal text whichever of the three
+# integer fields holds it, a float as nothing, and a string as itself
+expect {
+	vt = |bytes| Mvt.value_text(bytes, (Pbf.fields(bytes, 0, List.len(bytes))) ?? [])
+	vt([0x20, 0x07]) == "7" and vt([0x28, 0x05]) == "5" and vt([0x30, 0x03]) == "-2" and vt([0x15, 0, 0, 0x80, 0x3f]) == "" and vt(str_value("lake")) == "lake"
+}
+
+# the classes named: the five place classes, the four street groups, and
+# nothing else; a name is printable ASCII or not drawn
+expect List.map(["city", "town", "village", "suburb", "neighbourhood", "quarter", "hamlet", "state"], Mvt.place_of) == [Ok(0), Ok(1), Ok(2), Ok(3), Ok(4), Ok(4), Err(NotNamed), Err(NotNamed)]
+expect List.map(["motorway", "trunk", "primary", "secondary", "tertiary", "minor", "service", "path", "rail"], Mvt.street_of) == [Ok(5), Ok(5), Ok(6), Ok(6), Ok(7), Ok(8), Err(NotNamed), Err(NotNamed), Err(NotNamed)]
+expect Mvt.printable("North Avenue") and !(Mvt.printable("")) and !(Mvt.printable("Łódź")) and !(Mvt.printable("a\tb")) and Mvt.is_street(5) and !(Mvt.is_street(4)) and List.len(Mvt.name_kinds) == 9

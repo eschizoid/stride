@@ -639,6 +639,27 @@ build_map_rt! = |px|
 		_ => Refused({ w: px.w, h: px.h })
 	}
 
+# The picture's target and the shader its names are blended in through
+# (Map.text_frag), the shader a resized picture already holds kept; a GPU
+# that refuses the shader gets its names blended the usual way.
+picture_rt! : { w : F32, h : F32 }, [NoText, Text(Shader({ gain : F32 }))] => [NoTarget, Refused({ w : F32, h : F32 }), Target({ rt : Draw.RenderTexture, w : F32, h : F32, text : [NoText, Text(Shader({ gain : F32 }))] })]
+picture_rt! = |px, kept|
+	match build_map_rt!(px) {
+		Target(t) => {
+			text = match kept {
+				Text(s) => Text(s)
+				NoText =>
+					match Shader.from_source!({ vertex_source: "", fragment_source: Map.text_frag }, { gain: 1.0 }) {
+						Ok(s) => Text(s)
+						Err(_) => NoText
+					}
+			}
+			Target({ rt: t.rt, w: t.w, h: t.h, text })
+		}
+		NoTarget => NoTarget
+		Refused(r) => Refused(r)
+	}
+
 # Heat's texture of summed passes, window-sized like the picture, and the
 # shader that tone-maps it (Motion.heat_frag). A refusal of either is
 # remembered at its size, and heat mode then draws the routes as routes
@@ -3048,9 +3069,9 @@ update! = |model0, program_input, io| {
 				model.map_rt
 			} else {
 				match model.map_rt {
-					Target(t) => if (t.w == pixels.w and t.h == pixels.h) model.map_rt else build_map_rt!(pixels)
-					Refused(r) => if (r.w == pixels.w and r.h == pixels.h) model.map_rt else build_map_rt!(pixels)
-					NoTarget => build_map_rt!(pixels)
+					Target(t) => if (t.w == pixels.w and t.h == pixels.h) model.map_rt else picture_rt!(pixels, t.text)
+					Refused(r) => if (r.w == pixels.w and r.h == pixels.h) model.map_rt else picture_rt!(pixels, NoText)
+					NoTarget => picture_rt!(pixels, NoText)
 				}
 			}
 		map_fresh = match (model.map_rt, map_rt2) {
@@ -3517,7 +3538,7 @@ paint_map! = |model, frame|
 					t.rt,
 					|f| {
 						f.clear!(Color.transparent)
-						f.with_camera!(Camera.default.with_zoom(model.ui_scale), |g| Ok(Map.paint!(model, model.map_painted, Bool.True, g)))
+						Ok(Map.paint_picture!(model, f))
 					},
 				)
 				{}

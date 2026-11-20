@@ -12,6 +12,7 @@ import Hud
 import Geo
 import Labels
 import Map
+import MapNames
 import Mvt
 import Plan
 import Ramp
@@ -1011,13 +1012,52 @@ Gate :: [].{
 		}
 	}
 
+	# A tile of names, in tile units: a place of every kind, among them a
+	# long name, and a street of every kind, level, upright, slanting, and
+	# one bent too often to name. Drawn on every cell of a view, each name
+	# repeats a tile apart, so the placer meets crowds of every kind.
+	names_tile : Mvt.Tile
+	names_tile = {
+		place = |kind, rank, text, x, y| { kind, rank, text, pts: [{ x, y }] }
+		street = |kind, text, pts| { kind, rank: 0, text, pts }
+		zig = List.map_with_index(List.repeat({}, 41), |_, i| { x: U64.to_f32(i) * 100.0, y: if (i % 2 == 0) 3800.0 else 3900.0 })
+		{
+			fills: [],
+			lines: [],
+			names: [
+				place(0, 1, "Chicago", 2048.0, 2048.0),
+				place(1, 3, "Oak Park", 1000.0, 1200.0),
+				place(2, 0, "Riverside", 3000.0, 800.0),
+				place(3, 0, "Pilsen", 800.0, 3000.0),
+				place(4, 0, "Ukrainian Village", 3100.0, 3200.0),
+				place(4, 0, "Village of Fox River Grove Heights", 2600.0, 2500.0),
+				street(5, "Dan Ryan Expressway", [{ x: 3500.0, y: 0.0 }, { x: 3500.0, y: 4096.0 }]),
+				street(6, "West Cermak Road", [{ x: 0.0, y: 1500.0 }, { x: 4096.0, y: 1500.0 }]),
+				street(6, "South Ashland Avenue", [{ x: 1500.0, y: 0.0 }, { x: 1500.0, y: 4096.0 }]),
+				street(7, "North Milwaukee Avenue", [{ x: 0.0, y: 4096.0 }, { x: 2048.0, y: 2048.0 }, { x: 4096.0, y: 0.0 }]),
+				street(8, "West 18th Street", [{ x: 0.0, y: 2600.0 }, { x: 4096.0, y: 2600.0 }]),
+				street(8, "Lake Shore Drive", zig),
+			],
+		}
+	}
+
+	# the map with its names drawn on every tile, at the camera given, or at
+	# the opening when it is Map.unpainted
+	with_names : Ui.Model, Geo.Cam -> Ui.Model
+	with_names = |m, c| {
+		moved = if (c.mpp > 0.0) { ..m, map_moved: Bool.True, map_cam: c } else m
+		with_tiles(moved, Drawn(names_tile), Known("t"))
+	}
+
 	# the model with every tile its view shows in one state, and the source
 	# in another
 	with_tiles : Ui.Model, [Fetching, Waiting, Drawn(Mvt.Tile), Failed(U64)], Tiles.Source -> Ui.Model
 	with_tiles = |m, st, src| { ..m, map_source: src, map_tiles: List.map(Map.cells(m, Map.cam(m)), |c| { key: c.key, state: st, refresh: Done, used: 0 }) }
 
 	# the map with routes and no tiles yet, while the tiles are fetched;
-	# with its tiles drawn; with its tiles failed and the source
+	# with its tiles drawn; with a tile of names drawn on every cell, at
+	# the opening, wide, at street level, in playback with its clock, and
+	# with a note in the map's corner; with its tiles failed and the source
 	# unreachable, offline; in playback with a cache it cannot write, whose
 	# message is longer than the map is wide; with a route an ocean from the
 	# rest, in heat, in playback with its clock and with no route to play,
@@ -1037,6 +1077,11 @@ Gate :: [].{
 							[
 								{ name: "${a.name} map at ${size_name(sz)}", model: base },
 								{ name: "${a.name} map with its tiles at ${size_name(sz)}", model: with_tiles(base, Drawn(Mvt.empty), Known("t")) },
+								{ name: "${a.name} map with its names at ${size_name(sz)}", model: with_names(base, Map.unpainted) },
+								{ name: "${a.name} map with its names wide at ${size_name(sz)}", model: with_names(base, { ..Map.cam(base), mpp: 150.0 }) },
+								{ name: "${a.name} map with its names at street level at ${size_name(sz)}", model: with_names(base, { ..Map.cam(base), mpp: 1.0 }) },
+								{ name: "${a.name} map playback with its names at ${size_name(sz)}", model: with_names({ ..base, view: 12, map_play: { secs: 125.0, paused: Bool.False } }, Map.unpainted) },
+								{ name: "${a.name} map with its names and a cache it cannot write at ${size_name(sz)}", model: with_names({ ..base, map_cache_err: Str.repeat("could not keep a street-map tile: ", 6) }, Map.unpainted) },
 								{ name: "${a.name} map offline at ${size_name(sz)}", model: with_tiles(base, Failed(0), Unreachable(0)) },
 								{ name: "${a.name} map with a cache it cannot write at ${size_name(sz)}", model: { ..base, view: 12, map_cache_err: Str.repeat("could not keep a street-map tile: ", 6) } },
 								{ name: "${a.name} map without routes at ${size_name(sz)}", model: { ..base, map: Db.no_map } },
@@ -1519,6 +1564,48 @@ expect Gate.failures(|m| Gate.judge(Map.owned(m, Gate.builtin_measure), Map.mark
 # the window falls back to without them
 expect Gate.failures(|m| Gate.card_judge(m, Gate.measure), Gate.card_models) == []
 expect Gate.failures(|m| Gate.card_judge(m, Gate.builtin_measure), Gate.card_models) == []
+# the name models hold names in both faces, and the gate above judges them,
+# each placed name being among the boxes the view owns: the opening and
+# playback name places and streets, a street turned among them; the wide
+# view names its cities and towns alone; street level names streets, turned
+# ones among them, and no city; and the bent road is named nowhere
+expect List.all(
+	[Gate.measure, Gate.builtin_measure],
+	|measure| List.all(
+		List.keep_if(Gate.map_models, |e| Str.contains(e.name, "with its names") and Str.ends_with(e.name, " at ${Gate.size_name(Gate.default_size)}")),
+		|e| {
+			ns = List.map(Map.names(e.model, Map.cam(e.model), measure), |p| { text: p.item.item.text, turned: p.item.angle != 0.0 })
+			keys = List.map(Map.owned(e.model, measure), |o| o.key)
+			named = |t| List.any(ns, |n| n.text == t)
+			turned = List.any(ns, |n| n.turned)
+			shape =
+				if Str.contains(e.name, "wide") {
+					!(List.is_empty(ns)) and List.all(ns, |n| n.text == "Chicago" or n.text == "Oak Park")
+				} else if Str.contains(e.name, "street level") {
+					turned and !(named("Chicago")) and List.any(ns, |n| Str.ends_with(n.text, "Street") or Str.ends_with(n.text, "Road") or Str.ends_with(n.text, "Avenue"))
+				} else {
+					turned and (named("Chicago") or named("Pilsen") or named("Ukrainian Village")) and List.any(ns, |n| Str.ends_with(n.text, "Road") or Str.ends_with(n.text, "Avenue") or Str.ends_with(n.text, "Street"))
+				}
+			shape and !(named("Lake Shore Drive")) and List.all(ns, |n| List.contains(keys, "'${n.text}'"))
+		},
+	),
+)
+
+# no name of a name model is drawn over its route: the fixture's route on
+# screen, taken from the fixture itself, meets no placed name's turned box
+expect List.all(
+	List.keep_if(Gate.map_models, |e| Str.contains(e.name, "with its names")),
+	|e| {
+		c = Map.cam(e.model)
+		r = Map.rect(e.model.win)
+		route = List.map(Gate.map_fixture.routes, |l| Geo.strip(c, r, l.pts, 1.0))
+		g = MapNames.grid(r, route, |p| p)
+		List.all(
+			Map.names(e.model, c, Gate.measure),
+			|p| !(MapNames.blocked(g, { x: p.box.x + p.box.w / 2.0, y: p.box.y + p.box.h / 2.0 }, p.item.w, p.item.item.size, p.item.angle)),
+		)
+	},
+)
 
 # a cache the window cannot write is named on the map in place of the
 # playback clock, and a map whose cache works names nothing
