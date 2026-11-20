@@ -254,18 +254,19 @@ tries its point, then above, below and beside it. A street is named on the
 part of it the view shows, along the stretch nearest that part's middle
 that reads as straight, turned to the road's direction and kept upright
 (near-vertical names all read top to bottom); a road bent at every stretch
-long enough for its name is not named there. A name repeats along a long
-road only once the view has moved `MapNames.repeat_px` along it from its
-last placing, so a road crossing the view is named a few times and the
-grid does not fill with one word. Names go through the window's one label
-placer, larger kinds first, held off every other name, the view's own text
-and the chrome; no spot is taken where a route is drawn. They are part of
+long enough for its name is not named there. A name is placed again only
+where it lies at least `MapNames.repeat_px` in a straight line on screen
+from every placing of the same name already chosen, so a long road crossing
+the view is named a few times and the grid does not fill with one word.
+Names go through the window's one label placer, larger kinds first, held
+off every other name, the view's own text and the chrome; no spot is taken
+where a route is drawn. They are part of
 the cached picture, painted between the tiles and the routes, so they cost
 nothing between repaints, slide with the picture mid-drag, and sit under
 the routes, heat and play's markers. A route's card, drawn over the
-picture, is held clear of them too: the picture is repainted when a card
-opens, moves or closes, and the names make room for it and take the room
-back.
+picture, is held clear of them too: the picture is repainted when the room
+a card takes changes, as it opens, moves, grows or closes, and the names
+make room for it and take the room back.
 
 The map opens fitted to the routes. When they span more than the widest zoom
 shows, as a single trip abroad

@@ -3166,7 +3166,7 @@ update! = |model0, program_input, io| {
 		# paused playback places its markers once and keeps them
 		# (Motion.step_marks); running, each frame places its own
 		map_marks2 = Motion.step_marks(model.map_marks, { view: view2, paused: map_play2.paused, was_view: model.view, was_paused: model.map_play.paused, rebuilt: speed_now }, |_| Map.markers({ ..model, map: map2, map_speed: map_speed2, map_play: map_play2 }))
-		map_paint2 = Map.is_map(view2) and (speed_now or map_fresh or map_heat_fresh or view2 != model.map_painted_view or map_zoomed or map_resized or (map_idle and !(same_cam(map_shown, model.map_painted))) or Map.card_key(model0.map_card) != Map.card_key(map_card2))
+		map_paint2 = Map.is_map(view2) and (speed_now or map_fresh or map_heat_fresh or view2 != model.map_painted_view or map_zoomed or map_resized or (map_idle and !(same_cam(map_shown, model.map_painted))) or Map.card_key({ ..model, win, map_card: model0.map_card }, Scene.measure_of(model)) != Map.card_key({ ..model, win, map_card: map_card2 }, Scene.measure_of(model)))
 		glow2 =
 			match model.glow {
 				Ready(g9) => if (g9.gw == pixels.w and g9.gh == pixels.h) (model.glow) else build_glow!(pixels)

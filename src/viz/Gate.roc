@@ -1604,6 +1604,23 @@ expect List.all(
 	),
 )
 
+# the room a card takes from the names, which repaints the picture when it
+# changes: none with no card, the same for a card whose name is its widest
+# line from opening to ready, and another for a card that grows when its
+# last line outgrows the name, or that opens somewhere else
+expect {
+	base = { ..Gate.empty_model(Gate.default_size), view: 10, map: Gate.map_fixture }
+	r = Map.rect(base.win)
+	mid = { x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 }
+	up = |st, x| { ..Gate.with_card(base, x, mid.y), map_card: Map.with_state((Gate.with_card(base, x, mid.y)).map_card, st) }
+	short = |m| { ..m, map: { ..m.map, routes: List.map(m.map.routes, |l| { ..l, session: { ..l.session, name: "Loop" } }) } }
+	key = |m| Map.card_key(m, Gate.measure)
+	key(base) == ""
+		and key(up(Opening, mid.x)) == key(up(Ready, mid.x)) and key(up(Ready, mid.x)) != ""
+		and key(short(up(Opening, mid.x))) != key(short(up(Ready, mid.x)))
+		and key(Gate.with_card(base, mid.x, mid.y - 60.0)) != key(up(Ready, mid.x))
+}
+
 # a card up over a map of names, at the middle and held inside the map at
 # its edges, is judged with them, in both faces at every size: the view's
 # text, the names and the card's lines hold no two boxes overlapping and
