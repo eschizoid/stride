@@ -659,11 +659,11 @@ Db :: [].{
 	}
 
 	# the window's answer: what the human is looking at, one row, upserted
-	Focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, detail_day : Str, sport : Str, family : Str, curve_family : Str, curve_short : I64 }
+	Focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, detail_day : Str, sport : Str, family : Str, curve_family : Str, curve_short : I64, map_id : I64 }
 
 	# every placeholder the upsert names, bound from the row
 	focus_bindings : Focus -> List({ name : Str, value : Sqlite.Value })
-	focus_bindings = |f| [{ name: ":v", value: Integer(f.view) }, { name: ":rg", value: Integer(f.range) }, { name: ":cd", value: String(f.cursor_day) }, { name: ":td", value: String(f.trace_day) }, { name: ":gd", value: String(f.ghost_day) }, { name: ":ti", value: Integer(f.trace_id) }, { name: ":gi", value: Integer(f.ghost_id) }, { name: ":dd", value: String(f.detail_day) }, { name: ":sp", value: String(f.sport) }, { name: ":fm", value: String(f.family) }, { name: ":cf", value: String(f.curve_family) }, { name: ":cs", value: Integer(f.curve_short) }]
+	focus_bindings = |f| [{ name: ":v", value: Integer(f.view) }, { name: ":rg", value: Integer(f.range) }, { name: ":cd", value: String(f.cursor_day) }, { name: ":td", value: String(f.trace_day) }, { name: ":gd", value: String(f.ghost_day) }, { name: ":ti", value: Integer(f.trace_id) }, { name: ":gi", value: Integer(f.ghost_id) }, { name: ":dd", value: String(f.detail_day) }, { name: ":sp", value: String(f.sport) }, { name: ":fm", value: String(f.family) }, { name: ":cf", value: String(f.curve_family) }, { name: ":cs", value: Integer(f.curve_short) }, { name: ":mi", value: Integer(f.map_id) }]
 
 	write_focus! : Sqlite.Db, Focus => Try({}, [WriteFailed])
 	write_focus! = |db, f| {
@@ -1365,8 +1365,15 @@ Db :: [].{
 
 	expect pace_trace_fams_sql == "'Run','Walk','Swim','Rowing'"
 
+	trace_menu_from : Str
+	trace_menu_from = "SELECT a.id AS id, CAST(substr(a.start_local, 1, 10) AS TEXT) AS day, CAST(COALESCE(a.name,'') AS TEXT) AS name, CAST(COALESCE(a.sport_family,'') AS TEXT) AS sport, CASE WHEN json_extract(st.raw_json,'$.watts.data') IS NOT NULL THEN '$.watts.data' WHEN a.sport_family IN (${pace_trace_fams_sql}) AND json_extract(st.raw_json,'$.distance.data') IS NOT NULL AND json_extract(st.raw_json,'$.time.data') IS NOT NULL THEN 'pace' ELSE '$.heartrate.data' END AS chan FROM activities a JOIN streams st ON st.activity_id = a.id WHERE json_extract(st.raw_json,'$.watts.data') IS NOT NULL OR json_extract(st.raw_json,'$.heartrate.data') IS NOT NULL OR (a.sport_family IN (${pace_trace_fams_sql}) AND json_extract(st.raw_json,'$.distance.data') IS NOT NULL AND json_extract(st.raw_json,'$.time.data') IS NOT NULL)"
+
 	trace_menu_q : Str
-	trace_menu_q = "SELECT a.id AS id, CAST(substr(a.start_local, 1, 10) AS TEXT) AS day, CAST(COALESCE(a.name,'') AS TEXT) AS name, CAST(COALESCE(a.sport_family,'') AS TEXT) AS sport, CASE WHEN json_extract(st.raw_json,'$.watts.data') IS NOT NULL THEN '$.watts.data' WHEN a.sport_family IN (${pace_trace_fams_sql}) AND json_extract(st.raw_json,'$.distance.data') IS NOT NULL AND json_extract(st.raw_json,'$.time.data') IS NOT NULL THEN 'pace' ELSE '$.heartrate.data' END AS chan FROM activities a JOIN streams st ON st.activity_id = a.id WHERE json_extract(st.raw_json,'$.watts.data') IS NOT NULL OR json_extract(st.raw_json,'$.heartrate.data') IS NOT NULL OR (a.sport_family IN (${pace_trace_fams_sql}) AND json_extract(st.raw_json,'$.distance.data') IS NOT NULL AND json_extract(st.raw_json,'$.time.data') IS NOT NULL) ORDER BY a.start_local DESC LIMIT :lim"
+	trace_menu_q = "${trace_menu_from} ORDER BY a.start_local DESC LIMIT :lim"
+
+	# one session's picker row, by the menu's own rule, whatever its age
+	trace_one_q : Str
+	trace_one_q = "SELECT id, day, name, sport, chan FROM (${trace_menu_from}) WHERE id = :id"
 
 	# The cap runs AFTER the ascii_safe gate, because the gate can grow what
 	# it maps (an arrow becomes "->"): capping first would let a gated name
@@ -1460,21 +1467,34 @@ Db :: [].{
 	load_trace_ids! = |db|
 		match db.query!(trace_menu_q, [{ name: ":lim", value: Integer(trace_menu_limit) }]) {
 			Err(_) => []
+			Ok(rows) => List.keep_oks(rows, trace_row)
+		}
+
+	trace_row : Sqlite.Row -> Try({ id : I64, day : Str, name : Str, sport : Str, chan : Str }, Str)
+	trace_row = |r| {
+		i = r.i64("id") ? |_| "bad id"
+		d = r.str("day") ? |_| "bad day"
+		nm = r.str("name") ? |_| "bad name"
+		sp = r.str("sport") ? |_| "bad sport"
+		ch = r.str("chan") ? |_| "bad chan"
+		# names pass the ascii_safe gate - the brand atlases carry
+		# ASCII, and an unmapped glyph draws as '?'. Gate first,
+		# THEN cap: the gate can grow what it maps
+		Ok({ id: i, day: d, name: cap_name(ascii_safe(nm)), sport: sp, chan: ch })
+	}
+
+	# the picker row of one session, for a session the map opens that the
+	# picker does not hold; NoTrace when its stream carries nothing the trace
+	# can plot, or the read fails
+	load_trace_one! : Sqlite.Db, I64 => Try({ id : I64, day : Str, name : Str, sport : Str, chan : Str }, [NoTrace])
+	load_trace_one! = |db, id|
+		match db.query!(trace_one_q, [{ name: ":id", value: Integer(id) }]) {
 			Ok(rows) =>
-				List.keep_oks(
-					rows,
-					|r| {
-						i = r.i64("id") ? |_| "bad id"
-						d = r.str("day") ? |_| "bad day"
-						nm = r.str("name") ? |_| "bad name"
-						sp = r.str("sport") ? |_| "bad sport"
-						ch = r.str("chan") ? |_| "bad chan"
-						# names pass the ascii_safe gate - the brand atlases carry
-						# ASCII, and an unmapped glyph draws as '?'. Gate first,
-						# THEN cap: the gate can grow what it maps
-						Ok({ id: i, day: d, name: cap_name(ascii_safe(nm)), sport: sp, chan: ch })
-					},
-				)
+				match List.first(List.keep_oks(rows, trace_row)) {
+					Ok(row) => Ok(row)
+					Err(_) => Err(NoTrace)
+				}
+			Err(_) => Err(NoTrace)
 		}
 
 	# One session's trace, DOWNSAMPLED in SQL to ~800 points. A 45-minute ride
@@ -1974,8 +1994,21 @@ Db :: [].{
 	# playback; one without times keeps none. `bands` and `fbands` hold each
 	# segment's speed band for the two lists (Motion.banded), empty until
 	# playback first shows the map (with_bands), so the routes and the heat
-	# never pay for them.
-	MapLine : { kind : U8, pts : List(Geo.Pt), ts : List(F32), far : List(Geo.Pt), fts : List(F32), bands : List(U8), fbands : List(U8), box : Geo.Bounds }
+	# never pay for them. `session` is the session the route belongs to, as
+	# a click on the route names it (RouteSession).
+	MapLine : { kind : U8, pts : List(Geo.Pt), ts : List(F32), far : List(Geo.Pt), fts : List(F32), bands : List(U8), fbands : List(U8), box : Geo.Bounds, session : RouteSession }
+
+	# A route's session as the map's card states it: the activity id; its
+	# local start in seconds since 1970, the key the most recent of several
+	# routes under one click wins by; its name, day and sport type; its
+	# distance in metres and moving time in seconds; and its average watts
+	# when a power meter measured them, 0 when none did, since Strava's
+	# estimate for a ride without a meter is a model's guess and the engine
+	# scores nothing from it.
+	RouteSession : { id : I64, start : I64, name : Str, day : Str, sport : Str, dist_m : F64, moving_s : I64, watts : I64 }
+
+	no_session : RouteSession
+	no_session = { id: -1, start: 0, name: "", day: "", sport: "", dist_m: 0.0, moving_s: 0, watts: 0 }
 
 	# every route, all relative to one origin, and that origin in projected
 	# metres, which places the street map's tiles; the routes' extent, which
@@ -2005,11 +2038,11 @@ Db :: [].{
 			Err(TooShort)
 		} else if List.is_empty(times) {
 			pts = Geo.thin(List.map(coords, |c| Geo.rel(origin, c.lat, c.lng)), near_step)
-			Ok({ kind, pts, ts: [], far: Geo.thin(pts, far_step), fts: [], bands: [], fbands: [], box: Geo.box_of(pts) })
+			Ok({ kind, pts, ts: [], far: Geo.thin(pts, far_step), fts: [], bands: [], fbands: [], box: Geo.box_of(pts), session: no_session })
 		} else {
 			near = Geo.thin_timed(List.map(coords, |c| Geo.rel(origin, c.lat, c.lng)), times, near_step)
 			far = Geo.thin_timed(near.pts, near.ts, far_step)
-			Ok({ kind, pts: near.pts, ts: near.ts, far: far.pts, fts: far.ts, bands: [], fbands: [], box: Geo.box_of(near.pts) })
+			Ok({ kind, pts: near.pts, ts: near.ts, far: far.pts, fts: far.ts, bands: [], fbands: [], box: Geo.box_of(near.pts), session: no_session })
 		}
 
 	# every route's speed bands for both of its lists, each measured against
@@ -2043,13 +2076,34 @@ Db :: [].{
 	# budget rather than returning part of it, and one stored route answer
 	# runs to hundreds of kilobytes, so routes are read in pages keyed by
 	# id. A page of routes is decoded by the engine's own rule (core.Route)
-	# as it lands, keeping the coordinates and their times.
+	# as it lands, keeping the coordinates and their times, beside the
+	# session each belongs to (route_session). A route whose session row is
+	# missing keeps its id and reads empty.
 	route_page_size : I64
 	route_page_size = 16
 
-	route_pages! : Sqlite.Db, I64, List({ coords : List({ lat : F64, lng : F64 }), times : List(F32) }) => Try(List({ coords : List({ lat : F64, lng : F64 }), times : List(F32) }), Str)
+	Track : { coords : List({ lat : F64, lng : F64 }), times : List(F32), session : RouteSession }
+
+	route_page_sql : Str
+	route_page_sql = "SELECT r.activity_id AS id, CAST(r.raw_json AS TEXT) AS j, CAST(COALESCE(strftime('%s', a.start_local), 0) AS INTEGER) AS t, CAST(COALESCE(a.name, '') AS TEXT) AS nm, CAST(COALESCE(substr(a.start_local, 1, 10), '') AS TEXT) AS dy, CAST(COALESCE(a.sport_type, '') AS TEXT) AS sp, CAST(COALESCE(a.distance, 0) AS REAL) AS dm, CAST(COALESCE(a.moving_time, 0) AS INTEGER) AS mt, CAST(CASE WHEN a.device_watts = 1 THEN ROUND(COALESCE(a.avg_watts, 0)) ELSE 0 END AS INTEGER) AS w FROM routes r LEFT JOIN activities a ON a.id = r.activity_id WHERE r.raw_json IS NOT NULL AND r.raw_json <> '{}' AND r.activity_id > :a ORDER BY r.activity_id LIMIT :n"
+
+	# a route row's session; its names pass the same gate and cap the trace
+	# picker's do, since the brand atlases carry ASCII
+	route_session : I64, Sqlite.Row -> RouteSession
+	route_session = |id, r| {
+		id,
+		start: r.i64("t") ?? 0,
+		name: cap_name(ascii_safe(r.str("nm") ?? "")),
+		day: r.str("dy") ?? "",
+		sport: r.str("sp") ?? "",
+		dist_m: r.f64("dm") ?? 0.0,
+		moving_s: r.i64("mt") ?? 0,
+		watts: r.i64("w") ?? 0,
+	}
+
+	route_pages! : Sqlite.Db, I64, List(Track) => Try(List(Track), Str)
 	route_pages! = |db, after, acc|
-		match db.query!("SELECT activity_id AS id, CAST(raw_json AS TEXT) AS j FROM routes WHERE raw_json IS NOT NULL AND raw_json <> '{}' AND activity_id > :a ORDER BY activity_id LIMIT :n", [{ name: ":a", value: Integer(after) }, { name: ":n", value: Integer(route_page_size) }]) {
+		match db.query!(route_page_sql, [{ name: ":a", value: Integer(after) }, { name: ":n", value: Integer(route_page_size) }]) {
 			Err(e) => Err(query_err("the routes", e))
 			Ok(rs) =>
 				match List.last(rs) {
@@ -2059,8 +2113,9 @@ Db :: [].{
 							rs,
 							|r| {
 								b = r.str("j") ? |_| BadBody
+								id = r.i64("id") ? |_| BadId
 								match Route.decode_route(b) {
-									Points(ps) => Ok({ coords: List.map(ps, |p| { lat: p.lat, lng: p.lng }), times: List.map(ps, |p| I64.to_f32(p.t)) })
+									Points(ps) => Ok({ coords: List.map(ps, |p| { lat: p.lat, lng: p.lng }), times: List.map(ps, |p| I64.to_f32(p.t)), session: route_session(id, r) })
 									_ => Err(NoGps)
 								}
 							},
@@ -2094,7 +2149,7 @@ Db :: [].{
 				}
 			Err(_) => { x: 0.0, y: 0.0 }
 		}
-		routes = List.keep_oks(ts, |tr| map_line(origin, route_kind, tr.coords, tr.times))
+		routes = List.keep_oks(ts, |tr| map_line(origin, route_kind, tr.coords, tr.times).map_ok(|l| { ..l, session: tr.session }))
 		err = match tracks {
 			Err(e) => e
 			Ok(_) => ""
@@ -2281,11 +2336,11 @@ expect Db.plain_int("") == Err(NotAnInt)
 # are no more bindings than placeholders, and every column the INSERT
 # names is carried into the row on conflict
 expect {
-	blank = { view: 0, range: 0, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "", curve_family: "", curve_short: -1 }
+	blank = { view: 0, range: 0, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "", curve_family: "", curve_short: -1, map_id: -1 }
 	sql = Bus.focus_upsert_sql
 	names = List.map(Db.focus_bindings(blank), |b| b.name)
 	colons = List.count_if(Str.to_utf8(sql), |c| c == ':')
-	cols = ["view", "range", "cursor_day", "trace_day", "ghost_day", "trace_id", "ghost_id", "detail_day", "sport", "family", "curve_family", "curve_short"]
+	cols = ["view", "range", "cursor_day", "trace_day", "ghost_day", "trace_id", "ghost_id", "detail_day", "sport", "family", "curve_family", "curve_short", "map_id"]
 	bound = List.all(names, |nm| Str.contains(sql, Str.concat(nm, ",")) or Str.contains(sql, Str.concat(nm, ")")))
 	inserted = List.all(cols, |c| Str.contains(sql, " ${c},") or Str.contains(sql, " ${c})"))
 	carried = List.all(cols, |c| Str.contains(sql, "${c} = excluded.${c}"))

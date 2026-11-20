@@ -1,5 +1,8 @@
 import rr.Color
 import rr.Draw
+import core.Fmt
+import core.Sports
+import core.Units
 import Chrome
 import Db
 import Geo
@@ -99,8 +102,8 @@ Map :: [].{
 
 	hint_text : U8 -> Str
 	hint_text = |v|
-		if (v == 12) "P  pause      drag  pan      wheel  zoom      0  home      TAB  form      S  screenshot      ESC quit"
-		else "drag  pan      wheel  zoom      0  home      TAB  form      R  reload      S  screenshot      ESC quit"
+		if (v == 12) "P  pause      click  session      drag  pan      wheel  zoom      0  home      TAB  form      S  screenshot      ESC quit"
+		else "click  session      drag  pan      wheel  zoom      0  home      TAB  form      R  reload      S  screenshot      ESC quit"
 
 	# playback's clock as the route time every marker shows: hours and
 	# minutes into each session
@@ -458,6 +461,322 @@ Map :: [].{
 		)
 	}
 
+	# ── a click on a route, and the card it opens ──────────────────────────
+	# A click is a press on the map and its release with the cursor never
+	# farther than slop_px from where the press began, on either axis; a
+	# press that strays farther is a drag, which pans and never clicks. A
+	# click picks the routes the zoom draws within hit_px of it, in logical
+	# pixels at every zoom, and of those the session that started last,
+	# then the higher id. The pick opens a card for that session over the
+	# map, anchored where the click landed, and its route draws highlighted
+	# while the card is up. Every mode takes the same click: the hit test is
+	# geometry, and heat and play draw the same routes. A click on the card,
+	# or Enter, opens the trace view on the session; Esc or a click that
+	# picks nothing closes the card.
+	slop_px : F32
+	slop_px = 4.0
+
+	hit_px : F32
+	hit_px = 5.0
+
+	# one frame of the map's press: a press begins on the map, follows the
+	# cursor while the button is held, and on its release is a click at the
+	# last place it was held, unless it strayed
+	press_step : Ui.MapPress, { down : Bool, pressed : Bool, on_map : Bool, x : F32, y : F32 } -> { press : Ui.MapPress, click : Try(Geo.Pt, [NoClick]) }
+	press_step = |p, i|
+		match p {
+			Held(h) => {
+				far = h.far or (i.x - h.ox).abs() > slop_px or (i.y - h.oy).abs() > slop_px
+				if i.down {
+					{ press: Held({ x: i.x, y: i.y, ox: h.ox, oy: h.oy, far }), click: Err(NoClick) }
+				} else if far {
+					{ press: Idle, click: Err(NoClick) }
+				} else {
+					{ press: Idle, click: Ok({ x: h.x, y: h.y }) }
+				}
+			}
+			Idle => if (i.down and i.pressed and i.on_map) { press: Held({ x: i.x, y: i.y, ox: i.x, oy: i.y, far: Bool.False }), click: Err(NoClick) } else { press: Idle, click: Err(NoClick) }
+		}
+
+	on_map : { w : F32, h : F32 }, F32, F32 -> Bool
+	on_map = |win, x, y| {
+		r = rect(win)
+		x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h
+	}
+
+	# the point of segment a-b nearest p
+	nearest : Geo.Pt, Geo.Pt, Geo.Pt -> Geo.Pt
+	nearest = |a, b, p| {
+		dx = b.x - a.x
+		dy = b.y - a.y
+		len2 = dx * dx + dy * dy
+		t = if (len2 <= 0.0) 0.0 else F32.min(1.0, F32.max(0.0, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2))
+		{ x: a.x + t * dx, y: a.y + t * dy }
+	}
+
+	# whether a segment of the line from index i on passes within tol of w
+	# at a point inside the view's extent, so a stretch the map's edge cuts
+	# away is never picked
+	passes : List(Geo.Pt), U64, Geo.Pt, F32, Geo.Bounds -> Bool
+	passes = |pts, i, w, tol, view|
+		match (List.get(pts, i - 1), List.get(pts, i)) {
+			(Ok(a), Ok(b)) => {
+				q = nearest(a, b, w)
+				if (q.x - w.x) * (q.x - w.x) + (q.y - w.y) * (q.y - w.y) <= tol * tol and q.x >= view.x0 and q.x <= view.x1 and q.y >= view.y0 and q.y <= view.y1 {
+					Bool.True
+				} else {
+					passes(pts, i + 1, w, tol, view)
+				}
+			}
+			_ => Bool.False
+		}
+
+	# the session whose route a click at (sx, sy) picks, among the lines the
+	# camera's zoom draws; a click off the map picks none
+	hit : List(Db.MapLine), Geo.Cam, Geo.Rect, F32, F32 -> Try(Db.RouteSession, [Miss])
+	hit = |routes, c, r, sx, sy|
+		if sx < r.x or sx > r.x + r.w or sy < r.y or sy > r.y + r.h {
+			Err(Miss)
+		} else {
+			w = Geo.to_world(c, r, sx, sy)
+			tol = hit_px * c.mpp
+			lo = Geo.to_world(c, r, r.x, r.y + r.h)
+			hi = Geo.to_world(c, r, r.x + r.w, r.y)
+			view = { x0: lo.x, y0: lo.y, x1: hi.x, y1: hi.y }
+			wide = c.mpp > far_mpp
+			List.fold(
+				routes,
+				Err(Miss),
+				|best, l| {
+					b = l.box
+					near = w.x >= b.x0 - tol and w.x <= b.x1 + tol and w.y >= b.y0 - tol and w.y <= b.y1 + tol
+					later = match best {
+						Ok(s) => l.session.start > s.start or (l.session.start == s.start and l.session.id > s.id)
+						Err(_) => Bool.True
+					}
+					if (near and later and passes(if (wide) l.far else l.pts, 1, w, tol, view)) Ok(l.session) else best
+				},
+			)
+		}
+
+	# the route of the session the card is up for, on a map mode
+	picked : Ui.Model -> Try(Db.MapLine, [NoCard])
+	picked = |model|
+		match model.map_card {
+			Open(o) =>
+				if is_map(model.view) {
+					match List.find_first(model.map.routes, |l| l.session.id == o.id) {
+						Ok(l) => Ok(l)
+						Err(_) => Err(NoCard)
+					}
+				} else {
+					Err(NoCard)
+				}
+			Closed => Err(NoCard)
+		}
+
+	# the selected route drawn over every mode's picture: a dark casing under
+	# a white line, so it reads over the accent, the heat and the speed ramp
+	draw_picked! : Ui.Model, Geo.Cam, Draw.Frame => {}
+	draw_picked! = |model, c, frame|
+		match picked(model) {
+			Ok(l) => {
+				pts = Geo.strip(c, rect(model.win), if (c.mpp > far_mpp) l.far else l.pts, 1.0)
+				frame.line_strip!({ points: pts, stroke: Draw.stroke(Color.with_alpha(Theme.bg, 200), 5.0) })
+				frame.line_strip!({ points: pts, stroke: Draw.stroke(Color.white, 2.4) })
+			}
+			Err(_) => {}
+		}
+
+	# the card's text: the name, the sport and day, the distance, moving
+	# time and effort, and what the athlete can do next
+	CardLine : { text : Str, size : F32, face : Scene.Face, tone : [Title, Body, Muted] }
+
+	card_lines : Db.RouteSession, [Metric, Imperial], [Ready, Opening, NoTrace] -> List(CardLine)
+	card_lines = |s, units, state| {
+		title = if (s.name == "") s.sport else s.name
+		next = match state {
+			Ready => "Enter or click  open its trace      Esc  close"
+			Opening => "opening its trace..."
+			NoTrace => "no trace to open - its stream holds nothing to plot"
+		}
+		[
+			{ text: title, size: 14.0, face: Prose, tone: Title },
+			{ text: "${s.sport}   ${s.day}", size: 12.0, face: Data, tone: Body },
+			{ text: "${dist_text(s.dist_m, units)}   ${time_text(s.moving_s)}   ${effort_text(s, units)}", size: 12.0, face: Data, tone: Body },
+			{ text: next, size: 12.0, face: Prose, tone: Muted },
+		]
+	}
+
+	dist_text : F64, [Metric, Imperial] -> Str
+	dist_text = |m, units|
+		if m <= 0.0 {
+			"-"
+		} else {
+			"${Fmt.tenths((Units.dist_value(units, m) * 10.0).round_to_i64_try().ok_or(0))} ${Units.dist_unit(units)}"
+		}
+
+	# moving time as hours and minutes, or minutes alone under an hour
+	time_text : I64 -> Str
+	time_text = |secs|
+		if secs <= 0 {
+			"-"
+		} else {
+			mins = (secs + 30) // 60
+			h = mins // 60
+			mm = mins % 60
+			if (h == 0) "${I64.to_str(mm)}m" else "${I64.to_str(h)}h ${if (mm < 10) "0" else ""}${I64.to_str(mm)}m"
+		}
+
+	# a pace family reads its pace over the distance it is paced in, the
+	# kilometre or mile on foot, 100 m in the water, 500 m on the erg; every
+	# other sport reads its average power, when a meter measured it
+	effort_text : Db.RouteSession, [Metric, Imperial] -> Str
+	effort_text = |s, units| {
+		fam = Sports.canonical(s.sport)
+		if List.contains(Sports.pace_target_families, fam) {
+			pace =
+				if fam == "Swim" or fam == "Rowing" {
+					if (s.dist_m <= 0.0 or s.moving_s <= 0) "-" else Fmt.mmss((I64.to_f64(s.moving_s) * I64.to_f64(Sports.pace_unit(fam).dist_m) / s.dist_m).round_to_i64_try().ok_or(0))
+				} else {
+					Units.pace_per_dist(units, s.dist_m, s.moving_s)
+				}
+			"${pace} ${Sports.pace_label_for(units, fam)}"
+		} else if s.watts > 0 {
+			"${I64.to_str(s.watts)} W avg"
+		} else {
+			"no power meter"
+		}
+	}
+
+	card_pad : F32
+	card_pad = 10.0
+
+	card_gap : F32
+	card_gap = 5.0
+
+	# the card's box and its lines as fixed text inside it: beside the
+	# clicked point, 14 pixels right of it, or left of it when the right
+	# would leave the map, centred on it vertically, and held inside the map
+	card : Ui.Model, Scene.Measure -> Try({ box : Labels.Rect, lines : List(Labels.Label(Scene.Item)) }, [NoCard])
+	card = |model, measure|
+		match (picked(model), model.map_card) {
+			(Ok(l), Open(o)) => {
+				r = rect(model.win)
+				ls = card_lines(l.session, model.units, o.state)
+				w = 2.0 * card_pad + List.fold(ls, 0.0, |m, x| F32.max(m, measure(x.text, x.size, x.face)))
+				h = 2.0 * card_pad + List.fold(ls, 0.0, |acc, x| acc + x.size) + U64.to_f32(List.len(ls) - 1) * card_gap
+				a = Geo.to_screen(cam(model), r, o.at)
+				right = a.x + 14.0
+				left = if (right + w <= r.x + r.w) right else F32.max(r.x, a.x - 14.0 - w)
+				top = F32.max(r.y, F32.min(a.y - h / 2.0, r.y + r.h - h))
+				box = { x: left, y: top, w, h }
+				tone = |t|
+					match t {
+						Title => Color.white
+						Body => Theme.ink_muted
+						Muted => Theme.ink_faint
+					}
+				placed = List.fold(
+					ls,
+					{ y: top + card_pad, out: [] },
+					|acc, x| {
+						it = { text: x.text, size: x.size, color: tone(x.tone), face: x.face, prep: Fresh }
+						{ y: acc.y + x.size + card_gap, out: List.append(acc.out, Scene.fixed(measure, it, { x: left + card_pad, y: acc.y, align: Left }, box)) }
+					},
+				)
+				Ok({ box, lines: placed.out })
+			}
+			_ => Err(NoCard)
+		}
+
+	draw_card! : Ui.Model, Draw.Frame => {}
+	draw_card! = |model, frame|
+		match card(model, Scene.measure_of(model)) {
+			Ok(c) => {
+				frame.rounded_rectangle!({ x: c.box.x, y: c.box.y, width: c.box.w, height: c.box.h, radius: 6.0, segments: 6, style: Draw.filled(Color.with_alpha(Theme.card, 245)) })
+				Scene.draw!(frame, model, Labels.place(c.lines, { boxes: [], segs: [] }))
+			}
+			Err(_) => {}
+		}
+
+	# what the athlete did to the card this frame: a click on the card, or
+	# Enter, opens the session (`open`, -1 when nothing opens), a click that
+	# picks a route opens its card, a click that picks none and Esc close it.
+	# A card waiting on its session, or with no trace to open, opens nothing.
+	act : Ui.Model, Try(Geo.Pt, [NoClick]), { enter : Bool, esc : Bool }, Scene.Measure -> { card : Ui.MapCard, open : I64 }
+	act = |model, click, keys, measure| {
+		ready = match model.map_card {
+			Open(o) =>
+				match o.state {
+					Ready => o.id
+					_ => -1
+				}
+			Closed => -1
+		}
+		if !(is_map(model.view)) {
+			{ card: model.map_card, open: -1 }
+		} else {
+			match click {
+				Ok(p) => {
+					on_card = match card(model, measure) {
+						Ok(cd) => p.x >= cd.box.x and p.x <= cd.box.x + cd.box.w and p.y >= cd.box.y and p.y <= cd.box.y + cd.box.h
+						Err(_) => Bool.False
+					}
+					if on_card {
+						{ card: model.map_card, open: ready }
+					} else {
+						r = rect(model.win)
+						c = cam(model)
+						match hit(model.map.routes, c, r, p.x, p.y) {
+							Ok(s) => { card: Open({ id: s.id, at: Geo.to_world(c, r, p.x, p.y), state: Ready }), open: -1 }
+							Err(_) => { card: Closed, open: -1 }
+						}
+					}
+				}
+				Err(_) =>
+					if keys.esc {
+						{ card: Closed, open: -1 }
+					} else if keys.enter {
+						{ card: model.map_card, open: ready }
+					} else {
+						{ card: model.map_card, open: -1 }
+					}
+			}
+		}
+	}
+
+	# whether Esc closes the card rather than the window
+	card_up : Ui.Model -> Bool
+	card_up = |model| is_map(model.view) and picked(model).is_ok()
+
+	# the session the focus row names: the card's, while a map mode shows it
+	map_focus : Ui.Model -> I64
+	map_focus = |model|
+		match picked(model) {
+			Ok(l) => l.session.id
+			Err(_) => -1
+		}
+
+	# the session a card waits on for its picker row, -1 when it waits on none
+	waiting_on : Ui.MapCard -> I64
+	waiting_on = |c|
+		match c {
+			Open(o) =>
+				match o.state {
+					Opening => o.id
+					_ => -1
+				}
+			Closed => -1
+		}
+
+	with_state : Ui.MapCard, [Ready, Opening, NoTrace] -> Ui.MapCard
+	with_state = |c, state|
+		match c {
+			Open(o) => Open({ ..o, state })
+			Closed => Closed
+		}
+
 	# a failed read's message, cut to what the map's narrowest width holds
 	clip : Str -> Str
 	clip = |s| if (Str.count_utf8_bytes(s) > 96) Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(s), 93)), "...") else s
@@ -510,10 +829,11 @@ Map :: [].{
 	# The cached picture when the window holds one, shifted by however far
 	# the camera has moved since it was painted, else every line drawn
 	# straight to the frame. In heat mode the summed passes follow, through
-	# the tone-mapping shader, with the same shift; in play the markers
-	# follow, placed this frame. The scissor keeps all of it inside the
-	# map's rectangle; it takes screen pixels, so the logical rectangle is
-	# scaled by the UI size.
+	# the tone-mapping shader, with the same shift; then the route a card is
+	# up for, highlighted; in play the markers follow, placed this frame. The
+	# scissor keeps all of it inside the map's rectangle; it takes screen
+	# pixels, so the logical rectangle is scaled by the UI size. The card
+	# draws last, over the view's text.
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 	draw! = |model, frame| {
 		r = rect(model.win)
@@ -547,6 +867,7 @@ Map :: [].{
 						_ => {}
 					}
 				}
+				draw_picked!(model, c, f)
 				if model.view == 12 {
 					draw_markers!(model, c, f)
 				}
@@ -554,6 +875,7 @@ Map :: [].{
 			},
 		)
 		Scene.draw!(frame, model, scene(model, measure))
+		draw_card!(model, frame)
 		Ok({})
 	}
 }
@@ -608,3 +930,153 @@ expect {
 
 # the parks' green is the map's own: no sport and no zone wears it
 expect !(List.contains(Theme.sport_palette, Map.park_hue)) and !(List.contains(Theme.zone_ramp, Map.park_hue))
+
+# a route as the hit test reads it: one list for every zoom, its session
+# named by id and start
+expect {
+	line = |id, start, pts| { kind: Db.route_kind, pts, ts: [], far: pts, fts: [], bands: [], fbands: [], box: Geo.box_of(pts), session: { ..Db.no_session, id, start } }
+	r = Map.rect({ w: 980.0, h: 600.0 })
+	flat = line(7, 100, [{ x: -1000.0, y: 0.0 }, { x: 1000.0, y: 0.0 }])
+	diag = line(8, 100, [{ x: -1000.0, y: -1000.0 }, { x: 1000.0, y: 1000.0 }])
+	# a click within hit_px of the drawn line picks it and one past it
+	# does not, at a close, a middle and a wide zoom alike, and across a
+	# diagonal line, whose extent holds every point near it
+	List.all(
+		[0.5, 4.0, 50.0],
+		|mpp| {
+			c = { cx: 0.0, cy: 0.0, mpp }
+			s = Geo.to_screen(c, r, { x: 0.0, y: 0.0 })
+			# a step of k pixels on both axes lies k times the square root of
+			# two from the diagonal
+			k_in = (Map.hit_px - 0.5) / 1.41421356
+			k_out = (Map.hit_px + 0.5) / 1.41421356
+			(Map.hit([flat], c, r, s.x, s.y + Map.hit_px - 1.0)).map_ok(|x| x.id) == Ok(7) and Map.hit([flat], c, r, s.x, s.y + Map.hit_px + 1.0) == Err(Miss)
+				and (Map.hit([diag], c, r, s.x + k_in, s.y + k_in)).map_ok(|x| x.id) == Ok(8) and Map.hit([diag], c, r, s.x + k_out, s.y + k_out) == Err(Miss)
+		},
+	)
+}
+
+# where routes overlap at a click the session that started last wins, even
+# when an older one passes nearer, and of two that started together the
+# higher id
+expect {
+	line = |id, start, pts| { kind: Db.route_kind, pts, ts: [], far: pts, fts: [], bands: [], fbands: [], box: Geo.box_of(pts), session: { ..Db.no_session, id, start } }
+	r = Map.rect({ w: 980.0, h: 600.0 })
+	c = { cx: 0.0, cy: 0.0, mpp: 1.0 }
+	s = Geo.to_screen(c, r, { x: 0.0, y: 0.0 })
+	old = line(1, 100, [{ x: -500.0, y: 0.0 }, { x: 500.0, y: 0.0 }])
+	new = line(2, 200, [{ x: -500.0, y: 3.0 }, { x: 500.0, y: 3.0 }])
+	twin = line(3, 200, [{ x: -500.0, y: -2.0 }, { x: 500.0, y: -2.0 }])
+	(Map.hit([new, old], c, r, s.x, s.y)).map_ok(|x| x.id) == Ok(2)
+		and (Map.hit([old, new], c, r, s.x, s.y)).map_ok(|x| x.id) == Ok(2)
+		and (Map.hit([old, new, twin], c, r, s.x, s.y)).map_ok(|x| x.id) == Ok(3)
+		and (Map.hit([twin, new, old], c, r, s.x, s.y)).map_ok(|x| x.id) == Ok(3)
+}
+
+# a click off the map picks nothing though a route runs under it, a route
+# within hit_px of a click but only past the map's edge is never picked,
+# and a route far from the click is passed over on its extent alone
+expect {
+	line = |id, start, pts| { kind: Db.route_kind, pts, ts: [], far: pts, fts: [], bands: [], fbands: [], box: Geo.box_of(pts), session: { ..Db.no_session, id, start } }
+	r = Map.rect({ w: 980.0, h: 600.0 })
+	c = { cx: 0.0, cy: 0.0, mpp: 1.0 }
+	edge = Geo.to_world(c, r, r.x - 2.0, r.y + 100.0)
+	beyond = line(4, 100, [{ x: edge.x, y: -1000.0 }, { x: edge.x, y: 1000.0 }])
+	across = line(5, 100, [{ x: -2000.0, y: 0.0 }, { x: 2000.0, y: 0.0 }])
+	far = line(6, 100, [{ x: 50000.0, y: 50000.0 }, { x: 50100.0, y: 50000.0 }])
+	s = Geo.to_screen(c, r, { x: 0.0, y: 0.0 })
+	Map.hit([beyond], c, r, r.x + 1.0, r.y + 100.0) == Err(Miss)
+		and Map.hit([across], c, r, r.x - 10.0, s.y) == Err(Miss)
+		and (Map.hit([across], c, r, r.x + 10.0, s.y)).map_ok(|x| x.id) == Ok(5)
+		and Map.hit([far], c, r, s.x, s.y) == Err(Miss)
+}
+
+# the hit test reads the list the zoom draws: a bend the near list keeps
+# and the far list cuts is picked close in and not from the wide zooms
+expect {
+	r = Map.rect({ w: 980.0, h: 600.0 })
+	near = [{ x: -400.0, y: 0.0 }, { x: 0.0, y: 300.0 }, { x: 400.0, y: 0.0 }]
+	cut = [{ x: -400.0, y: 0.0 }, { x: 400.0, y: 0.0 }]
+	l = { kind: Db.route_kind, pts: near, ts: [], far: cut, fts: [], bands: [], fbands: [], box: Geo.box_of(near), session: { ..Db.no_session, id: 8, start: 1 } }
+	close = { cx: 0.0, cy: 300.0, mpp: Map.far_mpp }
+	wide = { cx: 0.0, cy: 300.0, mpp: Map.far_mpp * 2.0 }
+	at = |c| Geo.to_screen(c, r, { x: 0.0, y: 300.0 })
+	(Map.hit([l], close, r, (at(close)).x, (at(close)).y)).map_ok(|x| x.id) == Ok(8) and Map.hit([l], wide, r, (at(wide)).x, (at(wide)).y) == Err(Miss)
+}
+
+# a route carried across the antimeridian is picked where it is drawn, on
+# the far side of 180 degrees from where it set out
+expect {
+	r = Map.rect({ w: 980.0, h: 600.0 })
+	o = Geo.merc(0.0, 179.9)
+	coords = Geo.unwrap([{ lat: 0.0, lng: 179.9 }, { lat: 0.0, lng: -179.9 }, { lat: 0.0, lng: -179.8 }])
+	match Db.map_line(o, Db.route_kind, coords, []) {
+		Ok(l0) => {
+			l = { ..l0, session: { ..Db.no_session, id: 9, start: 1 } }
+			p = Geo.rel(o, 0.0, 180.15)
+			c = { cx: p.x, cy: p.y, mpp: 2.0 }
+			s = Geo.to_screen(c, r, p)
+			p.x > 0.0 and (Map.hit([l], c, r, s.x, s.y)).map_ok(|x| x.id) == Ok(9)
+		}
+		Err(_) => Bool.False
+	}
+}
+
+# a press and its release within slop_px is a click where it was last held,
+# one that strays past it is a drag however it ends, and a press that
+# begins off the map is neither
+expect {
+	at = |down, pressed, x, y| { down, pressed, on_map: Bool.True, x, y }
+	run = |steps| List.fold(
+		steps,
+		{ press: Idle, clicks: [] },
+		|acc, i| {
+			s = Map.press_step(acc.press, i)
+			{
+				press: s.press,
+				clicks: match s.click {
+					Ok(p) => List.append(acc.clicks, p)
+					Err(_) => acc.clicks
+				},
+			}
+		},
+	).clicks
+	run([at(Bool.True, Bool.True, 100.0, 100.0), at(Bool.False, Bool.False, 100.0, 100.0)]) == [{ x: 100.0, y: 100.0 }]
+		and run([at(Bool.True, Bool.True, 100.0, 100.0), at(Bool.True, Bool.False, 103.0, 98.0), at(Bool.False, Bool.False, 103.0, 98.0)]) == [{ x: 103.0, y: 98.0 }]
+		and run([at(Bool.True, Bool.True, 100.0, 100.0), at(Bool.True, Bool.False, 100.0 + Map.slop_px + 1.0, 100.0), at(Bool.True, Bool.False, 100.0, 100.0), at(Bool.False, Bool.False, 100.0, 100.0)]) == []
+		and run([{ ..at(Bool.True, Bool.True, 100.0, 100.0), on_map: Bool.False }, at(Bool.False, Bool.False, 100.0, 100.0)]) == []
+		and run([at(Bool.True, Bool.True, 100.0, 100.0), at(Bool.True, Bool.False, 100.0, 100.0)]) == []
+}
+
+# the card in metric: a ride its meter measured reads its power, and one
+# without a meter says so; and in imperial, the miles
+expect {
+	s = { id: 1, start: 0, name: "Lakefront loop", day: "2026-11-15", sport: "Ride", dist_m: 100000.0, moving_s: 35940, watts: 250 }
+	texts = |x, u, st| List.map(Map.card_lines(x, u, st), |l| l.text)
+	texts(s, Metric, Ready) == ["Lakefront loop", "Ride   2026-11-15", "100.0 km   9h 59m   250 W avg", "Enter or click  open its trace      Esc  close"]
+		and texts({ ..s, watts: 0, dist_m: 160934.4 }, Imperial, Ready) == ["Lakefront loop", "Ride   2026-11-15", "100.0 mi   9h 59m   no power meter", "Enter or click  open its trace      Esc  close"]
+		and texts({ ..s, watts: 0 }, Metric, Ready) == ["Lakefront loop", "Ride   2026-11-15", "100.0 km   9h 59m   no power meter", "Enter or click  open its trace      Esc  close"]
+}
+
+# a run reads its pace per kilometre or per mile, a swim per 100 m and an
+# erg session per 500 m in either unit, a session under an hour in minutes,
+# and an unnamed session by its sport
+expect {
+	run = { id: 2, start: 0, name: "", day: "2026-11-14", sport: "TrailRun", dist_m: 10000.0, moving_s: 3000, watts: 300 }
+	swim = { ..run, sport: "Swim", dist_m: 1500.0, moving_s: 1800 }
+	row = { ..run, sport: "VirtualRow", dist_m: 5000.0, moving_s: 1200 }
+	data = |x, u| (List.get(Map.card_lines(x, u, Ready), 2)).map_ok(|l| l.text)
+	data(run, Metric) == Ok("10.0 km   50m   5:00 ${Sports.pace_unit("Run").label}")
+		and data({ ..run, dist_m: 16093.44, moving_s: 4800 }, Imperial) == Ok("10.0 mi   1h 20m   8:00 /mi")
+		and data(swim, Imperial) == Ok("0.9 mi   30m   2:00 /100m") and data(swim, Metric) == Ok("1.5 km   30m   2:00 /100m")
+		and data(row, Imperial) == Ok("3.1 mi   20m   2:00 /500m")
+		and (List.first(Map.card_lines(run, Metric, Ready))).map_ok(|l| l.text) == Ok("TrailRun")
+		and Map.time_text(3900) == "1h 05m" and Map.time_text(0) == "-" and Map.dist_text(0.0, Metric) == "-"
+}
+
+# the card says when its trace is on its way and when there is none
+expect {
+	s = { id: 1, start: 0, name: "a", day: "2026-11-15", sport: "Ride", dist_m: 1000.0, moving_s: 600, watts: 0 }
+	(List.last(Map.card_lines(s, Metric, Opening))).map_ok(|l| l.text) == Ok("opening its trace...")
+		and (List.last(Map.card_lines(s, Imperial, NoTrace))).map_ok(|l| l.text) == Ok("no trace to open - its stream holds nothing to plot")
+}

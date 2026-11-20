@@ -21,6 +21,15 @@ Ui :: [].{
 	CaptureWait : { id : I64, refused : Str, path : Str, name : Str, since : U64 }
 	PendingCapture : [NoCapture, ArmedShot(CaptureWait), AwaitingShot(CaptureWait), AwaitingStart(CaptureWait), AwaitingStop(CaptureWait)]
 	EndLabel : { p : Text.Prepared, sel : U8 }
+	# a left press that began on the map: where the cursor was last, where
+	# the press began, and whether the cursor has since strayed past the
+	# distance a click allows, which makes the press a drag
+	MapPress : [Idle, Held({ x : F32, y : F32, ox : F32, oy : F32, far : Bool })]
+	# the map's card: closed, or up for the session whose route was clicked,
+	# anchored at the clicked point in map metres. Opening waits on that
+	# session's picker row, read for a session the trace picker does not
+	# hold; NoTrace says its stream holds nothing the trace can plot.
+	MapCard : [Closed, Open({ id : I64, at : Geo.Pt, state : [Ready, Opening, NoTrace] })]
 	# a copy the window prepared at load beside the string and size it was
 	# prepared from, for text no view can derive again from the model
 	Txt : { p : Text.Prepared, s : Str, size : F32 }
@@ -165,7 +174,7 @@ Ui :: [].{
 		# the coach: the window keeps its full frame rate for a moment after it
 		last_active : U64,
 		view_anim : U64,
-		last_focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, detail_day : Str, sport : Str, family : Str, curve_family : Str, curve_short : I64 },
+		last_focus : { view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, detail_day : Str, sport : Str, family : Str, curve_family : Str, curve_short : I64, map_id : I64 },
 		# quitting is raised by the ESC frame, which spawns the focus-row clear;
 		# the frame that sees the clear land - or sees quit_tick fall half a
 		# second behind, so a stuck database can never trap the athlete in a
@@ -278,9 +287,10 @@ Ui :: [].{
 		# have, the view opens where Geo.opening puts it
 		map_cam : Geo.Cam,
 		map_moved : Bool,
-		# the cursor's last position while the left button holds a drag that
-		# began on the map
-		map_drag : [Idle, Held({ x : F32, y : F32 })],
+		# the left button held on a press that began on the map (Map.press_step)
+		map_drag : MapPress,
+		# the card a click on a route opened (Map.act)
+		map_card : MapCard,
 		# the map's offscreen picture, sized to the window's pixels and
 		# allocated the first time the view shows. Refused remembers the size
 		# the GPU refused at, so a resize earns one fresh attempt; without a

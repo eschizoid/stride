@@ -372,7 +372,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1479)?
+	checks_ran_exactly!(1481)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2673,14 +2673,14 @@ b_seed_analyze! = |ctx| {
 	check!("...and every site that names a unit converts the number beside it, checked in source", units_static == "examined=19 formatted=13 unconverted=0")?
 	# The window's own half of the same rule. `src/cli/*.roc` above is non-recursive
 	# on purpose, so src/viz never enters that sweep; since the window converts
-	# (career card, pace spine, day-detail line) it needs its own pins. Two
-	# counters: `sites` is the exact count of lines calling a core.Units
-	# conversion or the pace label helper - a deleted call while the number
-	# beside it survives drops the count and fails loud - and `literals` is
-	# zero lines carrying a hardcoded metric unit string, the regression that
-	# motivated the sweep. Comment lines are skipped the same way as above.
+	# (career card, pace spine, day-detail line, the map's route card) it needs
+	# its own pins. Two counters: `sites` is the exact count of lines calling a
+	# core.Units conversion or the pace label helper - a deleted call while the
+	# number beside it survives drops the count and fails loud - and `literals`
+	# is zero lines carrying a hardcoded metric unit string. Comment lines are
+	# skipped the same way as above.
 	viz_units_static = Str.trim(sh!("s=0; l=0; for f in src/viz/*.roc; do while read -r ln; do case \"$ln\" in \\#*) continue;; esac; case \"$ln\" in expect*) continue;; esac; case \"$ln\" in *'Units.dist_value('*|*'Units.dist_unit('*|*'Units.pace_from_speed('*|*'Units.pace_per_dist('*|*'pace_label_for('*) s=$((s+1));; esac; case \"$ln\" in *'km\"'*|*'\" km'*|*'/km'*|*'min/km'*) l=$((l+1));; esac; done < $f; done; echo \"sites=$s literals=$l\""))
-	check!("the window names distance and pace units through core.Units, never a literal", viz_units_static == "sites=10 literals=0")?
+	check!("the window names distance and pace units through core.Units, never a literal", viz_units_static == "sites=13 literals=0")?
 	check!("coverage tiers discriminate (high and medium both live)", strjq!(ctx, ["summary"], ".data.last_28d.load_coverage | (.high_pct > 0) and (.medium_pct > 0)") == "true")?
 	check!("form coverage carries the 90d window", strjq!(ctx, ["summary"], ".data.form_coverage_90d | (.high_pct + .medium_pct + .low_pct == 100) and ((.known | type) == \"boolean\")") == "true")?
 	# with fixtures loaded TSB is known, so the enum arm is required here; the
@@ -8113,6 +8113,11 @@ b_viz_caps! = |ctx| {
 	check!("a focus table from before the identity columns reads them empty, the row still present", strjq!(ctx, ["viz"], ".data.focus | (.present | tostring) + \"/\" + (.detail_day | tojson) + \"/\" + (.sport | tojson) + \"/\" + (.family | tojson)") == "true/\"\"/\"\"/\"\"")?
 	_ = sql!(ctx.db, "ALTER TABLE viz_focus ADD COLUMN detail_day TEXT; ALTER TABLE viz_focus ADD COLUMN sport TEXT; ALTER TABLE viz_focus ADD COLUMN family TEXT; UPDATE viz_focus SET detail_day = '2099-01-02', sport = 'Ride', family = 'Rowing';")
 	check!("...and once the window writes them they are served beside the ids", strjq!(ctx, ["viz"], ".data.focus | .detail_day + \"/\" + .sport + \"/\" + .family + \"/\" + (.trace_id | tostring)") == "2099-01-02/Ride/Rowing/4242")?
+	# the session the map's card is up for, read -1 from a table without its
+	# column and served once the window writes it
+	check!("a focus table without map_id reads it -1", strjq!(ctx, ["viz"], ".data.focus.map_id | tostring") == "-1")?
+	_ = sql!(ctx.db, "ALTER TABLE viz_focus ADD COLUMN map_id INTEGER; UPDATE viz_focus SET map_id = 777;")
+	check!("...and once the window writes it the card's session is served", strjq!(ctx, ["viz"], ".data.focus.map_id | tostring") == "777")?
 	_ = sql!(ctx.db, "UPDATE viz_focus SET updated_at = datetime('now', '-1000 seconds');")
 	check!("a row older than the focus staleness is present but not live", strjq!(ctx, ["viz"], ".data.focus | (.present | tostring) + \"/\" + (.live | tostring)") == "true/false")?
 	# the boundary is inclusive. The write stamps one clock and the read
@@ -8240,7 +8245,7 @@ b_viz_tick! = |ctx| {
 	_ = strjq!(ctx, ["viz", "tick"], ".data.found")
 	cols2 = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_directives');")
 	fcols = sql!(ctx.db, "SELECT group_concat(name, ' ') FROM pragma_table_info('viz_focus');")
-	check!("a bus from before the id columns gains them on the next tick, both tables", Str.contains(cols2, "capture") and Str.contains(cols2, "result") and Str.contains(cols2, "trace_id") and Str.contains(cols2, "ghost_id") and Str.contains(fcols, "trace_id") and Str.contains(fcols, "ghost_id") and Str.contains(fcols, "detail_day") and Str.contains(fcols, "sport") and Str.contains(fcols, "family") and Str.contains(fcols, "curve_family") and Str.contains(fcols, "curve_short") and Str.contains(cols2, " family") and Str.contains(cols2, " short"))?
+	check!("a bus from before the id columns gains them on the next tick, both tables", Str.contains(cols2, "capture") and Str.contains(cols2, "result") and Str.contains(cols2, "trace_id") and Str.contains(cols2, "ghost_id") and Str.contains(fcols, "trace_id") and Str.contains(fcols, "ghost_id") and Str.contains(fcols, "detail_day") and Str.contains(fcols, "sport") and Str.contains(fcols, "family") and Str.contains(fcols, "curve_family") and Str.contains(fcols, "curve_short") and Str.contains(fcols, "map_id") and Str.contains(cols2, " family") and Str.contains(cols2, " short"))?
 	# a focus table the previous builds created - every column through the
 	# ids, none of the identity columns - gains all four on the next tick
 	_ = sql!(ctx.db, "ALTER TABLE viz_focus DROP COLUMN curve_family; ALTER TABLE viz_focus DROP COLUMN family; ALTER TABLE viz_focus DROP COLUMN sport; ALTER TABLE viz_focus DROP COLUMN detail_day;")
