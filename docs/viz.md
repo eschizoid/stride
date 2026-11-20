@@ -262,7 +262,10 @@ placer, larger kinds first, held off every other name, the view's own text
 and the chrome; no spot is taken where a route is drawn. They are part of
 the cached picture, painted between the tiles and the routes, so they cost
 nothing between repaints, slide with the picture mid-drag, and sit under
-the routes, heat and play's markers.
+the routes, heat and play's markers. A route's card, drawn over the
+picture, is held clear of them too: the picture is repainted when a card
+opens, moves or closes, and the names make room for it and take the room
+back.
 
 The map opens fitted to the routes. When they span more than the widest zoom
 shows, as a single trip abroad

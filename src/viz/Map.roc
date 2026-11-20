@@ -436,7 +436,10 @@ Map :: [].{
 	# MapNames clear of the routes and held off everything the view writes:
 	# the chrome, the title, the chips, the hint and the note in the map's
 	# corner, which in playback is the clock at the longest it reads, since
-	# the clock ticks while the picture holds still.
+	# the clock ticks while the picture holds still; and off the route card
+	# while one is up, which draws over the picture, so no name runs under
+	# its edge. The picture is repainted when the card opens, moves or
+	# closes (card_key), so the names make room for it and take it back.
 	names : Ui.Model, Geo.Cam, Scene.Measure -> List(Labels.Placed(MapNames.Item))
 	names = |model, c, measure| {
 		runs = name_runs(model, c)
@@ -446,7 +449,11 @@ Map :: [].{
 			r = rect(model.win)
 			g = MapNames.grid(r, route_lines(model, c), |p| Geo.to_screen(c, r, p))
 			clock = if (model.view == 12) [{ x: r.x + 14.0, y: r.y + 14.0, w: measure(clock_text(longest(model)), 12.0, Data), h: 12.0 }] else []
-			held = List.join([Chrome.boxes(model, measure), List.map(scene(model, measure), |p| p.box), clock])
+			on_card = match card(model, measure) {
+				Ok(cd) => [cd.box]
+				Err(_) => []
+			}
+			held = List.join([Chrome.boxes(model, measure), List.map(scene(model, measure), |p| p.box), clock, on_card])
 			MapNames.place(runs, c.mpp, measure, r, g, { boxes: held, segs: [] })
 		}
 	}
@@ -920,6 +927,23 @@ Map :: [].{
 		}
 	}
 
+	# what of a card the picture's names are placed around: its session, its
+	# state and the point it was opened at, to the metre; "" with none up
+	card_key : Ui.MapCard -> Str
+	card_key = |cd|
+		match cd {
+			Closed => ""
+			Open(o) => {
+				st = match o.state {
+					Ready => "ready"
+					Opening => "opening"
+					NoTrace => "no trace"
+				}
+				metres = |v| I64.to_str((F32.to_i64_try(F32.div_floor_by(v, 1.0))) ?? 0)
+				"${I64.to_str(o.id)} ${st} ${metres(o.at.x)} ${metres(o.at.y)}"
+			}
+		}
+
 	# whether Esc closes the card rather than the window
 	card_up : Ui.Model -> Bool
 	card_up = |model| is_map(model.view) and picked(model).is_ok()
@@ -1268,3 +1292,14 @@ expect Str.contains(Db.route_page_sql, "CASE WHEN COALESCE(a.device_watts, 1) <>
 # three of its pixels to a logical unit, one of an ordinary display one
 # and a half, and a window with no width falls back to the UI scale
 expect (Map.picture_zoom(2940.0, 980.0, 1.5) - 3.0).abs() < 0.001 and (Map.picture_zoom(1470.0, 980.0, 1.5) - 1.5).abs() < 0.001 and (Map.picture_zoom(2940.0, 0.0, 1.5) - 1.5).abs() < 0.001
+
+# a card's key changes when it opens, closes, changes state or opens on
+# another session or at another point, and holds while it does not
+expect {
+	up = Open({ id: 4, at: { x: 120.4, y: -30.2 }, state: Ready })
+	Map.card_key(Closed) == "" and Map.card_key(up) == "4 ready 120 -31"
+		and Map.card_key(Open({ id: 4, at: { x: 120.9, y: -30.7 }, state: Ready })) == Map.card_key(up)
+		and Map.card_key(Open({ id: 4, at: { x: 120.4, y: -30.2 }, state: NoTrace })) != Map.card_key(up)
+		and Map.card_key(Open({ id: 5, at: { x: 120.4, y: -30.2 }, state: Ready })) != Map.card_key(up)
+		and Map.card_key(Open({ id: 4, at: { x: 140.0, y: -30.2 }, state: Ready })) != Map.card_key(up)
+}

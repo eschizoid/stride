@@ -1041,6 +1041,10 @@ Gate :: [].{
 		}
 	}
 
+	# the model with the fixture route's card up, opened at a point on screen
+	with_card : Ui.Model, F32, F32 -> Ui.Model
+	with_card = |m, sx, sy| { ..m, map_card: Open({ id: route_session.id, at: Geo.to_world(Map.cam(m), Map.rect(m.win), sx, sy), state: Ready }) }
+
 	# the map with its names drawn on every tile, at the camera given, or at
 	# the opening when it is Map.unpainted
 	with_names : Ui.Model, Geo.Cam -> Ui.Model
@@ -1056,14 +1060,16 @@ Gate :: [].{
 
 	# the map with routes and no tiles yet, while the tiles are fetched;
 	# with its tiles drawn; with a tile of names drawn on every cell, at
-	# the opening, wide, at street level, in playback with its clock, and
-	# with a note in the map's corner; with its tiles failed and the source
-	# unreachable, offline; in playback with a cache it cannot write, whose
-	# message is longer than the map is wide; with a route an ocean from the
-	# rest, in heat, in playback with its clock and with no route to play,
-	# with no route at all, while it loads, and with a read that failed
-	# whose message is longer than the map is wide, for every athlete at
-	# every size
+	# the opening, wide, at street level, in playback with its clock, with
+	# a note in the map's corner, and with a route's card up at the map's
+	# middle, its top left corner, its right edge and its bottom right
+	# corner, where the card is held inside the map; with its tiles failed
+	# and the source unreachable, offline; in playback with a cache it
+	# cannot write, whose message is longer than the map is wide; with a
+	# route an ocean from the rest, in heat, in playback with its clock and
+	# with no route to play, with no route at all, while it loads, and with
+	# a read that failed whose message is longer than the map is wide, for
+	# every athlete at every size
 	map_models : List({ name : Str, model : Ui.Model })
 	map_models =
 		List.join(
@@ -1082,6 +1088,10 @@ Gate :: [].{
 								{ name: "${a.name} map with its names at street level at ${size_name(sz)}", model: with_names(base, { ..Map.cam(base), mpp: 1.0 }) },
 								{ name: "${a.name} map playback with its names at ${size_name(sz)}", model: with_names({ ..base, view: 12, map_play: { secs: 125.0, paused: Bool.False } }, Map.unpainted) },
 								{ name: "${a.name} map with its names and a cache it cannot write at ${size_name(sz)}", model: with_names({ ..base, map_cache_err: Str.repeat("could not keep a street-map tile: ", 6) }, Map.unpainted) },
+								{ name: "${a.name} map with its names and a card at the middle at ${size_name(sz)}", model: with_names(with_card(base, Map.rect(base.win).x + Map.rect(base.win).w / 2.0, Map.rect(base.win).y + Map.rect(base.win).h / 2.0), Map.unpainted) },
+								{ name: "${a.name} map with its names and a card at the top left at ${size_name(sz)}", model: with_names(with_card(base, Map.rect(base.win).x + 1.0, Map.rect(base.win).y + 1.0), Map.unpainted) },
+								{ name: "${a.name} map with its names and a card at the right edge at ${size_name(sz)}", model: with_names(with_card(base, Map.rect(base.win).x + Map.rect(base.win).w - 1.0, Map.rect(base.win).y + Map.rect(base.win).h / 2.0), Map.unpainted) },
+								{ name: "${a.name} map with its names and a card at the bottom right at ${size_name(sz)}", model: with_names(with_card(base, Map.rect(base.win).x + Map.rect(base.win).w - 1.0, Map.rect(base.win).y + Map.rect(base.win).h - 1.0), Map.unpainted) },
 								{ name: "${a.name} map offline at ${size_name(sz)}", model: with_tiles(base, Failed(0), Unreachable(0)) },
 								{ name: "${a.name} map with a cache it cannot write at ${size_name(sz)}", model: { ..base, view: 12, map_cache_err: Str.repeat("could not keep a street-map tile: ", 6) } },
 								{ name: "${a.name} map without routes at ${size_name(sz)}", model: { ..base, map: Db.no_map } },
@@ -1564,15 +1574,18 @@ expect Gate.failures(|m| Gate.judge(Map.owned(m, Gate.builtin_measure), Map.mark
 # the window falls back to without them
 expect Gate.failures(|m| Gate.card_judge(m, Gate.measure), Gate.card_models) == []
 expect Gate.failures(|m| Gate.card_judge(m, Gate.builtin_measure), Gate.card_models) == []
+
 # the name models hold names in both faces, and the gate above judges them,
 # each placed name being among the boxes the view owns: the opening and
 # playback name places and streets, a street turned among them; the wide
 # view names its cities and towns alone; street level names streets, turned
-# ones among them, and no city; and the bent road is named nowhere
+# ones among them, and no city; and the bent road is named nowhere. The
+# models with a card up, which takes room from the names, are judged by the
+# check below.
 expect List.all(
 	[Gate.measure, Gate.builtin_measure],
 	|measure| List.all(
-		List.keep_if(Gate.map_models, |e| Str.contains(e.name, "with its names") and Str.ends_with(e.name, " at ${Gate.size_name(Gate.default_size)}")),
+		List.keep_if(Gate.map_models, |e| Str.contains(e.name, "with its names") and !(Str.contains(e.name, "and a card")) and Str.ends_with(e.name, " at ${Gate.size_name(Gate.default_size)}")),
 		|e| {
 			ns = List.map(Map.names(e.model, Map.cam(e.model), measure), |p| { text: p.item.item.text, turned: p.item.angle != 0.0 })
 			keys = List.map(Map.owned(e.model, measure), |o| o.key)
@@ -1587,6 +1600,27 @@ expect List.all(
 					turned and (named("Chicago") or named("Pilsen") or named("Ukrainian Village")) and List.any(ns, |n| Str.ends_with(n.text, "Road") or Str.ends_with(n.text, "Avenue") or Str.ends_with(n.text, "Street"))
 				}
 			shape and !(named("Lake Shore Drive")) and List.all(ns, |n| List.contains(keys, "'${n.text}'"))
+		},
+	),
+)
+
+# a card up over a map of names, at the middle and held inside the map at
+# its edges, is judged with them, in both faces at every size: the view's
+# text, the names and the card's lines hold no two boxes overlapping and
+# none outside its region, and no name covers the card
+expect List.all(
+	[Gate.measure, Gate.builtin_measure],
+	|measure| List.all(
+		List.keep_if(Gate.map_models, |e| Str.contains(e.name, "with its names and a card")),
+		|e| {
+			ns = Map.names(e.model, Map.cam(e.model), measure)
+			match Map.card(e.model, measure) {
+				Ok(cd) => {
+					lines = Scene.owned(Labels.place(cd.lines, { boxes: [], segs: [] }))
+					!(List.is_empty(ns)) and Labels.check(List.concat(Map.owned(e.model, measure), lines)) == [] and Labels.covers(MapNames.owned(ns), [{ key: "the card", box: cd.box }]) == []
+				}
+				Err(_) => Bool.False
+			}
 		},
 	),
 )
