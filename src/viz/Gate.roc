@@ -274,9 +274,9 @@ Gate :: [].{
 
 	# ── the power view's targets around the threshold ───────────────────────
 	# Every 30- and 90-day folded curve fixture at the default window, with
-	# targets at each rung at 8% under, at and 8% over the threshold: one
-	# target alone, and two a step apart on different days, which share a
-	# ring.
+	# targets at 8% under, at and 8% over the threshold: at each rung one
+	# target alone and two a step apart on different days, which share a
+	# ring; and one target at every rung at once, each its own ring.
 	threshold_models : List({ name : Str, model : Ui.Model })
 	threshold_models =
 		List.join(
@@ -287,20 +287,17 @@ Gate :: [].{
 					pace_thr = (List.first(c.model.pace_targets)).ok_or({ day: "", typ: "", reps: 0, dur_s: 0, dist_m: 0, pace_s: 0, unit: "" })
 					List.join(
 						List.map(
-							c.model.prs,
-							|pr| List.join(
-								List.map(
-									[0.92, 1.0, 1.08],
-									|f| {
-										w = round_i(thr_w * f)
-										pace_s = round_i(I64.to_f32(pace_thr.pace_s) / (0.95 * f))
-										power = |ws| List.map_with_index(ws, |v, i| { day: "2026-11-2${U64.to_str(i + 1)}", typ: "threshold", reps: 3, dur_s: pr.secs, watts: v })
-										pace = |ps| List.map_with_index(ps, |p, i| { ..pace_thr, day: "2026-11-2${U64.to_str(i + 1)}", dur_s: pr.secs, dist_m: 0, pace_s: p })
-										at = |tag, ws, ps| { name: "${c.name} ${tag} at ${pr.rung} x${Db.fmt_f(f)}", model: { ..c.model, plan_targets: power(ws), pace_targets: pace(ps) } }
-										[at("one target", [w], [pace_s]), at("two targets", [w, w + 2], [pace_s, pace_s - 1])]
-									},
-								),
-							),
+							[0.92, 1.0, 1.08],
+							|f| {
+								w = round_i(thr_w * f)
+								p = round_i(I64.to_f32(pace_thr.pace_s) / (0.95 * f))
+								# each target on its own day, as a power and a pace target
+								power = |ts| List.map_with_index(ts, |t, i| { day: "2026-11-${U64.to_str(10 + i)}", typ: "threshold", reps: 3, dur_s: t.secs, watts: t.w })
+								pace = |ts| List.map_with_index(ts, |t, i| { ..pace_thr, day: "2026-11-${U64.to_str(10 + i)}", dur_s: t.secs, dist_m: 0, pace_s: t.p })
+								at = |tag, ts| { name: "${c.name} ${tag} x${Db.fmt_f(f)}", model: { ..c.model, plan_targets: power(ts), pace_targets: pace(ts) } }
+								per_rung = List.join(List.map(c.model.prs, |pr| [at("one target at ${pr.rung}", [{ secs: pr.secs, w, p }]), at("two targets at ${pr.rung}", [{ secs: pr.secs, w, p }, { secs: pr.secs, w: w + 2, p: p - 1 }])]))
+								List.append(per_rung, at("one target at every rung", List.map(c.model.prs, |pr| { secs: pr.secs, w, p })))
+							},
 						),
 					)
 				},
@@ -1379,14 +1376,16 @@ expect {
 	}
 }
 
-# a ring's lifted labels move nothing: over every power-view fixture in the
-# shipped faces and the built-in one, and every target around the
-# threshold in the shipped faces, each label the placer gives a spot keeps
-# it, only ring labels are added, a ring's added labels stack in date
-# order, the label gate passes the scene, and no ring label is left without
-# a spot; the threshold targets lift labels, alone and in stacks
+# a ring's lifted labels move nothing and keep apart: over every power-view
+# fixture and every target at every rung at once, in the shipped faces and
+# the built-in one, and every target around the threshold in the shipped
+# faces, each label the placer gives a spot keeps it, only ring labels are
+# added, a ring's added labels stack in date order, the label gate passes
+# the scene, and no ring label is left without a spot; the threshold
+# targets lift labels, alone and in stacks
 expect {
-	runs = List.concat(List.map(Gate.curve_models, |f| { f, ms: Gate.builtin_measure }), List.map(List.concat(Gate.curve_models, Gate.threshold_models), |f| { f, ms: Gate.measure }))
+	every = List.keep_if(Gate.threshold_models, |f| Str.contains(f.name, "at every rung"))
+	runs = List.concat(List.map(List.concat(Gate.curve_models, every), |f| { f, ms: Gate.builtin_measure }), List.map(List.concat(Gate.curve_models, Gate.threshold_models), |f| { f, ms: Gate.measure }))
 	checks = List.map(runs, |r| { name: r.f.name, c: Gate.ring_check(r.f.model, r.ms) })
 	fails = List.join(List.map(checks, |e| List.map(e.c.fails, |s| "${e.name}: ${s}")))
 	total = List.fold(checks, { lifted: 0, stacked: 0, dropped: 0 }, |a, e| { lifted: a.lifted + e.c.lifted, stacked: a.stacked + e.c.stacked, dropped: a.dropped + e.c.dropped })
