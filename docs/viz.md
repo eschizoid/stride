@@ -228,8 +228,11 @@ offline; the window holds the last 64 tiles it was asked for decoded, and
 one dropped from those is read and decoded again from the cache. The table is
 held to 64 MB: after each store the most recently used tiles are kept while
 their bytes fit, and every older one is deleted. A read marks a tile used,
-writing that mark at most once an hour. The window creates the table, is its
-only reader
+writing that mark at most once an hour. A table without the last-use
+column gains it, its tiles kept. A tile that cannot be stored, or a trim
+that fails, is still drawn, and the map names the failure in the colour of a
+failed read until a later store succeeds. The window creates the table, is
+its only reader
 and writer, and fetches nothing but these tiles and that document, from the
 one origin it declares. While no tile of the view can be drawn, the ways
 `stride basemap` stored in `map_ways` draw instead, if there are any; with

@@ -308,5 +308,8 @@ Ui :: [].{
 		# the map was read); main's plan_now says when a frame plans again
 		map_planned : { cam : Geo.Cam, tick : U64 },
 		map_plan_due : Bool,
+		# why the last tile the window fetched could not be kept in the
+		# cache, "" once one has been
+		map_cache_err : Str,
 	}
 }

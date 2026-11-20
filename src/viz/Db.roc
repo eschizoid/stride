@@ -2230,22 +2230,57 @@ Db :: [].{
 		}
 	}
 
-	# A tile stored, then the table held to its budget. A tile the store
-	# could not write is still drawn by its caller, and a trim that fails
-	# leaves the table as it was, to be trimmed by the next store.
-	store_tile! : Sqlite.Db, Tiles.Key, Str, List(U8) => Try({}, [NotStored])
-	store_tile! = |db, k, build, data| {
-		_ = db.execute!(tiles_ddl, [])
-		match db.execute!(tile_store_sql, List.concat(tile_bindings(k), [{ name: ":b", value: String(build) }, { name: ":d", value: Bytes(data) }])) {
-			Ok(_) => {
-				trim_tiles!(db, Tiles.cache_budget)
-				Ok({})
-			}
-			Err(_) => Err(NotStored)
+	# the table's columns as SQLite reports them
+	tile_columns_sql : Str
+	tile_columns_sql = "SELECT CAST(name AS TEXT) AS c FROM pragma_table_info('map_tiles')"
+
+	# What brings a map_tiles of an older shape up to tiles_ddl's: a table
+	# made before the cache recorded last use lacks `used`, and CREATE TABLE
+	# IF NOT EXISTS leaves an existing table as it is, so the column is
+	# added, every row reading as never used and so the first to go. The
+	# cached tiles are kept: the column is the only difference.
+	tiles_upgrade : List(Str) -> List(Str)
+	tiles_upgrade = |columns| if (List.contains(columns, "used")) [] else ["ALTER TABLE map_tiles ADD COLUMN used INTEGER NOT NULL DEFAULT 0"]
+
+	# the cache's failures, named for the athlete
+	cache_err : Str, [SqliteErr(_, Str), ResultTooLarge, MultipleStatements, RowsReturnedUseQueryInstead] -> Str
+	cache_err = |what, e|
+		match e {
+			SqliteErr(_, msg) => "could not ${what}: ${msg}"
+			_ => "could not ${what}"
 		}
+
+	# The table made and brought to the current shape (tiles_upgrade).
+	ensure_tiles! : Sqlite.Db => Try({}, Str)
+	ensure_tiles! = |db| {
+		_ = db.execute!(tiles_ddl, []).map_err(|e| cache_err("make the street-map cache", e))?
+		columns = match db.query!(tile_columns_sql, []) {
+			Ok(rs) => List.keep_oks(rs, |r| r.str("c"))
+			Err(e) => return Err(cache_err("read the street-map cache's shape", e))
+		}
+		var $out = Ok({})
+		for sql in tiles_upgrade(columns) {
+			match db.execute!(sql, []) {
+				Ok(_) => {}
+				Err(e) => {
+					$out = Err(cache_err("update the street-map cache", e))
+				}
+			}
+		}
+		$out
 	}
 
-	trim_tiles! : Sqlite.Db, U64 => {}
+	# A tile stored, then the table held to its budget. A failure of either
+	# is answered by name, for the map to show; its caller still draws the
+	# tile, and a trim that fails leaves the table to the next store.
+	store_tile! : Sqlite.Db, Tiles.Key, Str, List(U8) => Try({}, Str)
+	store_tile! = |db, k, build, data| {
+		ensure_tiles!(db)?
+		_ = db.execute!(tile_store_sql, List.concat(tile_bindings(k), [{ name: ":b", value: String(build) }, { name: ":d", value: Bytes(data) }])).map_err(|e| cache_err("keep a street-map tile", e))?
+		trim_tiles!(db, Tiles.cache_budget)
+	}
+
+	trim_tiles! : Sqlite.Db, U64 => Try({}, Str)
 	trim_tiles! = |db, budget|
 		match db.query!(tile_sizes_sql, []) {
 			Ok(rs) => {
@@ -2260,15 +2295,18 @@ Db :: [].{
 						Ok({ key: { z: I64.to_u64_wrap(z), x: I64.to_u64_wrap(x), y: I64.to_u64_wrap(y) }, bytes: I64.to_u64_wrap(n), used: u })
 					},
 				)
-				List.for_each!(
-					Tiles.evicted(rows, budget),
-					|k| {
-						_ = db.execute!(tile_drop_sql, tile_bindings(k))
-						{}
-					},
-				)
+				var $out = Ok({})
+				for k in Tiles.evicted(rows, budget) {
+					match db.execute!(tile_drop_sql, tile_bindings(k)) {
+						Ok(_) => {}
+						Err(e) => {
+							$out = Err(cache_err("trim the street-map cache", e))
+						}
+					}
+				}
+				$out
 			}
-			Err(_) => {}
+			Err(e) => Err(cache_err("trim the street-map cache", e))
 		}
 }
 # the tile cache's statements and their bindings agree: every placeholder
@@ -2409,4 +2447,14 @@ expect {
 		(Ok(r), Ok(w)) => r.ts == times and List.len(r.fts) == List.len(r.far) and List.first(r.fts) == Ok(0.0) and List.last(r.fts) == Ok(147.0) and List.get(r.fts, 1) == Ok(9.0) and List.map(r.runs, |x| x.band) == [2] and List.map(r.runs, |x| x.pts) == [r.pts] and List.map(r.fruns, |x| x.pts) == [r.far] and List.is_empty(w.ts) and List.is_empty(w.fts) and List.is_empty(w.runs) and List.is_empty(w.fruns)
 		_ => Bool.False
 	}
+}
+
+# a map_tiles made before last use was recorded gains the column, its rows
+# kept, and one of the current shape is left as it is; the column added is
+# the one the store and the trim read
+expect {
+	old = ["z", "x", "y", "build", "fetched", "data"]
+	up = Db.tiles_upgrade(old)
+	up == ["ALTER TABLE map_tiles ADD COLUMN used INTEGER NOT NULL DEFAULT 0"] and Db.tiles_upgrade(List.append(old, "used")) == []
+		and Str.contains(Db.tiles_ddl, "used INTEGER NOT NULL") and Str.contains(Db.tile_sizes_sql, "used AS u")
 }

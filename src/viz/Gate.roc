@@ -500,6 +500,7 @@ Gate :: [].{
 			map_source: Unasked,
 			map_planned: { cam: Map.unpainted, tick: 0 },
 			map_plan_due: Bool.True,
+			map_cache_err: "",
 			mouse_in: Bool.False,
 			cursor: -1,
 		}
@@ -934,11 +935,12 @@ Gate :: [].{
 
 	# the map with routes and streets; with routes and neither stored ways
 	# nor tiles yet, while the tiles are fetched; with its tiles drawn; with
-	# its tiles failed and the source unreachable, offline; with a route an
-	# ocean from the rest, in heat, in playback with its clock and with no
-	# route to play, with no route at all, while it loads, and with a read
-	# that failed whose message is longer than the map is wide, for every
-	# athlete at every size
+	# its tiles failed and the source unreachable, offline; in playback with
+	# a cache it cannot write, whose message is longer than the map is wide;
+	# with a route an ocean from the rest, in heat, in playback with its
+	# clock and with no route to play, with no route at all, while it loads,
+	# and with a read that failed whose message is longer than the map is
+	# wide, for every athlete at every size
 	map_models : List({ name : Str, model : Ui.Model })
 	map_models =
 		List.join(
@@ -954,6 +956,7 @@ Gate :: [].{
 								{ name: "${a.name} map without streets at ${size_name(sz)}", model: { ..base, map: { ..map_fixture, ways: [] } } },
 								{ name: "${a.name} map with its tiles at ${size_name(sz)}", model: with_tiles({ ..base, map: { ..map_fixture, ways: [] } }, Drawn(Mvt.empty), Known("t")) },
 								{ name: "${a.name} map offline at ${size_name(sz)}", model: with_tiles({ ..base, map: { ..map_fixture, ways: [] } }, Failed(0), Unreachable(0)) },
+								{ name: "${a.name} map with a cache it cannot write at ${size_name(sz)}", model: { ..base, view: 12, map_cache_err: Str.repeat("could not keep a street-map tile: ", 6) } },
 								{ name: "${a.name} map without routes at ${size_name(sz)}", model: { ..base, map: Db.no_map } },
 								{ name: "${a.name} map with a route an ocean away at ${size_name(sz)}", model: { ..base, map: madrid_fixture } },
 								{ name: "${a.name} map heat at ${size_name(sz)}", model: { ..base, view: 11 } },
@@ -1325,3 +1328,16 @@ expect (Gate.builtin_measure("playback - every session at once, an hour in 30 se
 # the window falls back to without its brand fonts, which runs wider: the
 # title and every note still keep apart
 expect Gate.failures(|m| Gate.judge(Map.owned(m, Gate.builtin_measure), Map.marks(m, Gate.builtin_measure)), List.keep_if(Gate.map_models, |e| Str.ends_with(e.name, " at ${Gate.size_name(Gate.default_size)}"))) == []
+
+# a cache the window cannot write is named on the map in place of the
+# playback clock, and a map whose cache works names nothing
+expect List.all(
+	Gate.sizes,
+	|sz| {
+		base = { ..Gate.empty_model(sz), view: 12, map: Gate.map_fixture }
+		said = |m| List.map(Map.owned(m, Gate.measure), |o| o.key)
+		failing = said({ ..base, map_cache_err: "could not keep a street-map tile: disk I/O error" })
+		List.contains(failing, "'could not keep a street-map tile: disk I/O error'") and !(List.any(failing, |k| Str.contains(k, "into each session")))
+			and !(List.any(said(base), |k| Str.contains(k, "could not")))
+	},
+)

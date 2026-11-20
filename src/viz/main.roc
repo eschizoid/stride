@@ -531,6 +531,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		map_source: Unasked,
 		map_planned: { cam: Map.unpainted, tick: 0 },
 		map_plan_due: Bool.True,
+		map_cache_err: "",
 		ramp_title: mk!(Ramp.title_text, 15)?,
 		ramp_hint: mk!(Ramp.hint_text, 13)?,
 		zones_title: mk!(Zones.title_text, 15)?,
@@ -719,25 +720,43 @@ map_on_reload = |l|
 map_on_landing : Bool -> [Unloaded, Loading, Loaded]
 map_on_landing = |stale| if (stale) Unloaded else Loaded
 
+# how a tile task's store went: no store tried, the tile kept, or why it
+# could not be
+CacheWrite : [Untouched, Stored, Failed(Str)]
+
 # A tile's answer lands in its slot (Tiles.land) and has the tiles planned
 # again. One that brings a tile repaints the picture, so the view sharpens
-# as each arrives; one that brings none leaves the picture as it is.
-tile_landed : Ui.Model, Tiles.Answer, U64 -> Ui.Model
-tile_landed = |m, ans, tick|
+# as each arrives; one that brings none leaves the picture as it is. A
+# store that failed is named on the map until a later store succeeds, so a
+# cache that cannot be written shows rather than being fetched into again
+# and again.
+tile_landed : Ui.Model, Tiles.Answer, CacheWrite, U64 -> Ui.Model
+tile_landed = |m0, ans, cache, tick| {
+	m = match cache {
+		Untouched => m0
+		Stored => { ..m0, map_cache_err: "" }
+		Failed(e) => { ..m0, map_cache_err: e }
+	}
 	match ans {
 		Read(_) => { ..m, map_tiles: Tiles.land(m.map_tiles, ans, tick), map_painted: Map.unpainted, map_plan_due: Bool.True }
 		Absent(_) => { ..m, map_tiles: Tiles.land(m.map_tiles, ans, tick), map_plan_due: Bool.True }
 	}
+}
 
 # a tile that lands is drawn and repaints the picture; a miss is recorded
-# and repaints nothing; either has the tiles planned again
+# and repaints nothing; either has the tiles planned again. A failed store
+# is named, a later store clears it, and an answer with no store leaves it
 expect {
 	k = { z: 9, x: 130, y: 189 }
 	painted = { cx: 1.0, cy: 2.0, mpp: 3.0 }
 	m = { ..Gate.empty_model({ w: 980.0, h: 600.0 }), map_painted: painted, map_plan_due: Bool.False, map_tiles: [{ key: k, state: Fetching, refresh: Done, used: 0 }] }
-	read = tile_landed(m, Read({ key: k, tile: Mvt.empty, fresh: Bool.True, tried: Bool.True }), 7)
-	miss = tile_landed(m, Absent({ key: k, tried: Bool.True }), 7)
+	got = Read({ key: k, tile: Mvt.empty, fresh: Bool.True, tried: Bool.True })
+	read = tile_landed(m, got, Untouched, 7)
+	miss = tile_landed(m, Absent({ key: k, tried: Bool.True }), Untouched, 7)
+	failed = tile_landed(m, got, Failed("could not keep a street-map tile: disk I/O error"), 7)
 	read.map_painted == Map.unpainted and Tiles.drawn(read.map_tiles, k) == Ok(Mvt.empty) and miss.map_painted == painted and List.map(miss.map_tiles, |s| s.state) == [Failed(7)] and read.map_plan_due and miss.map_plan_due
+		and failed.map_cache_err == "could not keep a street-map tile: disk I/O error" and Tiles.drawn(failed.map_tiles, k) == Ok(Mvt.empty)
+		and (tile_landed(failed, got, Untouched, 8)).map_cache_err == failed.map_cache_err and (tile_landed(failed, got, Stored, 8)).map_cache_err == ""
 }
 
 # R during a read never starts a second one; the read that lands then
@@ -786,21 +805,22 @@ tile_task! = |acc, k, template| {
 			}
 		Err(_) => Err(Absent)
 	}
+	untouched = |a| TileAnswer({ ans: a, cache: Untouched })
 	match copy {
-		Ok(cp) if cp.fresh => TileAnswer(Read({ key: k, tile: cp.tile, fresh: Bool.True, tried: Bool.False }))
+		Ok(cp) if cp.fresh => untouched(Read({ key: k, tile: cp.tile, fresh: Bool.True, tried: Bool.False }))
 		_ =>
 			if template == "" {
 				match copy {
-					Ok(cp) => TileAnswer(Read({ key: k, tile: cp.tile, fresh: Bool.False, tried: Bool.False }))
-					Err(_) => TileAnswer(Absent({ key: k, tried: Bool.False }))
+					Ok(cp) => untouched(Read({ key: k, tile: cp.tile, fresh: Bool.False, tried: Bool.False }))
+					Err(_) => untouched(Absent({ key: k, tried: Bool.False }))
 				}
 			} else {
 				match fetch_tile!(acc, template, k) {
-					Ok(t) => TileAnswer(Read({ key: k, tile: t, fresh: Bool.True, tried: Bool.True }))
+					Ok(f) => TileAnswer({ ans: Read({ key: k, tile: f.tile, fresh: Bool.True, tried: Bool.True }), cache: f.cache })
 					Err(_) =>
 						match copy {
-							Ok(cp) => TileAnswer(Read({ key: k, tile: cp.tile, fresh: Bool.False, tried: Bool.True }))
-							Err(_) => TileAnswer(Absent({ key: k, tried: Bool.True }))
+							Ok(cp) => untouched(Read({ key: k, tile: cp.tile, fresh: Bool.False, tried: Bool.True }))
+							Err(_) => untouched(Absent({ key: k, tried: Bool.True }))
 						}
 				}
 			}
@@ -808,9 +828,10 @@ tile_task! = |acc, k, template| {
 }
 
 # A tile from the network, its answer read by Tiles.body_of. What decodes
-# is stored before it is drawn, and a tile the cache could not take is
-# still drawn; anything that does not decode is not stored.
-fetch_tile! : Access, Str, Tiles.Key => Try(Mvt.Tile, [NotFetched])
+# is stored before it is drawn, and how the store went comes back beside
+# it: a tile the cache could not take is still drawn, and the map names
+# the failure. Anything that does not decode is not stored.
+fetch_tile! : Access, Str, Tiles.Key => Try({ tile : Mvt.Tile, cache : CacheWrite }, [NotFetched])
 fetch_tile! = |acc, template, k|
 	match acc.io.http().send!(Request.from_method(GET).with_uri(Tiles.url(template, k))) {
 		Ok(resp) =>
@@ -818,15 +839,18 @@ fetch_tile! = |acc, template, k|
 				Ok(body) =>
 					match Mvt.drawable(body) {
 						Ok(t) => {
-							match open_db!(acc) {
+							cache = match open_db!(acc) {
 								Ok(db) => {
-									_ = Db.store_tile!(db, k, Tiles.build_of(template), body)
+									stored = Db.store_tile!(db, k, Tiles.build_of(template), body)
 									_ = db.close!()
-									{}
+									match stored {
+										Ok(_) => Stored
+										Err(e) => Failed(e)
+									}
 								}
-								Err(_) => {}
+								Err(_) => Failed("could not keep a street-map tile: cannot open ${acc.dir}/db.sqlite")
 							}
-							Ok(t)
+							Ok({ tile: t, cache })
 						}
 						Err(_) => Err(NotFetched)
 					}
@@ -1941,7 +1965,7 @@ Msg : [
 	ReloadFailed,
 	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, gen : U64, day : Str, un : Str, sp : List(Series.Split), st : Db.StrengthLog }),
 	MapLoaded({ map : Db.MapData, gen : U64 }),
-	TileAnswer(Tiles.Answer),
+	TileAnswer({ ans : Tiles.Answer, cache : CacheWrite }),
 	SourceRead(Try(Str, [NoTemplate])),
 	TraceSwitchFailed(U64),
 	# `ids` is the picker as the database holds it at poll time, read only when
@@ -2122,7 +2146,7 @@ update! = |model0, program_input, io| {
 							}
 					}
 				Reloaded(fresh) => {
-					merged = { ..fresh, map: acc.map, map_tiles: acc.map_tiles, map_source: acc.map_source, map_planned: acc.map_planned, map_plan_due: acc.map_plan_due, map_heat: acc.map_heat, map_play: acc.map_play, map_gen: acc.map_gen, map_load: (map_on_reload(acc.map_load)).load, map_stale: (map_on_reload(acc.map_load)).stale, map_cam: acc.map_cam, map_moved: acc.map_moved, map_rt: acc.map_rt, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_active: acc.last_active, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending, flame: acc.flame }
+					merged = { ..fresh, map: acc.map, map_tiles: acc.map_tiles, map_source: acc.map_source, map_cache_err: acc.map_cache_err, map_planned: acc.map_planned, map_plan_due: acc.map_plan_due, map_heat: acc.map_heat, map_play: acc.map_play, map_gen: acc.map_gen, map_load: (map_on_reload(acc.map_load)).load, map_stale: (map_on_reload(acc.map_load)).stale, map_cam: acc.map_cam, map_moved: acc.map_moved, map_rt: acc.map_rt, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_active: acc.last_active, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending, flame: acc.flame }
 					# R reads the curve it was pressed on, and it is the slow path.
 					# A chip clicked while it ran has since moved curve_days or
 					# curve_family and landed its own curve; when the two disagree
@@ -2145,7 +2169,7 @@ update! = |model0, program_input, io| {
 				# the map lands only from the newest load and is repainted; one R
 				# marked stale while it was read is read once more (map_on_landing)
 				MapLoaded(ml) => if (ml.gen != acc.map_gen) acc else { ..acc, map: ml.map, map_load: map_on_landing(acc.map_stale), map_stale: Bool.False, map_painted: Map.unpainted, map_plan_due: Bool.True }
-				TileAnswer(ans) => tile_landed(acc, ans, tick)
+				TileAnswer(ta) => tile_landed(acc, ta.ans, ta.cache, tick)
 				# the template a tile fetch needs, or the tick the TileJSON could
 				# not be read at, after which it is asked for again
 				SourceRead(Ok(t)) => { ..acc, map_source: Known(t), map_plan_due: Bool.True }

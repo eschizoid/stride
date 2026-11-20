@@ -456,6 +456,8 @@ Map :: [].{
 		note =
 			if model.map.err != "" {
 				[fix(Scene.prose(clip(model.map.err), 13.0, Theme.alarm_c), r.x + 14.0, r.y + 14.0, Left, r)]
+			} else if model.map_cache_err != "" {
+				[fix(Scene.prose(clip(model.map_cache_err), 13.0, Theme.alarm_c), r.x + 14.0, r.y + 14.0, Left, r)]
 			} else if loading(model) and List.is_empty(model.map.routes) {
 				[fix(Scene.prose(loading_text, 13.0, Theme.ink_muted), r.x + 14.0, r.y + 14.0, Left, r)]
 			} else if List.is_empty(model.map.routes) {
