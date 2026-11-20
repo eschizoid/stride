@@ -272,6 +272,84 @@ Gate :: [].{
 			),
 		)
 
+	# ── the power view's targets around the threshold ───────────────────────
+	# Every 30- and 90-day folded curve fixture at the default window, with
+	# targets at 8% under, at and 8% over the threshold: at each rung one
+	# target alone and two a step apart on different days, which share a
+	# ring; and one target at every rung at once, each its own ring.
+	threshold_models : List({ name : Str, model : Ui.Model })
+	threshold_models =
+		List.join(
+			List.map(
+				List.keep_if(curve_models, |c| c.model.curve_days != 60 and !(c.model.show_short) and Str.ends_with(c.name, " at ${size_name(default_size)}")),
+				|c| {
+					thr_w = c.model.curve_info.thr
+					pace_thr = (List.first(c.model.pace_targets)).ok_or({ day: "", typ: "", reps: 0, dur_s: 0, dist_m: 0, pace_s: 0, unit: "" })
+					List.join(
+						List.map(
+							[0.92, 1.0, 1.08],
+							|f| {
+								w = round_i(thr_w * f)
+								p = round_i(I64.to_f32(pace_thr.pace_s) / (0.95 * f))
+								# each target on its own day, as a power and a pace target
+								power = |ts| List.map_with_index(ts, |t, i| { day: "2026-11-${U64.to_str(10 + i)}", typ: "threshold", reps: 3, dur_s: t.secs, watts: t.w })
+								pace = |ts| List.map_with_index(ts, |t, i| { ..pace_thr, day: "2026-11-${U64.to_str(10 + i)}", dur_s: t.secs, dist_m: 0, pace_s: t.p })
+								at = |tag, ts| { name: "${c.name} ${tag} x${Db.fmt_f(f)}", model: { ..c.model, plan_targets: power(ts), pace_targets: pace(ts) } }
+								per_rung = List.join(List.map(c.model.prs, |pr| [at("one target at ${pr.rung}", [{ secs: pr.secs, w, p }]), at("two targets at ${pr.rung}", [{ secs: pr.secs, w, p }, { secs: pr.secs, w: w + 2, p: p - 1 }])]))
+								List.append(per_rung, at("one target at every rung", List.map(c.model.prs, |pr| { secs: pr.secs, w, p })))
+							},
+						),
+					)
+				},
+			),
+		)
+
+	# what the placer would give the scene with no lifted stack: every
+	# label on the spots its own list names, a ring label on its first four
+	ring_reference : Ui.Model, Scene.Measure -> List(Labels.Placed(Scene.Item))
+	ring_reference = |m, ms| {
+		ls = List.map(Curve.texts(m, ms), |l| if (Str.starts_with(l.item.text, "planned ")) { ..l, spots: List.take_first(l.spots, 4) } else l)
+		Labels.place(ls, Curve.obstacles(m, ms))
+	}
+
+	# a scene against its reference: every label the reference places keeps
+	# its box, only ring labels are added, a ring's added labels read top to
+	# bottom in the order its labels are listed, and the label gate passes
+	# the scene; with the ring labels the scene adds, the rings it adds two
+	# or more to, and the ring labels it places nowhere
+	ring_check : Ui.Model, Scene.Measure -> { fails : List(Str), lifted : U64, stacked : U64, dropped : U64 }
+	ring_check = |m, ms| {
+		ref = ring_reference(m, ms)
+		sc = Curve.scene(m, ms)
+		g = Curve.geom(m)
+		same_box = |a, b| a.item.text == b.item.text and Labels.same(a.box, b.box)
+		moved = List.keep_oks(ref, |r| if (List.any(sc, |s| same_box(r, s))) Err(Kept) else Ok("'${r.item.text}' moved or vanished"))
+		added = List.keep_if(sc, |s| !(List.any(ref, |r| same_box(r, s))))
+		strays = List.keep_oks(added, |s| if (Str.starts_with(s.item.text, "planned ")) Err(Ring) else Ok("'${s.item.text}' appeared"))
+		per_ring = List.map(
+			g.rings,
+			|rg| {
+				ls = Curve.ring_labels(rg.ts, |t| Curve.best_at(g.now_pts, t.dur_s))
+				ys = List.keep_oks(ls, |l| (List.find_first(added, |s| s.item.text == l)).map_ok(|s| s.box.y))
+				rising = List.all(
+					List.map_with_index(ys, |y, i| { y, i }),
+					|e| match List.get(ys, e.i + 1) {
+						Ok(ny) => ny > e.y
+						Err(_) => Bool.True
+					},
+				)
+				{ x: rg.x, rising, n_added: List.len(ys), dropped: List.len(List.keep_if(ls, |l| !(List.any(sc, |s| s.item.text == l)))) }
+			},
+		)
+		order = List.keep_oks(per_ring, |r| if (r.rising) Err(InOrder) else Ok("the ring at ${Db.fmt_i(r.x)} stacks its lifted labels out of order"))
+		{
+			fails: List.join([moved, strays, order, judge(List.concat(Scene.owned(Chrome.placed(m, ms)), Scene.owned(sc)), Curve.marks(m, ms))]),
+			lifted: List.fold(per_ring, 0, |a, r| a + r.n_added),
+			stacked: List.len(List.keep_if(per_ring, |r| r.n_added >= 2)),
+			dropped: List.fold(per_ring, 0, |a, r| a + r.dropped),
+		}
+	}
+
 	size_name : { w : F32, h : F32 } -> Str
 	size_name = |sz| "${I64.to_str(round_i(sz.w))}x${I64.to_str(round_i(sz.h))}"
 
@@ -1268,6 +1346,53 @@ expect {
 		}
 		Err(_) => Bool.False
 	}
+}
+
+# a target at the threshold on the 20min rung at the default window, where
+# its ring sits on the threshold line near the axis floor, under the rung's
+# name and dots: just under the threshold and on it, each target alone gets
+# its label, centred on its ring's column, in a scene the gate passes
+expect {
+	power = List.keep_if(Gate.curve_models, |c| Str.contains(c.name, " power ") and Str.contains(c.name, "90d") and Str.contains(c.name, "folded") and Str.contains(c.name, "at 980x600"))
+	match List.first(power) {
+		Ok(c) =>
+			List.all(
+				[230, 238],
+				|w| {
+					m = { ..c.model, plan_targets: [{ day: "2026-11-24", typ: "threshold", reps: 3, dur_s: 1200, watts: w }], pace_targets: [] }
+					g = Curve.geom(m)
+					on_line = match (List.first(g.rings), Curve.cp_y(m, g)) {
+						(Ok(rg), Ok(cy)) => (rg.y - cy).abs() <= Curve.ring_r
+						_ => Bool.False
+					}
+					labelled = match (List.first(g.rings), List.find_first(Curve.scene(m, Gate.measure), |p| Str.starts_with(p.item.text, "planned 11-24 ${I64.to_str(w)}W"))) {
+						(Ok(rg), Ok(p)) => (p.box.x + p.box.w / 2.0 - rg.x).abs() < 0.5
+						_ => Bool.False
+					}
+					on_line and labelled and Gate.judge(Curve.owned(m, Gate.measure), Curve.marks(m, Gate.measure)) == []
+				},
+			)
+		Err(_) => Bool.False
+	}
+}
+
+# a ring's lifted labels move nothing and keep apart: over every power-view
+# fixture and every target at every rung at once, in the shipped faces and
+# the built-in one, and every target around the threshold in the shipped
+# faces, each label the placer gives a spot keeps it, only ring labels are
+# added, a ring's added labels stack in date order, the label gate passes
+# the scene, and no ring label is left without a spot; the threshold
+# targets lift labels, alone and in stacks
+expect {
+	every = List.keep_if(Gate.threshold_models, |f| Str.contains(f.name, "at every rung"))
+	runs = List.concat(List.map(List.concat(Gate.curve_models, every), |f| { f, ms: Gate.builtin_measure }), List.map(List.concat(Gate.curve_models, Gate.threshold_models), |f| { f, ms: Gate.measure }))
+	checks = List.map(runs, |r| { name: r.f.name, c: Gate.ring_check(r.f.model, r.ms) })
+	fails = List.join(List.map(checks, |e| List.map(e.c.fails, |s| "${e.name}: ${s}")))
+	total = List.fold(checks, { lifted: 0, stacked: 0, dropped: 0 }, |a, e| { lifted: a.lifted + e.c.lifted, stacked: a.stacked + e.c.stacked, dropped: a.dropped + e.c.dropped })
+	fails == []
+		and total.dropped == 0
+		and total.lifted > 0
+		and total.stacked > 0
 }
 
 # a route an ocean from the rest leaves the map opening on the rest: every

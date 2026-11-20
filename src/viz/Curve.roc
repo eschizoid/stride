@@ -362,9 +362,67 @@ Curve :: [].{
 	# zone names and the unpushed caption. Each of those is readable another
 	# way when the placer drops it: the hover card carries every rung's
 	# values, record and push, and a ring's card its targets; a zone band is
-	# its shading.
+	# its shading. Last, a ring whose labels found no spot gets them back as
+	# a stack lifted over it (lifted_labels), placed around everything else,
+	# so it moves nothing already placed.
 	scene : Ui.Model, Scene.Measure -> List(Labels.Placed(Scene.Item))
-	scene = |model, measure| Labels.place(texts(model, measure), obstacles(model, measure))
+	scene = |model, measure| {
+		obs = obstacles(model, measure)
+		base = Labels.place(texts(model, measure), obs)
+		if (has_records(model)) (List.concat(base, lifted_labels(geom(model), measure, base, obs))) else base
+	}
+
+	# A ring near the axis floor can find every spot beside it taken: under
+	# it the plot ends, over it sit its rung's dots and the rung name lifted
+	# clear of them, and beside it the neighbouring rungs. The labels the
+	# placer dropped for such a ring rise together as one stack, in the
+	# date order they would have stacked in, a label row at a time from the
+	# ring's over spot until the stack is clear of every placed label, every
+	# obstacle and every stack placed before it, or the plot's top ends the
+	# search. The stacks are placed in one pass of the placer, left to right.
+	# A ring whose other labels kept their spots under, over or beside it
+	# reads in date order within the lifted stack only. Each label stays
+	# centred over its ring unless a plot edge pushes it inward, as every
+	# ring label does; between the stack and its ring sit the shapes and the
+	# rung name that pushed it up.
+	lifted_labels : Geom, Scene.Measure, List(Labels.Placed(Scene.Item)), Labels.Obstacles -> List(Labels.Placed(Scene.Item))
+	lifted_labels = |g, measure, base, obs| {
+		plot = plot_box(g)
+		taken = { boxes: List.concat(obs.boxes, List.map(base, |p| p.box)), segs: obs.segs }
+		stacks = List.keep_oks(
+			g.rings,
+			|rg| {
+				dropped = List.keep_if(ring_labels(rg.ts, |t| best_at(g.now_pts, t.dur_s)), |l| !(List.any(base, |p| p.item.text == l)))
+				rows_of = List.map(
+					dropped,
+					|l| {
+						it = Scene.data(l, 10.0, Theme.gold_c)
+						w = Scene.width(measure, it)
+						{ it, w, left: label_center_within(rg.x, w / 2.0, g.left, g.left + g.pw - label_inset) - w / 2.0 }
+					},
+				)
+				ux = List.fold(rows_of, (List.first(List.map(rows_of, |r| r.left))) ?? rg.x, |a, r| F32.min(a, r.left))
+				ur = List.fold(rows_of, (List.first(List.map(rows_of, |r| r.left + r.w))) ?? rg.x, |a, r| F32.max(a, r.left + r.w))
+				m = U64.to_f32(List.len(rows_of))
+				# the stack's top at the ring's over spot, and one label row
+				# higher each step while it stays inside the plot
+				top0 = rg.y - 20.0 - (m - 1.0) * ring_label_pitch
+				n = if (top0 < plot_top) 0 else I64.to_u64_wrap((F32.round_to_i64_try(F32.div_floor_by(top0 - plot_top, ring_label_pitch)) ?? 0) + 1)
+				spots = List.map_with_index(List.repeat({}, n), |_u, j| { x: ux, y: top0 - U64.to_f32(j) * ring_label_pitch })
+				if (List.is_empty(rows_of)) (Err(NothingDropped)) else Ok({ w: ur - ux, h: (m - 1.0) * ring_label_pitch + 10.0, spots, prio: 0, keep: Bool.False, region: plot, item: rows_of })
+			},
+		)
+		List.join(
+			List.map(
+				Labels.place(stacks, taken),
+				|st| List.map_with_index(st.item, |r, i| { box: { x: r.left, y: st.box.y + U64.to_f32(i) * ring_label_pitch, w: r.w, h: 10.0 }, region: plot, item: r.it }),
+			),
+		)
+	}
+
+	# the rows a ring's stacked labels take
+	ring_label_pitch : F32
+	ring_label_pitch = 12.0
 
 	# the view's text and the chrome's, as the gate judges them
 	owned : Ui.Model, Scene.Measure -> List(Labels.Owned)

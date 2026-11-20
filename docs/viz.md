@@ -438,10 +438,17 @@ event tile), the trace footer's shared keys (every other view's footer
 carries them), and the top value of the weeks tab's scale (the focus line
 reads any week). The view's own placement rules are the candidate lists: a
 delta tries between its dots on the right, then the left, then above and
-below; a strip name tries under its segment, then beside the strip's end;
-the zero rule's caption tries the rule's right end, its left end, steps
-inward from the right, the column past the rule's end, and last the same
-row lifted to just above the tallest load bar.
+below; a planned ring's label tries under the ring, over it, then beside
+it on the right and the left, and the labels of a ring that find none of
+those come back once every other label is placed, as one stack in date
+order lifted over the ring a label row at a time until it clears every
+placed label and every other ring's stack, so a ring near the axis floor
+under its rung's name and dots keeps its labels and no other label moves
+(a ring whose other labels kept their spots reads in date order within
+the stack only); a strip name tries under its segment, then beside the
+strip's end; the zero rule's caption tries the rule's right end, its left
+end, steps inward from the right, the column past the rule's end, and last
+the same row lifted to just above the tallest load bar.
 
 Hover cards and tooltips (the power view's rung and ring cards, the form
 board's day card, the year's day line, the XP rail's sheet) draw over
@@ -758,8 +765,12 @@ its rep duration and target watts (between rungs, placed linearly in
 seconds), labelled `planned`, its day and the target's share of this
 window's best at that duration, read off the line between the rungs around
 it. The dashes and the `planned` prefix keep a prescription from reading as a
-measured best. Hovering a ring opens the same card for each session in it:
-its date, type, reps, duration and watts.
+measured best. When every spot next to a ring is taken, as under a rung's
+dots near the axis floor, its labels sit higher in the ring's column, above
+that rung's name and dots, and at either edge of the plot they shift
+inward from the ring; the gold and the `planned` prefix tie them to it, and
+its card repeats them. Hovering a ring opens the same card for each session
+in it: its date, type, reps, duration and watts.
 
 The tab draws one curve at a time, named by a curve key: a sport family's
 head for that family's POWER curve, or `pace:<sport_type>` for that sport's
