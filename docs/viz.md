@@ -502,7 +502,7 @@ strip names (the strip's tooltip), the form board's event marker name (the
 event tile), the trace footer's shared keys (every other view's footer
 carries them), and the top value of the weeks tab's scale (the focus line
 reads any week). The map's place and street names may drop too, being the
-street map's own detail rather than anything stride measured. The view's
+street map's own detail rather than anything the engine measured. The view's
 own placement rules are the candidate lists: a
 delta tries between its dots on the right, then the left, then above and
 below; a planned ring's label tries under the ring, over it, then beside
