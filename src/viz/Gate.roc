@@ -1323,5 +1323,5 @@ expect (Gate.builtin_measure("playback - every session at once, an hour in 30 se
 
 # every map mode at the size the window opens, judged in the built-in face
 # the window falls back to without its brand fonts, which runs wider: the
-# title, the credit and every note still keep apart
+# title and every note still keep apart
 expect Gate.failures(|m| Gate.judge(Map.owned(m, Gate.builtin_measure), Map.marks(m, Gate.builtin_measure)), List.keep_if(Gate.map_models, |e| Str.ends_with(e.name, " at ${Gate.size_name(Gate.default_size)}"))) == []

@@ -260,10 +260,14 @@ drawn. A capture of the map view waits for the map and for its tiles: each on
 screen drawn, failed, or waiting on a TileJSON that cannot be read. A database
 with no routes table reads as having no routes yet. The window's SQLite
 binding refuses a query whose result passes a byte budget rather than
-returning part of it, so routes and ways are read in pages. The credit, ©
-OpenFreeMap, OpenMapTiles and OpenStreetMap contributors, sits on a card in
-the map's lower-right corner, leaving the title row to the mode titles; the street data is OpenStreetMap's, under the
-ODbL.
+returning part of it, so routes and ways are read in pages.
+
+The window currently shows no attribution for its street map. OpenStreetMap's
+data is licensed under the Open Database Licence (ODbL), which requires
+crediting OpenStreetMap contributors wherever the data is shown, and the
+OpenMapTiles and OpenFreeMap terms require crediting OpenMapTiles and
+OpenFreeMap for the tiles; an attribution is required before the window is
+distributed.
 
 Heat sums what was drawn. Every route is drawn once into a texture of its
 own with added colours, each segment adding one to every pixel it covers,

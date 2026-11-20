@@ -16,9 +16,9 @@ Map :: [].{
 	# Mercator, north up. Drag pans, the wheel zooms at the cursor, and `0`
 	# returns to the opening view (Geo.opening). The street map is
 	# OpenFreeMap's vector tiles of OpenStreetMap's data in the OpenMapTiles
-	# schema, fetched as the view needs them and cached (Tiles); the view
-	# credits all three on the map itself. The ways `stride basemap` stored
-	# draw instead only while no tile is there to draw.
+	# schema, fetched as the view needs them and cached (Tiles). The view
+	# shows no attribution of them. The ways `stride basemap` stored draw
+	# instead only while no tile is there to draw.
 
 	# The tab's three modes share its pill and switch by chips in the
 	# header, as the day tab's do: routes (view 10) draws every route in the
@@ -112,9 +112,6 @@ Map :: [].{
 		pad = if (mm < 10) Str.concat("0", U64.to_str(mm)) else U64.to_str(mm)
 		"${U64.to_str(m // 60)}:${pad} into each session"
 	}
-
-	credit_text : Str
-	credit_text = "OpenFreeMap  OpenMapTiles  OpenStreetMap contributors"
 
 	no_routes_text : Str
 	no_routes_text = "no GPS routes yet - stride sync fetches one per outdoor session"
@@ -440,24 +437,6 @@ Map :: [].{
 		)
 	}
 
-	# The credit sits in the map's lower-right corner on a card of the map's
-	# ground, as web maps carry theirs, after its copyright mark: a ring
-	# with a c inside, both drawn as shapes, so the mark is the same in any
-	# face. That leaves the title row to the mode titles, which in a wide
-	# face run past where a credit on that row would start.
-	credit_box : { w : F32, h : F32 }, Scene.Measure -> Labels.Rect
-	credit_box = |win, measure| {
-		r = rect(win)
-		w = measure(credit_text, 11.0, Prose)
-		{ x: r.x + r.w - w - 30.0, y: r.y + r.h - 24.0, w: w + 26.0, h: 20.0 }
-	}
-
-	credit_ring : { w : F32, h : F32 }, Scene.Measure -> Labels.Rect
-	credit_ring = |win, measure| {
-		b = credit_box(win, measure)
-		{ x: b.x + 5.0, y: b.y + 3.5, w: 13.0, h: 13.0 }
-	}
-
 	# a failed read's message, cut to what the map's narrowest width holds
 	clip : Str -> Str
 	clip = |s| if (Str.count_utf8_bytes(s) > 96) Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(s), 93)), "...") else s
@@ -489,7 +468,6 @@ Map :: [].{
 		List.join([
 			[
 				fix(Scene.prose(title_text(model.view), 15.0, Theme.ink_muted), title_x, 70.0, Left, panel),
-				fix(Scene.prose(credit_text, 11.0, Theme.ink_faint), r.x + r.w - 6.0, (credit_box(model.win, measure)).y + 4.0, Right, r),
 				fix(Scene.prose(hint_text(model.view), 13.0, Theme.ink_faint), 36.0, model.win.h - 30.0, Left, panel),
 			],
 			note,
@@ -498,12 +476,12 @@ Map :: [].{
 		])
 	}
 
-	# the shapes no text may cover but its own: the pills, the mode chips,
-	# the map and the copyright mark
+	# the shapes no text may cover but its own: the pills, the mode chips and
+	# the map
 	marks : Ui.Model, Scene.Measure -> List(Labels.Mark)
-	marks = |model, measure| {
+	marks = |model, _measure| {
 		r = rect(model.win)
-		List.join([Chrome.marks(model), chip_marks, [{ key: "the map", box: r }, { key: "the copyright mark", box: credit_ring(model.win, measure) }]])
+		List.join([Chrome.marks(model), chip_marks, [{ key: "the map", box: r }]])
 	}
 
 	# The cached picture when the window holds one, shifted by however far
@@ -552,11 +530,6 @@ Map :: [].{
 				Ok({})
 			},
 		)
-		card = credit_box(model.win, measure)
-		frame.rounded_rectangle!({ x: card.x, y: card.y, width: card.w, height: card.h, radius: 6.0, segments: 6, style: Draw.filled(Color.with_alpha(Theme.card, 230)) })
-		ring = credit_ring(model.win, measure)
-		frame.circle!({ center: { x: ring.x + ring.w / 2.0, y: ring.y + ring.h / 2.0 }, radius: ring.w / 2.0, style: Draw.outlined(Theme.ink_faint, 1.0) })
-		frame.ring!({ center: { x: ring.x + ring.w / 2.0, y: ring.y + ring.h / 2.0 }, inner_radius: 2.0, outer_radius: 3.2, start_angle: 45.0, end_angle: 315.0, segments: 16, style: Draw.filled(Theme.ink_faint) })
 		Scene.draw!(frame, model, scene(model, measure))
 		Ok({})
 	}
