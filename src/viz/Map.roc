@@ -294,98 +294,111 @@ Map :: [].{
 	}
 
 	# Every cell of the view draws its own tile or, until that lands, its
-	# nearest drawn ancestor's scaled up (Tiles.shown). When `squared`, as
-	# in the picture, each is cut to its cell's square, so a coarse stand-in
-	# never spills over a neighbour already sharp and the buffer every tile
-	# carries past its edge never draws twice. Otherwise the view is drawing
-	# straight to the frame inside the map's own scissor, which a second
-	# scissor would replace rather than narrow, so each tile shown draws
-	# once, whole.
-	paint_tiles! : Ui.Model, Geo.Cam, Bool, Draw.Frame => {}
-	paint_tiles! = |model, c, squared, frame| {
+	# nearest drawn ancestor's scaled up (Tiles.shown). Squared, as in the
+	# picture, each is cut to its cell's square, its scissor in the
+	# target's pixels at `k` of them to a logical unit, so a coarse
+	# stand-in never spills over a neighbour already sharp and the buffer
+	# every tile carries past its edge never draws twice. Whole, the view
+	# is drawing straight to the frame inside the map's own scissor, which
+	# a second scissor would replace rather than narrow, so each tile shown
+	# draws once, whole.
+	paint_tiles! : Ui.Model, Geo.Cam, [Whole, Squared(F32)], Draw.Frame => {}
+	paint_tiles! = |model, c, how, frame| {
 		r = rect(model.win)
 		o = model.map.origin
 		shown = List.keep_oks(cells(model, c), |cell| Tiles.shown(model.map_tiles, cell).map_ok(|s| { cell, s }))
-		if squared {
-			List.for_each!(
-				shown,
-				|e|
-					match cut(Tiles.place(c, r, o, e.cell.key.z, e.cell.col, U64.to_i64_wrap(e.cell.key.y)), r, model.ui_scale) {
-						Ok(px) => {
-							_ = frame.with_scissor!(
-								px,
-								|f| {
-									draw_tile!(f, e.s.tile, Tiles.place(c, r, o, e.s.z, e.s.col, e.s.row), c.mpp)
-									Ok({})
-								},
-							)
-							{}
-						}
-						Err(_) => {}
-					},
-			)
-		} else {
-			once = List.fold(shown, [], |acc, e| if (List.any(acc, |x| x.z == e.s.z and x.col == e.s.col and x.row == e.s.row)) acc else List.append(acc, e.s))
-			List.for_each!(once, |s| draw_tile!(frame, s.tile, Tiles.place(c, r, o, s.z, s.col, s.row), c.mpp))
+		match how {
+			Squared(k) =>
+				List.for_each!(
+					shown,
+					|e|
+						match cut(Tiles.place(c, r, o, e.cell.key.z, e.cell.col, U64.to_i64_wrap(e.cell.key.y)), r, k) {
+							Ok(px) => {
+								_ = frame.with_scissor!(
+									px,
+									|f| {
+										draw_tile!(f, e.s.tile, Tiles.place(c, r, o, e.s.z, e.s.col, e.s.row), c.mpp)
+										Ok({})
+									},
+								)
+								{}
+							}
+							Err(_) => {}
+						},
+				)
+			Whole => {
+				once = List.fold(shown, [], |acc, e| if (List.any(acc, |x| x.z == e.s.z and x.col == e.s.col and x.row == e.s.row)) acc else List.append(acc, e.s))
+				List.for_each!(once, |s| draw_tile!(frame, s.tile, Tiles.place(c, r, o, s.z, s.col, s.row), c.mpp))
+			}
 		}
 	}
 
-	# what each mode paints into the cached picture. The street map goes
-	# first, the view's tiles, then the street map's names over them
-	# (names), then the routes over both. Routes mode draws the routes in
-	# the accent; play draws them in strips coloured by speed band
-	# (paint_speed!); heat draws none here, its passes being summed into a
-	# texture of their own (paint_heat!) and drawn over the picture, unless
-	# the window could not build that texture, when it draws them as routes
-	# mode does.
-	paint! : Ui.Model, Geo.Cam, Bool, Draw.Frame => {}
-	paint! = |model, c, squared, frame| {
-		paint_tiles!(model, c, squared, frame)
-		draw_names!(frame, model, names(model, c, Scene.measure_of(model)))
+	# What each mode paints, straight to the frame when the window holds
+	# no picture. The street map goes first, the view's tiles, then the
+	# street map's names over them (names), then the routes over both.
+	# Routes mode draws the routes in the accent; play draws them in strips
+	# coloured by speed band (paint_speed!); heat draws none here, its
+	# passes being summed into a texture of their own (paint_heat!) and
+	# drawn over the picture, unless the window could not build that
+	# texture, when it draws them as routes mode does.
+	paint! : Ui.Model, Geo.Cam, Draw.Frame => {}
+	paint! = |model, c, frame| {
+		paint_tiles!(model, c, Whole, frame)
+		draw_names!(frame, model, model.ui_scale, names(model, c, Scene.measure_of(model)))
 		paint_over!(model, c, frame)
 	}
 
-	# The picture itself: the same three layers, the tiles and the routes
-	# each under the UI scale's camera and each name under a camera of its
-	# own that turns it about its centre at that scale, so no camera is
-	# opened inside another. The picture starts transparent and is laid
-	# over the map's ground, so a glyph's edge covering a share a of a
-	# pixel, blended the usual way, would land in it as its colour times a
-	# with alpha a squared and show at a cubed, far dimmer than the same
-	# text drawn on the ground. Through the picture's text shader the names
-	# are blended with premultiplied alpha instead: each pixel is stored as
-	# its colour times a with alpha a over the transparent ground, and
-	# blended the usual way over a fill, so a name shows as the window's
-	# other text does.
+	# The picture itself, the same three layers. It is held in the
+	# framebuffer's own pixels, which a HiDPI display packs more of into a
+	# logical unit than the window's size counts, so its lines and names
+	# are drawn as sharp as the text the view draws straight to the screen:
+	# `k`, the target's pixels to a logical unit, is the camera's zoom. The
+	# tiles and the routes are each drawn under that camera and each name
+	# under a camera of its own that turns it about its centre at that
+	# zoom, so no camera is opened inside another. The picture starts
+	# transparent and is laid over the map's ground, so a glyph's edge
+	# covering a share a of a pixel, blended the usual way, would land in
+	# it as its colour times a with alpha a squared and show at a cubed,
+	# far dimmer than the same text drawn on the ground. Through the
+	# picture's text shader the names are blended with premultiplied alpha
+	# instead: each pixel is stored as its colour times a with alpha a over
+	# the transparent ground, and blended the usual way over a fill, so a
+	# name shows as the window's other text does.
 	paint_picture! : Ui.Model, Draw.Frame => {}
-	paint_picture! = |model, frame| {
-		zoom = Camera.default.with_zoom(model.ui_scale)
-		c = model.map_painted
-		_ = frame.with_camera!(zoom, |g| Ok(paint_tiles!(model, c, Bool.True, g)))
-		placed = names(model, c, Scene.measure_of(model))
-		text = match model.map_rt {
-			Target(t) => t.text
-			_ => NoText
-		}
-		match text {
-			Text(shader) => {
-				_ = frame.with_blend_mode!(
-					AlphaPremultiply,
-					|g| g.with_shader!(
-						shader,
-						|k| {
-							draw_names!(k, model, placed)
-							Ok({})
-						},
-					),
-				)
+	paint_picture! = |model, frame|
+		match model.map_rt {
+			Target(t) => {
+				k = picture_zoom(t.w, model.win.w, model.ui_scale)
+				zoom = Camera.default.with_zoom(k)
+				c = model.map_painted
+				_ = frame.with_camera!(zoom, |g| Ok(paint_tiles!(model, c, Squared(k), g)))
+				placed = names(model, c, Scene.measure_of(model))
+				match t.text {
+					Text(shader) => {
+						_ = frame.with_blend_mode!(
+							AlphaPremultiply,
+							|g| g.with_shader!(
+								shader,
+								|s| {
+									draw_names!(s, model, k, placed)
+									Ok({})
+								},
+							),
+						)
+						{}
+					}
+					NoText => draw_names!(frame, model, k, placed)
+				}
+				_ = frame.with_camera!(zoom, |g| Ok(paint_over!(model, c, g)))
 				{}
 			}
-			NoText => draw_names!(frame, model, placed)
+			_ => {}
 		}
-		_ = frame.with_camera!(zoom, |g| Ok(paint_over!(model, c, g)))
-		{}
-	}
+
+	# the picture's pixels to a logical unit: its width over the window's
+	# logical width, or the UI scale while the window has none
+	picture_zoom : F32, F32, F32 -> F32
+	picture_zoom = |target_w, win_w, ui_scale| if (win_w > 0.0) target_w / win_w else ui_scale
 
 	# the fragment shader that premultiplies a name's colour by its
 	# coverage, scaled by `gain`
@@ -463,12 +476,12 @@ Map :: [].{
 		List.keep_oks(model.map.routes, |l| if (Geo.visible(c, r, l.box)) Ok(if (c.mpp > far_mpp) l.far else l.pts) else Err(Hidden))
 	}
 
-	# each name centred in its placed box and turned about its centre, over
-	# a halo of the map's ground, the text drawn a pixel off each way, so
-	# the streets under it do not run through its letters
-	draw_names! : Draw.Frame, Ui.Model, List(Labels.Placed(MapNames.Item)) => {}
-	draw_names! = |frame, model, placed| {
-		sc = model.ui_scale
+	# each name centred in its placed box and turned about its centre, at
+	# `sc` target pixels to a logical unit, over a halo of the map's ground,
+	# the text drawn a pixel off each way, so the streets under it do not
+	# run through its letters
+	draw_names! : Draw.Frame, Ui.Model, F32, List(Labels.Placed(MapNames.Item)) => {}
+	draw_names! = |frame, model, sc, placed| {
 		List.for_each!(
 			placed,
 			|p| {
@@ -1012,7 +1025,7 @@ Map :: [].{
 			|f| {
 				match model.map_rt {
 					Target(t) => f.texture!({ texture: t.rt.texture(), source: t.rt.source(), dest, origin: { x: 0.0, y: 0.0 }, rotation: 0.0, tint: Color.white })
-					_ => paint!(model, c, Bool.False, f)
+					_ => paint!(model, c, f)
 				}
 				if model.view == 11 {
 					match model.map_heat {
@@ -1250,3 +1263,8 @@ expect {
 # the route query reads watts as analyze does: an unmarked row's as
 # measured, and none from a row Strava marked estimated
 expect Str.contains(Db.route_page_sql, "CASE WHEN COALESCE(a.device_watts, 1) <> 0 THEN ROUND(COALESCE(a.avg_watts, 0)) ELSE 0 END")
+
+# the picture of a doubled HiDPI display at the default UI size holds
+# three of its pixels to a logical unit, one of an ordinary display one
+# and a half, and a window with no width falls back to the UI scale
+expect (Map.picture_zoom(2940.0, 980.0, 1.5) - 3.0).abs() < 0.001 and (Map.picture_zoom(1470.0, 980.0, 1.5) - 1.5).abs() < 0.001 and (Map.picture_zoom(2940.0, 0.0, 1.5) - 1.5).abs() < 0.001

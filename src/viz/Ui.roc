@@ -291,7 +291,7 @@ Ui :: [].{
 		map_drag : MapPress,
 		# the card a click on a route opened (Map.act)
 		map_card : MapCard,
-		# the map's offscreen picture, sized to the window's pixels and
+		# the map's offscreen picture, sized to the framebuffer's pixels and
 		# allocated the first time the view shows, with the shader its names
 		# are blended in through (Map.text_frag), NoText when the GPU refused
 		# it. Refused remembers the size the GPU refused at, so a resize earns
@@ -306,8 +306,8 @@ Ui :: [].{
 		map_painted_view : U8,
 		# the heat mode's texture of summed passes and the shader that
 		# tone-maps it, built the first time heat shows and sized to the
-		# window's pixels like the picture; Unavailable remembers the size the
-		# GPU refused at, and heat mode then draws the routes as routes mode does
+		# window's pixels; Unavailable remembers the size the GPU refused at,
+		# and heat mode then draws the routes as routes mode does
 		map_heat : [Unbuilt, Unavailable({ w : F32, h : F32 }), Ready({ rt : Draw.RenderTexture, shader : Shader({ top : F32 }), w : F32, h : F32 })],
 		# playback's clock in seconds of play, which runs only while the play
 		# mode shows and is not paused, and starts over each time it opens

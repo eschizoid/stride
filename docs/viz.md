@@ -275,7 +275,9 @@ drawn back across the whole map. A drag that begins on the map pans it, the
 wheel zooms at the cursor, and `0` returns to the opening view. The window
 keeps the map as an offscreen picture, repainted only when the camera, the
 window or the data changes; mid-drag the picture slides with the cursor and
-the release repaints it.
+the release repaints it. The picture is held in the framebuffer's own
+pixels, so on a HiDPI display its lines and names are as sharp as the text
+drawn straight to the screen.
 Each line keeps a dense point list for close zooms and a sparse one for wide
 zooms, since a full backfill holds millions of points and every repaint
 walks the list it draws.

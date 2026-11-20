@@ -51,11 +51,11 @@ MapNames :: [].{
 		else if (kind == 1) { near: 3.0, far: 400.0, size: 13.0, color: place_ink }
 		else if (kind == 2) { near: 1.5, far: 120.0, size: 12.0, color: place_ink }
 		else if (kind == 3) { near: 0.0, far: 60.0, size: 12.0, color: place_ink }
-		else if (kind == 4) { near: 0.0, far: 20.0, size: 11.0, color: place_ink }
-		else if (kind == 5) { near: 0.0, far: 40.0, size: 11.0, color: street_ink }
-		else if (kind == 6) { near: 0.0, far: 16.0, size: 11.0, color: street_ink }
-		else if (kind == 7) { near: 0.0, far: 8.0, size: 11.0, color: street_ink }
-		else { near: 0.0, far: 4.0, size: 11.0, color: street_ink }
+		else if (kind == 4) { near: 0.0, far: 20.0, size: 12.0, color: place_ink }
+		else if (kind == 5) { near: 0.0, far: 40.0, size: 12.0, color: street_ink }
+		else if (kind == 6) { near: 0.0, far: 16.0, size: 12.0, color: street_ink }
+		else if (kind == 7) { near: 0.0, far: 8.0, size: 12.0, color: street_ink }
+		else { near: 0.0, far: 4.0, size: 12.0, color: street_ink }
 
 	# The names' inks: every place in the theme's muted ink, which the view's
 	# title and chips also wear but larger, and every street most of the way
