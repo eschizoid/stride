@@ -185,3 +185,11 @@ roc-ray 0.11 names no compiler, so the viz app header no longer carries a `roc:`
 ## Update, 2026-11-18. Warnings inside the roc-ray package are forgiven
 
 roc-ray 0.12.2 raises `duplicate definition` warnings in its own source on the pinned nightly, in source this repository cannot edit. `tools/roc-viz.sh` forgives a warning only when it is located inside the pinned roc-ray package; a warning in stride's own source, any error, and any warning from another roc-ray release still fail the run, and the wrapper's header states the full rule. The 2026-10-29 update's conclusion holds for the compiler: the viz build has no mismatch warning to forgive. The assertion-count pins are unchanged.
+
+## Update, 2026-11-19. The window fetches its street map's tiles
+
+The map tab's street map now comes from OpenStreetMap vector tiles that the window fetches itself (#714), which makes the window a network client for the first time. It declares exactly one `HttpOrigin`, `https://tiles.openfreemap.org`, in its own source beside its other grants, so what it may reach is still visible in the source and changed only by changing it, and a redirect to any other origin is refused by the platform.
+
+The window fetches, rather than the CLI, because what is needed is decided by where the human looks. A tile is wanted at the zoom and place the view shows, and a full-detail tile of a dense city runs to hundreds of kilobytes, so fetching ahead for everywhere the routes reach would cost hundreds of megabytes the human never looks at. Only the window knows its camera; a CLI fetch would have to be steered through the bus by every pan and zoom, with the window waiting on a round trip for each one. The decision about what to fetch belongs to the consumer that draws it.
+
+The database stays the bus. Every tile the window fetches is stored raw in `map_tiles`, a mirror-tier table the window creates and is the only reader and writer of, keyed by zoom, column and row; nothing the engine computes reads it, and deleting any row only costs fetching that tile again. The coach's surface is unchanged: Decision 1 holds, since a street map is pixels for the human and carries nothing the engine's JSON should.

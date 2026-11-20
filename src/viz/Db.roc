@@ -8,6 +8,7 @@ import rr.Sqlite
 import rr.Cmd
 import Geo
 import Motion
+import Tiles
 
 Db :: [].{
 	CurvePt : { dur_s : I64, watts : F32, aid : I64, name : Str, day : Str, ago : I64 }
@@ -1975,14 +1976,16 @@ Db :: [].{
 	# way keeps none of these.
 	MapLine : { kind : U8, pts : List(Geo.Pt), ts : List(F32), far : List(Geo.Pt), fts : List(F32), runs : List(Motion.Run), fruns : List(Motion.Run), box : Geo.Bounds }
 
-	# every route and base-map way, all relative to one origin; the extent
-	# of everything the map opens on, the routes' or, when no route has GPS,
-	# the base map's; where the routes gather, for when that extent is too
-	# wide to show (Geo.opening); and why a read failed, empty when none did
-	MapData : { routes : List(MapLine), ways : List(MapLine), fit : Geo.Bounds, focus : Geo.Focus, err : Str }
+	# every route and base-map way, all relative to one origin, and that
+	# origin in projected metres, which places the street map's tiles; the
+	# extent of everything the map opens on, the routes' or, when no route
+	# has GPS, the base map's; where the routes gather, for when that extent
+	# is too wide to show (Geo.opening); and why a read failed, empty when
+	# none did
+	MapData : { routes : List(MapLine), ways : List(MapLine), origin : { x : F64, y : F64 }, fit : Geo.Bounds, focus : Geo.Focus, err : Str }
 
 	no_map : MapData
-	no_map = { routes: [], ways: [], fit: Geo.no_box, focus: { box: Geo.no_box, anchor: { x: 0.0, y: 0.0 } }, err: "" }
+	no_map = { routes: [], ways: [], origin: { x: 0.0, y: 0.0 }, fit: Geo.no_box, focus: { box: Geo.no_box, anchor: { x: 0.0, y: 0.0 } }, err: "" }
 
 	# the base map's kinds as the engine stores them, in the order the view
 	# draws them, bottom first; a kind outside the list is not drawn
@@ -2158,11 +2161,168 @@ Db :: [].{
 		{
 			routes,
 			ways,
+			origin,
 			fit: List.fold(shown, Geo.no_box, |b, l| Geo.union(b, l.box)),
 			focus: Geo.focus(List.keep_oks(shown, |l| (List.first(l.pts)).map_ok(|p| { start: p, box: l.box }))),
 			err,
 		}
 	}
+
+	# ── the street map's tile cache ────────────────────────────────────────
+	# Every tile the window fetches is kept raw in map_tiles, keyed by its
+	# zoom, column and row alone, beside the planet build it came from, when
+	# it was fetched and when it was last used, both in seconds since 1970;
+	# Tiles says why the build is not part of the key, and how the table is
+	# held to its budget (Tiles.evicted), which every store enforces. The
+	# window is the table's one reader and writer. It creates the table
+	# before its first write, and a database without it reads as holding no
+	# tile. Like the other mirror tables it holds nothing that cannot be
+	# fetched again.
+	tiles_ddl : Str
+	tiles_ddl = "CREATE TABLE IF NOT EXISTS map_tiles (z INTEGER NOT NULL, x INTEGER NOT NULL, y INTEGER NOT NULL, build TEXT NOT NULL, fetched INTEGER NOT NULL, used INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY (z, x, y))"
+
+	tile_read_sql : Str
+	tile_read_sql = "SELECT data AS d, CAST(strftime('%s', 'now') AS INTEGER) - fetched AS age FROM map_tiles WHERE z = :z AND x = :x AND y = :y"
+
+	tile_store_sql : Str
+	tile_store_sql = "INSERT INTO map_tiles (z, x, y, build, fetched, used, data) VALUES (:z, :x, :y, :b, CAST(strftime('%s', 'now') AS INTEGER), CAST(strftime('%s', 'now') AS INTEGER), :d) ON CONFLICT (z, x, y) DO UPDATE SET build = excluded.build, fetched = excluded.fetched, used = excluded.used, data = excluded.data"
+
+	# a read marks the tile used, but writes only when its mark is older
+	# than Tiles.touch_secs, so panning over cached ground rarely writes
+	tile_touch_sql : Str
+	tile_touch_sql = "UPDATE map_tiles SET used = CAST(strftime('%s', 'now') AS INTEGER) WHERE z = :z AND x = :x AND y = :y AND used < CAST(strftime('%s', 'now') AS INTEGER) - :t"
+
+	# every stored tile's size and last use; length() of a blob is read from
+	# the row's header, never from the bytes
+	tile_sizes_sql : Str
+	tile_sizes_sql = "SELECT z AS z, x AS x, y AS y, length(data) AS n, used AS u FROM map_tiles"
+
+	tile_drop_sql : Str
+	tile_drop_sql = "DELETE FROM map_tiles WHERE z = :z AND x = :x AND y = :y"
+
+	tile_bindings : Tiles.Key -> List({ name : Str, value : Sqlite.Value })
+	tile_bindings = |k| [{ name: ":z", value: Integer(U64.to_i64_wrap(k.z)) }, { name: ":x", value: Integer(U64.to_i64_wrap(k.x)) }, { name: ":y", value: Integer(U64.to_i64_wrap(k.y)) }]
+
+	# a cached tile's bytes and its age in seconds; a tile stored with no
+	# bytes, as a 204 answer is, reads back as no bytes. A tile found is
+	# marked used.
+	read_tile! : Sqlite.Db, Tiles.Key => Try({ data : List(U8), age : I64 }, [Absent])
+	read_tile! = |db, k| {
+		found = match db.query!(tile_read_sql, tile_bindings(k)) {
+			Ok(rs) =>
+				match List.first(rs) {
+					Ok(r) =>
+						match (r.nullable_bytes("d"), r.i64("age")) {
+							(Ok(NotNull(d)), Ok(a)) => Ok({ data: d, age: a })
+							(Ok(Null), Ok(a)) => Ok({ data: [], age: a })
+							_ => Err(Absent)
+						}
+					Err(_) => Err(Absent)
+				}
+			Err(_) => Err(Absent)
+		}
+		match found {
+			Ok(_) => {
+				_ = db.execute!(tile_touch_sql, List.append(tile_bindings(k), { name: ":t", value: Integer(Tiles.touch_secs) }))
+				found
+			}
+			Err(_) => found
+		}
+	}
+
+	# the table's columns as SQLite reports them
+	tile_columns_sql : Str
+	tile_columns_sql = "SELECT CAST(name AS TEXT) AS c FROM pragma_table_info('map_tiles')"
+
+	# What brings a map_tiles of an older shape up to tiles_ddl's: a table
+	# made before the cache recorded last use lacks `used`, and CREATE TABLE
+	# IF NOT EXISTS leaves an existing table as it is, so the column is
+	# added, every row reading as never used and so the first to go. The
+	# cached tiles are kept: the column is the only difference.
+	tiles_upgrade : List(Str) -> List(Str)
+	tiles_upgrade = |columns| if (List.contains(columns, "used")) [] else ["ALTER TABLE map_tiles ADD COLUMN used INTEGER NOT NULL DEFAULT 0"]
+
+	# the cache's failures, named for the athlete
+	cache_err : Str, [SqliteErr(_, Str), ResultTooLarge, MultipleStatements, RowsReturnedUseQueryInstead] -> Str
+	cache_err = |what, e|
+		match e {
+			SqliteErr(_, msg) => "could not ${what}: ${msg}"
+			_ => "could not ${what}"
+		}
+
+	# The table made and brought to the current shape (tiles_upgrade).
+	ensure_tiles! : Sqlite.Db => Try({}, Str)
+	ensure_tiles! = |db| {
+		_ = db.execute!(tiles_ddl, []).map_err(|e| cache_err("make the street-map cache", e))?
+		columns = match db.query!(tile_columns_sql, []) {
+			Ok(rs) => List.keep_oks(rs, |r| r.str("c"))
+			Err(e) => return Err(cache_err("read the street-map cache's shape", e))
+		}
+		var $out = Ok({})
+		for sql in tiles_upgrade(columns) {
+			match db.execute!(sql, []) {
+				Ok(_) => {}
+				Err(e) => {
+					$out = Err(cache_err("update the street-map cache", e))
+				}
+			}
+		}
+		$out
+	}
+
+	# A tile stored, then the table held to its budget. A failure of either
+	# is answered by name, for the map to show; its caller still draws the
+	# tile, and a trim that fails leaves the table to the next store.
+	store_tile! : Sqlite.Db, Tiles.Key, Str, List(U8) => Try({}, Str)
+	store_tile! = |db, k, build, data| {
+		ensure_tiles!(db)?
+		_ = db.execute!(tile_store_sql, List.concat(tile_bindings(k), [{ name: ":b", value: String(build) }, { name: ":d", value: Bytes(data) }])).map_err(|e| cache_err("keep a street-map tile", e))?
+		trim_tiles!(db, Tiles.cache_budget)
+	}
+
+	trim_tiles! : Sqlite.Db, U64 => Try({}, Str)
+	trim_tiles! = |db, budget|
+		match db.query!(tile_sizes_sql, []) {
+			Ok(rs) => {
+				rows = List.keep_oks(
+					rs,
+					|r| {
+						z = r.i64("z")?
+						x = r.i64("x")?
+						y = r.i64("y")?
+						n = r.i64("n")?
+						u = r.i64("u")?
+						Ok({ key: { z: I64.to_u64_wrap(z), x: I64.to_u64_wrap(x), y: I64.to_u64_wrap(y) }, bytes: I64.to_u64_wrap(n), used: u })
+					},
+				)
+				var $out = Ok({})
+				for k in Tiles.evicted(rows, budget) {
+					match db.execute!(tile_drop_sql, tile_bindings(k)) {
+						Ok(_) => {}
+						Err(e) => {
+							$out = Err(cache_err("trim the street-map cache", e))
+						}
+					}
+				}
+				$out
+			}
+			Err(e) => Err(cache_err("trim the street-map cache", e))
+		}
+}
+# the tile cache's statements and their bindings agree: every placeholder
+# each statement names is bound under its own name, the store binds the
+# build and the bytes beside the key and sets the last use, the touch binds
+# its interval, the key is the table's whole primary key, and the sizes
+# read back carry every column the trim decodes
+expect {
+	names = List.map(Db.tile_bindings({ z: 14, x: 4203, y: 6088 }), |b| b.name)
+	store = List.concat(names, [":b", ":d"])
+	touch = List.append(names, ":t")
+	placeholders = |sql| List.count_if(Str.to_utf8(sql), |c| c == ':')
+	names == [":z", ":x", ":y"] and placeholders(Db.tile_read_sql) == 3 and placeholders(Db.tile_store_sql) == 5 and placeholders(Db.tile_touch_sql) == 4 and placeholders(Db.tile_drop_sql) == 3
+		and List.all(names, |nm| Str.contains(Db.tile_read_sql, nm) and Str.contains(Db.tile_drop_sql, nm)) and List.all(store, |nm| Str.contains(Db.tile_store_sql, nm)) and List.all(touch, |nm| Str.contains(Db.tile_touch_sql, nm))
+		and Str.contains(Db.tiles_ddl, "PRIMARY KEY (z, x, y)") and Str.contains(Db.tile_store_sql, "ON CONFLICT (z, x, y)") and Str.contains(Db.tile_store_sql, "used = excluded.used")
+		and List.all(["AS z", "AS x", "AS y", "AS n", "AS u"], |a| Str.contains(Db.tile_sizes_sql, a))
 }
 
 expect Db.parse_utc_offset("-0500") == Ok(-300)
@@ -2287,4 +2447,14 @@ expect {
 		(Ok(r), Ok(w)) => r.ts == times and List.len(r.fts) == List.len(r.far) and List.first(r.fts) == Ok(0.0) and List.last(r.fts) == Ok(147.0) and List.get(r.fts, 1) == Ok(9.0) and List.map(r.runs, |x| x.band) == [2] and List.map(r.runs, |x| x.pts) == [r.pts] and List.map(r.fruns, |x| x.pts) == [r.far] and List.is_empty(w.ts) and List.is_empty(w.fts) and List.is_empty(w.runs) and List.is_empty(w.fruns)
 		_ => Bool.False
 	}
+}
+
+# a map_tiles made before last use was recorded gains the column, its rows
+# kept, and one of the current shape is left as it is; the column added is
+# the one the store and the trim read
+expect {
+	old = ["z", "x", "y", "build", "fetched", "data"]
+	up = Db.tiles_upgrade(old)
+	up == ["ALTER TABLE map_tiles ADD COLUMN used INTEGER NOT NULL DEFAULT 0"] and Db.tiles_upgrade(List.append(old, "used")) == []
+		and Str.contains(Db.tiles_ddl, "used INTEGER NOT NULL") and Str.contains(Db.tile_sizes_sql, "used AS u")
 }
