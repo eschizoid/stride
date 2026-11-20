@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.24.0](https://github.com/eschizoid/stride/compare/v0.23.0...v0.24.0) (2026-11-20)
+
+
+### Features
+
+* **viz:** click a route on the map to open its session ([#730](https://github.com/eschizoid/stride/issues/730)) ([377a62c](https://github.com/eschizoid/stride/commit/377a62c350307fd5d9ddd68371c5eef95823c0b5))
+* **viz:** street and place names on the map ([#729](https://github.com/eschizoid/stride/issues/729)) ([ef8cff1](https://github.com/eschizoid/stride/commit/ef8cff14470cd0072ee641ec7c8344fb3dc042a3))
+
+
+### Bug Fixes
+
+* **viz:** a planned target on the threshold line keeps its label ([#727](https://github.com/eschizoid/stride/issues/727)) ([82c8b88](https://github.com/eschizoid/stride/commit/82c8b88ce13ea220102cdf557320122be7a6b4bf))
+
 ## [0.23.0](https://github.com/eschizoid/stride/compare/v0.22.0...v0.23.0) (2026-11-20)
 
 
