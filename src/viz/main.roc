@@ -490,7 +490,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		tick: 0,
 		last_active: 0,
 		view_anim: 0,
-		last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "", curve_family: "", curve_short: -1 },
+		last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "", curve_family: "", curve_short: -1, map_id: -1 },
 		day_notes: loaded.nts,
 		plan: loaded.pl,
 		week_tss: loaded.wk,
@@ -521,6 +521,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		map_cam: Map.unpainted,
 		map_moved: Bool.False,
 		map_drag: Idle,
+		map_card: Closed,
 		map_rt: NoTarget,
 		map_paint: Bool.False,
 		map_painted: Map.unpainted,
@@ -810,6 +811,16 @@ expect {
 # a capture in any map mode waits for the map to land, and one on another
 # view does not wait on it
 expect List.all([10, 11, 12], |v| !(view_settled({ view: v, view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: map_unread(Loading) }))) and view_settled({ view: 10, view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: map_unread(Loaded) }) and view_settled({ view: 0, view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: map_unread(Loading) })
+
+# The picker row of a session the map's card opens, read off the frame loop
+# when the picker does not hold it: the picker holds the newest sessions,
+# and a route can be older than all of them.
+map_open_task! : Access, I64 => Msg
+map_open_task! = |acc, id|
+	match open_db!(acc) {
+		Ok(db) => MapOpened({ id, row: Db.load_trace_one!(db, id) })
+		Err(_) => MapOpened({ id, row: Err(NoTrace) })
+	}
 
 # Every route, read off the main loop: a full backfill is
 # hundreds of megabytes of stored answers to decode, which would hold every
@@ -1327,6 +1338,50 @@ sel_following_id = |old, old_sel, fresh| {
 # NEWEST session - the picker is newest-first, and the first match is the
 # one the athlete most likely means on a day that carries two; an id names
 # one session exactly. Absent, the selection stays where it was.
+# A session the map opened that the picker lacks, placed where the
+# picker's newest-first order puts it: before the first row from an
+# earlier day, or from the same day with a lower id, since Strava numbers
+# a day's sessions in the order they were uploaded. The picker re-reads
+# only on R or a session-naming directive, so every session the map opens
+# meanwhile is placed this way. Every index from that place on moves up
+# one: the selection and the ghost move with their sessions, and the
+# trace cache, aligned to the picker by index, keeps only the entries
+# before it.
+with_opened : Ui.Model, TraceId -> Ui.Model
+with_opened = |m, row|
+	if List.any(m.trace_ids, |e| e.id == row.id) {
+		m
+	} else {
+		k = day_key(row.day)
+		at = (List.find_first_index(m.trace_ids, |e| day_key(e.day) < k or (day_key(e.day) == k and e.id < row.id))) ?? List.len(m.trace_ids)
+		ids = List.concat(List.append(List.take_first(m.trace_ids, at), row), List.drop_first(m.trace_ids, at))
+		{ ..m, trace_ids: ids, trace_cache: List.take_first(m.trace_cache, at), trace_sel: if (m.trace_sel >= at) m.trace_sel + 1 else m.trace_sel, ghost_sel: if (m.ghost_sel >= U64.to_i64_wrap(at)) m.ghost_sel + 1 else m.ghost_sel }
+	}
+
+# a YYYY-MM-DD day as the number its digits spell, which orders as the days do
+day_key : Str -> I64
+day_key = |day| List.fold(Str.to_utf8(day), 0, |acc, b| if (b >= 48 and b <= 57) acc * 10 + U8.to_i64(b - 48) else acc)
+
+# two sessions the map opens land in newest-first order whichever opens
+# first, the shown session and the ghost keep their sessions, and the cache
+# keeps only the entries before the first place a session landed
+expect {
+	row = |id, day| { id, day, name: "", sport: "Ride", chan: "w" }
+	picker = [row(50, "2026-11-15"), row(40, "2026-11-10"), row(30, "2026-11-10"), row(20, "2026-06-01")]
+	entry = { tr: [], sg: [], du: 0.0, un: "", sp: [], st: { rows: [], pasted: Bool.False } }
+	base = { ..Gate.empty_model(Gate.default_size), trace_ids: picker, trace_sel: 3, ghost_sel: 2, trace_cache: List.repeat(entry, 4) }
+	mid = row(35, "2026-11-10")
+	old = row(10, "2025-10-10")
+	may = row(15, "2026-05-31")
+	a = with_opened(with_opened(with_opened(base, old), may), mid)
+	b = with_opened(with_opened(with_opened(base, mid), may), old)
+	List.map(a.trace_ids, |e| e.id) == [50, 40, 35, 30, 20, 15, 10]
+		and List.map(b.trace_ids, |e| e.id) == [50, 40, 35, 30, 20, 15, 10]
+		and (List.get(a.trace_ids, a.trace_sel)).map_ok(|e| e.id) == Ok(20) and (List.get(b.trace_ids, b.trace_sel)).map_ok(|e| e.id) == Ok(20)
+		and (List.get(a.trace_ids, (I64.to_u64_try(a.ghost_sel)) ?? 0)).map_ok(|e| e.id) == Ok(30) and List.len(with_opened(base, old).trace_cache) == 4 and List.len(a.trace_cache) == 2 and List.len(with_opened(base, may).trace_ids) == 5 and List.len(with_opened(with_opened(base, may), may).trace_ids) == 5
+		and day_key("2026-05-31") < day_key("2026-11-10")
+}
+
 sel_for_day : List(TraceId), Str, U64 -> U64
 sel_for_day = |ids, day, fallback|
 	match List.find_first_index(ids, |e| e.day == day) {
@@ -2009,6 +2064,9 @@ Msg : [
 	ReloadFailed,
 	TraceSwitched({ tr : List(F32), sg : List(Db.Seg), du : F32, gen : U64, day : Str, un : Str, sp : List(Series.Split), st : Db.StrengthLog }),
 	MapLoaded({ map : Db.MapData, gen : U64 }),
+	# the picker row of a session the map opened that the picker did not
+	# hold, or NoTrace when its stream holds nothing the trace can plot
+	MapOpened({ id : I64, row : Try(TraceId, [NoTrace]) }),
 	TileAnswer({ ans : Tiles.Answer, cache : CacheWrite }),
 	SourceRead(Try(Str, [NoTemplate])),
 	TraceSwitchFailed(U64),
@@ -2151,7 +2209,7 @@ update! = |model0, program_input, io| {
 				DayDetail(dd) => if (dd.day == acc.detail_day) ({ ..acc, detail: dd.lines }) else acc
 				# a dropped write must not leave the coach stale: resetting
 				# last_focus makes the next throttle tick try again
-				FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "", curve_family: "", curve_short: -1 } }
+				FocusWriteFailed => { ..acc, last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "", curve_family: "", curve_short: -1, map_id: -1 } }
 				# a session-naming directive replaces the picker with the one it
 				# was read against, so the refusal below and the selection it
 				# resolves both see the database as it is. The trace cache is
@@ -2190,7 +2248,7 @@ update! = |model0, program_input, io| {
 							}
 					}
 				Reloaded(fresh) => {
-					merged = { ..fresh, map: acc.map, map_tiles: acc.map_tiles, map_source: acc.map_source, map_cache_err: acc.map_cache_err, map_planned: acc.map_planned, map_plan_due: acc.map_plan_due, map_heat: acc.map_heat, map_play: acc.map_play, map_speed: acc.map_speed, map_marks: acc.map_marks, map_gen: acc.map_gen, map_load: (map_on_reload(acc.map_load)).load, map_stale: (map_on_reload(acc.map_load)).stale, map_cam: acc.map_cam, map_moved: acc.map_moved, map_rt: acc.map_rt, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_active: acc.last_active, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending, flame: acc.flame }
+					merged = { ..fresh, map: acc.map, map_tiles: acc.map_tiles, map_source: acc.map_source, map_cache_err: acc.map_cache_err, map_planned: acc.map_planned, map_plan_due: acc.map_plan_due, map_heat: acc.map_heat, map_play: acc.map_play, map_speed: acc.map_speed, map_marks: acc.map_marks, map_gen: acc.map_gen, map_load: (map_on_reload(acc.map_load)).load, map_stale: (map_on_reload(acc.map_load)).stale, map_cam: acc.map_cam, map_moved: acc.map_moved, map_card: acc.map_card, map_rt: acc.map_rt, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_active: acc.last_active, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending, flame: acc.flame }
 					# R reads the curve it was pressed on, and it is the slow path.
 					# A chip clicked while it ran has since moved curve_days or
 					# curve_family and landed its own curve; when the two disagree
@@ -2214,6 +2272,18 @@ update! = |model0, program_input, io| {
 				# speed bands not yet worked out; one R marked stale while it was
 				# read is read once more (map_on_landing)
 				MapLoaded(ml) => if (ml.gen != acc.map_gen) acc else { ..acc, map: ml.map, map_speed: Unbuilt, map_marks: Stale, map_load: map_on_landing(acc.map_stale), map_stale: Bool.False, map_painted: Map.unpainted, map_plan_due: Bool.True }
+				# a session the map opened joins the picker where newest-first
+				# order puts it (with_opened); the frame body opens a card still
+				# waiting on it, and a card whose session has no trace says so
+				MapOpened(mo) =>
+					match mo.row {
+						Ok(row) => with_opened(acc, row)
+						Err(_) =>
+							match acc.map_card {
+								Open(o) => if (o.id == mo.id) { ..acc, map_card: Open({ ..o, state: NoTrace }) } else acc
+								Closed => acc
+							}
+					}
 				TileAnswer(ta) => tile_landed(acc, ta.ans, ta.cache, tick)
 				# the template a tile fetch needs, or the tick the TileJSON could
 				# not be read at, after which it is asked for again
@@ -2283,7 +2353,7 @@ update! = |model0, program_input, io| {
 		Window.set_target_fps!(full_fps)
 		if (exits_now(model.focus_cleared and model.quit_mark_pending < 0, tick, model.quit_tick)) (Err(Exit(0)))
 		else Ok({ ..model, tick, pending_capture: pending1, last_directive: last_directive1 })
-	} else if d.key_pressed(KeyEscape) {
+	} else if d.key_pressed(KeyEscape) and !(Map.card_up(model)) {
 		if (model.stride_dir == "") (Err(Exit(0)))
 		else {
 			accq = { io, dir: model.stride_dir }
@@ -2307,6 +2377,34 @@ update! = |model0, program_input, io| {
 		layout = DisplayScale.layout(ui_percent, pixels)
 		win = { w: layout.w, h: layout.h }
 		m0 = DisplayScale.point(d.mouse.position(), layout.scale)
+		# the map's press and what it does to the card (Map.press_step,
+		# Map.act), judged against the view the athlete was looking at. A
+		# session the picker holds opens on the trace this frame; one it
+		# lacks has its picker row read first, and opens in the frame that
+		# row lands in, while its card still waits on it.
+		map_step = if (Map.is_map(model.view)) (Map.press_step(model.map_drag, { down: Mouse.button_down(d.mouse, Left), pressed: Mouse.button_pressed(d.mouse, Left), on_map: Map.on_map(win, m0.x, m0.y), x: m0.x, y: m0.y })) else { press: Idle, click: Err(NoClick) }
+		map_act = Map.act({ ..model, win }, map_step.click, { enter: d.key_pressed(KeyEnter) or d.key_pressed(KeyKpEnter), esc: d.key_pressed(KeyEscape) }, Scene.measure_of(model))
+		map_listed = map_act.open >= 0 and List.any(model.trace_ids, |e| e.id == map_act.open)
+		map_landed = List.fold(
+			program_input.messages,
+			-1,
+			|acc, msg|
+				match msg {
+					MapOpened(mo) =>
+						match mo.row {
+							Ok(_) => mo.id
+							Err(_) => acc
+						}
+					_ => acc
+				},
+		)
+		map_open = if (map_listed) map_act.open else if (Map.is_map(model.view) and map_landed >= 0 and map_landed == Map.waiting_on(model.map_card)) map_landed else -1
+		_ = if map_act.open >= 0 and !map_listed {
+			acco = { io, dir: model.stride_dir }
+			oid = map_act.open
+			Task.spawn!(program_input, || map_open_task!(acco, oid))
+		}
+		map_card2 = if (map_open >= 0) (Map.with_state(map_act.card, Ready)) else if (map_act.open >= 0) (Map.with_state(map_act.card, Opening)) else map_act.card
 		# nav clicks mirror the render geometry exactly (right-anchored pills)
 		nav_click =
 			if Mouse.button_pressed(d.mouse, Left) and m0.y >= 30.0 and m0.y <= 54.0 {
@@ -2337,6 +2435,7 @@ update! = |model0, program_input, io| {
 					Err(_) => model.view
 				}
 			)
+			else if (map_open >= 0) 2
 			else if (d.key_pressed(KeyTab)) (Days.next_view(model.view)) else model.view
 		view = if (directive.has_d and directive.view >= 0 and directive.view <= last_view) (
 			match I64.to_u8_try(directive.view) {
@@ -2569,8 +2668,9 @@ update! = |model0, program_input, io| {
 				-1
 			} else cursor2
 		# TAB on the power view with a rung hovered opens the session that set
-		# that rung's window best (TAB already moves the power view to the trace).
-		# A directive's session wins over TAB's: an id names one session exactly
+		# that rung's window best (TAB already moves the power view to the trace),
+		# and the map's card opens the session whose route was clicked.
+		# A directive's session wins over both: an id names one session exactly
 		# and wins over a day, and a day names whichever session of that day
 		# sorts first, which is the newest. Reloads and trace switches SPAWN -
 		# Cmd panics in update!, and the task lane is where Sqlite and text
@@ -2579,6 +2679,7 @@ update! = |model0, program_input, io| {
 		want_sel2 =
 			if (directive.has_d and directive.trace_id >= 0) (sel_for_id(model.trace_ids, directive.trace_id, want_sel))
 			else if (directive.has_d and directive.trace_day != "") (sel_for_day(model.trace_ids, directive.trace_day, want_sel))
+			else if (map_open >= 0) (sel_for_id(model.trace_ids, map_open, want_sel))
 			else if (tab_source >= 0) (sel_for_id(model.trace_ids, tab_source, want_sel))
 			else want_sel
 		# a switch is the selection moving, or a refetch the picker re-read
@@ -2850,6 +2951,8 @@ update! = |model0, program_input, io| {
 			family: Career.spine_at(model.career_spines, spine_idx).fam,
 			curve_family: want_family,
 			curve_short: Curve.focus_short(Curve.layout(model).foldable, want_short),
+			# the session the map's card is up for, named while a map mode shows it
+			map_id: Map.map_focus({ ..model, view: view2, map_card: map_card2 }),
 		}
 		# written when what the human sees changed, at most twice a second,
 		# and on a heartbeat regardless: updated_at is the coach's liveness
@@ -2911,22 +3014,14 @@ update! = |model0, program_input, io| {
 			refm = refused9
 			Task.spawn!(program_input, || MarkDone(mark_task!(accm, did, refm, "")))
 		}
-		# the map camera: the wheel zooms at the cursor, a left drag that
-		# began on the map carries the map with it, and 0 returns to the
-		# opening view. A UI resize moves every logical point, so a drag
-		# spanning one is not carried.
+		# the map camera: the wheel zooms at the cursor, a left press that
+		# began on the map carries the map with it while held (Map.press_step),
+		# and 0 returns to the opening view. A UI resize moves every logical
+		# point, so a drag spanning one is not carried.
 		map_r = Map.rect(win)
 		map_cam0 = Map.cam({ ..model, win })
 		on_map = m.x >= map_r.x and m.x <= map_r.x + map_r.w and m.y >= map_r.y and m.y <= map_r.y + map_r.h
-		map_drag2 =
-			if !(Map.is_map(view2)) or !(Mouse.button_down(d.mouse, Left)) {
-				Idle
-			} else {
-				match model.map_drag {
-					Held(_) => Held({ x: m.x, y: m.y })
-					Idle => if (Mouse.button_pressed(d.mouse, Left) and on_map) Held({ x: m.x, y: m.y }) else Idle
-				}
-			}
+		map_drag2 = if (Map.is_map(view2)) map_step.press else Idle
 		map_dragged = match (model.map_drag, map_drag2) {
 			(Held(a), Held(b)) => if (layout.scale == model.ui_scale) Ok({ dx: b.x - a.x, dy: b.y - a.y }) else Err(NotCarried)
 			_ => Err(NotCarried)
@@ -3067,7 +3162,7 @@ update! = |model0, program_input, io| {
 		used = !List.is_empty(d.events) or List.any(d.keys, |k| k != 0) or pointer.x != 0.0 or pointer.y != 0.0 or wheel.x != 0.0 or wheel.y != 0.0 or Mouse.button_down(d.mouse, Left) or Mouse.button_down(d.mouse, Right) or win.w != model.win.w or win.h != model.win.h or directive.has_d
 		last_active = if (used) tick else model.last_active
 		Window.set_target_fps!(frame_rate({ busy, tick, last_active }))
-		Ok({ ..model, map: map2, map_speed: map_speed2, map_marks: map_marks2, map_tiles: tile_plan.slots, map_source: map_source2, map_planned: (if (planning) { cam: map_shown, tick } else model.map_planned), map_plan_due: model.map_plan_due and !planning, map_heat: map_heat2, map_play: map_play2, map_painted_view: (if (map_paint2) view2 else model.map_painted_view), map_load: (if (map_spawn) Loading else model.map_load), map_gen: map_gen2, map_cam: map_cam2, map_moved: map_moved2, map_drag: map_drag2, map_rt: map_rt2, map_paint: map_paint2, map_painted: (if (map_paint2) map_shown else model.map_painted), lifts_off: lifts_off2, last_off: last_off2, week_off: week_off2, week_cursor: week_cursor2, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, show_short: want_short, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else if (view2 == 1) Curve.plot_top else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, map: map2, map_speed: map_speed2, map_marks: map_marks2, map_tiles: tile_plan.slots, map_source: map_source2, map_planned: (if (planning) { cam: map_shown, tick } else model.map_planned), map_plan_due: model.map_plan_due and !planning, map_heat: map_heat2, map_play: map_play2, map_painted_view: (if (map_paint2) view2 else model.map_painted_view), map_load: (if (map_spawn) Loading else model.map_load), map_gen: map_gen2, map_cam: map_cam2, map_moved: map_moved2, map_drag: map_drag2, map_card: map_card2, map_rt: map_rt2, map_paint: map_paint2, map_painted: (if (map_paint2) map_shown else model.map_painted), lifts_off: lifts_off2, last_off: last_off2, week_off: week_off2, week_cursor: week_cursor2, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, show_short: want_short, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else if (view2 == 1) Curve.plot_top else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 

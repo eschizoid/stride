@@ -506,7 +506,7 @@ Gate :: [].{
 			tick: 0,
 			last_active: 0,
 			view_anim: 0,
-			last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "", curve_family: "", curve_short: -1 },
+			last_focus: { view: -1, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, detail_day: "", sport: "", family: "", curve_family: "", curve_short: -1, map_id: -1 },
 			quitting: Bool.False,
 			quit_tick: 0,
 			focus_cleared: Bool.False,
@@ -568,6 +568,7 @@ Gate :: [].{
 			map_cam: Map.unpainted,
 			map_moved: Bool.False,
 			map_drag: Idle,
+			map_card: Closed,
 			map_rt: NoTarget,
 			map_paint: Bool.False,
 			map_painted: Map.unpainted,
@@ -976,12 +977,17 @@ Gate :: [].{
 	}
 
 	# ── the map view's fixtures ────────────────────────────────────────────
+	# the session the fixture routes belong to: a ride its meter measured,
+	# named as long as the trace picker's cap lets a name be
+	route_session : Db.RouteSession
+	route_session = { id: 1, start: 1794738080, name: Db.cap_name(Str.repeat("W", 60)), day: "2026-11-15", sport: "Ride", dist_m: 160934.4, moving_s: 35940, watts: 1234 }
+
 	# a route, in metres from the origin
 	map_fixture : Db.MapData
 	map_fixture = {
 		route = [{ x: 0.0, y: 0.0 }, { x: 1200.0, y: 400.0 }, { x: 2600.0, y: -300.0 }]
 		{
-			routes: [{ kind: Db.route_kind, pts: route, ts: [0.0, 300.0, 600.0], far: route, fts: [0.0, 300.0, 600.0], bands: [2, 3], fbands: [], box: Geo.box_of(route) }],
+			routes: [{ kind: Db.route_kind, pts: route, ts: [0.0, 300.0, 600.0], far: route, fts: [0.0, 300.0, 600.0], bands: [2, 3], fbands: [], box: Geo.box_of(route), session: route_session }],
 			origin: Geo.merc(41.88, -87.63),
 			fit: Geo.box_of(route),
 			focus: Geo.focus([{ start: { x: 0.0, y: 0.0 }, box: Geo.box_of(route) }]),
@@ -995,7 +1001,7 @@ Gate :: [].{
 	madrid_fixture = {
 		home = [{ x: 0.0, y: 0.0 }, { x: 1200.0, y: 400.0 }, { x: 2600.0, y: -300.0 }]
 		away = [{ x: 9389000.0, y: -250000.0 }, { x: 9390000.0, y: -249500.0 }]
-		lines = [{ kind: Db.route_kind, pts: home, ts: [0.0, 300.0, 600.0], far: home, fts: [0.0, 300.0, 600.0], bands: [2, 2], fbands: [2, 2], box: Geo.box_of(home) }, { kind: Db.route_kind, pts: away, ts: [0.0, 400.0], far: away, fts: [0.0, 400.0], bands: [2], fbands: [2], box: Geo.box_of(away) }]
+		lines = [{ kind: Db.route_kind, pts: home, ts: [0.0, 300.0, 600.0], far: home, fts: [0.0, 300.0, 600.0], bands: [2, 2], fbands: [2, 2], box: Geo.box_of(home), session: route_session }, { kind: Db.route_kind, pts: away, ts: [0.0, 400.0], far: away, fts: [0.0, 400.0], bands: [2], fbands: [2], box: Geo.box_of(away), session: { ..route_session, id: 2, start: route_session.start - 86400 } }]
 		{
 			routes: lines,
 			origin: Geo.merc(41.88, -87.63),
@@ -1046,6 +1052,63 @@ Gate :: [].{
 				),
 			),
 		)
+
+	# the map's card at the default window for every athlete: up for a
+	# route of each family's longest sport type and of a sport no family
+	# holds, its name as long as the cap lets one be, with a measured power
+	# and without, in every state, anchored at the map's middle, at each of
+	# its corners and past each of its edges, where a pan leaves a clicked
+	# point; and in heat and play at the middle
+	card_models : List({ name : Str, model : Ui.Model })
+	card_models = {
+		sports = List.append(List.map(Sports.families, |fam| List.fold(fam.sports, "", |w, s| if (Str.count_utf8_bytes(s) > Str.count_utf8_bytes(w)) s else w)), rare)
+		states = [{ n: "ready", st: Ready }, { n: "opening", st: Opening }, { n: "without a trace", st: NoTrace }]
+		List.join(
+			List.map(
+				athletes,
+				|a| {
+					base = { ..athlete_model(a, default_size), view: 10, map: map_fixture }
+					r = Map.rect(base.win)
+					c = Map.cam(base)
+					spots = [{ n: "middle", x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 }, { n: "top left", x: r.x + 1.0, y: r.y + 1.0 }, { n: "top right", x: r.x + r.w - 1.0, y: r.y + 1.0 }, { n: "bottom left", x: r.x + 1.0, y: r.y + r.h - 1.0 }, { n: "bottom right", x: r.x + r.w - 1.0, y: r.y + r.h - 1.0 }, { n: "left of the map", x: r.x - 300.0, y: r.y + r.h / 2.0 }, { n: "right of the map", x: r.x + r.w + 300.0, y: r.y + r.h / 2.0 }, { n: "above the map", x: r.x + r.w / 2.0, y: r.y - 300.0 }, { n: "below the map", x: r.x + r.w / 2.0, y: r.y + r.h + 300.0 }]
+					up = |sport, watts, st, sx, sy, v| {
+						s = { ..route_session, sport, watts }
+						{ ..base, view: v, map: { ..map_fixture, routes: List.map(map_fixture.routes, |l| { ..l, session: s }) }, map_card: Open({ id: s.id, at: Geo.to_world(c, r, sx, sy), state: st }) }
+					}
+					per_sport = List.join(
+						List.map(
+							sports,
+							|sp| List.join(
+								List.map(
+									states,
+									|s0| List.join(
+										List.map(
+											spots,
+											|p0| [
+												{ name: "${a.name} card for a ${sp} ${s0.n} at the ${p0.n}", model: up(sp, 0, s0.st, p0.x, p0.y, 10) },
+												{ name: "${a.name} card for a ${sp} with power ${s0.n} at the ${p0.n}", model: up(sp, 1234, s0.st, p0.x, p0.y, 10) },
+											],
+										),
+									),
+								),
+							),
+						),
+					)
+					modes = List.map([11, 12], |v| { name: "${a.name} card in view ${U8.to_str(v)}", model: up("Ride", 1234, Ready, r.x + r.w / 2.0, r.y + r.h / 2.0, v) })
+					List.concat(per_sport, modes)
+				},
+			),
+		)
+	}
+
+	# a card's failures: a line outside the card or over another, the card
+	# outside the map, or no card where one is up
+	card_judge : Ui.Model, Scene.Measure -> List(Str)
+	card_judge = |m, ms|
+		match Map.card(m, ms) {
+			Ok(cd) => List.concat(Labels.check(Scene.owned(Labels.place(cd.lines, { boxes: [], segs: [] }))), if (Labels.inside(cd.box, Map.rect(m.win))) [] else ["the card leaves the map"])
+			Err(_) => ["no card is up"]
+		}
 
 	heat_models : List({ name : Str, model : Ui.Model })
 	heat_models = {
@@ -1451,6 +1514,12 @@ expect (Gate.builtin_measure("playback - every session at once, an hour in 30 se
 # title and every note still keep apart
 expect Gate.failures(|m| Gate.judge(Map.owned(m, Gate.builtin_measure), Map.marks(m, Gate.builtin_measure)), List.keep_if(Gate.map_models, |e| Str.ends_with(e.name, " at ${Gate.size_name(Gate.default_size)}"))) == []
 
+# the map's card holds its lines inside it and apart, and stays inside the
+# map, at the default window in the brand faces and in the built-in face
+# the window falls back to without them
+expect Gate.failures(|m| Gate.card_judge(m, Gate.measure), Gate.card_models) == []
+expect Gate.failures(|m| Gate.card_judge(m, Gate.builtin_measure), Gate.card_models) == []
+
 # a cache the window cannot write is named on the map in place of the
 # playback clock, and a map whose cache works names nothing
 expect List.all(
@@ -1463,3 +1532,42 @@ expect List.all(
 			and !(List.any(said(base), |k| Str.contains(k, "could not")))
 	},
 )
+
+# on the map a click on a route opens its card, a click on the card or
+# Enter opens its session, Esc and a click that picks nothing close it, a
+# card waiting on its session or with no trace opens nothing, and a card
+# whose route is no longer loaded closes and opens nothing; off the map
+# the card is left as it is, neither up nor named in the focus row
+expect {
+	base = { ..Gate.empty_model(Gate.default_size), view: 10, map: Gate.map_fixture }
+	r = Map.rect(base.win)
+	c = Map.cam(base)
+	on = Geo.to_screen(c, r, { x: 1200.0, y: 400.0 })
+	off = { x: r.x + 5.0, y: r.y + r.h - 5.0 }
+	keys = { enter: Bool.False, esc: Bool.False }
+	id_of = |cd|
+		match cd {
+			Open(o) => o.id
+			Closed => -1
+		}
+	opened = Map.act(base, Ok(on), keys, Gate.measure)
+	up = { ..base, map_card: opened.card }
+	inside = match Map.card(up, Gate.measure) {
+		Ok(cd) => { x: cd.box.x + cd.box.w / 2.0, y: cd.box.y + cd.box.h / 2.0 }
+		Err(_) => off
+	}
+	held = |st| { ..up, map_card: Map.with_state(up.map_card, st) }
+	gone = { ..up, map_card: Open({ id: 99, at: { x: 0.0, y: 0.0 }, state: Ready }) }
+	id_of(opened.card) == 1 and opened.open == -1
+		and (Map.act(up, Ok(inside), keys, Gate.measure)).open == 1
+		and (Map.act(up, Err(NoClick), { ..keys, enter: Bool.True }, Gate.measure)).open == 1
+		and id_of((Map.act(up, Err(NoClick), { ..keys, esc: Bool.True }, Gate.measure)).card) == -1
+		and id_of((Map.act(up, Ok(off), keys, Gate.measure)).card) == -1
+		and (Map.act(held(Opening), Err(NoClick), { ..keys, enter: Bool.True }, Gate.measure)).open == -1
+		and (Map.act(held(NoTrace), Ok(inside), keys, Gate.measure)).open == -1
+		and (Map.act(gone, Err(NoClick), { ..keys, enter: Bool.True }, Gate.measure)).open == -1 and id_of((Map.act(gone, Err(NoClick), keys, Gate.measure)).card) == -1
+		and id_of((Map.act({ ..up, view: 2 }, Ok(on), keys, Gate.measure)).card) == 1
+		and Map.card_up(up) and Map.card_up({ ..up, view: 12 }) and !(Map.card_up({ ..up, view: 2 })) and !(Map.card_up(base))
+		and Map.map_focus(up) == 1 and Map.map_focus({ ..up, view: 2 }) == -1 and Map.map_focus(base) == -1
+		and Map.waiting_on(held(Opening).map_card) == 1 and Map.waiting_on(up.map_card) == -1
+}

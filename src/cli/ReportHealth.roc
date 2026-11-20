@@ -641,12 +641,24 @@ ReportHealth :: [].{
 				Ok(rows) => List.first(rows) ?? -1
 				Err(_) => -1
 			}
-			absent = { present: Bool.False, live: Bool.False, age_seconds: -1, updated_at: "", view: -1, range: -1, cursor_day: "", trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1, detail_day: "", sport: "", family: "", curve_family: "", curve_short: -1 }
+			# the session the map's card is up for, -1 when none is or the
+			# window never reported one (its own read for the same reason)
+			mi_rows = Sql.query_many!({
+				path: Path.utf8(path),
+				query: "SELECT COALESCE(map_id, -1) AS fmi FROM viz_focus WHERE id = 1",
+				bindings: [],
+				rows: Sql.i64("fmi"),
+			})
+			map_id = match mi_rows {
+				Ok(rows) => List.first(rows) ?? -1
+				Err(_) => -1
+			}
+			absent = { present: Bool.False, live: Bool.False, age_seconds: -1, updated_at: "", view: -1, range: -1, cursor_day: "", trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1, detail_day: "", sport: "", family: "", curve_family: "", curve_short: -1, map_id: -1 }
 			focus = match focus_rows {
 				Err(_) => absent
 				Ok(rows) => match List.first(rows) {
 					Err(_) => absent
-					Ok(r) => { present: Bool.True, live: r.age >= 0 and r.age <= s.fstale, age_seconds: r.age, updated_at: r.ua, view: r.view, range: r.range, cursor_day: r.cd, trace_day: r.td, trace_id: ids.ti, ghost_day: r.gd, ghost_id: ids.gi, detail_day: ext.fdd, sport: ext.fsp, family: ext.ffm, curve_family, curve_short }
+					Ok(r) => { present: Bool.True, live: r.age >= 0 and r.age <= s.fstale, age_seconds: r.age, updated_at: r.ua, view: r.view, range: r.range, cursor_day: r.cd, trace_day: r.td, trace_id: ids.ti, ghost_day: r.gd, ghost_id: ids.gi, detail_day: ext.fdd, sport: ext.fsp, family: ext.ffm, curve_family, curve_short, map_id }
 				}
 			}
 			# the last ten directives, newest first, each with its status and

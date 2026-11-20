@@ -254,6 +254,37 @@ Each line keeps a dense point list for close zooms and a sparse one for wide
 zooms, since a full backfill holds millions of points and every repaint
 walks the list it draws.
 
+A click on a route opens a card for its session over the map, beside
+where the click landed: the session's name, its sport type and day, its
+distance and moving time in the athlete's units, and its effort as the
+sport reads it: the pace a run, walk, swim or erg session is paced in; the
+average power of any session a meter measured, read as analyze reads
+Strava's mark, so an unmarked row counts as measured and an estimate does
+not; "no power meter" for a ride without one; and nothing for any other
+sport. The route draws white over a dark casing while its card is up, and
+the card stays inside the map: a pan that carries the clicked point past
+the map's edge holds the card at that edge. A click is a press and
+release that never strays more than a few pixels from where the press
+began; a press that strays further is a drag, which pans and never
+clicks. The click picks the routes the zoom draws (the dense or the sparse
+list) that pass within a few logical pixels of it, the same few at every
+zoom, and where several do the session that started last wins, by the
+local start, the only start an activity row stores; a stretch of route
+the map's edge cuts off is never picked. Enter, or a click on the card,
+opens the session on the trace view. The trace picker holds its newest
+sessions, so for an older route the window first reads that session's
+picker row and places it where the picker's newest-first order puts it,
+the card saying the trace is on its way; a session whose stream holds
+nothing the trace can plot says so on the card instead. A card whose
+route is no longer loaded closes. Esc, or a click that picks no route,
+closes the card, and Esc quits only while no card is up. Heat and play
+take the same click as routes mode, since the hit test is geometry over
+the routes every mode draws, and the card and the highlight draw over the
+heat and over playback alike. While a map mode shows a card, the focus
+row names its session (`map_id`); a window from before the column writes
+none, so a row it updates keeps whatever map_id a newer window last
+wrote. Map.hit is the hit test, pure and covered by expects.
+
 The map loads in a task beside the other views, which open without waiting
 for it; on the first load the map says it is being read until it lands, and it
 names a read that failed. One map load runs at a time: R pressed while one
@@ -321,13 +352,15 @@ and resumes, and the clock starts over each time the mode opens.
 | `X` (trace view) | cycle the picker's sport filter (all / each sport the menu holds); the header names the active filter |
 | wheel / drag / `0` (trace view) | zoom anchored at the cursor's moment, pan while held, reset - the window is [pan, pan+1/zoom] of the session |
 | wheel / drag / `0` (map view) | zoom at the cursor, pan while a drag that began on the map is held, return to the opening view |
+| click a route (map view, every mode) | open its session's card and highlight the route; where routes overlap, the session that started last; a click on no route closes the card |
+| `Enter` / click the card (map view) | open the card's session on the trace view |
 | `[` / `]` (trace view) | older / newer session among those the active sport filter admits - every one is cached at load, so a switch is a memory read, not a query |
 | `←` / `→` (table view) | scroll the window through the whole series (rows fill the window height) |
 | click a date (table view) | open that day's detail panel: sessions, minutes, km, TSS, NP |
 | window edges | drag to resize; every view reflows live (980x600 floor) |
 | `S` | save a PNG of the current view into `captures/` under the window's working directory |
 | mouse hover | crosshair + per-day dots + a top-right readout (form board) |
-| `ESC` | quit |
+| `ESC` | quit; on the map with a card up, close the card |
 
 The trace picks each session's channel by what its stream carries: power
 when watts exist; PACE for a run, walk or swim carrying distance and time
@@ -451,7 +484,7 @@ end, steps inward from the right, the column past the rule's end, and last
 the same row lifted to just above the tallest load bar.
 
 Hover cards and tooltips (the power view's rung and ring cards, the form
-board's day card, the year's day line, the XP rail's sheet) draw over
+board's day card, the year's day line, the XP rail's sheet, the map's route card) draw over
 everything through the same layer, as fixed text inside their card.
 
 The chrome every view shares (the wordmark, the scale chip, the nav pills,
@@ -504,6 +537,11 @@ sport no family holds. The fixtures per view:
 - lifts: more lifts than the widest window holds and the latest session's
   sets, in kilograms and scrolled in pounds, for every athlete who lifts,
   and the empty tab for every athlete who does not;
+- the map's route card, at the default window in both faces: up for a
+  route of each family's longest sport type and of a sport no family holds,
+  its name as long as the cap lets one be, with a measured power and without,
+  ready, waiting on its trace and with none, at the map's middle and at each
+  corner, and in heat and play;
 - the boot splash at every dot count, slow and not, and the XP rail's sheet.
 
 For each scene the gate asserts that no two text boxes overlap, the
@@ -512,8 +550,8 @@ covers a shape other than the one it is written inside. Each view lists the
 shapes it draws in its `marks`: the nav pills and the XP rail on every view,
 the bars, chips, tiles and cards of the views that draw them, the power
 view's dots, planned rings and legend swatches, and the career view's spine
-dots, load bars, legend swatches and composition strip. The boot splash and the XP rail's sheet run
-the first two checks alone. `roc test` reports only that the expect failed;
+dots, load bars, legend swatches and composition strip. The boot splash, the XP rail's sheet and the map's card run
+the first two checks alone, and the map's card must also lie inside the map. `roc test` reports only that the expect failed;
 `Gate.failures` names each failure by fixture, size and the texts and
 shapes involved, so `dbg` it inside the expect to read them.
 
@@ -603,16 +641,17 @@ CREATE TABLE IF NOT EXISTS viz_focus (
   cursor_day TEXT, trace_day TEXT, ghost_day TEXT,
   trace_id INTEGER, ghost_id INTEGER,
   detail_day TEXT, sport TEXT, family TEXT,
-  curve_family TEXT, curve_short INTEGER);
+  curve_family TEXT, curve_short INTEGER, map_id INTEGER);
 
 -- observe: one row, upserted when what the human sees changes (throttled
 -- ~2/s) and on a heartbeat every 30 seconds regardless. Beyond the session
 -- it names the day whose detail panel is open on the table, the trace's
 -- sport filter, the family the career view is on, the power view's curve
--- (curve_family) and whether its short rungs are shown (curve_short, 1
--- shown, 0 folded), each NULL when none
+-- (curve_family), whether its short rungs are shown (curve_short, 1
+-- shown, 0 folded) and the session whose route the map's card is up for
+-- (map_id), each NULL when none
 SELECT view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id,
-       detail_day, sport, family, curve_family, curve_short, updated_at
+       detail_day, sport, family, curve_family, curve_short, map_id, updated_at
 FROM viz_focus;
 ```
 

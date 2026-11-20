@@ -46,7 +46,8 @@
         "sport",
         "family",
         "curve_family",
-        "curve_short"
+        "curve_short",
+        "map_id"
       ],
       "additionalKeys": false,
       "properties": {
@@ -102,6 +103,10 @@
         "curve_short": {
           "type": "integer",
           "description": "whether the power view shows the short rungs (under 5 minutes) it folds when none was pushed all-out: 1 shown, 0 folded, -1 when there is nothing to fold or the window has not reported it"
+        },
+        "map_id": {
+          "type": "integer",
+          "description": "the activity id of the session whose route the map view's card is up for, named while a map mode shows it; -1 when no card is up or the window has not reported one"
         }
       }
     },

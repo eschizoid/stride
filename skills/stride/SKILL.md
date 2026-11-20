@@ -485,10 +485,11 @@ polls about once a second and every row reaches a status you can read back.
    row won; `stale` = nothing read it within the freshness window. A refused field is a
    fact about the data or the picker, not a reason to retry.
 4. **Observe with freshness.** `stride viz --json` serves `focus`
-   `{present, live, age_seconds, updated_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id, detail_day, sport, family, curve_family, curve_short}`
-   (`family` is the career view's family, `curve_family` the power view's, and
+   `{present, live, age_seconds, updated_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id, detail_day, sport, family, curve_family, curve_short, map_id}`
+   (`family` is the career view's family, `curve_family` the power view's,
    `curve_short` whether it shows the short rungs it folds when none was pushed:
-   1 shown, 0 folded, -1 unreported).
+   1 shown, 0 folded, -1 unreported, and `map_id` the activity id of the session whose
+   route card is up on the map, named while a map mode shows it, -1 otherwise).
    Read `live`, never the timestamp: a window closed by the OS leaves a row that is
    present but not live; `present: false` is a clean quit (ESC) or a window that never ran.
 5. **Focus is context, not evidence.** It tells you what the athlete is asking about,

@@ -30,8 +30,8 @@ Bus :: [].{
 	# The migration, in order. Every statement is safe to repeat: CREATE and
 	# INDEX carry IF NOT EXISTS, and an ALTER on a column that already exists
 	# fails and is discarded by the executor, by design. The LAST statement
-	# adds curve_short to viz_focus, and the sentinel below counts that column
-	# as proof the whole list ran - so a new column joins at the END and the
+	# adds map_id to viz_focus, and the sentinel below counts that column as
+	# proof the whole list ran - so a new column joins at the END and the
 	# sentinel moves to it, or an existing database never gains it.
 	ddl : List(Str)
 	ddl = [
@@ -71,6 +71,8 @@ Bus :: [].{
 		# directive (1 shows, 0 folds), reported in the focus row
 		"ALTER TABLE viz_directives ADD COLUMN short INTEGER",
 		"ALTER TABLE viz_focus ADD COLUMN curve_short INTEGER",
+		# the session whose route the map's card is up for, by activity id
+		"ALTER TABLE viz_focus ADD COLUMN map_id INTEGER",
 	]
 
 	# The every-second fast path: one read of the catalog, no schema lock.
@@ -81,13 +83,13 @@ Bus :: [].{
 	# to its last statement reaches sentinel_present; any older column set
 	# re-enters the DDL. A table that does not exist contributes nothing.
 	sentinel_sql : Str
-	sentinel_sql = "SELECT (SELECT count(*) FROM sqlite_master WHERE name IN ('viz_directives', 'viz_focus', 'viz_directives_pending')) + (SELECT count(*) FROM pragma_table_info('viz_directives') WHERE name IN ('ghost_day', 'ghost_id', 'capture', 'result', 'family', 'short')) + (SELECT count(*) FROM pragma_table_info('viz_focus') WHERE name IN ('ghost_day', 'ghost_id', 'detail_day', 'sport', 'family', 'curve_family', 'curve_short')) AS c"
+	sentinel_sql = "SELECT (SELECT count(*) FROM sqlite_master WHERE name IN ('viz_directives', 'viz_focus', 'viz_directives_pending')) + (SELECT count(*) FROM pragma_table_info('viz_directives') WHERE name IN ('ghost_day', 'ghost_id', 'capture', 'result', 'family', 'short')) + (SELECT count(*) FROM pragma_table_info('viz_focus') WHERE name IN ('ghost_day', 'ghost_id', 'detail_day', 'sport', 'family', 'curve_family', 'curve_short', 'map_id')) AS c"
 
 	# 3 objects + ghost_day, ghost_id, capture, result, family and short on
 	# viz_directives (6) + ghost_day, ghost_id, detail_day, sport, family,
-	# curve_family and curve_short on viz_focus (7)
+	# curve_family, curve_short and map_id on viz_focus (8)
 	sentinel_present : I64
-	sentinel_present = 16
+	sentinel_present = 17
 
 	# a read gates the writes: a zero-row UPDATE still takes the write lock
 	has_pending_sql : Str
@@ -188,26 +190,26 @@ Bus :: [].{
 	short_refusal = |v| if (v == -1 or v == 0 or v == 1) "" else "short ${v.to_str()} not 0/1"
 
 	focus_upsert_sql : Str
-	focus_upsert_sql = "INSERT INTO viz_focus (id, updated_at, view, range, cursor_day, trace_day, ghost_day, trace_id, ghost_id, detail_day, sport, family, curve_family, curve_short) VALUES (1, datetime('now'), :v, :rg, NULLIF(:cd, ''), NULLIF(:td, ''), NULLIF(:gd, ''), NULLIF(:ti, -1), NULLIF(:gi, -1), NULLIF(:dd, ''), NULLIF(:sp, ''), NULLIF(:fm, ''), NULLIF(:cf, ''), NULLIF(:cs, -1)) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, view = excluded.view, range = excluded.range, cursor_day = excluded.cursor_day, trace_day = excluded.trace_day, ghost_day = excluded.ghost_day, trace_id = excluded.trace_id, ghost_id = excluded.ghost_id, detail_day = excluded.detail_day, sport = excluded.sport, family = excluded.family, curve_family = excluded.curve_family, curve_short = excluded.curve_short"
+	focus_upsert_sql = "INSERT INTO viz_focus (id, updated_at, view, range, cursor_day, trace_day, ghost_day, trace_id, ghost_id, detail_day, sport, family, curve_family, curve_short, map_id) VALUES (1, datetime('now'), :v, :rg, NULLIF(:cd, ''), NULLIF(:td, ''), NULLIF(:gd, ''), NULLIF(:ti, -1), NULLIF(:gi, -1), NULLIF(:dd, ''), NULLIF(:sp, ''), NULLIF(:fm, ''), NULLIF(:cf, ''), NULLIF(:cs, -1), NULLIF(:mi, -1)) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, view = excluded.view, range = excluded.range, cursor_day = excluded.cursor_day, trace_day = excluded.trace_day, ghost_day = excluded.ghost_day, trace_id = excluded.trace_id, ghost_id = excluded.ghost_id, detail_day = excluded.detail_day, sport = excluded.sport, family = excluded.family, curve_family = excluded.curve_family, curve_short = excluded.curve_short, map_id = excluded.map_id"
 
 	focus_clear_sql : Str
 	focus_clear_sql = "DELETE FROM viz_focus WHERE id = 1"
 }
 
-# the sentinel's proof is the migration's last statement: it ADDS
-# curve_short to viz_focus. A column appended after it would never be
-# counted, so this holds the two together.
+# the sentinel's proof is the migration's last statement: it ADDS map_id
+# to viz_focus. A column appended after it would never be counted, so this
+# holds the two together.
 expect {
 	last = match List.last(Bus.ddl) {
 		Ok(s) => s
 		Err(_) => ""
 	}
-	Str.starts_with(last, "ALTER TABLE viz_focus ADD COLUMN curve_short")
+	Str.starts_with(last, "ALTER TABLE viz_focus ADD COLUMN map_id")
 }
 
 # the sentinel reads the catalog's column structure for both tables, not
 # the text of a CREATE statement, and its target is the three objects plus
-# the columns it names on each table: six on viz_directives, seven on
+# the columns it names on each table: six on viz_directives, eight on
 # viz_focus, each one a column some migration appended, named in the list
 # of the table it belongs to
 expect {
@@ -222,9 +224,9 @@ expect {
 	}
 	Str.contains(directives_part, "pragma_table_info('viz_directives')")
 		and List.len(parts) == 2
-		and Bus.sentinel_present == 3 + 6 + 7
+		and Bus.sentinel_present == 3 + 6 + 8
 		and List.all(["'ghost_day'", "'ghost_id'", "'capture'", "'result'", "'family'", "'short'"], |c| Str.contains(directives_part, c))
-		and List.all(["'ghost_day'", "'ghost_id'", "'detail_day'", "'sport'", "'family'", "'curve_family'", "'curve_short'"], |c| Str.contains(focus_part, c))
+		and List.all(["'ghost_day'", "'ghost_id'", "'detail_day'", "'sport'", "'family'", "'curve_family'", "'curve_short'", "'map_id'"], |c| Str.contains(focus_part, c))
 		and !Str.contains(focus_part, "'capture'") and !Str.contains(directives_part, "'sport'")
 }
 
@@ -259,4 +261,4 @@ expect Bus.curve_key("pace:Swim") == Pace("Swim") and Bus.curve_key("Ride") == P
 expect Str.contains(Bus.winner_sql, "AS fm, ")
 # the short vocabulary: nothing asked, show, fold, and anything else refused
 expect Bus.short_refusal(-1) == "" and Bus.short_refusal(1) == "" and Bus.short_refusal(0) == "" and Bus.short_refusal(2) == "short 2 not 0/1"
-expect Str.contains(Bus.winner_sql, "AS sh, ") and Str.contains(Bus.focus_upsert_sql, "curve_short = excluded.curve_short")
+expect Str.contains(Bus.winner_sql, "AS sh, ") and Str.contains(Bus.focus_upsert_sql, "curve_short = excluded.curve_short") and Str.contains(Bus.focus_upsert_sql, "map_id = excluded.map_id")
