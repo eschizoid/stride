@@ -1056,8 +1056,9 @@ Gate :: [].{
 	# the map's card at the default window for every athlete: up for a
 	# route of each family's longest sport type and of a sport no family
 	# holds, its name as long as the cap lets one be, with a measured power
-	# and without, in every state, anchored at the map's middle and at each
-	# of its corners; and in heat and play at the middle
+	# and without, in every state, anchored at the map's middle, at each of
+	# its corners and past each of its edges, where a pan leaves a clicked
+	# point; and in heat and play at the middle
 	card_models : List({ name : Str, model : Ui.Model })
 	card_models = {
 		sports = List.append(List.map(Sports.families, |fam| List.fold(fam.sports, "", |w, s| if (Str.count_utf8_bytes(s) > Str.count_utf8_bytes(w)) s else w)), rare)
@@ -1069,7 +1070,7 @@ Gate :: [].{
 					base = { ..athlete_model(a, default_size), view: 10, map: map_fixture }
 					r = Map.rect(base.win)
 					c = Map.cam(base)
-					spots = [{ n: "middle", x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 }, { n: "top left", x: r.x + 1.0, y: r.y + 1.0 }, { n: "top right", x: r.x + r.w - 1.0, y: r.y + 1.0 }, { n: "bottom left", x: r.x + 1.0, y: r.y + r.h - 1.0 }, { n: "bottom right", x: r.x + r.w - 1.0, y: r.y + r.h - 1.0 }]
+					spots = [{ n: "middle", x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 }, { n: "top left", x: r.x + 1.0, y: r.y + 1.0 }, { n: "top right", x: r.x + r.w - 1.0, y: r.y + 1.0 }, { n: "bottom left", x: r.x + 1.0, y: r.y + r.h - 1.0 }, { n: "bottom right", x: r.x + r.w - 1.0, y: r.y + r.h - 1.0 }, { n: "left of the map", x: r.x - 300.0, y: r.y + r.h / 2.0 }, { n: "right of the map", x: r.x + r.w + 300.0, y: r.y + r.h / 2.0 }, { n: "above the map", x: r.x + r.w / 2.0, y: r.y - 300.0 }, { n: "below the map", x: r.x + r.w / 2.0, y: r.y + r.h + 300.0 }]
 					up = |sport, watts, st, sx, sy, v| {
 						s = { ..route_session, sport, watts }
 						{ ..base, view: v, map: { ..map_fixture, routes: List.map(map_fixture.routes, |l| { ..l, session: s }) }, map_card: Open({ id: s.id, at: Geo.to_world(c, r, sx, sy), state: st }) }
@@ -1533,8 +1534,9 @@ expect List.all(
 )
 
 # on the map a click on a route opens its card, a click on the card or
-# Enter opens its session, Esc and a click that picks nothing close it, and
-# a card waiting on its session or with no trace opens nothing; off the map
+# Enter opens its session, Esc and a click that picks nothing close it, a
+# card waiting on its session or with no trace opens nothing, and a card
+# whose route is no longer loaded closes and opens nothing; off the map
 # the card is left as it is, neither up nor named in the focus row
 expect {
 	base = { ..Gate.empty_model(Gate.default_size), view: 10, map: Gate.map_fixture }
@@ -1555,6 +1557,7 @@ expect {
 		Err(_) => off
 	}
 	held = |st| { ..up, map_card: Map.with_state(up.map_card, st) }
+	gone = { ..up, map_card: Open({ id: 99, at: { x: 0.0, y: 0.0 }, state: Ready }) }
 	id_of(opened.card) == 1 and opened.open == -1
 		and (Map.act(up, Ok(inside), keys, Gate.measure)).open == 1
 		and (Map.act(up, Err(NoClick), { ..keys, enter: Bool.True }, Gate.measure)).open == 1
@@ -1562,6 +1565,7 @@ expect {
 		and id_of((Map.act(up, Ok(off), keys, Gate.measure)).card) == -1
 		and (Map.act(held(Opening), Err(NoClick), { ..keys, enter: Bool.True }, Gate.measure)).open == -1
 		and (Map.act(held(NoTrace), Ok(inside), keys, Gate.measure)).open == -1
+		and (Map.act(gone, Err(NoClick), { ..keys, enter: Bool.True }, Gate.measure)).open == -1 and id_of((Map.act(gone, Err(NoClick), keys, Gate.measure)).card) == -1
 		and id_of((Map.act({ ..up, view: 2 }, Ok(on), keys, Gate.measure)).card) == 1
 		and Map.card_up(up) and Map.card_up({ ..up, view: 12 }) and !(Map.card_up({ ..up, view: 2 })) and !(Map.card_up(base))
 		and Map.map_focus(up) == 1 and Map.map_focus({ ..up, view: 2 }) == -1 and Map.map_focus(base) == -1

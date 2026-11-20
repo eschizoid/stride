@@ -257,26 +257,33 @@ walks the list it draws.
 A click on a route opens a card for its session over the map, beside
 where the click landed: the session's name, its sport type and day, its
 distance and moving time in the athlete's units, and its effort as the
-sport reads it, the pace a run, walk, swim or erg session is paced in, or
-a ride's average power when a meter measured it and "no power meter" when
-none did, since Strava's estimate is not a measurement. The route draws
-white over a dark casing while its card is up. A click is a press and
+sport reads it: the pace a run, walk, swim or erg session is paced in; the
+average power of any session a meter measured, read as analyze reads
+Strava's mark, so an unmarked row counts as measured and an estimate does
+not; "no power meter" for a ride without one; and nothing for any other
+sport. The route draws white over a dark casing while its card is up, and
+the card stays inside the map: a pan that carries the clicked point past
+the map's edge holds the card at that edge. A click is a press and
 release that never strays more than a few pixels from where the press
 began; a press that strays further is a drag, which pans and never
 clicks. The click picks the routes the zoom draws (the dense or the sparse
 list) that pass within a few logical pixels of it, the same few at every
-zoom, and where several do the session that started last wins; a stretch
-of route the map's edge cuts off is never picked. Enter, or a click on the
-card, opens the session on the trace view. The trace picker holds its
-newest sessions, so for an older route the window first reads that
-session's picker row and adds it after them, the card saying the trace is
-on its way; a session whose stream holds nothing the trace can plot says
-so on the card instead. Esc, or a click that picks no route, closes the
-card, and Esc quits only while no card is up. Heat and play take the same
-click as routes mode, since the hit test is geometry over the routes every
-mode draws, and the card and the highlight draw over the heat and over
-playback alike. While a map mode shows a card, the focus row names its
-session (`map_id`). Map.hit is the hit test, pure and covered by expects.
+zoom, and where several do the session that started last wins, by the
+local start, the only start an activity row stores; a stretch of route
+the map's edge cuts off is never picked. Enter, or a click on the card,
+opens the session on the trace view. The trace picker holds its newest
+sessions, so for an older route the window first reads that session's
+picker row and places it where the picker's newest-first order puts it,
+the card saying the trace is on its way; a session whose stream holds
+nothing the trace can plot says so on the card instead. A card whose
+route is no longer loaded closes. Esc, or a click that picks no route,
+closes the card, and Esc quits only while no card is up. Heat and play
+take the same click as routes mode, since the hit test is geometry over
+the routes every mode draws, and the card and the highlight draw over the
+heat and over playback alike. While a map mode shows a card, the focus
+row names its session (`map_id`); a window from before the column writes
+none, so a row it updates keeps whatever map_id a newer window last
+wrote. Map.hit is the hit test, pure and covered by expects.
 
 The map loads in a task beside the other views, which open without waiting
 for it; on the first load the map says it is being read until it lands, and it

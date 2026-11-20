@@ -603,7 +603,7 @@ Map :: [].{
 		[
 			{ text: title, size: 14.0, face: Prose, tone: Title },
 			{ text: "${s.sport}   ${s.day}", size: 12.0, face: Data, tone: Body },
-			{ text: "${dist_text(s.dist_m, units)}   ${time_text(s.moving_s)}   ${effort_text(s, units)}", size: 12.0, face: Data, tone: Body },
+			{ text: Str.join_with(List.keep_if([dist_text(s.dist_m, units), time_text(s.moving_s), effort_text(s, units)], |t| t != ""), "   "), size: 12.0, face: Data, tone: Body },
 			{ text: next, size: 12.0, face: Prose, tone: Muted },
 		]
 	}
@@ -629,8 +629,10 @@ Map :: [].{
 		}
 
 	# a pace family reads its pace over the distance it is paced in, the
-	# kilometre or mile on foot, 100 m in the water, 500 m on the erg; every
-	# other sport reads its average power, when a meter measured it
+	# kilometre or mile on foot, 100 m in the water, 500 m on the erg; a
+	# session a power meter measured reads its average power; a ride without
+	# one says so, since a ride's effort is its power; any other sport has no
+	# effort to state, and its slot is left out
 	effort_text : Db.RouteSession, [Metric, Imperial] -> Str
 	effort_text = |s, units| {
 		fam = Sports.canonical(s.sport)
@@ -644,8 +646,10 @@ Map :: [].{
 			"${pace} ${Sports.pace_label_for(units, fam)}"
 		} else if s.watts > 0 {
 			"${I64.to_str(s.watts)} W avg"
-		} else {
+		} else if fam == "Ride" {
 			"no power meter"
+		} else {
+			""
 		}
 	}
 
@@ -658,6 +662,8 @@ Map :: [].{
 	# the card's box and its lines as fixed text inside it: beside the
 	# clicked point, 14 pixels right of it, or left of it when the right
 	# would leave the map, centred on it vertically, and held inside the map
+	# on both axes; a clicked point panned off the map anchors the card at
+	# the map's edge, so the card stays up beside the nearest part of the map
 	card : Ui.Model, Scene.Measure -> Try({ box : Labels.Rect, lines : List(Labels.Label(Scene.Item)) }, [NoCard])
 	card = |model, measure|
 		match (picked(model), model.map_card) {
@@ -668,7 +674,7 @@ Map :: [].{
 				h = 2.0 * card_pad + List.fold(ls, 0.0, |acc, x| acc + x.size) + U64.to_f32(List.len(ls) - 1) * card_gap
 				a = Geo.to_screen(cam(model), r, o.at)
 				right = a.x + 14.0
-				left = if (right + w <= r.x + r.w) right else F32.max(r.x, a.x - 14.0 - w)
+				left = F32.max(r.x, F32.min(if (right + w <= r.x + r.w) right else a.x - 14.0 - w, r.x + r.w - w))
 				top = F32.max(r.y, F32.min(a.y - h / 2.0, r.y + r.h - h))
 				box = { x: left, y: top, w, h }
 				tone = |t|
@@ -703,10 +709,16 @@ Map :: [].{
 	# what the athlete did to the card this frame: a click on the card, or
 	# Enter, opens the session (`open`, -1 when nothing opens), a click that
 	# picks a route opens its card, a click that picks none and Esc close it.
-	# A card waiting on its session, or with no trace to open, opens nothing.
+	# A card waiting on its session, or with no trace to open, opens nothing,
+	# and a card whose route is no longer loaded closes on a map mode's next
+	# frame and opens nothing.
 	act : Ui.Model, Try(Geo.Pt, [NoClick]), { enter : Bool, esc : Bool }, Scene.Measure -> { card : Ui.MapCard, open : I64 }
 	act = |model, click, keys, measure| {
-		ready = match model.map_card {
+		up = match picked(model) {
+			Ok(_) => model.map_card
+			Err(_) => Closed
+		}
+		ready = match up {
 			Open(o) =>
 				match o.state {
 					Ready => o.id
@@ -724,7 +736,7 @@ Map :: [].{
 						Err(_) => Bool.False
 					}
 					if on_card {
-						{ card: model.map_card, open: ready }
+						{ card: up, open: ready }
 					} else {
 						r = rect(model.win)
 						c = cam(model)
@@ -738,9 +750,9 @@ Map :: [].{
 					if keys.esc {
 						{ card: Closed, open: -1 }
 					} else if keys.enter {
-						{ card: model.map_card, open: ready }
+						{ card: up, open: ready }
 					} else {
-						{ card: model.map_card, open: -1 }
+						{ card: up, open: -1 }
 					}
 			}
 		}
@@ -1049,13 +1061,17 @@ expect {
 }
 
 # the card in metric: a ride its meter measured reads its power, and one
-# without a meter says so; and in imperial, the miles
+# without a meter says so; in imperial, the miles; and a sport neither
+# paced nor ridden reads its power when a meter measured it and leaves the
+# slot out when none did
 expect {
 	s = { id: 1, start: 0, name: "Lakefront loop", day: "2026-11-15", sport: "Ride", dist_m: 100000.0, moving_s: 35940, watts: 250 }
 	texts = |x, u, st| List.map(Map.card_lines(x, u, st), |l| l.text)
 	texts(s, Metric, Ready) == ["Lakefront loop", "Ride   2026-11-15", "100.0 km   9h 59m   250 W avg", "Enter or click  open its trace      Esc  close"]
 		and texts({ ..s, watts: 0, dist_m: 160934.4 }, Imperial, Ready) == ["Lakefront loop", "Ride   2026-11-15", "100.0 mi   9h 59m   no power meter", "Enter or click  open its trace      Esc  close"]
 		and texts({ ..s, watts: 0 }, Metric, Ready) == ["Lakefront loop", "Ride   2026-11-15", "100.0 km   9h 59m   no power meter", "Enter or click  open its trace      Esc  close"]
+		and texts({ ..s, sport: "Kayaking", watts: 0 }, Metric, Ready) == ["Lakefront loop", "Kayaking   2026-11-15", "100.0 km   9h 59m", "Enter or click  open its trace      Esc  close"]
+		and texts({ ..s, sport: "Kayaking" }, Metric, Ready) == ["Lakefront loop", "Kayaking   2026-11-15", "100.0 km   9h 59m   250 W avg", "Enter or click  open its trace      Esc  close"]
 }
 
 # a run reads its pace per kilometre or per mile, a swim per 100 m and an
@@ -1080,3 +1096,7 @@ expect {
 	(List.last(Map.card_lines(s, Metric, Opening))).map_ok(|l| l.text) == Ok("opening its trace...")
 		and (List.last(Map.card_lines(s, Imperial, NoTrace))).map_ok(|l| l.text) == Ok("no trace to open - its stream holds nothing to plot")
 }
+
+# the route query reads watts as analyze does: an unmarked row's as
+# measured, and none from a row Strava marked estimated
+expect Str.contains(Db.route_page_sql, "CASE WHEN COALESCE(a.device_watts, 1) <> 0 THEN ROUND(COALESCE(a.avg_watts, 0)) ELSE 0 END")

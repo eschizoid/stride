@@ -1999,12 +1999,13 @@ Db :: [].{
 	MapLine : { kind : U8, pts : List(Geo.Pt), ts : List(F32), far : List(Geo.Pt), fts : List(F32), bands : List(U8), fbands : List(U8), box : Geo.Bounds, session : RouteSession }
 
 	# A route's session as the map's card states it: the activity id; its
-	# local start in seconds since 1970, the key the most recent of several
+	# start in seconds since 1970, read from Strava's local start, the only
+	# start an activity row stores, and the key the most recent of several
 	# routes under one click wins by; its name, day and sport type; its
-	# distance in metres and moving time in seconds; and its average watts
-	# when a power meter measured them, 0 when none did, since Strava's
-	# estimate for a ride without a meter is a model's guess and the engine
-	# scores nothing from it.
+	# distance in metres and moving time in seconds; and its average watts,
+	# 0 when none were recorded or Strava marked them estimated
+	# (device_watts 0). Analyze reads an unmarked row's watts as measured
+	# and scores nothing from an estimate, and so does the card.
 	RouteSession : { id : I64, start : I64, name : Str, day : Str, sport : Str, dist_m : F64, moving_s : I64, watts : I64 }
 
 	no_session : RouteSession
@@ -2085,7 +2086,7 @@ Db :: [].{
 	Track : { coords : List({ lat : F64, lng : F64 }), times : List(F32), session : RouteSession }
 
 	route_page_sql : Str
-	route_page_sql = "SELECT r.activity_id AS id, CAST(r.raw_json AS TEXT) AS j, CAST(COALESCE(strftime('%s', a.start_local), 0) AS INTEGER) AS t, CAST(COALESCE(a.name, '') AS TEXT) AS nm, CAST(COALESCE(substr(a.start_local, 1, 10), '') AS TEXT) AS dy, CAST(COALESCE(a.sport_type, '') AS TEXT) AS sp, CAST(COALESCE(a.distance, 0) AS REAL) AS dm, CAST(COALESCE(a.moving_time, 0) AS INTEGER) AS mt, CAST(CASE WHEN a.device_watts = 1 THEN ROUND(COALESCE(a.avg_watts, 0)) ELSE 0 END AS INTEGER) AS w FROM routes r LEFT JOIN activities a ON a.id = r.activity_id WHERE r.raw_json IS NOT NULL AND r.raw_json <> '{}' AND r.activity_id > :a ORDER BY r.activity_id LIMIT :n"
+	route_page_sql = "SELECT r.activity_id AS id, CAST(r.raw_json AS TEXT) AS j, CAST(COALESCE(strftime('%s', a.start_local), 0) AS INTEGER) AS t, CAST(COALESCE(a.name, '') AS TEXT) AS nm, CAST(COALESCE(substr(a.start_local, 1, 10), '') AS TEXT) AS dy, CAST(COALESCE(a.sport_type, '') AS TEXT) AS sp, CAST(COALESCE(a.distance, 0) AS REAL) AS dm, CAST(COALESCE(a.moving_time, 0) AS INTEGER) AS mt, CAST(CASE WHEN COALESCE(a.device_watts, 1) <> 0 THEN ROUND(COALESCE(a.avg_watts, 0)) ELSE 0 END AS INTEGER) AS w FROM routes r LEFT JOIN activities a ON a.id = r.activity_id WHERE r.raw_json IS NOT NULL AND r.raw_json <> '{}' AND r.activity_id > :a ORDER BY r.activity_id LIMIT :n"
 
 	# a route row's session; its names pass the same gate and cap the trace
 	# picker's do, since the brand atlases carry ASCII

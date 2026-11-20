@@ -1338,6 +1338,50 @@ sel_following_id = |old, old_sel, fresh| {
 # NEWEST session - the picker is newest-first, and the first match is the
 # one the athlete most likely means on a day that carries two; an id names
 # one session exactly. Absent, the selection stays where it was.
+# A session the map opened that the picker lacks, placed where the
+# picker's newest-first order puts it: before the first row from an
+# earlier day, or from the same day with a lower id, since Strava numbers
+# a day's sessions in the order they were uploaded. The picker re-reads
+# only on R or a session-naming directive, so every session the map opens
+# meanwhile is placed this way. Every index from that place on moves up
+# one: the selection and the ghost move with their sessions, and the
+# trace cache, aligned to the picker by index, keeps only the entries
+# before it.
+with_opened : Ui.Model, TraceId -> Ui.Model
+with_opened = |m, row|
+	if List.any(m.trace_ids, |e| e.id == row.id) {
+		m
+	} else {
+		k = day_key(row.day)
+		at = (List.find_first_index(m.trace_ids, |e| day_key(e.day) < k or (day_key(e.day) == k and e.id < row.id))) ?? List.len(m.trace_ids)
+		ids = List.concat(List.append(List.take_first(m.trace_ids, at), row), List.drop_first(m.trace_ids, at))
+		{ ..m, trace_ids: ids, trace_cache: List.take_first(m.trace_cache, at), trace_sel: if (m.trace_sel >= at) m.trace_sel + 1 else m.trace_sel, ghost_sel: if (m.ghost_sel >= U64.to_i64_wrap(at)) m.ghost_sel + 1 else m.ghost_sel }
+	}
+
+# a YYYY-MM-DD day as the number its digits spell, which orders as the days do
+day_key : Str -> I64
+day_key = |day| List.fold(Str.to_utf8(day), 0, |acc, b| if (b >= 48 and b <= 57) acc * 10 + U8.to_i64(b - 48) else acc)
+
+# two sessions the map opens land in newest-first order whichever opens
+# first, the shown session and the ghost keep their sessions, and the cache
+# keeps only the entries before the first place a session landed
+expect {
+	row = |id, day| { id, day, name: "", sport: "Ride", chan: "w" }
+	picker = [row(50, "2026-11-15"), row(40, "2026-11-10"), row(30, "2026-11-10"), row(20, "2026-06-01")]
+	entry = { tr: [], sg: [], du: 0.0, un: "", sp: [], st: { rows: [], pasted: Bool.False } }
+	base = { ..Gate.empty_model(Gate.default_size), trace_ids: picker, trace_sel: 3, ghost_sel: 2, trace_cache: List.repeat(entry, 4) }
+	mid = row(35, "2026-11-10")
+	old = row(10, "2025-10-10")
+	may = row(15, "2026-05-31")
+	a = with_opened(with_opened(with_opened(base, old), may), mid)
+	b = with_opened(with_opened(with_opened(base, mid), may), old)
+	List.map(a.trace_ids, |e| e.id) == [50, 40, 35, 30, 20, 15, 10]
+		and List.map(b.trace_ids, |e| e.id) == [50, 40, 35, 30, 20, 15, 10]
+		and (List.get(a.trace_ids, a.trace_sel)).map_ok(|e| e.id) == Ok(20) and (List.get(b.trace_ids, b.trace_sel)).map_ok(|e| e.id) == Ok(20)
+		and (List.get(a.trace_ids, (I64.to_u64_try(a.ghost_sel)) ?? 0)).map_ok(|e| e.id) == Ok(30) and List.len(with_opened(base, old).trace_cache) == 4 and List.len(a.trace_cache) == 2 and List.len(with_opened(base, may).trace_ids) == 5 and List.len(with_opened(with_opened(base, may), may).trace_ids) == 5
+		and day_key("2026-05-31") < day_key("2026-11-10")
+}
+
 sel_for_day : List(TraceId), Str, U64 -> U64
 sel_for_day = |ids, day, fallback|
 	match List.find_first_index(ids, |e| e.day == day) {
@@ -2228,23 +2272,18 @@ update! = |model0, program_input, io| {
 				# speed bands not yet worked out; one R marked stale while it was
 				# read is read once more (map_on_landing)
 				MapLoaded(ml) => if (ml.gen != acc.map_gen) acc else { ..acc, map: ml.map, map_speed: Unbuilt, map_marks: Stale, map_load: map_on_landing(acc.map_stale), map_stale: Bool.False, map_painted: Map.unpainted, map_plan_due: Bool.True }
-				# the picker holds the newest sessions whose stream it can plot,
-				# so a session the map opened that it lacks is older than all of
-				# them and joins at the end, where newest-first order keeps it;
-				# the index of every session before it, and so the trace cache,
-				# stays as it was. The frame body opens a card still waiting on
-				# it, and a card whose session has no trace says so.
-				MapOpened(mo) => {
-					ids = match mo.row {
-						Ok(row) => if (List.any(acc.trace_ids, |e| e.id == row.id)) acc.trace_ids else List.append(acc.trace_ids, row)
-						Err(_) => acc.trace_ids
+				# a session the map opened joins the picker where newest-first
+				# order puts it (with_opened); the frame body opens a card still
+				# waiting on it, and a card whose session has no trace says so
+				MapOpened(mo) =>
+					match mo.row {
+						Ok(row) => with_opened(acc, row)
+						Err(_) =>
+							match acc.map_card {
+								Open(o) => if (o.id == mo.id) { ..acc, map_card: Open({ ..o, state: NoTrace }) } else acc
+								Closed => acc
+							}
 					}
-					card = match (acc.map_card, mo.row) {
-						(Open(o), Err(_)) => if (o.id == mo.id) Open({ ..o, state: NoTrace }) else acc.map_card
-						_ => acc.map_card
-					}
-					{ ..acc, trace_ids: ids, map_card: card }
-				}
 				TileAnswer(ta) => tile_landed(acc, ta.ans, ta.cache, tick)
 				# the template a tile fetch needs, or the tick the TileJSON could
 				# not be read at, after which it is asked for again
