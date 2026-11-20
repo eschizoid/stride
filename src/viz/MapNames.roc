@@ -42,20 +42,37 @@ MapNames :: [].{
 	Item : { item : Scene.Item, w : F32, angle : F32 }
 
 	# each kind's zooms, in metres per pixel: shown closer than `far` and no
-	# closer than `near`, at a pixel size, in a muted tone
+	# closer than `near`, at a pixel size, in its ink
 	Look : { near : F32, far : F32, size : F32, color : Color.Rgba }
 
 	look : U8 -> Look
 	look = |kind|
-		if (kind == 0) { near: 3.0, far: 2000.0, size: 14.0, color: Theme.ink_muted }
-		else if (kind == 1) { near: 3.0, far: 400.0, size: 13.0, color: Theme.ink_muted }
-		else if (kind == 2) { near: 1.5, far: 120.0, size: 12.0, color: Theme.ink_faint }
-		else if (kind == 3) { near: 0.0, far: 60.0, size: 12.0, color: Theme.ink_faint }
-		else if (kind == 4) { near: 0.0, far: 20.0, size: 11.0, color: Theme.ink_faint }
-		else if (kind == 5) { near: 0.0, far: 40.0, size: 11.0, color: Theme.ink_faint }
-		else if (kind == 6) { near: 0.0, far: 16.0, size: 11.0, color: Theme.ink_faint }
-		else if (kind == 7) { near: 0.0, far: 8.0, size: 11.0, color: Theme.ink_faint }
-		else { near: 0.0, far: 4.0, size: 11.0, color: Theme.ink_faint }
+		if (kind == 0) { near: 3.0, far: 2000.0, size: 14.0, color: place_ink }
+		else if (kind == 1) { near: 3.0, far: 400.0, size: 13.0, color: place_ink }
+		else if (kind == 2) { near: 1.5, far: 120.0, size: 12.0, color: place_ink }
+		else if (kind == 3) { near: 0.0, far: 60.0, size: 12.0, color: place_ink }
+		else if (kind == 4) { near: 0.0, far: 20.0, size: 11.0, color: place_ink }
+		else if (kind == 5) { near: 0.0, far: 40.0, size: 11.0, color: street_ink }
+		else if (kind == 6) { near: 0.0, far: 16.0, size: 11.0, color: street_ink }
+		else if (kind == 7) { near: 0.0, far: 8.0, size: 11.0, color: street_ink }
+		else { near: 0.0, far: 4.0, size: 11.0, color: street_ink }
+
+	# The names' inks: every place in the theme's muted ink, which the view's
+	# title and chips also wear but larger, and every street most of the way
+	# from the faint ink to it, so a street reads against the dark ground
+	# and still sits a step below the places.
+	place_ink : Color.Rgba
+	place_ink = Theme.ink_muted
+
+	street_ink : Color.Rgba
+	street_ink = toward(Theme.ink_faint, Theme.ink_muted, 0.75)
+
+	# a colour a share t of the way from one to another, opaque
+	toward : Color.Rgba, Color.Rgba, F32 -> Color.Rgba
+	toward = |a, b, t| {
+		mix = |x, y| U64.to_u8_wrap((F32.round_to_u64_try(U8.to_f32(x) * (1.0 - t) + U8.to_f32(y) * t)) ?? 0)
+		Color.rgba(mix(a.r, b.r), mix(a.g, b.g), mix(a.b, b.b), 255)
+	}
 
 	shows : U8, F32 -> Bool
 	shows = |kind, mpp| {
@@ -676,4 +693,16 @@ expect {
 expect {
 	bump = [{ x: 0.0, y: 0.0 }, { x: 100.0, y: 0.0 }, { x: 110.0, y: 5.0 }, { x: 120.0, y: 0.0 }, { x: 220.0, y: 0.0 }]
 	MapNames.along(bump, 100.0, 3.0) == Err(Bent) and MapNames.along(bump, 100.0, 6.0) != Err(Bent)
+}
+
+# a street's ink sits between the faint ink and the places' muted one on
+# every channel, three quarters of the way up, and every kind wears one of
+# the two
+expect {
+	s = MapNames.street_ink
+	f = Theme.ink_faint
+	m = Theme.ink_muted
+	s.r > f.r and s.r < m.r and s.g > f.g and s.g < m.g and s.b > f.b and s.b < m.b and s == Color.rgba(167, 179, 195, 255)
+		and List.all([0, 1, 2, 3, 4], |k| (MapNames.look(k)).color == MapNames.place_ink) and List.all([5, 6, 7, 8], |k| (MapNames.look(k)).color == MapNames.street_ink)
+		and MapNames.place_ink == m
 }

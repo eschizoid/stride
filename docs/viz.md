@@ -245,8 +245,9 @@ neighbourhoods are named at the wide and middle zooms and the streets close
 in, each kind between zooms of its own (`MapNames.look`): cities and towns
 give way to the streets at street level, and motorways, arterials, tertiary
 and minor roads come in one after another as the view closes in. Larger
-places go before smaller and major roads before minor, in the theme's muted
-inks over a halo of the map's ground. A name takes its text from the first
+places go before smaller and major roads before minor. Places wear the
+theme's muted ink and streets a step below it (`MapNames.street_ink`), each
+over a halo of the map's ground. A name takes its text from the first
 of `name`, `name:latin`, `name_en` and `name_int` that is printable ASCII,
 the range the fonts draw, and a feature with none is not named. A place
 tries its point, then above, below and beside it. A street is named on the
