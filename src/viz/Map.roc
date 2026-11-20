@@ -1,5 +1,7 @@
+import rr.Camera
 import rr.Color
 import rr.Draw
+import rr.Text
 import core.Fmt
 import core.Sports
 import core.Units
@@ -7,6 +9,7 @@ import Chrome
 import Db
 import Geo
 import Labels
+import MapNames
 import Motion
 import Mvt
 import Scene
@@ -291,51 +294,143 @@ Map :: [].{
 	}
 
 	# Every cell of the view draws its own tile or, until that lands, its
-	# nearest drawn ancestor's scaled up (Tiles.shown). When `squared`, as
-	# in the picture, each is cut to its cell's square, so a coarse stand-in
-	# never spills over a neighbour already sharp and the buffer every tile
-	# carries past its edge never draws twice. Otherwise the view is drawing
-	# straight to the frame inside the map's own scissor, which a second
-	# scissor would replace rather than narrow, so each tile shown draws
-	# once, whole.
-	paint_tiles! : Ui.Model, Geo.Cam, Bool, Draw.Frame => {}
-	paint_tiles! = |model, c, squared, frame| {
+	# nearest drawn ancestor's scaled up (Tiles.shown). Squared, as in the
+	# picture, each is cut to its cell's square, its scissor in the
+	# target's pixels at `k` of them to a logical unit, so a coarse
+	# stand-in never spills over a neighbour already sharp and the buffer
+	# every tile carries past its edge never draws twice. Whole, the view
+	# is drawing straight to the frame inside the map's own scissor, which
+	# a second scissor would replace rather than narrow, so each tile shown
+	# draws once, whole.
+	paint_tiles! : Ui.Model, Geo.Cam, [Whole, Squared(F32)], Draw.Frame => {}
+	paint_tiles! = |model, c, how, frame| {
 		r = rect(model.win)
 		o = model.map.origin
 		shown = List.keep_oks(cells(model, c), |cell| Tiles.shown(model.map_tiles, cell).map_ok(|s| { cell, s }))
-		if squared {
-			List.for_each!(
-				shown,
-				|e|
-					match cut(Tiles.place(c, r, o, e.cell.key.z, e.cell.col, U64.to_i64_wrap(e.cell.key.y)), r, model.ui_scale) {
-						Ok(px) => {
-							_ = frame.with_scissor!(
-								px,
-								|f| {
-									draw_tile!(f, e.s.tile, Tiles.place(c, r, o, e.s.z, e.s.col, e.s.row), c.mpp)
-									Ok({})
-								},
-							)
-							{}
-						}
-						Err(_) => {}
-					},
-			)
-		} else {
-			once = List.fold(shown, [], |acc, e| if (List.any(acc, |x| x.z == e.s.z and x.col == e.s.col and x.row == e.s.row)) acc else List.append(acc, e.s))
-			List.for_each!(once, |s| draw_tile!(frame, s.tile, Tiles.place(c, r, o, s.z, s.col, s.row), c.mpp))
+		match how {
+			Squared(k) =>
+				List.for_each!(
+					shown,
+					|e|
+						match cut(Tiles.place(c, r, o, e.cell.key.z, e.cell.col, U64.to_i64_wrap(e.cell.key.y)), r, k) {
+							Ok(px) => {
+								_ = frame.with_scissor!(
+									px,
+									|f| {
+										draw_tile!(f, e.s.tile, Tiles.place(c, r, o, e.s.z, e.s.col, e.s.row), c.mpp)
+										Ok({})
+									},
+								)
+								{}
+							}
+							Err(_) => {}
+						},
+				)
+			Whole => {
+				once = List.fold(shown, [], |acc, e| if (List.any(acc, |x| x.z == e.s.z and x.col == e.s.col and x.row == e.s.row)) acc else List.append(acc, e.s))
+				List.for_each!(once, |s| draw_tile!(frame, s.tile, Tiles.place(c, r, o, s.z, s.col, s.row), c.mpp))
+			}
 		}
 	}
 
-	# what each mode paints into the cached picture. The street map goes
-	# first, the view's tiles. Routes mode draws the routes over it in the
-	# accent; play draws them in strips coloured by speed band
-	# (paint_speed!); heat draws none here, its passes being summed into a
-	# texture of their own (paint_heat!), unless the window could not build
-	# that texture, when it draws them as routes mode does.
-	paint! : Ui.Model, Geo.Cam, Bool, Draw.Frame => {}
-	paint! = |model, c, squared, frame| {
-		paint_tiles!(model, c, squared, frame)
+	# What each mode paints, straight to the frame when the window holds
+	# no picture. The street map goes first, the view's tiles, then the
+	# street map's names over them (names), then the routes over both.
+	# Routes mode draws the routes in the accent; play draws them in strips
+	# coloured by speed band (paint_speed!); heat draws none here, its
+	# passes being summed into a texture of their own (paint_heat!) and
+	# drawn over the picture, unless the window could not build that
+	# texture, when it draws them as routes mode does.
+	paint! : Ui.Model, Geo.Cam, Draw.Frame => {}
+	paint! = |model, c, frame| {
+		paint_tiles!(model, c, Whole, frame)
+		draw_names!(frame, model, model.ui_scale, names(model, c, Scene.measure_of(model)))
+		paint_over!(model, c, frame)
+	}
+
+	# The picture itself, the same three layers. It is held in the
+	# framebuffer's own pixels, which a HiDPI display packs more of into a
+	# logical unit than the window's size counts, so its lines and names
+	# are drawn as sharp as the text the view draws straight to the screen:
+	# `k`, the target's pixels to a logical unit, is the camera's zoom. The
+	# tiles and the routes are each drawn under that camera and each name
+	# under a camera of its own that turns it about its centre at that
+	# zoom, so no camera is opened inside another; the tiles are cut to
+	# their cells and the routes to the map's rectangle (clip_px), so the
+	# picture holds nothing outside the map. The picture starts
+	# transparent and is laid over the map's ground, so a glyph's edge
+	# covering a share a of a pixel, blended the usual way, would land in
+	# it as its colour times a with alpha a squared and show at a cubed,
+	# far dimmer than the same text drawn on the ground. Through the
+	# picture's text shader the names are blended with premultiplied alpha
+	# instead: each pixel is stored as its colour times a with alpha a over
+	# the transparent ground, and blended the usual way over a fill, so a
+	# name shows as the window's other text does.
+	paint_picture! : Ui.Model, Draw.Frame => {}
+	paint_picture! = |model, frame|
+		match model.map_rt {
+			Target(t) => {
+				k = picture_zoom(t.w, model.win.w, model.ui_scale)
+				zoom = Camera.default.with_zoom(k)
+				c = model.map_painted
+				_ = frame.with_camera!(zoom, |g| Ok(paint_tiles!(model, c, Squared(k), g)))
+				placed = names(model, c, Scene.measure_of(model))
+				match t.text {
+					Text(shader) => {
+						_ = frame.with_blend_mode!(
+							AlphaPremultiply,
+							|g| g.with_shader!(
+								shader,
+								|s| {
+									draw_names!(s, model, k, placed)
+									Ok({})
+								},
+							),
+						)
+						{}
+					}
+					NoText => draw_names!(frame, model, k, placed)
+				}
+				_ = frame.with_scissor!(clip_px(rect(model.win), k), |g| g.with_camera!(zoom, |h| Ok(paint_over!(model, c, h))))
+				{}
+			}
+			_ => {}
+		}
+
+	# The map's rectangle in a target's pixels at k of them to a logical
+	# unit: what the picture and heat's texture are cut to as they are
+	# painted, so the map's clip rests on the targets' own scissor, which is
+	# measured in the target's pixels, and not on the screen's alone.
+	clip_px : Geo.Rect, F32 -> { x : F32, y : F32, width : F32, height : F32 }
+	clip_px = |r, k| { x: r.x * k, y: r.y * k, width: r.w * k, height: r.h * k }
+
+	# the picture's pixels to a logical unit: its width over the window's
+	# logical width, or the UI scale while the window has none
+	picture_zoom : F32, F32, F32 -> F32
+	picture_zoom = |target_w, win_w, ui_scale| if (win_w > 0.0) target_w / win_w else ui_scale
+
+	# the fragment shader that premultiplies a name's colour by its
+	# coverage, scaled by `gain`
+	text_frag : Str
+	text_frag = Str.join_with(
+		[
+			"#version 330",
+			"in vec2 fragTexCoord;",
+			"in vec4 fragColor;",
+			"uniform sampler2D texture0;",
+			"uniform float gain;",
+			"out vec4 finalColor;",
+			"void main() {",
+			"    vec4 t = texture(texture0, fragTexCoord) * fragColor;",
+			"    float a = t.a * gain;",
+			"    finalColor = vec4(t.rgb * a, a);",
+			"}",
+		],
+		"\n",
+	)
+
+	paint_over! : Ui.Model, Geo.Cam, Draw.Frame => {}
+	paint_over! = |model, c, frame| {
 		if model.view == 12 {
 			paint_speed!(model, c, frame)
 		} else if model.view != 11 or !(heat_ready(model)) {
@@ -343,6 +438,98 @@ Map :: [].{
 			paint_routes!(model, c, Color.with_alpha(s.color, 190), s.width, frame)
 		}
 	}
+
+	# ── the street map's names ─────────────────────────────────────────────
+	# Every name of the tiles the view shows (each tile once, a coarse
+	# stand-in included) that its zoom shows, on screen, placed by
+	# MapNames clear of the routes and held off everything the view writes:
+	# the chrome, the title, the chips, the hint and the note in the map's
+	# corner, which in playback is the clock at the longest it reads, since
+	# the clock ticks while the picture holds still; and off the route card
+	# while one is up, which draws over the picture, so no name runs under
+	# its edge. The picture is repainted when the room the card takes
+	# changes (card_key), so the names make room for it and take it back.
+	names : Ui.Model, Geo.Cam, Scene.Measure -> List(Labels.Placed(MapNames.Item))
+	names = |model, c, measure| {
+		runs = name_runs(model, c)
+		if List.is_empty(runs) {
+			[]
+		} else {
+			r = rect(model.win)
+			g = MapNames.grid(r, route_lines(model, c), |p| Geo.to_screen(c, r, p))
+			clock = if (model.view == 12) [{ x: r.x + 14.0, y: r.y + 14.0, w: measure(clock_text(longest(model)), 12.0, Data), h: 12.0 }] else []
+			on_card = match card(model, measure) {
+				Ok(cd) => [cd.box]
+				Err(_) => []
+			}
+			held = List.join([Chrome.boxes(model, measure), List.map(scene(model, measure), |p| p.box), clock, on_card])
+			MapNames.place(runs, c.mpp, measure, r, g, { boxes: held, segs: [] })
+		}
+	}
+
+	# Every name the view shows, on screen, from each tile shown once (a
+	# coarse stand-in included): a name its zoom shows and that reaches the
+	# map (MapNames.touches), in tile order. The names are gathered one at a
+	# time, so the list a repaint builds is as long as the names kept rather
+	# than every name the tiles carry.
+	name_runs : Ui.Model, Geo.Cam -> List(MapNames.Run)
+	name_runs = |model, c| {
+		r = rect(model.win)
+		o = model.map.origin
+		shown = List.keep_oks(cells(model, c), |cell| Tiles.shown(model.map_tiles, cell))
+		once = List.fold(shown, [], |acc, s| if (List.any(acc, |x| x.z == s.z and x.col == s.col and x.row == s.row)) acc else List.append(acc, s))
+		var $out = []
+		for s in once {
+			at = Tiles.place(c, r, o, s.z, s.col, s.row)
+			for n in s.tile.names {
+				if MapNames.shows(n.kind, c.mpp) {
+					run = { kind: n.kind, rank: n.rank, text: n.text, pts: List.map(n.pts, |p| { x: at.x + p.x * at.k, y: at.y + p.y * at.k }) }
+					if MapNames.touches(run, r) {
+						$out = List.append($out, run)
+					}
+				}
+			}
+		}
+		$out
+	}
+
+	# every route the camera shows, in projected metres, from the list a
+	# repaint at this zoom draws
+	route_lines : Ui.Model, Geo.Cam -> List(List(Geo.Pt))
+	route_lines = |model, c| {
+		r = rect(model.win)
+		List.keep_oks(model.map.routes, |l| if (Geo.visible(c, r, l.box)) Ok(if (c.mpp > far_mpp) l.far else l.pts) else Err(Hidden))
+	}
+
+	# each name centred in its placed box and turned about its centre, at
+	# `sc` target pixels to a logical unit, over a halo of the map's ground,
+	# the text drawn a pixel off each way, so the streets under it do not
+	# run through its letters
+	draw_names! : Draw.Frame, Ui.Model, F32, List(Labels.Placed(MapNames.Item)) => {}
+	draw_names! = |frame, model, sc, placed| {
+		List.for_each!(
+			placed,
+			|p| {
+				at = { x: p.box.x + p.box.w / 2.0, y: p.box.y + p.box.h / 2.0 }
+				turn = Camera.default.with_target(at).with_offset({ x: at.x * sc, y: at.y * sc }).with_rotation(p.item.angle).with_zoom(sc)
+				x = at.x - p.item.w / 2.0
+				y = at.y - p.item.item.size / 2.0
+				t = Text.from(p.item.item.text, model.prose).size(p.item.item.size)
+				_ = frame.with_camera!(
+					turn,
+					|f| {
+						List.for_each!(halo, |d| t.draw!(f, { pos: { x: x + d.x, y: y + d.y }, color: Theme.card, align: (Top, Left) }))
+						t.draw!(f, { pos: { x, y }, color: p.item.item.color, align: (Top, Left) })
+						Ok({})
+					},
+				)
+				{}
+			},
+		)
+	}
+
+	halo : List({ x : F32, y : F32 })
+	halo = [{ x: -1.0, y: 0.0 }, { x: 1.0, y: 0.0 }, { x: 0.0, y: -1.0 }, { x: 0.0, y: 1.0 }]
 
 	# every route the camera shows in one colour and width
 	paint_routes! : Ui.Model, Geo.Cam, Color.Rgba, F32, Draw.Frame => {}
@@ -381,10 +568,20 @@ Map :: [].{
 	heat_width : F32
 	heat_width = 2.0
 
-	# the heat texture's passes, to be drawn with added colours into a
-	# cleared texture
+	# The heat texture's passes, to be drawn with added colours into a
+	# cleared texture, cut to the map's rectangle in the texture's pixels
+	# (clip_px), so the texture holds nothing outside the map.
 	paint_heat! : Ui.Model, Geo.Cam, Draw.Frame => {}
-	paint_heat! = |model, c, frame| paint_routes!(model, c, heat_ink, heat_width, frame)
+	paint_heat! = |model, c, frame| {
+		_ = frame.with_scissor!(
+			clip_px(rect(model.win), model.ui_scale),
+			|f| {
+				paint_routes!(model, c, heat_ink, heat_width, f)
+				Ok({})
+			},
+		)
+		{}
+	}
 
 	heat_ready : Ui.Model -> Bool
 	heat_ready = |model|
@@ -575,15 +772,21 @@ Map :: [].{
 			Closed => Err(NoCard)
 		}
 
-	# the selected route drawn over every mode's picture: a dark casing under
-	# a white line, so it reads over the accent, the heat and the speed ramp
+	# the selected route on screen, as the zoom draws it, cut to the map
+	picked_parts : Ui.Model, Geo.Cam, Db.MapLine -> List(List(Geo.Pt))
+	picked_parts = |model, c, l| MapNames.clip(Geo.strip(c, rect(model.win), if (c.mpp > far_mpp) l.far else l.pts, 1.0), rect(model.win))
+
+	# The selected route drawn over every mode's picture: a dark casing under
+	# a white line, so it reads over the accent, the heat and the speed ramp.
+	# It draws straight to the screen, so it is cut to the map's rectangle
+	# by geometry (MapNames.clip) as well as by the view's scissor.
 	draw_picked! : Ui.Model, Geo.Cam, Draw.Frame => {}
 	draw_picked! = |model, c, frame|
 		match picked(model) {
 			Ok(l) => {
-				pts = Geo.strip(c, rect(model.win), if (c.mpp > far_mpp) l.far else l.pts, 1.0)
-				frame.line_strip!({ points: pts, stroke: Draw.stroke(Color.with_alpha(Theme.bg, 200), 5.0) })
-				frame.line_strip!({ points: pts, stroke: Draw.stroke(Color.white, 2.4) })
+				parts = picked_parts(model, c, l)
+				List.for_each!(parts, |pts| frame.line_strip!({ points: pts, stroke: Draw.stroke(Color.with_alpha(Theme.bg, 200), 5.0) }))
+				List.for_each!(parts, |pts| frame.line_strip!({ points: pts, stroke: Draw.stroke(Color.white, 2.4) }))
 			}
 			Err(_) => {}
 		}
@@ -758,6 +961,20 @@ Map :: [].{
 		}
 	}
 
+	# the room a card takes from the picture's names: its box to the whole
+	# pixel, "" with none up. A card that changes state in the same box, as
+	# one whose name is its widest line does from opening to ready, leaves
+	# the names where they are.
+	card_key : Ui.Model, Scene.Measure -> Str
+	card_key = |model, measure|
+		match card(model, measure) {
+			Err(_) => ""
+			Ok(cd) => {
+				px = |v| I64.to_str((F32.to_i64_try(F32.div_floor_by(v + 0.5, 1.0))) ?? 0)
+				"${px(cd.box.x)} ${px(cd.box.y)} ${px(cd.box.w)} ${px(cd.box.h)}"
+			}
+		}
+
 	# whether Esc closes the card rather than the window
 	card_up : Ui.Model -> Bool
 	card_up = |model| is_map(model.view) and picked(model).is_ok()
@@ -798,7 +1015,7 @@ Map :: [].{
 
 	# the view's text and the chrome's, as the gate judges them
 	owned : Ui.Model, Scene.Measure -> List(Labels.Owned)
-	owned = |model, measure| List.concat(Scene.owned(Chrome.placed(model, measure)), Scene.owned(scene(model, measure)))
+	owned = |model, measure| List.join([Scene.owned(Chrome.placed(model, measure)), Scene.owned(scene(model, measure)), MapNames.owned(names(model, cam(model), measure))])
 
 	texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
 	texts = |model, measure| {
@@ -839,10 +1056,11 @@ Map :: [].{
 	}
 
 	# The cached picture when the window holds one, shifted by however far
-	# the camera has moved since it was painted, else every line drawn
-	# straight to the frame. In heat mode the summed passes follow, through
-	# the tone-mapping shader, with the same shift; then the route a card is
-	# up for, highlighted; in play the markers follow, placed this frame. The
+	# the camera has moved since it was painted, else its layers drawn
+	# straight to the frame (paint!), each name under its own camera inside
+	# the view's. In heat mode the summed passes follow, through the
+	# tone-mapping shader, with the same shift; then the route a card is up
+	# for, highlighted; in play the markers follow, placed this frame. The
 	# scissor keeps all of it inside the map's rectangle; it takes screen
 	# pixels, so the logical rectangle is scaled by the UI size. The card
 	# draws last, over the view's text.
@@ -862,7 +1080,7 @@ Map :: [].{
 			|f| {
 				match model.map_rt {
 					Target(t) => f.texture!({ texture: t.rt.texture(), source: t.rt.source(), dest, origin: { x: 0.0, y: 0.0 }, rotation: 0.0, tint: Color.white })
-					_ => paint!(model, c, Bool.False, f)
+					_ => paint!(model, c, f)
 				}
 				if model.view == 11 {
 					match model.map_heat {
@@ -1100,3 +1318,14 @@ expect {
 # the route query reads watts as analyze does: an unmarked row's as
 # measured, and none from a row Strava marked estimated
 expect Str.contains(Db.route_page_sql, "CASE WHEN COALESCE(a.device_watts, 1) <> 0 THEN ROUND(COALESCE(a.avg_watts, 0)) ELSE 0 END")
+
+# the picture of a doubled HiDPI display at the default UI size holds
+# three of its pixels to a logical unit, one of an ordinary display one
+# and a half, and a window with no width falls back to the UI scale
+expect (Map.picture_zoom(2940.0, 980.0, 1.5) - 3.0).abs() < 0.001 and (Map.picture_zoom(1470.0, 980.0, 1.5) - 1.5).abs() < 0.001 and (Map.picture_zoom(2940.0, 0.0, 1.5) - 1.5).abs() < 0.001
+
+# the map's rectangle in a target's pixels scales with the target
+expect {
+	px = Map.clip_px({ x: 36.0, y: 96.0, w: 908.0, h: 456.0 }, 3.0)
+	(px.x - 108.0).abs() < 0.001 and (px.y - 288.0).abs() < 0.001 and (px.width - 2724.0).abs() < 0.001 and (px.height - 1368.0).abs() < 0.001
+}

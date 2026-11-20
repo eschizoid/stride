@@ -621,9 +621,9 @@ build_glow! = |win|
 		_ => Unavailable({ gw: win.w, gh: win.h })
 	}
 
-# The map view's offscreen picture, window-sized like the glow's target. A
-# refusal is remembered at its size, and the view then draws every line
-# straight to the frame.
+# An offscreen target of the given pixels, for the map's picture and
+# heat's texture. A refusal is remembered at its size, and the view then
+# draws every line straight to the frame.
 build_map_rt! : { w : F32, h : F32 } => [NoTarget, Refused({ w : F32, h : F32 }), Target({ rt : Draw.RenderTexture, w : F32, h : F32 })]
 build_map_rt! = |px|
 	match (F32.round_to_u64_try(px.w), F32.round_to_u64_try(px.h)) {
@@ -639,10 +639,30 @@ build_map_rt! = |px|
 		_ => Refused({ w: px.w, h: px.h })
 	}
 
-# Heat's texture of summed passes, window-sized like the picture, and the
-# shader that tone-maps it (Motion.heat_frag). A refusal of either is
-# remembered at its size, and heat mode then draws the routes as routes
-# mode does.
+# The picture's target and the shader its names are blended in through
+# (Map.text_frag), the shader a resized picture already holds kept; a GPU
+# that refuses the shader gets its names blended the usual way.
+picture_rt! : { w : F32, h : F32 }, [NoText, Text(Shader({ gain : F32 }))] => [NoTarget, Refused({ w : F32, h : F32 }), Target({ rt : Draw.RenderTexture, w : F32, h : F32, text : [NoText, Text(Shader({ gain : F32 }))] })]
+picture_rt! = |px, kept|
+	match build_map_rt!(px) {
+		Target(t) => {
+			text = match kept {
+				Text(s) => Text(s)
+				NoText =>
+					match Shader.from_source!({ vertex_source: "", fragment_source: Map.text_frag }, { gain: 1.0 }) {
+						Ok(s) => Text(s)
+						Err(_) => NoText
+					}
+			}
+			Target({ rt: t.rt, w: t.w, h: t.h, text })
+		}
+		NoTarget => NoTarget
+		Refused(r) => Refused(r)
+	}
+
+# Heat's texture of summed passes, window-sized, and the shader that
+# tone-maps it (Motion.heat_frag). A refusal of either is remembered at
+# its size, and heat mode then draws the routes as routes mode does.
 build_map_heat! : { w : F32, h : F32 } => [Unbuilt, Unavailable({ w : F32, h : F32 }), Ready({ rt : Draw.RenderTexture, shader : Shader({ top : F32 }), w : F32, h : F32 })]
 build_map_heat! = |px|
 	match build_map_rt!(px) {
@@ -3040,17 +3060,20 @@ update! = |model0, program_input, io| {
 		map_moved2 = if (map_fit) Bool.False else model.map_moved or map_did_drag or map_zoom != 1.0
 		map_shown = Map.cam({ ..model, win, map_moved: map_moved2, map_cam: map_cam2 })
 		# the picture is allocated the first time the map shows and follows
-		# the window's pixels; it is repainted whenever what it holds is not
-		# what the view shows, except mid-drag, where the old picture slides
-		# with the cursor and the release repaints it
+		# the framebuffer's pixels, the window's size times the display's
+		# scale (Map.paint_picture!); it is repainted whenever what it holds
+		# is not what the view shows, except mid-drag, where the old picture
+		# slides with the cursor and the release repaints it
+		dpi = Window.scale!()
+		picture_px = { w: pixels.w * dpi.x, h: pixels.h * dpi.y }
 		map_rt2 =
 			if !(Map.is_map(view2)) {
 				model.map_rt
 			} else {
 				match model.map_rt {
-					Target(t) => if (t.w == pixels.w and t.h == pixels.h) model.map_rt else build_map_rt!(pixels)
-					Refused(r) => if (r.w == pixels.w and r.h == pixels.h) model.map_rt else build_map_rt!(pixels)
-					NoTarget => build_map_rt!(pixels)
+					Target(t) => if (t.w == picture_px.w and t.h == picture_px.h) model.map_rt else picture_rt!(picture_px, t.text)
+					Refused(r) => if (r.w == picture_px.w and r.h == picture_px.h) model.map_rt else picture_rt!(picture_px, NoText)
+					NoTarget => picture_rt!(picture_px, NoText)
 				}
 			}
 		map_fresh = match (model.map_rt, map_rt2) {
@@ -3143,7 +3166,7 @@ update! = |model0, program_input, io| {
 		# paused playback places its markers once and keeps them
 		# (Motion.step_marks); running, each frame places its own
 		map_marks2 = Motion.step_marks(model.map_marks, { view: view2, paused: map_play2.paused, was_view: model.view, was_paused: model.map_play.paused, rebuilt: speed_now }, |_| Map.markers({ ..model, map: map2, map_speed: map_speed2, map_play: map_play2 }))
-		map_paint2 = Map.is_map(view2) and (speed_now or map_fresh or map_heat_fresh or view2 != model.map_painted_view or map_zoomed or map_resized or (map_idle and !(same_cam(map_shown, model.map_painted))))
+		map_paint2 = Map.is_map(view2) and (speed_now or map_fresh or map_heat_fresh or view2 != model.map_painted_view or map_zoomed or map_resized or (map_idle and !(same_cam(map_shown, model.map_painted))) or Map.card_key({ ..model, win, map_card: model0.map_card }, Scene.measure_of(model)) != Map.card_key({ ..model, win, map_card: map_card2 }, Scene.measure_of(model)))
 		glow2 =
 			match model.glow {
 				Ready(g9) => if (g9.gw == pixels.w and g9.gh == pixels.h) (model.glow) else build_glow!(pixels)
@@ -3517,7 +3540,7 @@ paint_map! = |model, frame|
 					t.rt,
 					|f| {
 						f.clear!(Color.transparent)
-						f.with_camera!(Camera.default.with_zoom(model.ui_scale), |g| Ok(Map.paint!(model, model.map_painted, Bool.True, g)))
+						Ok(Map.paint_picture!(model, f))
 					},
 				)
 				{}

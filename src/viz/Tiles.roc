@@ -652,7 +652,7 @@ expect {
 expect {
 	c = { key: { z: 14, x: 4203, y: 6088 }, col: 4203 }
 	far = { key: { z: 11, x: 525, y: 761 }, state: Drawn(Mvt.empty), refresh: Done, used: 0 }
-	near_up = { key: { z: 13, x: 2101, y: 3044 }, state: Drawn({ fills: [], lines: [{ kind: 1, pts: [] }] }), refresh: Done, used: 0 }
+	near_up = { key: { z: 13, x: 2101, y: 3044 }, state: Drawn({ fills: [], lines: [{ kind: 1, pts: [] }], names: [] }), refresh: Done, used: 0 }
 	a = Tiles.shown([far], c)
 	b = Tiles.shown([far, near_up], c)
 	match (a, b) {
