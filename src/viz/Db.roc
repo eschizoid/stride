@@ -1971,10 +1971,11 @@ Db :: [].{
 	# full backfill holds millions of points, and every repaint walks the
 	# list it draws. A route with times keeps each kept point's seconds since
 	# its start in `ts` and `fts`, aligned with `pts` and `far`, for
-	# playback, and both lists split into runs of one speed band in `runs`
-	# and `fruns` (Motion.runs), worked out once when the map loads so a
-	# playback repaint only draws; one without times keeps none of these.
-	MapLine : { kind : U8, pts : List(Geo.Pt), ts : List(F32), far : List(Geo.Pt), fts : List(F32), runs : List(Motion.Run), fruns : List(Motion.Run), box : Geo.Bounds }
+	# playback; one without times keeps none. `bands` and `fbands` hold each
+	# segment's speed band for the two lists (Motion.banded), empty until
+	# playback first shows the map (with_bands), so the routes and the heat
+	# never pay for them.
+	MapLine : { kind : U8, pts : List(Geo.Pt), ts : List(F32), far : List(Geo.Pt), fts : List(F32), bands : List(U8), fbands : List(U8), box : Geo.Bounds }
 
 	# every route, all relative to one origin, and that origin in projected
 	# metres, which places the street map's tiles; the routes' extent, which
@@ -2004,13 +2005,30 @@ Db :: [].{
 			Err(TooShort)
 		} else if List.is_empty(times) {
 			pts = Geo.thin(List.map(coords, |c| Geo.rel(origin, c.lat, c.lng)), near_step)
-			Ok({ kind, pts, ts: [], far: Geo.thin(pts, far_step), fts: [], runs: [], fruns: [], box: Geo.box_of(pts) })
+			Ok({ kind, pts, ts: [], far: Geo.thin(pts, far_step), fts: [], bands: [], fbands: [], box: Geo.box_of(pts) })
 		} else {
 			near = Geo.thin_timed(List.map(coords, |c| Geo.rel(origin, c.lat, c.lng)), times, near_step)
 			far = Geo.thin_timed(near.pts, near.ts, far_step)
-			ref = Motion.moving_speed(far.pts, far.ts)
-			Ok({ kind, pts: near.pts, ts: near.ts, far: far.pts, fts: far.ts, runs: Motion.runs(near.pts, Motion.bands_of(near.pts, near.ts, ref)), fruns: Motion.runs(far.pts, Motion.bands_of(far.pts, far.ts, ref)), box: Geo.box_of(near.pts) })
+			Ok({ kind, pts: near.pts, ts: near.ts, far: far.pts, fts: far.ts, bands: [], fbands: [], box: Geo.box_of(near.pts) })
 		}
+
+	# every route's speed bands for both of its lists, each measured against
+	# the route's moving speed over its far list; a route without times
+	# keeps none
+	with_bands : MapData -> MapData
+	with_bands = |m| {
+		..m,
+		routes: List.map(
+			m.routes,
+			|l|
+				if List.is_empty(l.ts) {
+					l
+				} else {
+					ref = Motion.moving_speed(l.far, l.fts)
+					{ ..l, bands: Motion.banded(l.pts, l.ts, ref), fbands: Motion.banded(l.far, l.fts, ref) }
+				},
+		),
+	}
 
 	# a failed read, named for the athlete
 	query_err : Str, [SqliteErr(_, Str), ResultTooLarge, MultipleStatements] -> Str
@@ -2352,15 +2370,23 @@ expect {
 	}
 }
 
-# a route's line keeps each kept point's time beside it and its speed runs,
-# in both lists (a steady route is one run at its own speed), and a line
-# with no times keeps neither
+# a route's line keeps each kept point's time beside it, in both lists, and
+# no speed bands; with_bands then bands each list segment by segment (a
+# steady route at its own speed throughout), and a line with no times keeps
+# no times and gets no bands
 expect {
 	o = Geo.merc(41.88, -87.63)
 	coords = List.map_with_index(List.repeat(0, 50), |_, i| { lat: 41.88 + U64.to_f64(i) * 0.0001, lng: -87.63 })
 	times = List.map_with_index(coords, |_, i| U64.to_f32(i) * 3.0)
 	match (Db.map_line(o, Db.route_kind, coords, times), Db.map_line(o, 1, coords, [])) {
-		(Ok(r), Ok(w)) => r.ts == times and List.len(r.fts) == List.len(r.far) and List.first(r.fts) == Ok(0.0) and List.last(r.fts) == Ok(147.0) and List.get(r.fts, 1) == Ok(9.0) and List.map(r.runs, |x| x.band) == [2] and List.map(r.runs, |x| x.pts) == [r.pts] and List.map(r.fruns, |x| x.pts) == [r.far] and List.is_empty(w.ts) and List.is_empty(w.fts) and List.is_empty(w.runs) and List.is_empty(w.fruns)
+		(Ok(r), Ok(w)) => {
+			b = Db.with_bands({ ..Db.no_map, routes: [r, w] })
+			rb = (List.first(b.routes)) ?? w
+			wb = (List.last(b.routes)) ?? r
+			r.ts == times and List.len(r.fts) == List.len(r.far) and List.first(r.fts) == Ok(0.0) and List.last(r.fts) == Ok(147.0) and List.get(r.fts, 1) == Ok(9.0) and List.is_empty(r.bands) and List.is_empty(r.fbands)
+				and rb.bands == List.repeat(2, List.len(r.pts) - 1) and rb.fbands == List.repeat(2, List.len(r.far) - 1) and rb.pts == r.pts
+				and List.is_empty(w.ts) and List.is_empty(w.fts) and List.is_empty(wb.bands) and List.is_empty(wb.fbands)
+		}
 		_ => Bool.False
 	}
 }

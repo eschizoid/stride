@@ -326,10 +326,10 @@ Map :: [].{
 
 	# what each mode paints into the cached picture. The street map goes
 	# first, the view's tiles. Routes mode draws the routes over it in the
-	# accent; play draws them in runs of their speed bands; heat draws none
-	# here, its passes being summed into a texture of their own
-	# (paint_heat!), unless the window could not build that texture, when it
-	# draws them as routes mode does.
+	# accent; play draws them in strips coloured by speed band
+	# (paint_speed!); heat draws none here, its passes being summed into a
+	# texture of their own (paint_heat!), unless the window could not build
+	# that texture, when it draws them as routes mode does.
 	paint! : Ui.Model, Geo.Cam, Bool, Draw.Frame => {}
 	paint! = |model, c, squared, frame| {
 		paint_tiles!(model, c, squared, frame)
@@ -354,18 +354,18 @@ Map :: [].{
 		)
 	}
 
-	# every route the camera shows, in the speed runs the map load worked
-	# out for the list this zoom draws
+	# every route the camera shows, in strips of one speed band each from
+	# the bands of the list this zoom draws (Motion.strips)
 	paint_speed! : Ui.Model, Geo.Cam, Draw.Frame => {}
 	paint_speed! = |model, c, frame| {
 		r = rect(model.win)
+		wide = c.mpp > far_mpp
 		List.for_each!(
 			model.map.routes,
 			|l|
 				if Geo.visible(c, r, l.box) {
-					wide = c.mpp > far_mpp
-					runs = if (wide) l.fruns else l.runs
-					List.for_each!(runs, |run| frame.line_strip!({ points: Geo.strip(c, r, run.pts, 1.0), stroke: Draw.stroke(Color.with_alpha(Motion.band_colour(run.band), 220), 2.0) }))
+					ss = if (wide) Motion.strips(l.far, l.fbands, |p| Geo.to_screen(c, r, p), 1.0) else Motion.strips(l.pts, l.bands, |p| Geo.to_screen(c, r, p), 1.0)
+					List.for_each!(ss, |s| frame.line_strip!({ points: s.pts, stroke: Draw.stroke(Color.with_alpha(Motion.band_colour(s.band), 220), 2.0) }))
 				},
 		)
 	}
@@ -391,27 +391,67 @@ Map :: [].{
 		}
 
 	# the route seconds the longest route lasts, the length of a playback
-	# cycle before its rest
+	# cycle before its rest: kept beside the speed bands once they are
+	# built, so a frame does not walk every route for it
 	longest : Ui.Model -> F32
-	longest = |model| List.fold(model.map.routes, 0.0, |m, l| F32.max(m, (List.last(l.ts)) ?? 0.0))
+	longest = |model|
+		match model.map_speed {
+			Built(b) => b.longest
+			Unbuilt => longest_of(model.map)
+		}
+
+	longest_of : Db.MapData -> F32
+	longest_of = |m| List.fold(m.routes, 0.0, |acc, l| F32.max(acc, (List.last(l.ts)) ?? 0.0))
+
+	# A marker is a disc a few pixels across, drawn as a polygon of this many
+	# sides rather than raylib's 36, since a frame draws one or two per
+	# route; strays bounds how far the polygon departs from its circle.
+	halo_sides : I32
+	halo_sides = 12
+
+	dot_sides : I32
+	dot_sides = 8
+
+	# how far a polygon of n sides departs from its circle of radius r, in
+	# pixels at UI scale k: r k (1 - cos x) for x = pi / n, bounded above by
+	# r k x^2 / 2
+	strays : F32, I32, F32 -> F32
+	strays = |r, n, k| {
+		x = 3.14159265 / I32.to_f32(n)
+		r * k * x * x / 2.0
+	}
+
+	disc! : Draw.Frame, Geo.Pt, F32, I32, Color.Rgba => {}
+	disc! = |frame, at, radius, sides, color| frame.circle_sector!({ center: at, radius, start_angle: 0.0, end_angle: 360.0, segments: sides, style: Draw.filled(color) })
+
+	# every route's marker at the playback time
+	markers : Ui.Model -> List(Motion.Mark)
+	markers = |model| {
+		t = Motion.play_time(model.map_play.secs, longest(model))
+		List.map(model.map.routes, |l| Motion.mark(l.pts, l.ts, t))
+	}
 
 	# One marker per route at the playback time, drawn every frame over the
 	# cached picture, which playback never repaints: a route still under way
-	# in white with a halo, one already finished dimmed at its end.
+	# in white with a halo, one already finished dimmed at its end. Paused,
+	# the markers are the ones the window keeps (Motion.step_marks).
 	draw_markers! : Ui.Model, Geo.Cam, Draw.Frame => {}
 	draw_markers! = |model, c, frame| {
 		r = rect(model.win)
-		t = Motion.play_time(model.map_play.secs, longest(model))
+		ms = match model.map_marks {
+			Held(kept) => kept
+			Stale => markers(model)
+		}
 		List.for_each!(
-			model.map.routes,
-			|l| {
-				s = Geo.to_screen(c, r, Motion.at_time(l.pts, l.ts, t))
+			ms,
+			|m| {
+				s = Geo.to_screen(c, r, m.at)
 				if s.x >= r.x and s.x <= r.x + r.w and s.y >= r.y and s.y <= r.y + r.h {
-					if t < ((List.last(l.ts)) ?? 0.0) {
-						frame.circle!({ center: s, radius: 5.0, style: Draw.filled(Color.with_alpha(Theme.tsb_c, 70)) })
-						frame.circle!({ center: s, radius: 2.4, style: Draw.filled(Color.white) })
+					if m.live {
+						disc!(frame, s, 5.0, halo_sides, Color.with_alpha(Theme.tsb_c, 70))
+						disc!(frame, s, 2.4, dot_sides, Color.white)
 					} else {
-						frame.circle!({ center: s, radius: 2.0, style: Draw.filled(Color.with_alpha(Theme.ink_faint, 150)) })
+						disc!(frame, s, 2.0, dot_sides, Color.with_alpha(Theme.ink_faint, 150))
 					}
 				}
 			},
