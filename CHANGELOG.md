@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.23.0](https://github.com/eschizoid/stride/compare/v0.22.0...v0.23.0) (2026-11-20)
+
+
+### Features
+
+* **basemap:** fetch the map view's roads and water from OpenStreetMap ([#709](https://github.com/eschizoid/stride/issues/709)) ([0318653](https://github.com/eschizoid/stride/commit/031865322bf9efab8ad16b39968115997069ef86))
+* estimated 1RM, durability, and per-sport fitness ([#711](https://github.com/eschizoid/stride/issues/711)) ([3e52fac](https://github.com/eschizoid/stride/commit/3e52fac53c8f7d471e52cb654d60989394ee2cfa))
+* **sync:** store GPS routes for the map view ([#707](https://github.com/eschizoid/stride/issues/707)) ([2fb1129](https://github.com/eschizoid/stride/commit/2fb112932698178854c249e2d6f0dc3d01da7b1d))
+* time to exhaustion for every sport, with a pace form ([#716](https://github.com/eschizoid/stride/issues/716)) ([d543e75](https://github.com/eschizoid/stride/commit/d543e756cbfbbb06968643def1435fe7dbd2274e))
+* **viz:** a map tab drawing every GPS route over the street map ([#710](https://github.com/eschizoid/stride/issues/710)) ([b003c4e](https://github.com/eschizoid/stride/commit/b003c4ea3735b8d6fdbbbdb6c9323c3e71d79584))
+* **viz:** every view places its labels through the placer, and the gate covers them all ([#697](https://github.com/eschizoid/stride/issues/697)) ([85dd0c9](https://github.com/eschizoid/stride/commit/85dd0c984df46380b16a3baa2efea77a0e7016ae))
+* **viz:** heat and speed playback on the map tab ([#715](https://github.com/eschizoid/stride/issues/715)) ([708f496](https://github.com/eschizoid/stride/commit/708f49680e9a8d7cf3e367d164477180ba4644a8))
+* **viz:** one label placer for every view, and a gate that fails on overlapping labels ([#695](https://github.com/eschizoid/stride/issues/695)) ([5832e90](https://github.com/eschizoid/stride/commit/5832e908ecedec5f402b75d5d08d1b05e0c34cca))
+* **viz:** street map from OpenStreetMap vector tiles, fetched on zoom and cached ([#720](https://github.com/eschizoid/stride/issues/720)) ([c4e521b](https://github.com/eschizoid/stride/commit/c4e521be8d44706401efa39b28aec69491122371))
+* **viz:** the streak chip wears the flame emoji ([#701](https://github.com/eschizoid/stride/issues/701)) ([82b64b0](https://github.com/eschizoid/stride/commit/82b64b0b43901aed9f74806653f5ca95a3e1e7d6))
+
+
+### Bug Fixes
+
+* **strength:** read every set line Peloton writes, and report the rest ([#705](https://github.com/eschizoid/stride/issues/705)) ([7aca477](https://github.com/eschizoid/stride/commit/7aca477a367a2bb25bff862481321dd070b854e2))
+* **viz:** a workout planned on several days is one label on the power and pace curves ([#713](https://github.com/eschizoid/stride/issues/713)) ([6398ff0](https://github.com/eschizoid/stride/commit/6398ff0acc429a4b11703d7587a64c0cc99996a5))
+* **viz:** the lifts view's session card shows every exercise ([#703](https://github.com/eschizoid/stride/issues/703)) ([2c20b77](https://github.com/eschizoid/stride/commit/2c20b77a17ff9245d33598ee14a44062dbc9336d))
+* **viz:** the overlap gate checks power and career text against their shapes ([#699](https://github.com/eschizoid/stride/issues/699)) ([b62506c](https://github.com/eschizoid/stride/commit/b62506c8a8be16bb9ff0576987cdb87a33beee91))
+
+
+### Performance Improvements
+
+* **viz:** play mode repaints near routes' cost and loads nothing for it ([#722](https://github.com/eschizoid/stride/issues/722)) ([e81a785](https://github.com/eschizoid/stride/commit/e81a785913b45bec0ed1cd3cb53f178a7ecd514b))
+* **viz:** the map loads without the Overpass base map ([#721](https://github.com/eschizoid/stride/issues/721)) ([393908e](https://github.com/eschizoid/stride/commit/393908efb8409ad5c155ae4e30c2fe2bd5aaf2e5))
+
 ## [0.22.0](https://github.com/eschizoid/stride/compare/v0.21.0...v0.22.0) (2026-11-12)
 
 
