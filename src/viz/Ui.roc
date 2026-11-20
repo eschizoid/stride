@@ -6,6 +6,7 @@ import rr.Text
 import rr.Texture
 import Db
 import Geo
+import Motion
 import Tiles
 
 Ui :: [].{
@@ -299,6 +300,14 @@ Ui :: [].{
 		# playback's clock in seconds of play, which runs only while the play
 		# mode shows and is not paused, and starts over each time it opens
 		map_play : { secs : F32, paused : Bool },
+		# whether the landed map's routes carry their speed bands yet, the
+		# tick of the frame that worked them out (Db.with_bands), and the
+		# route seconds the longest route lasts (Map.longest): Unbuilt until
+		# playback first shows a landed map, and again whenever a map lands
+		map_speed : [Unbuilt, Built({ tick : U64, longest : F32 })],
+		# the markers paused playback draws, placed once while the clock
+		# stands still (Motion.step_marks)
+		map_marks : Motion.Marks,
 		# the street map's tiles the window holds, and the state of the
 		# TileJSON their addresses are read from (Tiles)
 		map_tiles : List(Tiles.Slot),

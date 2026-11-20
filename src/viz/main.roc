@@ -527,6 +527,8 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		map_painted_view: 0,
 		map_heat: Unbuilt,
 		map_play: { secs: 0.0, paused: Bool.False },
+		map_speed: Unbuilt,
+		map_marks: Stale,
 		map_tiles: [],
 		map_source: Unasked,
 		map_planned: { cam: Map.unpainted, tick: 0 },
@@ -720,6 +722,26 @@ map_on_reload = |l|
 map_on_landing : Bool -> [Unloaded, Loading, Loaded]
 map_on_landing = |stale| if (stale) Unloaded else Loaded
 
+# whether this frame works out the routes' speed bands: playback shows a
+# landed map whose bands are not yet built
+speed_due : U8, [Unloaded, Loading, Loaded], [Unbuilt, Built({ tick : U64, longest : F32 })] -> Bool
+speed_due = |view, load, speed|
+	match (load, speed) {
+		(Loaded, Unbuilt) => view == 12
+		_ => Bool.False
+	}
+
+# Whether playback's clock may run, given the bands' state and the tick of
+# the last frame. The frame that works the bands out lasts as long as that
+# work, and the frame after it measures its step from that frame's tick, so
+# the clock holds through both and its first step is an ordinary one.
+speed_ready : [Unbuilt, Built({ tick : U64, longest : F32 })], U64 -> Bool
+speed_ready = |speed, last|
+	match speed {
+		Built(b) => b.tick < last
+		Unbuilt => Bool.False
+	}
+
 # how a tile task's store went: no store tried, the tile kept, or why it
 # could not be
 CacheWrite : [Untouched, Stored, Failed(Str)]
@@ -762,6 +784,28 @@ expect {
 # R during a read never starts a second one; the read that lands then
 # starts exactly one more, and a map at rest is read again at once
 expect map_on_reload(Loading) == { load: Loading, stale: Bool.True } and map_on_reload(Loaded) == { load: Unloaded, stale: Bool.False } and map_on_reload(Unloaded) == { load: Unloaded, stale: Bool.False } and map_on_landing(Bool.True) == Unloaded and map_on_landing(Bool.False) == Loaded
+
+# playback alone works the bands out, once a map has landed and only while
+# none are built
+expect speed_due(12, Loaded, Unbuilt) and !(speed_due(12, Loaded, Built({ tick: 3, longest: 60.0 }))) and !(speed_due(12, Loading, Unbuilt)) and !(speed_due(12, Unloaded, Unbuilt)) and !(speed_due(10, Loaded, Unbuilt)) and !(speed_due(11, Loaded, Unbuilt))
+
+# the clock holds until the bands are built, through the frame after the
+# one that built them, and runs from the frame after that
+expect !(speed_ready(Unbuilt, 9)) and !(speed_ready(Built({ tick: 9, longest: 60.0 }), 9)) and speed_ready(Built({ tick: 9, longest: 60.0 }), 10)
+
+# the longest route's seconds are read from the routes until the bands are
+# built, and kept beside them after
+expect {
+	m = { ..Gate.empty_model({ w: 980.0, h: 600.0 }), map: Gate.map_fixture }
+	(Map.longest(m) - 600.0).abs() < 0.001 and (Map.longest({ ..m, map_speed: Built({ tick: 4, longest: 90.0 }) }) - 90.0).abs() < 0.001
+}
+
+# a marker's polygon departs from its circle by under half a pixel at the
+# largest UI scale the window takes, for the halo and for both dots
+expect {
+	k = (DisplayScale.layout(DisplayScale.adjust(DisplayScale.default_percent + 1000, Larger), { w: 99999.0, h: 99999.0 })).scale
+	(Map.strays(1.0, 2, 4.0) - 4.9348).abs() < 0.001 and k >= 2.0 and Map.strays(5.0, Map.halo_sides, k) < 0.5 and Map.strays(2.4, Map.dot_sides, k) < 0.5 and Map.strays(2.0, Map.dot_sides, k) < 0.5
+}
 
 # a capture in any map mode waits for the map to land, and one on another
 # view does not wait on it
@@ -2146,7 +2190,7 @@ update! = |model0, program_input, io| {
 							}
 					}
 				Reloaded(fresh) => {
-					merged = { ..fresh, map: acc.map, map_tiles: acc.map_tiles, map_source: acc.map_source, map_cache_err: acc.map_cache_err, map_planned: acc.map_planned, map_plan_due: acc.map_plan_due, map_heat: acc.map_heat, map_play: acc.map_play, map_gen: acc.map_gen, map_load: (map_on_reload(acc.map_load)).load, map_stale: (map_on_reload(acc.map_load)).stale, map_cam: acc.map_cam, map_moved: acc.map_moved, map_rt: acc.map_rt, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_active: acc.last_active, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending, flame: acc.flame }
+					merged = { ..fresh, map: acc.map, map_tiles: acc.map_tiles, map_source: acc.map_source, map_cache_err: acc.map_cache_err, map_planned: acc.map_planned, map_plan_due: acc.map_plan_due, map_heat: acc.map_heat, map_play: acc.map_play, map_speed: acc.map_speed, map_marks: acc.map_marks, map_gen: acc.map_gen, map_load: (map_on_reload(acc.map_load)).load, map_stale: (map_on_reload(acc.map_load)).stale, map_cam: acc.map_cam, map_moved: acc.map_moved, map_rt: acc.map_rt, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_active: acc.last_active, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending, flame: acc.flame }
 					# R reads the curve it was pressed on, and it is the slow path.
 					# A chip clicked while it ran has since moved curve_days or
 					# curve_family and landed its own curve; when the two disagree
@@ -2166,9 +2210,10 @@ update! = |model0, program_input, io| {
 				# since the fetch read its index; the samples are still that
 				# session's, so they land under whatever index it holds now.
 				TraceSwitched(sw) => if (sw.gen != acc.trace_gen) acc else { ..acc, trace: sw.tr, segs: sw.sg, trace_dur: sw.du, trace_day: sw.day, trace_unit: sw.un, trace_splits: sw.sp, trace_sets: sw.st, trace_loading: Bool.False }
-				# the map lands only from the newest load and is repainted; one R
-				# marked stale while it was read is read once more (map_on_landing)
-				MapLoaded(ml) => if (ml.gen != acc.map_gen) acc else { ..acc, map: ml.map, map_load: map_on_landing(acc.map_stale), map_stale: Bool.False, map_painted: Map.unpainted, map_plan_due: Bool.True }
+				# the map lands only from the newest load and is repainted, its
+				# speed bands not yet worked out; one R marked stale while it was
+				# read is read once more (map_on_landing)
+				MapLoaded(ml) => if (ml.gen != acc.map_gen) acc else { ..acc, map: ml.map, map_speed: Unbuilt, map_marks: Stale, map_load: map_on_landing(acc.map_stale), map_stale: Bool.False, map_painted: Map.unpainted, map_plan_due: Bool.True }
 				TileAnswer(ta) => tile_landed(acc, ta.ans, ta.cache, tick)
 				# the template a tile fetch needs, or the tick the TileJSON could
 				# not be read at, after which it is asked for again
@@ -2987,14 +3032,23 @@ update! = |model0, program_input, io| {
 			(_, Ready(_)) => Bool.True
 			_ => Bool.False
 		}
-		# playback's clock steps only while the play mode shows (Motion.step_clock)
+		# playback's speed bands are worked out in the frame that first shows
+		# it a landed map (speed_due), and that frame repaints the picture
+		speed_now = speed_due(view2, model.map_load, model.map_speed)
+		map2 = if (speed_now) Db.with_bands(model.map) else model.map
+		map_speed2 = if (speed_now) Built({ tick, longest: Map.longest_of(map2) }) else model.map_speed
+		# playback's clock steps only while the play mode shows, and holds
+		# until the map has landed with its bands (Motion.step_clock, speed_ready)
 		map_play2 =
 			if view2 != 12 {
 				model.map_play
 			} else {
-				Motion.step_clock(model.map_play, { opening: model.view != 12, landed: !(map_unread(model.map_load)), toggle: d.key_pressed(KeyP), dt: U64.to_f32(tick - model.tick) / U64.to_f32(ticks_per_second) })
+				Motion.step_clock(model.map_play, { opening: model.view != 12, landed: !(map_unread(model.map_load)) and speed_ready(model.map_speed, model.tick), toggle: d.key_pressed(KeyP), dt: U64.to_f32(tick - model.tick) / U64.to_f32(ticks_per_second) })
 			}
-		map_paint2 = Map.is_map(view2) and (map_fresh or map_heat_fresh or view2 != model.map_painted_view or map_zoomed or map_resized or (map_idle and !(same_cam(map_shown, model.map_painted))))
+		# paused playback places its markers once and keeps them
+		# (Motion.step_marks); running, each frame places its own
+		map_marks2 = Motion.step_marks(model.map_marks, { view: view2, paused: map_play2.paused, was_view: model.view, was_paused: model.map_play.paused, rebuilt: speed_now }, |_| Map.markers({ ..model, map: map2, map_speed: map_speed2, map_play: map_play2 }))
+		map_paint2 = Map.is_map(view2) and (speed_now or map_fresh or map_heat_fresh or view2 != model.map_painted_view or map_zoomed or map_resized or (map_idle and !(same_cam(map_shown, model.map_painted))))
 		glow2 =
 			match model.glow {
 				Ready(g9) => if (g9.gw == pixels.w and g9.gh == pixels.h) (model.glow) else build_glow!(pixels)
@@ -3013,7 +3067,7 @@ update! = |model0, program_input, io| {
 		used = !List.is_empty(d.events) or List.any(d.keys, |k| k != 0) or pointer.x != 0.0 or pointer.y != 0.0 or wheel.x != 0.0 or wheel.y != 0.0 or Mouse.button_down(d.mouse, Left) or Mouse.button_down(d.mouse, Right) or win.w != model.win.w or win.h != model.win.h or directive.has_d
 		last_active = if (used) tick else model.last_active
 		Window.set_target_fps!(frame_rate({ busy, tick, last_active }))
-		Ok({ ..model, map_tiles: tile_plan.slots, map_source: map_source2, map_planned: (if (planning) { cam: map_shown, tick } else model.map_planned), map_plan_due: model.map_plan_due and !planning, map_heat: map_heat2, map_play: map_play2, map_painted_view: (if (map_paint2) view2 else model.map_painted_view), map_load: (if (map_spawn) Loading else model.map_load), map_gen: map_gen2, map_cam: map_cam2, map_moved: map_moved2, map_drag: map_drag2, map_rt: map_rt2, map_paint: map_paint2, map_painted: (if (map_paint2) map_shown else model.map_painted), lifts_off: lifts_off2, last_off: last_off2, week_off: week_off2, week_cursor: week_cursor2, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, show_short: want_short, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else if (view2 == 1) Curve.plot_top else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, map: map2, map_speed: map_speed2, map_marks: map_marks2, map_tiles: tile_plan.slots, map_source: map_source2, map_planned: (if (planning) { cam: map_shown, tick } else model.map_planned), map_plan_due: model.map_plan_due and !planning, map_heat: map_heat2, map_play: map_play2, map_painted_view: (if (map_paint2) view2 else model.map_painted_view), map_load: (if (map_spawn) Loading else model.map_load), map_gen: map_gen2, map_cam: map_cam2, map_moved: map_moved2, map_drag: map_drag2, map_rt: map_rt2, map_paint: map_paint2, map_painted: (if (map_paint2) map_shown else model.map_painted), lifts_off: lifts_off2, last_off: last_off2, week_off: week_off2, week_cursor: week_cursor2, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, show_short: want_short, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else if (view2 == 1) Curve.plot_top else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
