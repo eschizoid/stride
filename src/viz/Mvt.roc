@@ -86,15 +86,24 @@ Mvt :: [].{
 		if ($bad) Err(Malformed) else Ok({ name: $name, extent: $extent, keys: $keys, values: $values, features: $features })
 	}
 
-	# a value message's text: its string (field 1), else its whole number
-	# (4 int, 5 uint, 6 sint) in decimal, else ""
+	# a value message's text: its string (field 1), else its whole number in
+	# decimal: an int (4) read as a signed 64-bit two's complement, so a
+	# negative one, which a varint stores in ten bytes, reads with its sign;
+	# a uint (5) as unsigned; and a sint (6) unzigzagged; else ""
 	value_text : List(U8), List(Pbf.Field) -> Str
 	value_text = |bytes, vs|
 		match List.find_first(vs, |v| v.num == 1 and v.wire == 2) {
 			Ok(v) => Pbf.text(bytes, v)
 			Err(_) =>
 				match List.find_first(vs, |v| v.wire == 0 and (v.num == 4 or v.num == 5 or v.num == 6)) {
-					Ok(v) => if (v.num == 6) I64.to_str(Pbf.zigzag(v.value)) else U64.to_str(v.value)
+					Ok(v) =>
+						if v.num == 6 {
+							I64.to_str(Pbf.zigzag(v.value))
+						} else if v.num == 4 {
+							I64.to_str(U64.to_i64_wrap(v.value))
+						} else {
+							U64.to_str(v.value)
+						}
 					Err(_) => ""
 				}
 		}
@@ -574,10 +583,13 @@ expect {
 }
 
 # a whole-number value reads as its decimal text whichever of the three
-# integer fields holds it, a float as nothing, and a string as itself
+# integer fields holds it, a negative int with its sign and the same ten
+# bytes as a uint without one, a float as nothing, and a string as itself
 expect {
 	vt = |bytes| Mvt.value_text(bytes, (Pbf.fields(bytes, 0, List.len(bytes))) ?? [])
+	minus_one = [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01]
 	vt([0x20, 0x07]) == "7" and vt([0x28, 0x05]) == "5" and vt([0x30, 0x03]) == "-2" and vt([0x15, 0, 0, 0x80, 0x3f]) == "" and vt(str_value("lake")) == "lake"
+		and vt(List.prepend(minus_one, 0x20)) == "-1" and vt(List.prepend(minus_one, 0x28)) == "18446744073709551615"
 }
 
 # the classes named: the five place classes, the four street groups, and
