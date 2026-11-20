@@ -458,21 +458,30 @@ Map :: [].{
 		}
 	}
 
+	# Every name the view shows, on screen, from each tile shown once (a
+	# coarse stand-in included): a name its zoom shows and that reaches the
+	# map (MapNames.touches), in tile order. The names are gathered one at a
+	# time, so the list a repaint builds is as long as the names kept rather
+	# than every name the tiles carry.
 	name_runs : Ui.Model, Geo.Cam -> List(MapNames.Run)
 	name_runs = |model, c| {
 		r = rect(model.win)
 		o = model.map.origin
 		shown = List.keep_oks(cells(model, c), |cell| Tiles.shown(model.map_tiles, cell))
 		once = List.fold(shown, [], |acc, s| if (List.any(acc, |x| x.z == s.z and x.col == s.col and x.row == s.row)) acc else List.append(acc, s))
-		List.join(
-			List.map(
-				once,
-				|s| {
-					at = Tiles.place(c, r, o, s.z, s.col, s.row)
-					List.keep_oks(s.tile.names, |n| if (MapNames.shows(n.kind, c.mpp)) Ok({ kind: n.kind, rank: n.rank, text: n.text, pts: List.map(n.pts, |p| { x: at.x + p.x * at.k, y: at.y + p.y * at.k }) }) else Err(Hidden))
-				},
-			),
-		)
+		var $out = []
+		for s in once {
+			at = Tiles.place(c, r, o, s.z, s.col, s.row)
+			for n in s.tile.names {
+				if MapNames.shows(n.kind, c.mpp) {
+					run = { kind: n.kind, rank: n.rank, text: n.text, pts: List.map(n.pts, |p| { x: at.x + p.x * at.k, y: at.y + p.y * at.k }) }
+					if MapNames.touches(run, r) {
+						$out = List.append($out, run)
+					}
+				}
+			}
+		}
+		$out
 	}
 
 	# every route the camera shows, in projected metres, from the list a

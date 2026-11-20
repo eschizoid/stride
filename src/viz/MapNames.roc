@@ -83,10 +83,10 @@ MapNames :: [].{
 	# the placer's order: places by kind then rank (an unranked place last
 	# in its kind), then streets by kind, after the view's fixed text
 	prio : Run -> U64
-	prio = |r| 1 + U8.to_u64(r.kind) * 20 + (if (r.rank == 0) 19 else U64.min(r.rank, 19))
+	prio = |r| 1 + U8.to_u64(r.kind) * 20 + rank_of(r)
 
-	# how far apart two runs of one name must be, in logical pixels, for
-	# both to be named
+	# how far apart two placings of one name must be, in a straight line on
+	# screen in logical pixels, for both to be named
 	repeat_px : F32
 	repeat_px = 360.0
 
@@ -456,17 +456,34 @@ MapNames :: [].{
 		}
 	}
 
-	# the runs a zoom shows, in the placer's order: each place kind by
-	# rank, then each street kind, a kind keeping the order the runs came in
+	# The runs a zoom shows, in the placer's order: each place kind by rank,
+	# then each street kind, a kind keeping the order the runs came in. The
+	# runs are split by kind in one pass per kind, and only a place kind's
+	# own runs are split again by rank, so no pass walks every run once per
+	# rank.
 	ordered : List(Run), F32 -> List(Run)
 	ordered = |runs, mpp| {
 		shown = List.keep_if(runs, |r| shows(r.kind, mpp))
-		place_prios = List.map_with_index(List.repeat({}, U8.to_u64(Mvt.street_kind) * 20), |_, i| i + 1)
-		places = List.join(List.map(place_prios, |p| List.keep_if(shown, |r| !(Mvt.is_street(r.kind)) and prio(r) == p)))
-		street_kinds = List.map_with_index(List.repeat({}, List.len(Mvt.name_kinds) - U8.to_u64(Mvt.street_kind)), |_, i| U64.to_u8_wrap(i) + Mvt.street_kind)
-		streets = List.join(List.map(street_kinds, |k| List.keep_if(shown, |r| r.kind == k)))
-		List.concat(places, streets)
+		kinds = List.map_with_index(Mvt.name_kinds, |_, i| U64.to_u8_wrap(i))
+		ranks = List.map_with_index(List.repeat({}, 19), |_, i| i + 1)
+		List.join(
+			List.map(
+				kinds,
+				|k| {
+					of_kind = List.keep_if(shown, |r| r.kind == k)
+					if Mvt.is_street(k) or List.len(of_kind) < 2 {
+						of_kind
+					} else {
+						List.join(List.map(ranks, |rk| List.keep_if(of_kind, |r| rank_of(r) == rk)))
+					}
+				},
+			),
+		)
 	}
+
+	# a place's rank as the order reads it, an unranked place last
+	rank_of : Run -> U64
+	rank_of = |r| if (r.rank == 0) 19 else U64.min(r.rank, 19)
 
 	# whether a run can be named in the region at all: a place's point lies
 	# inside it, and a street's points span a box that meets it
