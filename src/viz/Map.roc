@@ -355,7 +355,9 @@ Map :: [].{
 	# `k`, the target's pixels to a logical unit, is the camera's zoom. The
 	# tiles and the routes are each drawn under that camera and each name
 	# under a camera of its own that turns it about its centre at that
-	# zoom, so no camera is opened inside another. The picture starts
+	# zoom, so no camera is opened inside another; the tiles are cut to
+	# their cells and the routes to the map's rectangle (clip_px), so the
+	# picture holds nothing outside the map. The picture starts
 	# transparent and is laid over the map's ground, so a glyph's edge
 	# covering a share a of a pixel, blended the usual way, would land in
 	# it as its colour times a with alpha a squared and show at a cubed,
@@ -389,11 +391,18 @@ Map :: [].{
 					}
 					NoText => draw_names!(frame, model, k, placed)
 				}
-				_ = frame.with_camera!(zoom, |g| Ok(paint_over!(model, c, g)))
+				_ = frame.with_scissor!(clip_px(rect(model.win), k), |g| g.with_camera!(zoom, |h| Ok(paint_over!(model, c, h))))
 				{}
 			}
 			_ => {}
 		}
+
+	# The map's rectangle in a target's pixels at k of them to a logical
+	# unit: what the picture and heat's texture are cut to as they are
+	# painted, so the map's clip rests on the targets' own scissor, which is
+	# measured in the target's pixels, and not on the screen's alone.
+	clip_px : Geo.Rect, F32 -> { x : F32, y : F32, width : F32, height : F32 }
+	clip_px = |r, k| { x: r.x * k, y: r.y * k, width: r.w * k, height: r.h * k }
 
 	# the picture's pixels to a logical unit: its width over the window's
 	# logical width, or the UI scale while the window has none
@@ -559,10 +568,20 @@ Map :: [].{
 	heat_width : F32
 	heat_width = 2.0
 
-	# the heat texture's passes, to be drawn with added colours into a
-	# cleared texture
+	# The heat texture's passes, to be drawn with added colours into a
+	# cleared texture, cut to the map's rectangle in the texture's pixels
+	# (clip_px), so the texture holds nothing outside the map.
 	paint_heat! : Ui.Model, Geo.Cam, Draw.Frame => {}
-	paint_heat! = |model, c, frame| paint_routes!(model, c, heat_ink, heat_width, frame)
+	paint_heat! = |model, c, frame| {
+		_ = frame.with_scissor!(
+			clip_px(rect(model.win), model.ui_scale),
+			|f| {
+				paint_routes!(model, c, heat_ink, heat_width, f)
+				Ok({})
+			},
+		)
+		{}
+	}
 
 	heat_ready : Ui.Model -> Bool
 	heat_ready = |model|
@@ -753,15 +772,21 @@ Map :: [].{
 			Closed => Err(NoCard)
 		}
 
-	# the selected route drawn over every mode's picture: a dark casing under
-	# a white line, so it reads over the accent, the heat and the speed ramp
+	# the selected route on screen, as the zoom draws it, cut to the map
+	picked_parts : Ui.Model, Geo.Cam, Db.MapLine -> List(List(Geo.Pt))
+	picked_parts = |model, c, l| MapNames.clip(Geo.strip(c, rect(model.win), if (c.mpp > far_mpp) l.far else l.pts, 1.0), rect(model.win))
+
+	# The selected route drawn over every mode's picture: a dark casing under
+	# a white line, so it reads over the accent, the heat and the speed ramp.
+	# It draws straight to the screen, so it is cut to the map's rectangle
+	# by geometry (MapNames.clip) as well as by the view's scissor.
 	draw_picked! : Ui.Model, Geo.Cam, Draw.Frame => {}
 	draw_picked! = |model, c, frame|
 		match picked(model) {
 			Ok(l) => {
-				pts = Geo.strip(c, rect(model.win), if (c.mpp > far_mpp) l.far else l.pts, 1.0)
-				frame.line_strip!({ points: pts, stroke: Draw.stroke(Color.with_alpha(Theme.bg, 200), 5.0) })
-				frame.line_strip!({ points: pts, stroke: Draw.stroke(Color.white, 2.4) })
+				parts = picked_parts(model, c, l)
+				List.for_each!(parts, |pts| frame.line_strip!({ points: pts, stroke: Draw.stroke(Color.with_alpha(Theme.bg, 200), 5.0) }))
+				List.for_each!(parts, |pts| frame.line_strip!({ points: pts, stroke: Draw.stroke(Color.white, 2.4) }))
 			}
 			Err(_) => {}
 		}
@@ -1298,3 +1323,9 @@ expect Str.contains(Db.route_page_sql, "CASE WHEN COALESCE(a.device_watts, 1) <>
 # three of its pixels to a logical unit, one of an ordinary display one
 # and a half, and a window with no width falls back to the UI scale
 expect (Map.picture_zoom(2940.0, 980.0, 1.5) - 3.0).abs() < 0.001 and (Map.picture_zoom(1470.0, 980.0, 1.5) - 1.5).abs() < 0.001 and (Map.picture_zoom(2940.0, 0.0, 1.5) - 1.5).abs() < 0.001
+
+# the map's rectangle in a target's pixels scales with the target
+expect {
+	px = Map.clip_px({ x: 36.0, y: 96.0, w: 908.0, h: 456.0 }, 3.0)
+	(px.x - 108.0).abs() < 0.001 and (px.y - 288.0).abs() < 0.001 and (px.width - 2724.0).abs() < 0.001 and (px.height - 1368.0).abs() < 0.001
+}

@@ -1621,6 +1621,25 @@ expect {
 		and key(Gate.with_card(base, mid.x, mid.y - 60.0)) != key(up(Ready, mid.x))
 }
 
+# the highlighted route, drawn straight to the screen, is cut to the map:
+# close in, where the route runs far past the map's edges, every point it
+# draws lies inside the map, and some of the route was cut away
+expect {
+	base = { ..Gate.empty_model(Gate.default_size), view: 10, map: Gate.map_fixture, map_moved: Bool.True, map_cam: { cx: 0.0, cy: 0.0, mpp: 1.0 } }
+	r = Map.rect(base.win)
+	m = Gate.with_card(base, r.x + r.w / 2.0, r.y + r.h / 2.0)
+	c = Map.cam(m)
+	match List.first(Gate.map_fixture.routes) {
+		Ok(l) => {
+			parts = Map.picked_parts(m, c, l)
+			whole = Geo.strip(c, r, l.pts, 1.0)
+			inside = |p| p.x >= r.x - 0.01 and p.x <= r.x + r.w + 0.01 and p.y >= r.y - 0.01 and p.y <= r.y + r.h + 0.01
+			!(List.is_empty(parts)) and List.all(List.join(parts), inside) and List.any(whole, |p| !(inside(p)))
+		}
+		Err(_) => Bool.False
+	}
+}
+
 # a card up over a map of names, at the middle and held inside the map at
 # its edges, is judged with them, in both faces at every size: the view's
 # text, the names and the card's lines hold no two boxes overlapping and
