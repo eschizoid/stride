@@ -767,7 +767,7 @@ expect map_on_reload(Loading) == { load: Loading, stale: Bool.True } and map_on_
 # view does not wait on it
 expect List.all([10, 11, 12], |v| !(view_settled({ view: v, view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: map_unread(Loading) }))) and view_settled({ view: 10, view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: map_unread(Loaded) }) and view_settled({ view: 0, view_anim: 0, tick: 5, trace_loading: Bool.False, ghost_loading: Bool.False, reloading: Bool.False, map_loading: map_unread(Loading) })
 
-# Every route and base-map way, read off the main loop: a full backfill is
+# Every route, read off the main loop: a full backfill is
 # hundreds of megabytes of stored answers to decode, which would hold every
 # view behind the splash. A database the task cannot open answers with
 # the reason, so the map names it.
