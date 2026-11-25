@@ -29,25 +29,25 @@ The installer picks the build for your OS and CPU (macOS arm64 and x86_64, Linux
 2. It tells you exactly what to enter when you create your own [Strava API app](https://www.strava.com/settings/api) (callback domain `localhost`), then asks for its client ID and secret.
 3. It opens Strava's authorize page and receives the code on a local port when you click Authorize. If that fails, paste the address the browser landed on.
 4. It detects your timezone and asks you to confirm it, so "today" is your local day.
-5. It asks for one heart rate, your threshold HR or else your max HR, and derives your four zone bounds from it.
-6. It runs the first sync and analyze, then shows `stride doctor`.
+5. It lists your activities and proposes heart-rate zones from them: your maximum heart rate is the highest reached in at least two sessions, so one session's strap spike is ignored. You accept them, or type a threshold or max HR of your own; with no heart-rate data it asks for one.
+6. It runs the first sync to its end, everything analyzed, then shows `stride doctor`.
 
 Holding Strava API credentials needs an active Strava subscription ([Strava's announcement](https://communityhub.strava.com/insider-journal-9/an-update-to-our-developer-program-13428)). Without one, `stride import <export.zip>` loads the account export Strava emails you (Settings → My Account → Download or Delete Your Account). The export is summary-level only, so nothing that needs a stream (normalized power, power and pace curves, interval detection) exists for those activities.
 
-The first sync pulls your whole history but stays inside Strava's read limits: it stops after about 95 reads, says so, and continues when you run it again 15 minutes later. A long history takes a few days of that. After the first pull, a sync takes seconds.
+The first sync pulls your whole history but stays inside Strava's read limits: it lists every activity first and analyzes them, so load and form are there from the first minutes, then fetches each activity's streams and route. When Strava's 15-minute read window is spent it waits for the next one (the window resets at :00, :15, :30 and :45 past the hour) and shows when the next batch starts; Ctrl-C stops it, and the next `stride sync` resumes where it stopped. Strava also allows 1,000 reads a day, so a long history can take more than a day: the run then ends with the local time the allowance returns, at midnight UTC. After the first pull, a sync takes seconds.
 
 ## Coaching with an AI agent
 
 Any agent that can run a shell command can coach with it: every command answers `--json`, and `stride --json` describes every command, its arguments and its error codes. The repo ships the coaching instructions as a skill at [`skills/stride/`](skills/stride/SKILL.md), packaged as plugins for two agents: in Claude Code, run `/plugin marketplace add eschizoid/stride` and install `stride`; in Codex, use `codex plugin add`. Any other agent can read the same SKILL.md as its instructions. Then talk to it about your training. A coaching session runs:
 
-1. `stride sync` and `stride analyze` to bring the data up to date.
+1. `stride sync` to bring the data up to date; it analyzes as the data lands.
 2. `stride plan` for the planning bundle: form, zones, recent sessions, open sessions and adherence.
 3. `stride complete`, `stride skip` and `stride relabel` to reconcile last week's plan against what you did.
 4. `stride review` for the whole week in one payload: each session against its target, planned versus actual load, intensity and every sport.
 5. `stride week add` to plan the coming days, with targets on power (`3x12:00@230W`), heart rate (`1x60:00@HR125-147`), zone (`1x90:00@Z2`), pace (`5x4:00@4:10/km`, `10x100m@1:40/100m`, `6x500m@1:55/500m`) or effort rating (`1x45:00@RPE6`).
 6. `stride project` and `stride events` to see where the plan takes your fitness on a date.
 
-The coach reads stride's numbers and adds the judgment; stride never prescribes. Without an agent everything still works: the human tables carry the same numbers. A new athlete can also let the agent run setup: `stride setup --json` never prompts, answers with the next step and what it needs, and takes one `key=value` per call.
+The coach reads stride's numbers and adds the judgment; stride never prescribes. Without an agent everything still works: the human tables carry the same numbers. A new athlete can also let the agent run setup: `stride setup --json` never prompts or waits, answers with the next step and what it needs, takes one `key=value` per call, and runs the first sync one read window per call, each answer naming when the next call can continue.
 
 ## What it computes
 

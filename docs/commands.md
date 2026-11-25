@@ -12,7 +12,7 @@ pins against the parser's own list. That is the authoritative set; this file exp
 
 ### `stride setup [key=value]`
 
-The whole first run in one command, and it resumes wherever a previous run stopped: it creates the database, guides the Strava API app (callback domain `localhost`) and stores its client ID and secret, opens the authorize page and receives the code on a local port (or takes the pasted address), confirms the detected timezone, derives the four heart-rate zone bounds from one number (85, 89, 94 and 99 % of threshold HR; a max HR is first turned into an estimated threshold of 90 % of max, so both inputs give one zone system), then runs the first sync and analyze and shows `doctor`. With `--json` it never prompts: each call reports the next step, whether it needs the athlete at a browser, and the values it takes, and `stride setup <key>=<value>` supplies one (`client_id`, `client_secret`, `code`, `timezone`, `threshold_hr` or `max_hr`). In that mode the first sync is left to `stride sync` and `stride analyze`, since each call answers with exactly one envelope.
+The whole first run in one command, and it resumes wherever a previous run stopped: it creates the database, guides the Strava API app (callback domain `localhost`) and stores its client ID and secret, opens the authorize page and receives the code on a local port (or takes the pasted address), confirms the detected timezone, lists the activities, and proposes the four heart-rate zone bounds from them: the maximum heart rate is the highest reached in at least two sessions, so one session's strap spike is ignored, and the bounds come from it as below. The athlete accepts them, or types a threshold or max HR; with no heart-rate data setup asks for one number. The bounds are 85, 89, 94 and 99 % of threshold HR; a max HR is first turned into an estimated threshold of 90 % of max, so both inputs give one zone system. Then it runs the first sync to its end, waiting for Strava's read windows as `stride sync` does, and shows `doctor`. With `--json` it never prompts or waits: each call reports the next step, whether it needs the athlete at a browser, and the values it takes, and `stride setup <key>=<value>` supplies one (`client_id`, `client_secret`, `code`, `timezone`, `threshold_hr` or `max_hr`). A call with no value runs a step that needs none: the activity list, or one read window of the first sync, answered with the fetches still `owed` and `resume_at`, the time the next call can continue. At the zones step `max_hr_proposed` and `zone_bounds_proposed` carry the proposal, accepted with `stride setup max_hr=<max_hr_proposed>`.
 
 ### `stride init`
 
@@ -43,7 +43,7 @@ out for a row the engine no longer reads — `config set <key> ""` does NOT remo
 
 ### `stride sync`
 
-Pulls new activities + the next batch of HR/power streams. Re-pulls a rolling 30-day window so edits made on Strava self-heal. The fast daily command.
+Lists new and changed activities, then fetches the streams, strength descriptions and GPS routes still missing, and analyzes as they land, so it ends with everything analyzed and prints the form verdict. Re-lists a rolling 30-day window so edits made on Strava self-heal; a first sync lists the whole history first and analyzes it before any stream. Paced against Strava's read limits, by its own count and the `X-ReadRateLimit-Usage` header Strava sends: when the 15-minute read window is spent it waits for the next one, which opens at :00, :15, :30 or :45 past the hour, showing the local time the next batch starts; Ctrl-C stops it, and the next sync resumes where it stopped. When the day's 1,000 reads are spent it ends and names the local time the allowance returns, at midnight UTC. With `--json` it never waits: it does what the window allows and answers with what is still owed and `resume_at`, the time the next call can continue. A routine sync owes less than a window and takes seconds.
 
 `--all` forces a full re-list from scratch rather than the rolling window — a dev escape hatch, not part of the daily loop.
 
@@ -71,7 +71,7 @@ Nothing is left out silently. A set that cannot become a row is listed in its wo
 
 ### `stride analyze`
 
-Computes metrics for new (or invalidated) activities — TSS, time-in-zone, normalized power — then rebuilds the daily fitness/fatigue/form series through today. Prints what it did plus a one-line form verdict.
+Computes metrics for new (or invalidated) activities — TSS, time-in-zone, normalized power — to its fixed point, then rebuilds the daily fitness/fatigue/form series through today. Prints what it did plus a one-line form verdict. `stride sync` runs it after every batch, so it is the command for a recompute without a sync, after a zone or rating change.
 
 
 ## Reading your training
