@@ -324,7 +324,6 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		Err(NoStrideDir) => skeleton("no stride directory — the launcher passes it as the first argument")
 		Err(Unreachable) => skeleton("cannot open ${acc.dir}/db.sqlite")
 	}
-	ev = Db.find_idx(loaded.s.days, loaded.e.day)
 	# the curve on screen: what the load chose, the ride power curve when
 	# the database could not answer, and still unchosen while booting; then
 	# the fit, which runs the engine, so the skeleton skips it
@@ -334,8 +333,14 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 	fit_text = Curve.anchor_caption_for(cf, loaded.un, fit, ft.test, loaded.b20)
 	# the board projects as far as the written plan reaches, never past the
 	# next event (load_plan_horizon! caps it there), and reads the numbers
-	# from the engine's own walk
-	proj = if (boot or loaded.ph == "") ({ ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0 }) else Db.load_projection!(acc.io.commands(), loaded.ph)
+	# and the day-by-day series from the engine's own walk
+	proj = if (boot or loaded.ph == "") Db.no_projection else Db.load_projection!(acc.io.commands(), loaded.ph)
+	proj_days = if (proj.ok) proj.days else []
+	# the event marker finds its day among the measured days and then the
+	# projected ones, so an event the plan reaches is marked where it falls
+	ev = Db.find_idx(List.concat(loaded.s.days, List.map(proj_days, |d| d.day)), loaded.e.day)
+	# the lines end on the projection's last day when there is one
+	line_data = List.concat(loaded.s.data, List.map(proj_days, Board.proj_point))
 	# Quicksand carries prose; JetBrains Mono carries data. Small labels
 	# use an atlas close to their displayed size: shrinking title-sized
 	# glyphs to captions loses thin strokes between samples. Titles and
@@ -366,9 +371,9 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 	)?
 	ends = List.map_try!(
 		[
-			{ s: Board.end_text(loaded.s.data, 0), k: 0.U8 },
-			{ s: Board.end_text(loaded.s.data, 1), k: 1.U8 },
-			{ s: Board.end_text(loaded.s.data, 2), k: 2.U8 },
+			{ s: Board.end_text(line_data, 0), k: 0.U8 },
+			{ s: Board.end_text(line_data, 1), k: 1.U8 },
+			{ s: Board.end_text(line_data, 2), k: 2.U8 },
 		],
 		|e| {
 			p = mkm!(e.s, 13)?
@@ -455,6 +460,8 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		],
 		ev_tile_name: List.map_try!(ev_name.lines, |l| mkt!(l, ev_name.size))?,
 		ev_tile_proj: List.map_try!(Board.proj_lines(loaded.ph, loaded.e.day, proj), |l| mkt!(l, 10))?,
+		proj: proj_days,
+		proj_key: mkt!(Board.proj_key_text(proj.considered, proj.projected), 11)?,
 		ev_tile_sub: mkt!(ev_tile.sub, 11)?,
 		zero_note: mk!(Board.zero_text, 11)?,
 		ridden_found: loaded.rd.ago >= 0 and loaded.rd.ago <= 7 and loaded.e.day != "",

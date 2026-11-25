@@ -224,7 +224,11 @@ reason `--json` and still answers in JSON).
   session dated on the baseline day is excluded because the baseline already contains
   today. Negative `days_away` echoes the current baseline, not a projection.
 - `stride project <YYYY-MM-DD> ["<date>=<target>,..."] --json` returns
-  `{target_date, days_away, projected_from, baseline_known, ftp_known, plan_source, ctl, atl, tsb, sessions_considered, sessions_projected, unprojected, hypothetical}`.
+  `{target_date, days_away, projected_from, baseline_known, ftp_known, plan_source, ctl, atl, tsb, sessions_considered, sessions_projected, unprojected, hypothetical, series}`.
+  `series` is the same walk day by day, `{date, load, load_known, ctl, atl, tsb}`, from
+  the day after `projected_from` to the plan's last day (or `target_date`, when the plan
+  reaches past it); `load_known: false` marks a day holding an `unprojected` session.
+  The form board draws it.
   Bare, it walks the recorded plan; with pairs (any target kind) it walks your
   hypothetical plan instead, echoed in `hypothetical` as
   `{date, target_kind, target_literal, reps, dur_s, watts}` and never stored.

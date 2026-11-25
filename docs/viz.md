@@ -56,7 +56,24 @@ inputs can price adds nothing, so that count is how much of the projection is
 blind;
 past the plan's last day a projection is only decay, so the board names the
 day it stops ("plan to 11-08") and says "at event" only when the plan reaches
-it. The subtitle always carries the as-of day, and the TSB zero rule is
+it.
+
+The plot draws the same projection. The window reads the `series` of that
+one `stride project` call, the engine's walk day by day, so the board and
+the command cannot disagree about a day. After the last measured day the
+fitness, fatigue and form lines continue dashed to the plan's last day and
+stop there, and each projected day the plan prices a load onto gets a hollow
+bar on the load rug's scale; a day it priced nothing onto draws no bar. The
+range chips still count measured days, and the projected days follow them.
+The line-end values read the projection's last day, an event the plan
+reaches is marked where it falls, and a key along the plot's top says the
+dashed part is projected and how many of the window's sessions are priced,
+the count the tile shows. The pointer reads projected days too: the day
+card says "projected" and reads the planned load, or "unpriced" for a
+session the engine could not price. The arrow cursor still counts back from
+the last measured day.
+
+The subtitle always carries the as-of day, and the TSB zero rule is
 captioned "fresh above" just over the rule: at its right end, else its left,
 else the first spot along it clear of every load bar, preferring one no line
 crosses; when bars cover the whole rule the caption rises to just above the
@@ -528,15 +545,15 @@ text (titles, chips, tile and card text, axis labels, legends, table cells,
 footers) keeps one spot and never drops. Essential text with somewhere else
 to go keeps, trying its spots in order: the power view's threshold value;
 the career view's milestone values, the all-time-high cheer, test kinds and
-withheld dot values; the form board's line-end values, its event warning
-and the zero rule's "fresh above" caption; the session trace's unit label
+withheld dot values; the form board's line-end values, its event warning,
+the zero rule's "fresh above" caption and the projection's key; the session trace's unit label
 and zoom note; and the zones mode's key-row note, which names the sports
 with their own heart-rate zones or reads the focused week's zone hours. Text that another surface also shows may drop: the power
 view's deltas, `pr` and `new record` marks, unpushed caption and zone names
 (the rung's hover card carries its values, record and push), its
 planned-ring labels (the ring's card), the career view's year names and
 strip names (the strip's tooltip), the form board's event marker name (the
-event tile), the trace footer's shared keys (every other view's footer
+event tile) and its key hint when the stale note needs the footer row (the controls section lists the keys), the trace footer's shared keys (every other view's footer
 carries them), and the top value of the weeks tab's scale (the focus line
 reads any week). The map's place and street names may drop too, being the
 street map's own detail rather than anything the engine measured. The view's
@@ -586,10 +603,11 @@ sport no family holds. The fixtures per view:
   rungs folded and shown;
 - career: every spine;
 - form board: every range, with an event ahead (a two-line name and a
-  projection) and with the event-day story (the event marked on the plot, a
-  ridden event and an unreadable event record), over a steady series whose
-  zero rule runs into the load rug and a building one, and the boards with a
-  load error and with no data;
+  projection drawn on the plot), with the event-day story (the event marked
+  on the plot, a ridden event and an unreadable event record) and with an
+  event the projection reaches, over a steady series whose zero rule runs
+  into the load rug and a building one, and the boards with a load error and
+  with no data, in the brand faces and in the built-in face;
 - session trace: every session in the athlete's picker, in its own channel
   (power, pace in the family's unit with its splits, heart rate with a
   lifting session's sets), at home and zoomed and panned with a ghost, and

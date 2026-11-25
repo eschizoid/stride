@@ -50,7 +50,8 @@ power_curve.json	dur_s,watts	dur_s,watts	doc	properties.points.items
 progress.json	anchor_date,anchor_scored,groups	anchor_date,anchor_scored,groups	doc	$
 progress.json	avg_hr,avg_hr_scored,date,decoupling_known,decoupling_pct,distance_m,moving_time,np_w,output_kj,rpe,score,sport,tss	avg_hr,date,decoupling_known,decoupling_pct,distance_m,moving_time,np_w,output_kj,rpe,score,sport,tss	-	properties.groups.items.properties.sessions.items
 progress.json	grouped_by,hidden,hidden_lens,hidden_scope,lens,name,sessions	grouped_by,hidden,hidden_lens,hidden_scope,lens,name,sessions	doc	properties.groups.items
-project.json	atl,baseline_known,ctl,days_away,ftp_known,hypothetical,plan_source,projected_from,sessions_considered,sessions_projected,target_date,tsb,unprojected	atl,baseline_known,ctl,days_away,ftp_known,hypothetical,plan_source,projected_from,sessions_considered,sessions_projected,target_date,tsb,unprojected	doc	$
+project.json	atl,baseline_known,ctl,days_away,ftp_known,hypothetical,plan_source,projected_from,series,sessions_considered,sessions_projected,target_date,tsb,unprojected	atl,baseline_known,ctl,days_away,ftp_known,hypothetical,plan_source,projected_from,series,sessions_considered,sessions_projected,target_date,tsb,unprojected	doc	$
+project.json	atl,ctl,date,load,load_known,tsb	atl,ctl,date,load,load_known,tsb	doc	properties.series.items
 project.json	date,dur_s,reps,target_kind,target_literal,watts	date,dur_s,reps,target_kind,target_literal,watts	doc	properties.hypothetical.items
 project.json	date,reason,target_literal	date,reason,target_literal	doc	properties.unprojected.items
 rate.json	rated,rpe	rated,rpe	-	$

@@ -65,6 +65,10 @@ Ui :: [].{
 		kpis : List({ v : Text.Prepared, cap : Text.Prepared, sel : U8 }),
 		ev_tile_name : List(Txt),
 		ev_tile_proj : List(Txt),
+		# the engine's projected series past the plot's last day, empty when
+		# nothing is planned ahead, and the board's key naming it
+		proj : List(Db.ProjDay),
+		proj_key : Txt,
 		ev_tile_sub : Txt,
 		zero_note : Text.Prepared,
 		ridden_found : Bool,

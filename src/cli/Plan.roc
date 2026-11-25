@@ -1503,20 +1503,6 @@ Plan :: [].{
 		})?
 		Ok(List.keep_oks(opens, |o| (Metrics.date_str_to_days(o.target_date)).map_ok(|d| { date: o.target_date, d, target: Metrics.stored_target(o.tlit, o.treps, o.tdur, o.twatts) })))
 	}
-	# price each session in a window: the (day, load) pairs the walk folds, and the
-	# sessions it could not price with the reason (ADR 0009: unpriced is stated,
-	# never a silent zero)
-	price_window : List({ date : Str, d : I64, target : Metrics.Target }), Metrics.ProjectionInputs -> { loads : List({ d : I64, tss : F64 }), unprojected : List({ date : Str, target_literal : Str, reason : Str }) }
-	price_window = |sessions, inp|
-		List.fold(
-			sessions,
-			{ loads: [], unprojected: [] },
-			|acc, s|
-				match Metrics.projected_load(s.target, inp) {
-					Load(x) => { ..acc, loads: List.append(acc.loads, { d: s.d, tss: x }) }
-					Unprojected(r) => { ..acc, unprojected: List.append(acc.unprojected, { date: s.date, target_literal: Metrics.target_literal(s.target), reason: r }) }
-				},
-		)
 
 	events! : {} => Try({}, _)
 	events! = |{}| {
@@ -1543,12 +1529,8 @@ Plan :: [].{
 			evs,
 			|ev| {
 				ev_days = (Metrics.date_str_to_days(ev.event_date)).ok_or(today)
-				in_window = List.keep_if(opens, |o| o.d > base_days and o.d <= ev_days)
-				# the shared pure walk: loads materialized first, so the walk is
-				# arithmetic over (day, tss) with no per-day re-filtering
-				priced = price_window(in_window, inp)
-				proj = Metrics.project_walk({ ctl: base.ctl, atl: base.atl }, base_days, ev_days, priced.loads)
-				{ id: ev.id, event_date: ev.event_date, name: ev.name, days_away: ev_days - today, ctl: proj.ctl, atl: proj.atl, tsb: proj.tsb, planned_in_window: List.len(in_window), sessions_projected: List.len(priced.loads), unprojected: priced.unprojected }
+				proj = Metrics.project_plan({ ctl: base.ctl, atl: base.atl }, base_days, ev_days, opens, inp)
+				{ id: ev.id, event_date: ev.event_date, name: ev.name, days_away: ev_days - today, ctl: proj.ctl, atl: proj.atl, tsb: proj.tsb, planned_in_window: proj.considered, sessions_projected: proj.projected, unprojected: proj.unprojected }
 			},
 		)
 		Output.out!({ projected_from: base.day, baseline_known: base.known, ftp_known, events: projected }, |p| Render.events_screen(p))
@@ -1595,17 +1577,14 @@ Plan :: [].{
 							source = match plan_mode {
 								Recorded => {
 									opens = open_targets!(path)?
-									in_w = List.keep_if(opens, |o| o.d > base_days and o.d <= horizon)
-									{ in_w, label: "recorded", echo: [] }
+									{ sessions: opens, label: "recorded", echo: [] }
 								}
 								Hypo(pairs) => {
 									sessions = List.map(pairs, |p2| { date: p2.date, d: p2.days, target: p2.target })
-									in_w = List.keep_if(sessions, |s| s.d > base_days and s.d <= horizon)
-									{ in_w, label: "hypothetical", echo: List.map(pairs, |p2| { date: p2.date, target_kind: p2.target.kind, target_literal: Metrics.target_literal(p2.target), reps: p2.target.reps, dur_s: p2.target.dur_s, watts: p2.target.watts }) }
+									{ sessions, label: "hypothetical", echo: List.map(pairs, |p2| { date: p2.date, target_kind: p2.target.kind, target_literal: Metrics.target_literal(p2.target), reps: p2.target.reps, dur_s: p2.target.dur_s, watts: p2.target.watts }) }
 								}
 							}
-							priced = price_window(source.in_w, inp)
-							proj = Metrics.project_walk({ ctl: base.ctl, atl: base.atl }, base_days, horizon, priced.loads)
+							proj = Metrics.project_plan({ ctl: base.ctl, atl: base.atl }, base_days, horizon, source.sessions, inp)
 							Output.out!(
 								{
 									target_date: date_str,
@@ -1617,12 +1596,14 @@ Plan :: [].{
 									ctl: proj.ctl,
 									atl: proj.atl,
 									tsb: proj.tsb,
-									sessions_considered: List.len(source.in_w),
-									sessions_projected: List.len(priced.loads),
-									unprojected: priced.unprojected,
+									sessions_considered: proj.considered,
+									sessions_projected: proj.projected,
+									unprojected: proj.unprojected,
 									hypothetical: source.echo,
+									series: proj.series,
 								},
-								|p| Render.project_screen(p),
+								# the human screen states the horizon; the series is for the window and the coach
+								|p| Render.project_screen({ target_date: p.target_date, days_away: p.days_away, projected_from: p.projected_from, baseline_known: p.baseline_known, ftp_known: p.ftp_known, plan_source: p.plan_source, ctl: p.ctl, atl: p.atl, tsb: p.tsb, sessions_considered: p.sessions_considered, sessions_projected: p.sessions_projected, unprojected: p.unprojected, hypothetical: p.hypothetical }),
 							)
 						}
 					}

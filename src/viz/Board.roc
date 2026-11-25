@@ -203,16 +203,52 @@ Board :: [].{
 	y_text = |v| I64.to_str(v)
 
 	# ── the layout the drawing, the scene and the gate share ───────────────
-	# the range shown: its points and days, how many points the range cut
-	# from the front of the series, the value span, and the plot on screen
-	Geom : { data : List(Db.Point), days : List(Str), n : U64, off : U64, lo : F32, hi : F32, left : F32, top : F32, pw : F32, ph : F32 }
+	# the range shown: its measured days followed by the projected ones, how
+	# many of them were measured, how many points the range cut from the
+	# front of the series, the value span over both, and the plot on screen
+	Geom : { data : List(Db.Point), days : List(Str), n : U64, meas : U64, off : U64, lo : F32, hi : F32, left : F32, top : F32, pw : F32, ph : F32 }
+
+	# a projected day as a plotted point, its load the plan's priced load
+	proj_point : Db.ProjDay -> Db.Point
+	proj_point = |d| { ctl: d.ctl, atl: d.atl, tsb: d.tsb, tss: d.tss }
 
 	geom : Ui.Model -> Geom
 	geom = |model| {
 		take = U64.min(model.range, List.len(model.data))
-		data = List.take_last(model.data, take)
+		measured = List.take_last(model.data, take)
+		# a projection continues a plotted series, so a board too short to
+		# plot draws none
+		proj = if (take >= 2) model.proj else []
+		data = List.concat(measured, List.map(proj, proj_point))
+		days = List.concat(List.take_last(model.days, take), List.map(proj, |d| d.day))
 		top = Theme.pad_t + band_h
-		{ data, days: List.take_last(model.days, take), n: List.len(data), off: List.len(model.data) - List.len(data), lo: lo_of(data), hi: hi_of(data), left: Theme.pad_l, top, pw: model.win.w - Theme.pad_l - Theme.pad_r, ph: model.win.h - top - Theme.pad_b }
+		{ data, days, n: List.len(data), meas: take, off: List.len(model.data) - take, lo: lo_of(data), hi: hi_of(data), left: Theme.pad_l, top, pw: model.win.w - Theme.pad_l - Theme.pad_r, ph: model.win.h - top - Theme.pad_b }
+	}
+
+	# a projected day's index in the plot, when `i` is one
+	proj_day : Ui.Model, Geom, U64 -> Try(Db.ProjDay, [Measured])
+	proj_day = |model, g, i| if (i < g.meas) Err(Measured) else List.get(model.proj, i - g.meas).map_err(|_| Measured)
+
+	# the key under the legend: what the dashed part is, and how much of the
+	# plan's load it carries
+	proj_key_text : I64, I64 -> Str
+	proj_key_text = |considered, projected| "dashed: projected, ${I64.to_str(projected)} of ${I64.to_str(considered)} sessions priced"
+
+	# a segment cut into dashes `on` long with `off` between, from its start;
+	# the last dash stops at the segment's end
+	dashes : { x : F32, y : F32 }, { x : F32, y : F32 }, F32, F32 -> List({ a : { x : F32, y : F32 }, b : { x : F32, y : F32 } })
+	dashes = |p0, p1, on, off| {
+		dx = p1.x - p0.x
+		dy = p1.y - p0.y
+		len = F32.sqrt(dx * dx + dy * dy)
+		at = |t| { x: p0.x + dx * t, y: p0.y + dy * t }
+		if len <= 0.0 {
+			[]
+		} else {
+			k = F32.round_to_u64_try(F32.div_floor_by(len, on + off)) ?? 0
+			starts = List.keep_if(List.map_with_index(List.repeat({}, k + 1), |_u, j| U64.to_f32(j) * (on + off)), |s| s < len)
+			List.map(starts, |s| { a: at(s / len), b: at(F32.min(len, s + on) / len) })
+		}
 	}
 
 	# the plot draws once the series holds two days and no error stands
@@ -233,7 +269,9 @@ Board :: [].{
 	# the top if it shared the axis. One bar per day with load, centred on
 	# its day and clipped to the plot, so the first and last days draw half
 	# a bar rather than reach under the axis labels and the line-end values.
-	bars : Geom -> List({ day : Str, box : Labels.Rect })
+	# A projected day's bar is the plan's priced load on the same scale,
+	# `planned`, and a day the plan priced nothing onto draws none.
+	bars : Geom -> List({ day : Str, box : Labels.Rect, planned : Bool })
 	bars = |g| {
 		bw = F32.max(1.5, g.pw / U64.to_f32(g.n) - 1.4)
 		tss_max = F32.max(1.0, List.fold(g.data, 1.0, |acc, p| F32.max(acc, p.tss)))
@@ -246,7 +284,7 @@ Board :: [].{
 					bh = (e.p.tss / tss_max) * band
 					x0 = F32.max(g.left, x_at(g, e.i) - bw / 2.0)
 					x1 = F32.min(g.left + g.pw, x_at(g, e.i) + bw / 2.0)
-					Ok({ day: (List.get(g.days, e.i)) ?? "", box: { x: x0, y: base - bh, w: x1 - x0, h: bh } })
+					Ok({ day: (List.get(g.days, e.i)) ?? "", box: { x: x0, y: base - bh, w: x1 - x0, h: bh }, planned: e.i >= g.meas })
 				} else {
 					Err(Rest)
 				},
@@ -301,19 +339,21 @@ Board :: [].{
 	rug_share = 0.22
 
 	# the series index the crosshair reads: the pointer while it is inside
-	# the plot, else the arrow cursor counting days back from the latest
+	# the plot, projected days included, else the arrow cursor counting
+	# days back from the latest measured day
 	hovered : Ui.Model, Geom -> Try(U64, [NoHover])
 	hovered = |model, g| {
 		hi_idx = g.n - 1
+		last_meas = if (g.meas == 0) 0 else g.meas - 1
 		mouse_sel = model.mouse_in and model.mouse_x >= g.left and model.mouse_x <= g.left + g.pw
 		cur_back = if (model.cursor < 0) (0.U64) else match I64.to_u64_try(model.cursor) {
-			Ok(c) => if (c > hi_idx) (hi_idx) else c
+			Ok(c) => if (c > last_meas) (last_meas) else c
 			Err(_) => 0.U64
 		}
 		if mouse_sel {
 			Ok(clamp_idx((model.mouse_x - g.left) / g.pw * U64.to_f32(hi_idx), hi_idx))
 		} else if model.cursor >= 0 {
-			Ok(hi_idx - cur_back)
+			Ok(last_meas - cur_back)
 		} else {
 			Err(NoHover)
 		}
@@ -322,7 +362,9 @@ Board :: [].{
 	# the crosshair's card: date header, a colored row per series, then
 	# what was actually done that day, wrapped by the shared rule at a 6.7px
 	# glyph budget, up to four lines and cut past them; flipped left when
-	# the cursor nears the right edge
+	# the cursor nears the right edge. A projected day says so in its
+	# header and reads its load as the plan's, and a day holding a session
+	# the engine could not price says that rather than showing a load.
 	tip_card : Ui.Model, Geom, U64, Db.Point, Scene.Measure -> { box : Labels.Rect, lines : List(Labels.Label(Scene.Item)) }
 	tip_card = |model, g, i, hp, measure| {
 		hx = x_at(g, i)
@@ -334,11 +376,20 @@ Board :: [].{
 		tip_y = g.top + 8.0
 		box = { x: tip_x, y: tip_y, w: tip_w, h: tip_h }
 		fix = |it, x, y, align| Scene.fixed(measure, it, { x, y, align }, box)
+		planned = proj_day(model, g, i)
+		load_row = match planned {
+			Ok(pd) => { lbl: "Planned load", v: planned_load_text(pd) }
+			Err(_) => { lbl: "Load", v: Db.fmt_f(hp.tss) }
+		}
+		head = match planned {
+			Ok(_) => "${day} projected"
+			Err(_) => day
+		}
 		rows = [
 			{ lbl: "Fitness", v: Db.fmt_f(hp.ctl), c: Theme.ctl_c },
 			{ lbl: "Fatigue", v: Db.fmt_f(hp.atl), c: Theme.atl_c },
 			{ lbl: "Form", v: Db.fmt_f(hp.tsb), c: Theme.tsb_c },
-			{ lbl: "Load", v: Db.fmt_f(hp.tss), c: Theme.ink_muted },
+			{ lbl: load_row.lbl, v: load_row.v, c: Theme.ink_muted },
 		]
 		row_lines = List.join(
 			List.map_with_index(
@@ -350,16 +401,30 @@ Board :: [].{
 			),
 		)
 		notes = List.map_with_index(note_lines, |ln, li| fix(Scene.data(ln, 11.0, Theme.ink_faint), tip_x + 10.0, tip_y + 107.0 + U64.to_f32(li) * 14.0, Left))
-		{ box, lines: List.join([[fix(Scene.data(day, 12.0, Color.white), tip_x + 10.0, tip_y + 8.0, Left)], row_lines, notes]) }
+		{ box, lines: List.join([[fix(Scene.data(head, 12.0, Color.white), tip_x + 10.0, tip_y + 8.0, Left)], row_lines, notes]) }
 	}
+
+	# a projected day's load as the card reads it: the priced load, with
+	# "+ unpriced" when a session on the day carries none, or only
+	# "unpriced" when nothing on it was priced
+	planned_load_text : Db.ProjDay -> Str
+	planned_load_text = |pd|
+		if pd.known {
+			Db.fmt_f(pd.tss)
+		} else if pd.tss > 0.0 {
+			"${Db.fmt_f(pd.tss)} + unpriced"
+		} else {
+			"unpriced"
+		}
 
 	# ── every string the view writes, placed ───────────────────────────────
 	# Fixed text first: the chips, the tiles and the event tile, the
-	# subtitle, the axes, the footer. Then the kept labels in priority order:
-	# the line-end values (the tiles carry the same numbers), the event
-	# warning and the zero rule's caption, each trying its spots and never
-	# dropped. Last the event marker's name, which the event tile also
-	# carries, so it may drop.
+	# subtitle, the axes, the stale note. Then the kept labels in priority
+	# order: the line-end values, the event warning, the zero rule's caption
+	# and the projection's key, each trying its spots and never dropped.
+	# Last the labels that may drop: the event marker's name, which the
+	# event tile also carries, and the key hint, which yields its row to
+	# the stale note when a face is too wide for both.
 	scene : Ui.Model, Scene.Measure -> List(Labels.Placed(Scene.Item))
 	scene = |model, measure| Labels.place(texts(model, measure), obstacles(model, measure))
 
@@ -376,8 +441,14 @@ Board :: [].{
 	prio_zero : U64
 	prio_zero = 3
 
+	prio_key : U64
+	prio_key = 4
+
 	prio_event : U64
-	prio_event = 4
+	prio_event = 5
+
+	prio_hint : U64
+	prio_hint = 6
 
 	texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
 	texts = |model, measure| {
@@ -435,7 +506,9 @@ Board :: [].{
 			} else if List.len(model.data) < 2 {
 				[fix(Scene.prepared(model.empty, empty_text, 16.0, Prose, ink_muted), 36.0, g.top + 20.0, Left, panel)]
 			} else {
-				List.append(plot_texts(model, measure, g), fix(Scene.prepared(model.hint, hint_text, 13.0, Prose, ink_faint), 34.0, win_h - 30.0, Left, panel))
+				# the key hint shares the footer row with the stale note, and gives
+				# it the row in a face too wide for both
+				List.append(plot_texts(model, measure, g), Scene.free(measure, Scene.prepared(model.hint, hint_text, 13.0, Prose, ink_faint), [{ x: 34.0, y: win_h - 30.0, align: Left }], prio_hint, panel))
 			}
 		List.join([verdict, tiles, ev_tile, chips, sub, warn, stale, body])
 	}
@@ -461,13 +534,26 @@ Board :: [].{
 				}
 			},
 		)
-		# the current values at the line ends, spread so none overlaps the
-		# next
+		# the values the lines end on, spread so none overlaps the next: the
+		# projection's last day when the board draws one, else the latest
+		# measured day. Each starts just past the plot and, in a face too
+		# wide for that, ends on the panel's edge instead
 		last = last_point(g.data)
 		tops = end_tops(List.map(model.ends, |e| y_at(g, value_of(last, e.sel)) - 7.0), 15.0)
 		ex2 = g.left + g.pw + 8.0
-		ends = List.map2(model.ends, tops, |e, top| Scene.kept(measure, Scene.prepared(e.p, end_text(model.data, e.sel), 13.0, Data, sel_color(e.sel)), [{ x: ex2, y: top, align: Left }], prio_end, panel))
+		ends = List.map2(model.ends, tops, |e, top| Scene.kept(measure, Scene.prepared(e.p, end_text(g.data, e.sel), 13.0, Data, sel_color(e.sel)), [{ x: ex2, y: top, align: Left }, { x: panel.x + panel.w, y: top, align: Right }], prio_end, panel))
 		zero = Scene.kept(measure, Scene.prepared(model.zero_note, zero_text, 11.0, Prose, ink_faint), zero_spots(g), prio_zero, panel)
+		# the projection's key along the plot's top: just past the last
+		# measured day, then the plot's right end, then the same two a row
+		# lower
+		key =
+			if g.n > g.meas {
+				kx = x_at(g, g.meas - 1) + 8.0
+				rx = g.left + g.pw - 6.0
+				[Scene.kept(measure, Scene.txt(model.proj_key, Prose, ink_faint), [{ x: kx, y: g.top + 4.0, align: Left }, { x: rx, y: g.top + 4.0, align: Right }, { x: kx, y: g.top + 22.0, align: Left }, { x: rx, y: g.top + 22.0, align: Right }], prio_key, plot_box(g))]
+			} else {
+				[]
+			}
 		# the event marker's name beside its dashed line, left first. ev_idx
 		# indexes the full series, so it shifts by the days the range cut.
 		event =
@@ -477,7 +563,7 @@ Board :: [].{
 			} else {
 				[]
 			}
-		List.join([ylabels, dates, ends, [zero], event])
+		List.join([ylabels, dates, ends, [zero], key, event])
 	}
 
 	# what the board's labels keep off: the chrome, the chips, the tiles and
@@ -503,7 +589,7 @@ Board :: [].{
 			if (List.is_empty(model.data)) [] else [{ key: "the form chip", box: verdict_box(model.win.w) }],
 			List.map([0, 1, 2, 3], |i| { key: "tile ${U64.to_str(i + 1)}", box: tile_box(i) }),
 		])
-		if (plotted(model)) List.concat(shapes, List.map(bars(geom(model)), |b| { key: "the load bar on ${b.day}", box: b.box })) else shapes
+		if (plotted(model)) List.concat(shapes, List.map(bars(geom(model)), |b| { key: if (b.planned) "the planned load bar on ${b.day}" else "the load bar on ${b.day}", box: b.box })) else shapes
 	}
 
 	draw! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
@@ -562,14 +648,14 @@ Board :: [].{
 					}
 				},
 			)
-			List.for_each!(bars(g), |b| frame.rectangle!({ x: b.box.x, y: b.box.y, width: b.box.w, height: b.box.h, style: Draw.filled(Color.with_alpha(ink_muted, 55)) }))
-			# soft fill under fitness
+			# a measured day's load fills its bar; a planned day's is hollow
+			List.for_each!(bars(g), |b| frame.rectangle!({ x: b.box.x, y: b.box.y, width: b.box.w, height: b.box.h, style: if (b.planned) Draw.outlined(Color.with_alpha(ink_muted, 140), 1.0) else Draw.filled(Color.with_alpha(ink_muted, 55)) }))
+			# soft fill under fitness, over the measured days only
 			List.for_each!(
 				List.map_with_index(g.data, |p, i| { i, v: p.ctl }),
 				|cur|
-					match List.get(g.data, cur.i + 1) {
-						Ok(_) => frame.rectangle!({ x: x_at(g, cur.i), y: y_at(g, cur.v), width: (g.pw / U64.to_f32(n - 1)) + 1.0, height: zy - y_at(g, cur.v), style: Draw.filled(Color.with_alpha(ctl_c, 12)) })
-						Err(_) => {}
+					if cur.i + 1 < g.meas {
+						frame.rectangle!({ x: x_at(g, cur.i), y: y_at(g, cur.v), width: (g.pw / U64.to_f32(n - 1)) + 1.0, height: zy - y_at(g, cur.v), style: Draw.filled(Color.with_alpha(ctl_c, 12)) })
 					},
 			)
 			# the event marker: a dashed vertical, its name in the scene
@@ -600,7 +686,17 @@ Board :: [].{
 					|cur|
 						if U64.to_f32(cur.i) < limit {
 							match List.get(g.data, cur.i + 1) {
-								Ok(nxt) => frame.line!({ start: { x: x_at(g, cur.i), y: y_at(g, cur.v) }, end: { x: x_at(g, cur.i + 1), y: y_at(g, value_of(nxt, sel)) }, stroke: Draw.stroke(col, 2) })
+								Ok(nxt) => {
+									a = { x: x_at(g, cur.i), y: y_at(g, cur.v) }
+									b = { x: x_at(g, cur.i + 1), y: y_at(g, value_of(nxt, sel)) }
+									# from the last measured day on, the line is the projection
+									if cur.i + 1 >= g.meas {
+										List.for_each!(dashes(a, b, 5.0, 4.0), |d| frame.line!({ start: d.a, end: d.b, stroke: Draw.stroke(col, 2) }))
+									} else {
+										frame.line!({ start: a, end: b, stroke: Draw.stroke(col, 2) })
+									}
+								}
+
 								Err(_) => {}
 							}
 						},
@@ -675,10 +771,10 @@ expect Str.ends_with(Str.join_with(Board.ev_lines(Text.font_stub, "one two three
 
 # the projection names where it ends - the event only when the plan reaches
 # it - and how many of the window's sessions carry load
-expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.True, ctl: 46.0, tsb: 14.3, considered: 4, projected: 1 }) == ["plan to 11-08: fit 46.0, form 14.3", "1 of 4 sessions carry load"]
-expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 40, projected: 12 }) == ["at event: fit 52.5, form -3.2", "12 of 40 sessions carry load"]
-expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0 }) == []
-expect Board.proj_lines("", "", { ok: Bool.True, ctl: 1.0, tsb: 1.0, considered: 1, projected: 1 }) == []
+expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.True, ctl: 46.0, tsb: 14.3, considered: 4, projected: 1, days: [] }) == ["plan to 11-08: fit 46.0, form 14.3", "1 of 4 sessions carry load"]
+expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 40, projected: 12, days: [] }) == ["at event: fit 52.5, form -3.2", "12 of 40 sessions carry load"]
+expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0, days: [] }) == []
+expect Board.proj_lines("", "", { ok: Bool.True, ctl: 1.0, tsb: 1.0, considered: 1, projected: 1, days: [] }) == []
 
 # the zero rule's caption keeps the right end of the rule unless a series
 # crosses it there and the left end is clear; a series along the whole rule
@@ -686,7 +782,7 @@ expect Board.proj_lines("", "", { ok: Bool.True, ctl: 1.0, tsb: 1.0, considered:
 # it left, and with both ends under bars it steps inward to the first clear
 # spot
 expect {
-	g = { data: [], days: [], n: 30, off: 0, lo: -10.0, hi: 70.0, left: 64.0, top: 182.0, pw: 830.0, ph: 362.0 }
+	g = { data: [], days: [], n: 30, meas: 30, off: 0, lo: -10.0, hi: 70.0, left: 64.0, top: 182.0, pw: 830.0, ph: 362.0 }
 	caption = { w: 55.0, h: 11.0, spots: List.map(Board.zero_spots(g), |a| { x: Labels.left_of(a.x, 55.0, a.align), y: a.y }), prio: 0, keep: Bool.True, region: { x: 16.0, y: 16.0, w: 948.0, h: 568.0 }, item: {} }
 	at = |obs| List.map(Labels.place([caption], obs), |p| p.box.x)
 	zy = Board.y_at(g, 0.0)
@@ -699,3 +795,20 @@ expect {
 		and at({ boxes: [bar(870.0)], segs: [] }) == [70.0]
 		and at({ boxes: [bar(870.0), bar(80.0)], segs: [] }) == [64.0 + 830.0 - 6.0 - 830.0 / 6.0 - 55.0]
 }
+
+# a dashed segment: dashes of `on` from its start with `off` between, the
+# last cut at the segment's end, and none for a segment of no length
+expect {
+	ds = Board.dashes({ x: 10.0, y: 50.0 }, { x: 30.0, y: 50.0 }, 5.0, 4.0)
+	List.map(ds, |d| { a: d.a.x, b: d.b.x }) == [{ a: 10.0, b: 15.0 }, { a: 19.0, b: 24.0 }, { a: 28.0, b: 30.0 }]
+		and List.all(ds, |d| d.a.y == 50.0 and d.b.y == 50.0)
+		and List.is_empty(Board.dashes({ x: 10.0, y: 50.0 }, { x: 10.0, y: 50.0 }, 5.0, 4.0))
+}
+
+# the key names the dashed part and how many sessions are priced; a
+# projected day's card reads the priced load, says when a session on it
+# went unpriced, and never prints a load for a day nothing was priced onto
+expect Board.proj_key_text(20, 17) == "dashed: projected, 17 of 20 sessions priced"
+expect Board.planned_load_text({ day: "2026-12-01", ctl: 1.0, atl: 1.0, tsb: 0.0, tss: 45.0, known: Bool.True }) == "45.0"
+expect Board.planned_load_text({ day: "2026-12-01", ctl: 1.0, atl: 1.0, tsb: 0.0, tss: 45.0, known: Bool.False }) == "45.0 + unpriced"
+expect Board.planned_load_text({ day: "2026-12-01", ctl: 1.0, atl: 1.0, tsb: 0.0, tss: 0.0, known: Bool.False }) == "unpriced"
