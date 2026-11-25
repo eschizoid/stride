@@ -61,6 +61,11 @@ Config :: [].{
 		"strava_reads_window_mark",
 		"strava_reads_quarter",
 		"strava_reads_quarter_mark",
+		"strava_reads_daywin",
+		"strava_reads_daywin_mark",
+		"strava_limit_window",
+		"strava_limit_day",
+		"strava_limit_app",
 	]
 
 	known_key : Str -> Bool
@@ -90,7 +95,7 @@ Config :: [].{
 	# Pinned against `known_key` below: every literal that predicate accepts has an expect
 	# asserting it appears here, so the two cannot drift.
 	known_key_summary : Str
-	known_key_summary = "Settable: timezone, units (metric|imperial), strength_log_weight (per_hand|total), utc_offset_minutes, hr_z1_max..hr_z4_max (optionally per sport, e.g. hr_z2_max_ride). Written by stride and rarely set by hand: last_sync_epoch, strava_client_id, strava_expires_at, strava_reads_today, strava_reads_day, strava_reads_window(_mark), strava_reads_quarter(_mark), strava_access_token, strava_refresh_token, strava_client_secret. FTP is derived, never set."
+	known_key_summary = "Settable: timezone, units (metric|imperial), strength_log_weight (per_hand|total), utc_offset_minutes, hr_z1_max..hr_z4_max (optionally per sport, e.g. hr_z2_max_ride). Written by stride and rarely set by hand: last_sync_epoch, strava_client_id, strava_expires_at, strava_reads_today, strava_reads_day, strava_reads_window(_mark), strava_reads_quarter(_mark), strava_reads_daywin(_mark), strava_limit_window, strava_limit_day, strava_limit_app, strava_access_token, strava_refresh_token, strava_client_secret. FTP is derived, never set."
 
 	# The one key whose value is an ENUM rather than a number or free text. Validated at
 	# the WRITE for the same reason numeric_key is: a value nothing recognises would fall
@@ -161,7 +166,7 @@ Config :: [].{
 	# false sentence in three consecutive rounds, every time because a hand-typed list of
 	# `known_key`'s members was one short.
 	is_bookkeeping : Str -> Bool
-	is_bookkeeping = |k| List.contains(["last_sync_epoch", "strava_reads_today", "strava_reads_day", "strava_reads_window", "strava_reads_window_mark", "strava_reads_quarter", "strava_reads_quarter_mark"], k)
+	is_bookkeeping = |k| List.contains(["last_sync_epoch", "strava_reads_today", "strava_reads_day", "strava_reads_window", "strava_reads_window_mark", "strava_reads_quarter", "strava_reads_quarter_mark", "strava_reads_daywin", "strava_reads_daywin_mark", "strava_limit_window", "strava_limit_day", "strava_limit_app"], k)
 
 	# bytes: h r _ z <digit> _ m a x, then either end-of-key or `_` and a non-empty suffix
 	zone_shape : List(U8) -> Bool
@@ -204,7 +209,7 @@ Config :: [].{
 	# refusal loud and keeps the read sites honest.
 	numeric_key : Str -> [Int, Decimal, Free]
 	numeric_key = |k|
-		if (k == "utc_offset_minutes" or k == "last_sync_epoch" or Str.starts_with(k, "strava_reads_") or Str.ends_with(k, "_expires_at"))
+		if (k == "utc_offset_minutes" or k == "last_sync_epoch" or Str.starts_with(k, "strava_reads_") or k == "strava_limit_window" or k == "strava_limit_day" or Str.ends_with(k, "_expires_at"))
 			Int
 		else if (Str.starts_with(k, "hr_z"))
 			Decimal

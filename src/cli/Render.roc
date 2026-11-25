@@ -397,12 +397,16 @@ Render :: [].{
 		"${(c.checked).to_str()} checked, ${(c.new).to_str()} new${updated}"
 	}
 
-	# seconds as m:ss
+	# the time left: m:ss under an hour, hours and minutes past one
 	clock_left : I64 -> Str
 	clock_left = |secs| {
 		s = (secs).max(0)
-		ss = s % 60
-		"${(s // 60).to_str()}:${if (ss < 10) "0" else ""}${(ss).to_str()}"
+		if s >= 3600 {
+			"${(s // 3600).to_str()} h ${((s % 3600) // 60).to_str()} min"
+		} else {
+			ss = s % 60
+			"${(s // 60).to_str()}:${if (ss < 10) "0" else ""}${(ss).to_str()}"
+		}
 	}
 
 	# The wait's frame, padded to one width: the time left counts down, and
@@ -411,8 +415,13 @@ Render :: [].{
 	wait_frame_width : U64
 	wait_frame_width = 72
 
-	wait_frame : { tick : U64, at : Str, left : I64 } -> Str
-	wait_frame = |w| pad_right(step_line("waiting for Strava", "${spinner(w.tick)} next batch at ${w.at}, ${clock_left(w.left)} left"), wait_frame_width)
+	wait_frame : { daily : Bool, tick : U64, at : Str, left : I64 } -> Str
+	wait_frame = |w|
+		if w.daily {
+			pad_right(step_line("daily allowance", "${spinner(w.tick)} returns ${w.at}, ${clock_left(w.left)} left"), wait_frame_width)
+		} else {
+			pad_right(step_line("waiting for Strava", "${spinner(w.tick)} next batch at ${w.at}, ${clock_left(w.left)} left"), wait_frame_width)
+		}
 
 	# An epoch second as the athlete's clock reads it, given the zone's offset
 	# in minutes east of UTC: "HH:MM", with the date after it when that local
@@ -986,21 +995,39 @@ Render :: [].{
 	# `streams` is the streams queue alone, which is what a complete run can leave
 	# behind as unreadable stream data. `resume` is the local time the run can
 	# continue, as Render.local_time writes it.
-	drain_note : Drain.StopReason, { streams : I64, owed : I64, resume : Str } -> Str
+	drain_note : Drain.StopReason, { streams : I64, owed : I64, resume : Str, again : Bool } -> Str
 	drain_note = |stopped, counts| {
 		owed = count_noun(counts.owed, "fetch", "fetches")
+		# `again`: the run waited for this period and found it spent on arrival,
+		# which stride's own reads cannot explain
 		match stopped {
 			# A stream body that would not decode is skipped WITHOUT storing, and the
 			# id stays queued until it has failed Strava.stream_attempt_cap fetches,
 			# so a complete run can still owe those. A 404 is NOT this case: it
 			# stores a `{}` marker and leaves the queue at once.
 			Complete => if (counts.streams == 0) "" else "${I64.to_str(counts.streams)} had unreadable stream data and retry on the next sync"
-			BudgetReached => if (counts.owed == 0) "" else "filled Strava's read window with ${owed} still owed; the next window opens at ${counts.resume}"
-			RateLimited => if (counts.owed == 0) "" else "Strava refused reads in a fresh window with ${owed} still owed; the next window opens at ${counts.resume}"
+			BudgetReached =>
+				if counts.owed == 0 {
+					""
+				} else if counts.again {
+					"the read window was still full after the wait, so another app on this token may be using it; ${owed} still owed, and the next window opens at ${counts.resume}"
+				} else {
+					"filled Strava's read window with ${owed} still owed; the next window opens at ${counts.resume}"
+				}
+			RateLimited =>
+				if counts.owed == 0 {
+					""
+				} else if counts.again {
+					"Strava refused reads in a fresh window with ${owed} still owed; the next window opens at ${counts.resume}"
+				} else {
+					"Strava refused a read with ${owed} still owed; the next window opens at ${counts.resume}"
+				}
 			# the one stop that speaks on an EMPTY queue: the pre-flight refusal makes
 			# no request, so an empty queue says nothing about whether work remains
 			DailyCapReached =>
-				if counts.owed == 0 {
+				if counts.again {
+					"today's Strava read allowance was still spent after its reset, so another app on this token may be using it; ${owed} still owed, and it returns at ${counts.resume}, midnight UTC"
+				} else if counts.owed == 0 {
 					"today's Strava read allowance is used up, so nothing was fetched; it returns at ${counts.resume}, midnight UTC"
 				} else {
 					"today's Strava read allowance is used up with ${owed} still owed; it returns at ${counts.resume}, midnight UTC"
@@ -1057,7 +1084,7 @@ Render :: [].{
 	# DO NOT, not CANNOT: the signature takes payload and tag independently, so a
 	# caller CAN pass a mismatched pair. The producer binds the tag once and
 	# derives `stopped:` from that binding.
-	SyncNote : { resume : Str, analysis : [Settled, NoZones, Unsettled], verdict : Str, requested : Bool }
+	SyncNote : { resume : Str, analysis : [Settled, NoZones, Unsettled], verdict : Str, requested : Bool, again : Bool }
 
 	sync_screen : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, routes_fetched : I64, routes_skipped : I64, pending_routes : I64, stopped : Str, resumable : Bool, resume_at : Str, analyzed : Bool, computed : U64 }, Drain.SyncStop, SyncNote -> Str
 	sync_screen = |p, stop, note| {
@@ -1113,7 +1140,7 @@ Render :: [].{
 					" — Strava refused the activity list with today's read allowance used up, so it is incomplete${prune_claim}; it returns at ${note.resume}, midnight UTC"
 				}
 				FromDrain(r) => {
-					said = drain_note(r, { streams: p.pending_streams, owed, resume: note.resume })
+					said = drain_note(r, { streams: p.pending_streams, owed, resume: note.resume, again: note.again })
 					if (Str.is_empty(said)) "" else " — ${said}"
 				}
 			}
@@ -1141,7 +1168,7 @@ Render :: [].{
 	sync_fixture = { synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 0, stopped: "complete", resumable: False, resume_at: "", analyzed: True, computed: 0 }
 
 	sync_note_fixture : SyncNote
-	sync_note_fixture = { resume: "10:45", analysis: Settled, verdict: "", requested: True }
+	sync_note_fixture = { resume: "10:45", analysis: Settled, verdict: "", requested: True, again: False }
 
 	# ── load command screen ─────────────────────────────────────────────
 
@@ -1937,9 +1964,9 @@ expect Render.spin_frame("activity list", 1) == "activity list       /"
 expect Render.step_line("activity list", Render.list_result({ checked: 25, new: 1, updated: 0 })) == "activity list       25 checked, 1 new"
 expect Render.list_result({ checked: 25, new: 0, updated: 2 }) == "25 checked, 0 new, 2 updated"
 # the wait, as the waiting transcript writes it, padded to one width as it counts down
-expect Str.trim_end(Render.wait_frame({ tick: 1, at: "10:45", left: 252 })) == "waiting for Strava  / next batch at 10:45, 4:12 left"
+expect Str.trim_end(Render.wait_frame({ daily: False, tick: 1, at: "10:45", left: 252 })) == "waiting for Strava  / next batch at 10:45, 4:12 left"
 expect {
-	widths = List.map([900, 600, 599, 61, 9, 0], |left| Render.display_width(Render.wait_frame({ tick: 0, at: "10:45", left })))
+	widths = List.map([900, 600, 599, 61, 9, 0], |left| Render.display_width(Render.wait_frame({ daily: False, tick: 0, at: "10:45", left })))
 	List.all(widths, |w| w == Render.wait_frame_width)
 }
 expect Render.clock_left(0) == "0:00" and Render.clock_left(-5) == "0:00" and Render.clock_left(910) == "15:10"
@@ -2777,26 +2804,26 @@ expect !(Metrics.has_coaching_language(Render.warming_up_note(True, 12))) and !(
 # Every arm pinned by full-string equality, and the SCREEN pinned on both inputs it
 # forwards — substring or empty-case-only expects pass with every number deleted
 # from the format string.
-expect Render.drain_note(Complete, { streams: 0, owed: 0, resume: "" }) == ""
+expect Render.drain_note(Complete, { streams: 0, owed: 0, resume: "", again: False }) == ""
 # the count outranks the reason: a budget stop that empties every queue is done, as
 # `resumable: false` says
-expect Render.drain_note(BudgetReached, { streams: 0, owed: 0, resume: "10:45" }) == ""
-expect Render.drain_note(RateLimited, { streams: 0, owed: 0, resume: "10:45" }) == ""
+expect Render.drain_note(BudgetReached, { streams: 0, owed: 0, resume: "10:45", again: False }) == ""
+expect Render.drain_note(RateLimited, { streams: 0, owed: 0, resume: "10:45", again: True }) == ""
 # a complete run names only its unreadable streams, and a stop names everything owed
-expect Render.drain_note(Complete, { streams: 2, owed: 9, resume: "" }) == "2 had unreadable stream data and retry on the next sync"
-expect Render.drain_note(BudgetReached, { streams: 0, owed: 9, resume: "10:45" }) == "filled Strava's read window with 9 fetches still owed; the next window opens at 10:45"
-expect Render.drain_note(BudgetReached, { streams: 1, owed: 1, resume: "10:45" }) == "filled Strava's read window with 1 fetch still owed; the next window opens at 10:45"
-expect Render.drain_note(RateLimited, { streams: 40, owed: 40, resume: "10:45" }) == "Strava refused reads in a fresh window with 40 fetches still owed; the next window opens at 10:45"
+expect Render.drain_note(Complete, { streams: 2, owed: 9, resume: "", again: False }) == "2 had unreadable stream data and retry on the next sync"
+expect Render.drain_note(BudgetReached, { streams: 0, owed: 9, resume: "10:45", again: False }) == "filled Strava's read window with 9 fetches still owed; the next window opens at 10:45"
+expect Render.drain_note(BudgetReached, { streams: 1, owed: 1, resume: "10:45", again: False }) == "filled Strava's read window with 1 fetch still owed; the next window opens at 10:45"
+expect Render.drain_note(RateLimited, { streams: 40, owed: 40, resume: "10:45", again: True }) == "Strava refused reads in a fresh window with 40 fetches still owed; the next window opens at 10:45"
 # the day's stop names the local time midnight UTC falls at, on both queue shapes
-expect Render.drain_note(DailyCapReached, { streams: 40, owed: 40, resume: "18:00" }) == "today's Strava read allowance is used up with 40 fetches still owed; it returns at 18:00, midnight UTC"
-expect Render.drain_note(DailyCapReached, { streams: 0, owed: 0, resume: "18:00" }) == "today's Strava read allowance is used up, so nothing was fetched; it returns at 18:00, midnight UTC"
+expect Render.drain_note(DailyCapReached, { streams: 40, owed: 40, resume: "18:00", again: False }) == "today's Strava read allowance is used up with 40 fetches still owed; it returns at 18:00, midnight UTC"
+expect Render.drain_note(DailyCapReached, { streams: 0, owed: 0, resume: "18:00", again: False }) == "today's Strava read allowance is used up, so nothing was fetched; it returns at 18:00, midnight UTC"
 # no stop sends the athlete away for a vague while: every one names its time
 expect {
 	notes = [
-		Render.drain_note(BudgetReached, { streams: 4, owed: 4, resume: "10:45" }),
-		Render.drain_note(RateLimited, { streams: 4, owed: 4, resume: "10:45" }),
-		Render.drain_note(DailyCapReached, { streams: 4, owed: 4, resume: "18:00" }),
-		Render.drain_note(DailyCapReached, { streams: 0, owed: 0, resume: "18:00" }),
+		Render.drain_note(BudgetReached, { streams: 4, owed: 4, resume: "10:45", again: False }),
+		Render.drain_note(RateLimited, { streams: 4, owed: 4, resume: "10:45", again: True }),
+		Render.drain_note(DailyCapReached, { streams: 4, owed: 4, resume: "18:00", again: False }),
+		Render.drain_note(DailyCapReached, { streams: 0, owed: 0, resume: "18:00", again: False }),
 	]
 	List.all(notes, |n| !(Str.contains(n, "15 minutes")) and !(Str.contains(n, "tomorrow")) and !(Str.contains(n, "again")))
 }
@@ -2839,14 +2866,14 @@ expect {
 	# only what its kind carries
 	tm_base = { target_kind: "", target_literal: "", target_pace_unit: "", target_rpe: 0, detected_known: Bool.False, detected_reps: 0, detected_mean_dur_s: 0, detected_mean_watts: 0.0, exec_known: Bool.False, exec_reason: "", hr_under_s: 0, hr_in_s: 0, hr_over_s: 0, hr_mean: 0.0, zone_below_s: 0, zone_in_s: 0, zone_above_s: 0, pace_basis: "", pace_actual_s: 0.0, pace_reps: 0, rpe_actual: 0.0 }
 	notes = [
-		Render.drain_note(Complete, { streams: 0, owed: 0, resume: "" }),
-		Render.drain_note(Complete, { streams: 5, owed: 5, resume: "" }),
-		Render.drain_note(BudgetReached, { streams: 40, owed: 40, resume: "10:45" }),
-		Render.drain_note(RateLimited, { streams: 40, owed: 40, resume: "10:45" }),
+		Render.drain_note(Complete, { streams: 0, owed: 0, resume: "", again: False }),
+		Render.drain_note(Complete, { streams: 5, owed: 5, resume: "", again: False }),
+		Render.drain_note(BudgetReached, { streams: 40, owed: 40, resume: "10:45", again: False }),
+		Render.drain_note(RateLimited, { streams: 40, owed: 40, resume: "10:45", again: True }),
 		# the daily cap, BOTH pending shapes. Its empty-queue arm is the one that says
 		# something where the other three say nothing, so it is prose the others are not.
-		Render.drain_note(DailyCapReached, { streams: 0, owed: 0, resume: "18:00" }),
-		Render.drain_note(DailyCapReached, { streams: 40, owed: 40, resume: "18:00" }),
+		Render.drain_note(DailyCapReached, { streams: 0, owed: 0, resume: "18:00", again: False }),
+		Render.drain_note(DailyCapReached, { streams: 40, owed: 40, resume: "18:00", again: False }),
 		# the list-refusal sentences and the analysis clauses are prose surfaces of
 		# their own — they do not come through drain_note
 		Render.sync_screen({ ..Render.sync_fixture, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, Render.sync_note_fixture),
@@ -2854,7 +2881,7 @@ expect {
 		Render.sync_screen({ ..Render.sync_fixture, stopped: Drain.sync_stopped_label(ListDailyCapReached), resumable: True }, ListDailyCapReached, Render.sync_note_fixture),
 		Render.sync_screen(Render.sync_fixture, FromDrain(Complete), { ..Render.sync_note_fixture, analysis: NoZones }),
 		Render.sync_screen(Render.sync_fixture, FromDrain(Complete), { ..Render.sync_note_fixture, analysis: Unsettled }),
-		Render.wait_frame({ tick: 0, at: "10:45", left: 252 }),
+		Render.wait_frame({ daily: False, tick: 0, at: "10:45", left: 252 }),
 		# freshness_note is a prose surface too, and ADR 0012's own consequences say the
 		# sweep is where a new one joins. Every arm, including the empty one: an arm that
 		# is only exercised on a broken config is exactly the one nobody would think to
@@ -2976,7 +3003,7 @@ expect
 		== "synced, nothing new; everything analyzed — Strava refused the activity list with today's read allowance used up, so it is incomplete; nothing was pruned; it returns at 18:00, midnight UTC"
 # a DRAIN refusal gets drain_note's wording, owing every queue
 expect
-	Render.sync_screen({ ..Render.sync_fixture, synced: 3, streams_fetched: 2, pending_streams: 5, pending_routes: 7, stopped: "rate_limited", resumable: True }, FromDrain(RateLimited), Render.sync_note_fixture)
+	Render.sync_screen({ ..Render.sync_fixture, synced: 3, streams_fetched: 2, pending_streams: 5, pending_routes: 7, stopped: "rate_limited", resumable: True }, FromDrain(RateLimited), { ..Render.sync_note_fixture, again: True })
 		== "synced streams for 2; everything analyzed — Strava refused reads in a fresh window with 12 fetches still owed; the next window opens at 10:45"
 # a budget stop states the reason AND the streams that would not decode
 expect
@@ -3019,10 +3046,25 @@ expect Render.progress_bar("scoring", 90, 90) == "scoring             [███
 # frame's "4:12 left" cannot show past the shorter result
 expect {
 	result = Render.step_result("waiting for Strava", "next batch started at 12:06")
-	Render.display_width(result) >= Render.display_width(Render.wait_frame({ tick: 0, at: "12:06", left: 899 }))
+	Render.display_width(result) >= Render.display_width(Render.wait_frame({ daily: False, tick: 0, at: "12:06", left: 899 }))
 		and Str.trim_end(result) == "waiting for Strava  next batch started at 12:06"
 }
 # a run that asked Strava for nothing says so instead of "nothing new"
 expect
 	Render.sync_screen({ ..Render.sync_fixture, pending_streams: 11, stopped: "daily_cap_reached", resumable: True }, FromDrain(DailyCapReached), { ..Render.sync_note_fixture, resume: "18:00", requested: False })
 		== "nothing synced: this run made no request; everything analyzed — today's Strava read allowance is used up with 11 fetches still owed; it returns at 18:00, midnight UTC"
+
+# the wait for the daily allowance names it, with the hours and minutes left
+expect Str.trim_end(Render.wait_frame({ daily: True, tick: 2, at: "18:00", left: 27720 })) == "daily allowance     - returns 18:00, 7 h 42 min left"
+expect Render.clock_left(3600) == "1 h 0 min" and Render.clock_left(3599) == "59:59"
+expect Render.display_width(Render.wait_frame({ daily: True, tick: 0, at: "01:00 on 2026-11-26", left: 86399 })) == Render.wait_frame_width
+
+# a refusal right after a wait names the situation rather than the limit alone
+expect Render.drain_note(RateLimited, { streams: 4, owed: 4, resume: "10:45", again: False }) == "Strava refused a read with 4 fetches still owed; the next window opens at 10:45"
+expect Render.drain_note(DailyCapReached, { streams: 4, owed: 4, resume: "18:00", again: True }) == "today's Strava read allowance was still spent after its reset, so another app on this token may be using it; 4 fetches still owed, and it returns at 18:00, midnight UTC"
+expect Render.drain_note(BudgetReached, { streams: 4, owed: 4, resume: "10:45", again: True }) == "the read window was still full after the wait, so another app on this token may be using it; 4 fetches still owed, and the next window opens at 10:45"
+
+# the daily transcript of ADR 0021, line by line
+expect Str.trim_end(Render.wait_frame({ daily: True, tick: 3, at: "18:00", left: 27720 })) == "daily allowance     \\ returns 18:00, 7 h 42 min left"
+expect Render.progress_bar("streams", 939, 1412) == "streams             [██████░░░░]  939/1412"
+expect Render.progress_bar("scoring", 85, 85) == "scoring             [██████████] 85/85"

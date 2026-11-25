@@ -26,6 +26,9 @@ strength_port := env("STRENGTH_PORT", "8792")
 # reads another app already spent
 pace_port := env("PACE_PORT", "8791")
 paced_port := env("PACED_PORT", "8790")
+# ...and two reporting a limit other than the documented one: higher, and lower
+pace_hi_port := env("PACE_HI_PORT", "8786")
+pace_lo_port := env("PACE_LO_PORT", "8785")
 
 default: test
 
@@ -419,18 +422,23 @@ e2e-sync: build
     STRMOCK=$!
     trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK $P5MOCK $L429MOCK $L429P $STRMOCK 2>/dev/null' EXIT
     E2E_MODE=notes STRIDE_API_BASE=http://127.0.0.1:{{strength_port}} ./e2e || exit 1
-    # the waiting first sync (ADR 0021), against two mocks that send Strava's
-    # read-limit headers, plus the main one, which sends none, and the strength
-    # one, whose descriptions `sync --all` re-reads. The header mocks' read counts
-    # live in files keyed by port, cleared first so a previous run's reads do not
-    # count against this one.
-    rm -f .e2e-mock-reads.{{pace_port}} .e2e-mock-reads.{{paced_port}}
+    # the waiting first sync (ADR 0021), against four mocks that send Strava's
+    # read-limit headers (two of them reporting limits other than the documented
+    # one), the main one, which sends none, and the strength one, whose
+    # descriptions `sync --all` re-reads. The header mocks' read counts live in
+    # files keyed by port, cleared first so a previous run's reads do not count
+    # against this one.
+    rm -f .e2e-mock-reads.{{pace_port}} .e2e-mock-reads.{{paced_port}} .e2e-mock-reads.{{pace_hi_port}} .e2e-mock-reads.{{pace_lo_port}}
     E2E_MODE=mock E2E_RATE_HEADERS=1 E2E_WINDOW_SECONDS=2 MOCK_PORT={{pace_port}} ./e2e &
     PACEMOCK=$!
     E2E_MODE=mock E2E_RATE_HEADERS=1 E2E_WINDOW_SECONDS=86400 E2E_EXTERNAL_READS=90 E2E_EXTERNAL_LIST_DAY=500 E2E_ODD_MAX_HR=1 MOCK_PORT={{paced_port}} ./e2e &
     PACEDMOCK=$!
-    trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK $P5MOCK $L429MOCK $L429P $STRMOCK $PACEMOCK $PACEDMOCK 2>/dev/null; rm -f .e2e-mock-reads.{{pace_port}} .e2e-mock-reads.{{paced_port}}' EXIT
-    E2E_MODE=pace STRIDE_API_BASE=http://127.0.0.1:{{pace_port}} E2E_HEADER_BASE=http://127.0.0.1:{{paced_port}} E2E_PLAIN_BASE=http://127.0.0.1:{{mock_port}} E2E_STRENGTH_BASE=http://127.0.0.1:{{strength_port}} ./e2e || exit 1
+    E2E_MODE=mock E2E_RATE_HEADERS=1 E2E_WINDOW_SECONDS=86400 E2E_LIMIT_HEADER=300,3000 MOCK_PORT={{pace_hi_port}} ./e2e &
+    PACEHIMOCK=$!
+    E2E_MODE=mock E2E_RATE_HEADERS=1 E2E_WINDOW_SECONDS=86400 E2E_LIMIT_HEADER=100,10 MOCK_PORT={{pace_lo_port}} ./e2e &
+    PACELOMOCK=$!
+    trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK $P5MOCK $L429MOCK $L429P $STRMOCK $PACEMOCK $PACEDMOCK $PACEHIMOCK $PACELOMOCK 2>/dev/null; rm -f .e2e-mock-reads.{{pace_port}} .e2e-mock-reads.{{paced_port}} .e2e-mock-reads.{{pace_hi_port}} .e2e-mock-reads.{{pace_lo_port}}' EXIT
+    E2E_MODE=pace STRIDE_API_BASE=http://127.0.0.1:{{pace_port}} E2E_HEADER_BASE=http://127.0.0.1:{{paced_port}} E2E_PLAIN_BASE=http://127.0.0.1:{{mock_port}} E2E_STRENGTH_BASE=http://127.0.0.1:{{strength_port}} E2E_HIGH_LIMIT_BASE=http://127.0.0.1:{{pace_hi_port}} E2E_LOW_LIMIT_BASE=http://127.0.0.1:{{pace_lo_port}} ./e2e || exit 1
 
 # build + refresh the ~/.local/bin symlink
 install: build

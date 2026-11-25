@@ -163,7 +163,7 @@ Output :: [].{
 		if (json_mode!({})) Stderr.line!(Render.step_line(label, text)) else Stderr.line!("\r${Render.step_result(label, text)}")
 
 	# the wait's frame, redrawn in place; only a human run ever waits
-	wait_frame! : { tick : U64, at : Str, left : I64 } => Try({}, _)
+	wait_frame! : { daily : Bool, tick : U64, at : Str, left : I64 } => Try({}, _)
 	wait_frame! = |w| Stderr.write!("\r${Render.wait_frame(w)}")
 
 	# a step with no countable total ("rebuilding daily load…"). Always its own line in

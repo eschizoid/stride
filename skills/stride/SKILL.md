@@ -89,9 +89,10 @@ reason `--json` and still answers in JSON).
      `notes_fetched` as progress: it includes the routine re-reads of descriptions
      inside the window.
    - A person running bare `stride sync` at a terminal gets the same work without the
-     calls: it waits for each next window, shows when the next batch starts, and ends
-     with everything fetched and analyzed, or with the local time the daily allowance
-     returns. Ctrl-C stops it, and the next sync resumes there.
+     calls: it waits for each next window and for the daily reset alike, shows when the
+     next batch starts, and ends with everything fetched and analyzed; only a period
+     still spent after its wait (another app on the token) ends it, with the time the
+     allowance returns. Ctrl-C stops it, and the next sync resumes there.
    - A stream body that does not decode (not UTF-8, or not stream JSON) is never
      stored. Each failed fetch is counted, and nothing but a stored body resets the
      count; the next sync asks again, up to 3 failed fetches. Then a plain sync stops
@@ -110,10 +111,11 @@ reason `--json` and still answers in JSON).
      `routes_retry_capped`. Routes are stored for the window's map tab, which
      fetches its own street map; no command uses their coordinates, and nothing
      scored ever will.
-   - Stride counts its own daily reads in config rows `strava_reads_today` and
-     `strava_reads_day` (a UTC day number; a stale stamp is the reset). Do not touch
-     them unless Stride itself names `stride config set strava_reads_today 0` as the
-     repair.
+   - Stride paces to the limits Strava reports (`X-ReadRateLimit-Limit`, documented as
+     100 a quarter-hour and 1,000 a day) less a margin, and keeps its read counts and the
+     last reported limits in config rows (`strava_reads_*`, `strava_limit_*`; a stale
+     stamp is the reset). Do not touch them unless Stride itself names
+     `stride config set strava_reads_today 0` as the repair.
    - `stride sync --all` drops the window, re-lists everything and replaces each
      activity row Strava still lists with Strava's copy. It is the only way a deletion
      in old history propagates, the repair Stride names for an activity with an
