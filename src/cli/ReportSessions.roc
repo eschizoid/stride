@@ -937,6 +937,7 @@ ReportSessions :: [].{
 			average_watts: opt_field("Average Watts"),
 			average_heartrate: opt_field("Average Heart Rate"),
 			weighted_average_watts: opt_field("Weighted Average Power"),
+			max_heartrate: opt_field("Max Heart Rate"),
 			# account exports do not say whether watts came from a meter — unknown, not true
 			device_watts: Err(Missing),
 		})

@@ -313,7 +313,24 @@ Render :: [].{
 		if (n >= w) s else Str.concat(Str.repeat(" ", w - n), s)
 	}
 
-	# A `\r`-redrawn progress bar for the commands slow enough to look hung. Reuses the
+	# ── narration (ADR 0007, shaped by ADR 0021) ─────────────────────────
+	# Every long step is one line on stderr with its label in a fixed column. A
+	# step with a count draws the bar; a step without one draws a spinner that
+	# advances per unit of work and is replaced by its result when the step
+	# ends. Every glyph here is one terminal column wide.
+	step_column : U64
+	step_column = 20
+
+	# the label padded to the column, keeping one space after a label as long
+	# as the column so the content never touches it
+	step_label : Str -> Str
+	step_label = |label| if (display_width(label) + 1 >= step_column) "${label} " else pad_right(label, step_column)
+
+	# a finished step: its label, then what it did
+	step_line : Str, Str -> Str
+	step_line = |label, text| "${step_label(label)}${text}"
+
+	# A `\r`-redrawn progress bar for the steps slow enough to look hung. Reuses the
 	# table's `█` so the glyph vocabulary stays one thing.
 	#
 	# CONSTANT WIDTH is the whole trick, not cosmetics: `\r` returns the cursor without
@@ -334,11 +351,12 @@ Render :: [].{
 			capped = if (done > total) total else done
 			filled = (capped * progress_bar_cells) // total
 			counts = "${pad_left((capped).to_str(), Str.count_utf8_bytes((total).to_str()))}/${(total).to_str()}"
-			"${label} [${Str.repeat("█", filled)}${Str.repeat("░", progress_bar_cells - filled)}] ${counts}"
+			step_line(label, "[${Str.repeat("█", filled)}${Str.repeat("░", progress_bar_cells - filled)}] ${counts}")
 		}
 
-	# machine mode gets the same information with no carriage returns and no padding —
-	# a `\r` is garbage in a CI log, and these lines are appended, never redrawn
+	# machine mode gets the same information with no carriage returns and no padding
+	# of the count — a `\r` is garbage in a CI log, and these lines are appended,
+	# never redrawn
 	progress_line : Str, U64, U64 -> Str
 	progress_line = |label, done, total|
 		if total == 0 {
@@ -349,8 +367,63 @@ Render :: [].{
 			# without this, machine mode prints an impossible `730/723` while human mode
 			# shows a full bar at 723/723.
 			capped = if (done > total) total else done
-			"${label} ${(capped).to_str()}/${(total).to_str()}"
+			step_line(label, "${(capped).to_str()}/${(total).to_str()}")
 		}
+
+	# the spinner of a step with no count, one frame per unit of work
+	spinner : U64 -> Str
+	spinner = |tick|
+		match tick % 4 {
+			0 => "|"
+			1 => "/"
+			2 => "-"
+			_ => "\\"
+		}
+
+	spin_frame : Str, U64 -> Str
+	spin_frame = |label, tick| step_line(label, spinner(tick))
+
+	# the activity list's result: what it re-listed, and of those what was new
+	# or changed. Updated is said only when something was.
+	list_result : { checked : U64, new : U64, updated : U64 } -> Str
+	list_result = |c| {
+		updated = if (c.updated > 0) ", ${(c.updated).to_str()} updated" else ""
+		"${(c.checked).to_str()} checked, ${(c.new).to_str()} new${updated}"
+	}
+
+	# seconds as m:ss
+	clock_left : I64 -> Str
+	clock_left = |secs| {
+		s = (secs).max(0)
+		ss = s % 60
+		"${(s // 60).to_str()}:${if (ss < 10) "0" else ""}${(ss).to_str()}"
+	}
+
+	# The wait's frame, padded to one width: the time left counts down, and
+	# "10:00 left" redrawn as "9:59 left" would otherwise leave a character of
+	# the previous frame behind it.
+	wait_frame_width : U64
+	wait_frame_width = 72
+
+	wait_frame : { tick : U64, at : Str, left : I64 } -> Str
+	wait_frame = |w| pad_right(step_line("waiting for Strava", "${spinner(w.tick)} next batch at ${w.at}, ${clock_left(w.left)} left"), wait_frame_width)
+
+	# An epoch second as the athlete's clock reads it, given the zone's offset
+	# in minutes east of UTC: "HH:MM", with the date after it when that local
+	# day is not the one `now` falls in.
+	local_time : I64, I64, I64 -> Str
+	local_time = |at, offset_min, now| {
+		at_local = Metrics.epoch_to_iso(at + offset_min * 60)
+		now_local = Metrics.epoch_to_iso(now + offset_min * 60)
+		hhmm = Str.from_utf8(List.sublist(Str.to_utf8(at_local), { start: 11, len: 5 })).ok_or("")
+		day = Str.from_utf8(List.sublist(Str.to_utf8(at_local), { start: 0, len: 10 })).ok_or("")
+		now_day = Str.from_utf8(List.sublist(Str.to_utf8(now_local), { start: 0, len: 10 })).ok_or("")
+		if (day == now_day) hhmm else "${hhmm} on ${day}"
+	}
+
+	# a count with the noun it needs: "1 activity", "2 activities"
+	count_noun : I64, Str, Str -> Str
+	count_noun = |n, one, many| "${(n).to_str()} ${if (n == 1) one else many}"
 
 	# terminal columns, not bytes. Each UTF-8 code point has exactly one lead byte
 	# (< 0x80, or >= 0xC0); continuation bytes (0x80–0xBF) don't count. Astral-plane
@@ -898,55 +971,36 @@ Render :: [].{
 	}
 
 	# ── drain note, used by sync's human line ────────────────────────────
-	# Takes the TAG, not the payload's string. Matching three literals with a catch-all
-	# stated the handled set in a different file from the set that exists: add a stop
-	# reason, satisfy every compile error, and the user still got the raw wire token.
-	# With a StopReason argument a new reason is a non-exhaustive match HERE, and the
-	# branch you are forced to write is the branch that runs.
+	# Takes the TAG, not the payload's string, so a new stop reason is a
+	# non-exhaustive match HERE and the branch the compiler forces is the branch
+	# that runs.
 	#
-	# Two counts, because a run's stop and its leftovers are different facts. `owed` is
-	# everything the run still owes across the streams, notes and routes queues: the
-	# drains share one read budget, so whichever of them stopped, the remedy covers all
-	# three. `streams` is the streams queue alone, which is what a complete run can
-	# leave behind as unreadable stream data; the notes and routes clauses of the sync
-	# line name their own leftovers.
-	drain_note : Drain.StopReason, { streams : I64, owed : I64 } -> Str
-	drain_note = |stopped, counts|
-		# The count is tested first for MOST reasons, and the exception is the point.
-		# For Complete, BudgetReached and RateLimited an empty queue means nothing is left
-		# to do regardless of why the run ended (a budget stop that empties the queue is
-		# reachable). DailyCapReached is NOT one of those: its refusal arrives having made
-		# no request, so an empty queue says nothing about whether work remains.
-		#
-		# Each arm states its OWN empty-queue behaviour rather than sharing one test above
-		# the match, because the shared test is wrong for one of the four reasons, and a
-		# `_` to carve that one out gives back exactly the exhaustiveness this type buys.
+	# Two counts, because a run's stop and its leftovers are different facts. `owed`
+	# is everything the run still owes across the streams, notes and routes queues;
+	# `streams` is the streams queue alone, which is what a complete run can leave
+	# behind as unreadable stream data. `resume` is the local time the run can
+	# continue, as Render.local_time writes it.
+	drain_note : Drain.StopReason, { streams : I64, owed : I64, resume : Str } -> Str
+	drain_note = |stopped, counts| {
+		owed = count_noun(counts.owed, "fetch", "fetches")
 		match stopped {
-			# The ONLY way to drain the queue and still be pending: a stream body
-			# that would not decode is skipped WITHOUT storing, and the id stays
-			# queued until it has failed Strava.stream_attempt_cap fetches — the
-			# pending count holds only ids under that cap, so each of them is
-			# fetched again by the next sync. A 404 is NOT this case — it stores a
-			# `{}` marker and leaves the pending set at once, which is why "Strava
-			# has no streams for these" is the wrong sentence here however
-			# plausible it sounds.
-			Complete => if (counts.streams == 0) "" else "${I64.to_str(counts.streams)} had unreadable stream data — they retry next sync"
-			BudgetReached => if (counts.owed == 0) "" else "filled Strava's 15-minute read window — ${I64.to_str(counts.owed)} to go, run `stride sync` again in ~15 minutes"
-			RateLimited => if (counts.owed == 0) "" else "Strava rate-limited this run — ${I64.to_str(counts.owed)} to go, try again in ~15 minutes"
-			# the ONE stop whose remedy is not fifteen minutes: Strava's daily read cap resets
-			# at UTC midnight, so re-running sooner spends nothing and gets nothing.
-			#
-			# And the ONE stop that speaks on an EMPTY queue: the pre-flight refusal arrives
-			# having made no request, so "all streams present" would be a claim about state
-			# the run never looked at, and silence would let `stride sync` print a quiet
-			# successful-looking line and exit 0 on a day where nothing more would happen.
+			# A stream body that would not decode is skipped WITHOUT storing, and the
+			# id stays queued until it has failed Strava.stream_attempt_cap fetches,
+			# so a complete run can still owe those. A 404 is NOT this case: it
+			# stores a `{}` marker and leaves the queue at once.
+			Complete => if (counts.streams == 0) "" else "${I64.to_str(counts.streams)} had unreadable stream data and retry on the next sync"
+			BudgetReached => if (counts.owed == 0) "" else "filled Strava's read window with ${owed} still owed; the next window opens at ${counts.resume}"
+			RateLimited => if (counts.owed == 0) "" else "Strava refused reads in a fresh window with ${owed} still owed; the next window opens at ${counts.resume}"
+			# the one stop that speaks on an EMPTY queue: the pre-flight refusal makes
+			# no request, so an empty queue says nothing about whether work remains
 			DailyCapReached =>
 				if counts.owed == 0 {
-					"used up today's Strava read allowance — nothing was fetched, and nothing will be until it resets; run `stride sync` again tomorrow"
+					"today's Strava read allowance is used up, so nothing was fetched; it returns at ${counts.resume}, midnight UTC"
 				} else {
-					"used up today's Strava read allowance — ${I64.to_str(counts.owed)} to go, run `stride sync` again tomorrow"
+					"today's Strava read allowance is used up with ${owed} still owed; it returns at ${counts.resume}, midnight UTC"
 				}
 		}
+	}
 
 	# `plan`'s data-freshness line. "" when there is nothing to say, on the same
 	# reasoning as sync_screen's tail below: for a human the absence of the line IS the
@@ -986,135 +1040,92 @@ Render :: [].{
 		if (List.is_empty(parts)) "" else "DATA: ${Str.join_with(parts, " · ")}"
 	}
 
-	# sync's human line. Extracted from an inline closure in Strava.roc so pure expects
-	# can reach it. Takes the payload AND the tag it was built from: `p.stopped`
-	# is the WIRE string (sync.json is a flat enum) and nothing here reads it —
-	# recovering the tag from it would be a lookup a maintainer can leave stale,
-	# shipping the raw token. Passed alongside, a new reason is a non-exhaustive
-	# match here and in drain_note, and the branch you are made to write is the
-	# branch that runs.
+	# sync's human screen: one summary line, then the form verdict, since sync
+	# runs analyze to its fixed point. Takes the payload AND the tag it was built
+	# from: `p.stopped` is the WIRE string and nothing here reads it, so a new
+	# reason is a non-exhaustive match here and in drain_note. `note` carries
+	# what the payload does not: the local time the run can continue, how the
+	# analysis ended, and the verdict line ("" when there is no form yet).
 	#
 	# DO NOT, not CANNOT: the signature takes payload and tag independently, so a
-	# caller CAN pass a mismatched pair. All three producer sites bind the tag once and
-	# derive `stopped:` from that binding — that is discipline, not enforcement, and a
-	# fourth caller has to keep it.
-	sync_screen : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, routes_fetched : I64, routes_skipped : I64, pending_routes : I64, stopped : Str, resumable : Bool }, Drain.SyncStop, Bool -> Str
-	sync_screen = |p, stop, all| {
-		prune_note = if (p.pruned > 0) " (pruned ${U64.to_str(p.pruned)} removed on Strava)" else ""
-		# Said plainly rather than folded into the pending count: unreadable is not
-		# not-yet-fetched, and only the first is worth chasing. Suppressed on a complete
-		# run because drain_note's Complete arm is only reachable with pending > 0 —
-		# precisely the skip case — so both clauses would state one fact twice.
-		#
-		# `skip_for_reason` answers whether a stop reason's own note already states the
-		# skip count, a property of the REASON. It is an exhaustive match returning the
-		# CLAUSE, so a new reason must say whether it prints one; an inequality against one
-		# tag would let a new reason print the count a second time in other words.
-		skip_clause = " (${I64.to_str(p.streams_skipped)} had unreadable stream data)"
-		skip_for_reason : Drain.StopReason -> Str
-		skip_for_reason = |r|
-			match r {
-				# Complete's own note names the skipped count, so repeating it here is the
-				# duplication these lines exist to prevent.
-				Complete => ""
-				BudgetReached => skip_clause
-				RateLimited => skip_clause
-				DailyCapReached => skip_clause
+	# caller CAN pass a mismatched pair. The producer binds the tag once and
+	# derives `stopped:` from that binding.
+	SyncNote : { resume : Str, analysis : [Settled, NoZones, Unsettled], verdict : Str }
+
+	sync_screen : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, routes_fetched : I64, routes_skipped : I64, pending_routes : I64, stopped : Str, resumable : Bool, resume_at : Str, analyzed : Bool, computed : U64 }, Drain.SyncStop, SyncNote -> Str
+	sync_screen = |p, stop, note| {
+		n64 = |n| (n).to_i64_wrap()
+		# what landed, in the singular or plural each count needs. New and updated
+		# lead: the re-listed count is a function of how often the athlete trains,
+		# and the activity list's own narration line already reports it.
+		landed = List.join([
+			if (p.new_activities > 0) [count_noun(n64(p.new_activities), "new activity", "new activities")] else [],
+			if (p.updated_activities > 0) ["${U64.to_str(p.updated_activities)} updated"] else [],
+			if (p.pruned > 0) ["${U64.to_str(p.pruned)} removed on Strava"] else [],
+			if (p.streams_fetched > 0) ["streams for ${I64.to_str(p.streams_fetched)}"] else [],
+			if (p.notes_fetched > 0) [count_noun(p.notes_fetched, "strength description", "strength descriptions")] else [],
+			if (p.routes_fetched > 0) ["routes for ${I64.to_str(p.routes_fetched)}"] else [],
+		])
+		# unreadable is not not-yet-fetched, so each says so on its own. A complete
+		# run's streams skip is said once, by drain_note's Complete arm.
+		unreadable = List.join([
+			if (p.streams_skipped > 0 and stop != FromDrain(Complete)) [Str.concat(count_noun(p.streams_skipped, "stream", "streams"), " would not decode")] else [],
+			if (p.routes_skipped > 0) [Str.concat(count_noun(p.routes_skipped, "route", "routes"), " would not decode")] else [],
+		])
+		head = if (List.is_empty(landed)) "synced, nothing new" else "synced ${Str.join_with(landed, ", ")}"
+		skips = if (List.is_empty(unreadable)) "" else " (${Str.join_with(unreadable, ", ")})"
+		analysis =
+			match note.analysis {
+				Settled => "; everything analyzed"
+				NoZones => "; nothing analyzed until heart-rate zones are set (`stride setup` sets them)"
+				Unsettled => "; scoring did not settle, a stride bug that `stride analyze` describes"
 			}
-		skip_note =
-			if p.streams_skipped > 0 {
-				match stop {
-					FromDrain(r) => skip_for_reason(r)
-					ListRateLimited => skip_clause
-					ListDailyCapReached => skip_clause
-				}
-			} else {
-				""
-			}
-		# WHY it stopped, not merely that work remains. A refused LIST is tested FIRST and
-		# unconditionally: a first-run sync lists a full page of stream-less activities and
-		# is refused on the next page, so pending is at its MAXIMUM there — guarding this
-		# behind `pending_streams > 0` let drain_note win and describe a stream drain that
-		# never started. The queue is only empty in the steady state.
+		owed = p.pending_streams + p.pending_notes + p.pending_routes
+		# WHY it stopped. A refused LIST is matched first and unconditionally: a
+		# first sync is refused with the stream queue at its maximum, and the
+		# listing, not the drain, is what is incomplete.
 		tail =
 			match stop {
+				# read from `pruned`, not assumed: the early return before the prune is
+				# a fact about Strava.sync!, which this function never observes
 				ListRateLimited => {
-					# read from `pruned`, not from `stopped`. Prune is unreachable on this
-					# path today — sync! returns before it — but that is a fact about
-					# Strava.sync!, and this function can only see what it is handed.
-					# Asserting it from here would be Render vouching for a caller it
-					# never observes, and the sentence would go quietly false the day the
-					# early return moves.
 					prune_claim = if (p.pruned == 0) "; nothing was pruned" else ""
-					" — Strava rate-limited the activity list, so it is incomplete${prune_claim}. Run `stride sync` again in ~15 minutes"
+					" — Strava rate-limited the activity list, so it is incomplete${prune_claim}; the next window opens at ${note.resume}"
 				}
-				# A MATCH on the TAG, no catch-all — that IS the enforcement: add an arm to
-				# SyncStop and this stops compiling; add one to StopReason and drain_note does.
-				# What matters is that the branch the compiler makes you write is the branch that
-				# RUNS. The earlier shapes failed exactly that: `==` against a literal, and a
-				# Str->tag lookup which compiled after a new arm yet still shipped the raw
-				# `auth_expired` token, because the lookup table had no entry. Deleting the lookup
-				# is what closes it.
-				ListDailyCapReached =>
-				# UNCONDITIONAL, like its sibling above and for one more reason: this stop is
-				# reachable with an empty queue by construction — a capped day is exactly the day
-				# nothing is left to drain. `prune_claim` READ, not assumed (see the sibling);
-				# computed here rather than hoisted, because the two arms are the only users and
-				# hoisting would put a binding in scope for the FromDrain arm that must never
-				# read it.
-					{
-						cap_prune_claim = if (p.pruned == 0) "; nothing was pruned" else ""
-						" — Strava rate-limited the activity list, so it is incomplete${cap_prune_claim}; and today's read allowance is used up. Run `stride sync` again tomorrow"
-					}
-				FromDrain(r) =>
-				# UNCONDITIONAL. Whether a reason has anything to say on an empty queue is a
-				# property of the REASON, so `drain_note` answers it per arm, exhaustively, and
-				# this site only formats. A `pending_streams > 0` guard here would make a capped
-				# day print a quiet successful-looking sync (no request made, none possible), and
-				# a `match` with a `_` arm here would let a new StopReason compile with no remedy
-				# printed; the exhaustive match in drain_note is what makes the compiler name it.
-					{
-						note = drain_note(r, { streams: p.pending_streams, owed: p.pending_streams + p.pending_notes + p.pending_routes })
-						if (Str.is_empty(note)) "" else " — ${note}"
-					}
+				ListDailyCapReached => {
+					prune_claim = if (p.pruned == 0) "; nothing was pruned" else ""
+					" — Strava refused the activity list with today's read allowance used up, so it is incomplete${prune_claim}; it returns at ${note.resume}, midnight UTC"
+				}
+				FromDrain(r) => {
+					said = drain_note(r, { streams: p.pending_streams, owed, resume: note.resume })
+					if (Str.is_empty(said)) "" else " — ${said}"
+				}
 			}
-		# `--all` re-listed the ENTIRE account, so naming the rolling window there would
-		# describe a bound the run did not have.
-		window_note = if (all) "" else " in the 30-day window"
-		# Silent when nothing happened AND nothing waits: strength descriptions only
-		# exist for strength-family activities, so for most syncs both counts are 0
-		# and a standing "0 descriptions" clause would be noise about a feature the
-		# athlete does not use. Either count non-zero is worth a clause — a fetched
-		# note is work done, a pending one is work owed.
-		notes_note =
-			if p.notes_fetched > 0 and p.pending_notes > 0 {
-				", fetched ${I64.to_str(p.notes_fetched)} strength descriptions (${I64.to_str(p.pending_notes)} still queued)"
-			} else if p.notes_fetched > 0 {
-				", fetched ${I64.to_str(p.notes_fetched)} strength descriptions"
-			} else if p.pending_notes > 0 {
-				", ${I64.to_str(p.pending_notes)} strength descriptions queued"
-			} else {
-				""
-			}
-		# the same rule for GPS routes: silent once every route is in and none arrived.
-		# A route that would not decode is said on its own clause, since unreadable is
-		# not the same as not yet fetched.
-		route_skip_note = if (p.routes_skipped > 0) ", ${I64.to_str(p.routes_skipped)} routes would not decode" else ""
-		routes_note =
-			if p.routes_fetched > 0 and p.pending_routes > 0 {
-				", fetched ${I64.to_str(p.routes_fetched)} routes (${I64.to_str(p.pending_routes)} still queued)"
-			} else if p.routes_fetched > 0 {
-				", fetched ${I64.to_str(p.routes_fetched)} routes"
-			} else if p.pending_routes > 0 {
-				", ${I64.to_str(p.pending_routes)} routes queued"
-			} else {
-				""
-			}
-		# New and updated FIRST, re-checked in parentheses behind them: the re-listed
-		# count is a function of how often you train rather than of this sync, and a line
-		# leading with it ("synced 22 activities") reads as 22 NEW ones.
-		"synced ${U64.to_str(p.new_activities)} new, ${U64.to_str(p.updated_activities)} updated (${U64.to_str(p.synced)} re-checked${window_note})${prune_note}, fetched streams for ${I64.to_str(p.streams_fetched)}${notes_note}${routes_note}${route_skip_note}${skip_note}${tail}"
+		verdict = if (Str.is_empty(note.verdict)) "" else "\n${note.verdict}"
+		"${head}${skips}${analysis}${tail}${verdict}"
 	}
+
+	# analyze's and sync's one verdict line, "" while there is no form yet; the
+	# full report lives in `stride summary`
+	today_verdict : [Some(F64), None], [Known(F64), Unknown] -> Str
+	today_verdict = |tsb, delta|
+		match tsb {
+			Some(t) => "→ today: form ${fmt0(t)}${form_trend_phrase(delta)} — ${Metrics.form_label(t)}"
+			None => ""
+		}
+
+	# the line an analyze run prints when its guard stopped a rescore that would
+	# not settle
+	unsettled_note : U64 -> Str
+	unsettled_note = |computed| "scoring stopped after ${U64.to_str(computed)} scores without settling: rows kept invalidating each other, which is a stride bug; please report it with `stride doctor --json` at github.com/eschizoid/stride/issues"
+
+	# a sync payload of a complete run that did nothing, and the note of one that
+	# analyzed everything with no verdict; the expects widen them field by field
+	sync_fixture : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, routes_fetched : I64, routes_skipped : I64, pending_routes : I64, stopped : Str, resumable : Bool, resume_at : Str, analyzed : Bool, computed : U64 }
+	sync_fixture = { synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 0, stopped: "complete", resumable: False, resume_at: "", analyzed: True, computed: 0 }
+
+	sync_note_fixture : SyncNote
+	sync_note_fixture = { resume: "10:45", analysis: Settled, verdict: "" }
 
 	# ── load command screen ─────────────────────────────────────────────
 
@@ -1877,27 +1888,51 @@ expect Render.signed(0.4) == "+0"
 expect Render.signed(-0.4) != Render.signed(0.4)
 expect Render.pad_left("1234", 3) == "1234" # never truncates
 
-# ── progress bar ──
-expect Render.progress_bar("rescoring", 0, 10) == "rescoring [░░░░░░░░░░]  0/10"
-expect Render.progress_bar("rescoring", 5, 10) == "rescoring [█████░░░░░]  5/10"
-expect Render.progress_bar("rescoring", 10, 10) == "rescoring [██████████] 10/10"
+# ── narration: one shape for every step ──
+# the label column is fixed, so the ADR's transcripts line up
+expect Render.progress_bar("scoring", 0, 10) == "scoring             [░░░░░░░░░░]  0/10"
+expect Render.progress_bar("scoring", 5, 10) == "scoring             [█████░░░░░]  5/10"
+expect Render.progress_bar("descriptions", 11, 11) == "descriptions        [██████████] 11/11"
+expect Render.progress_bar("streams", 1, 1) == "streams             [██████████] 1/1"
 # a zero total has no honest fraction to render, and must not divide
 expect Render.progress_bar("syncing", 0, 0) == "syncing…"
 # ...spelled exactly as the machine-mode line, so the two modes cannot drift apart
 expect Render.progress_bar("syncing", 0, 0) == Render.progress_line("syncing", 0, 0)
 # done > total would overfill the bar; clamp rather than emit a wider frame
-expect Render.progress_bar("x", 99, 10) == "x [██████████] 10/10"
+expect Render.progress_bar("x", 99, 10) == "x                   [██████████] 10/10"
 # EVERY frame of one run is the same width — `\r` does not clear the line, so a
 # shorter frame would leave the previous frame's tail behind it on screen
 expect {
-	frames = List.map([0, 7, 42, 358, 723], |d| Render.display_width(Render.progress_bar("rescoring", d, 723)))
+	frames = List.map([0, 7, 42, 358, 723], |d| Render.display_width(Render.progress_bar("scoring", d, 723)))
 	List.all(frames, |w| w == List.first(frames).ok_or(0))
 }
-# machine mode: same information, no carriage return and no padding
-expect Render.progress_line("rescoring", 5, 10) == "rescoring 5/10"
-expect !(Str.contains(Render.progress_line("rescoring", 5, 10), "\r"))
+# machine mode: same information, no carriage return and no padding of the count
+expect Render.progress_line("scoring", 5, 10) == "scoring             5/10"
+expect !(Str.contains(Render.progress_line("scoring", 5, 10), "\r"))
 # ...and it clamps like the bar, so neither mode can print an impossible fraction
-expect Render.progress_line("rescoring", 730, 723) == "rescoring 723/723"
+expect Render.progress_line("scoring", 730, 723) == "scoring             723/723"
+# a label as long as the column keeps a space before its content
+expect Render.step_line("a label of twenty ch", "x") == "a label of twenty ch x"
+expect Render.display_width(Render.step_label("activity list")) == Render.step_column
+# the spinner walks four single-width ASCII frames and comes back round
+expect List.map([0, 1, 2, 3, 4], Render.spinner) == ["|", "/", "-", "\\", "|"]
+expect Render.spin_frame("activity list", 1) == "activity list       /"
+# the list's result, as the routine transcript writes it; updated only when some were
+expect Render.step_line("activity list", Render.list_result({ checked: 25, new: 1, updated: 0 })) == "activity list       25 checked, 1 new"
+expect Render.list_result({ checked: 25, new: 0, updated: 2 }) == "25 checked, 0 new, 2 updated"
+# the wait, as the waiting transcript writes it, padded to one width as it counts down
+expect Str.trim_end(Render.wait_frame({ tick: 1, at: "10:45", left: 252 })) == "waiting for Strava  / next batch at 10:45, 4:12 left"
+expect {
+	widths = List.map([900, 600, 599, 61, 9, 0], |left| Render.display_width(Render.wait_frame({ tick: 0, at: "10:45", left })))
+	List.all(widths, |w| w == Render.wait_frame_width)
+}
+expect Render.clock_left(0) == "0:00" and Render.clock_left(-5) == "0:00" and Render.clock_left(910) == "15:10"
+# the local clock: a zone west of UTC reads midnight UTC as the evening before
+expect Render.local_time(1795651200, -360, 1795601640) == "18:00"
+# ...and one east of it as the next day, which is then named
+expect Render.local_time(1795651200, 60, 1795601640) == "01:00 on 2026-11-26"
+expect Render.local_time(1795602610, 0, 1795601640) == "10:30"
+expect Render.count_noun(1, "new activity", "new activities") == "1 new activity" and Render.count_noun(2, "fetch", "fetches") == "2 fetches" and Render.count_noun(0, "fetch", "fetches") == "0 fetches"
 
 # ── rule rows: a full-width divider, not cells ──
 expect {
@@ -2726,59 +2761,61 @@ expect !(Metrics.has_coaching_language(Render.warming_up_note(True, 12))) and !(
 # Every arm pinned by full-string equality, and the SCREEN pinned on both inputs it
 # forwards — substring or empty-case-only expects pass with every number deleted
 # from the format string.
-expect Render.drain_note(Complete, { streams: 0, owed: 0 }) == ""
-
-# the count outranks the reason: a budget stop that empties every queue is done (the
-# window fills on the read just stored), so the note says nothing, as `resumable:
-# false` does. The human and machine surfaces must not contradict each other about
-# the same run.
-expect Render.drain_note(BudgetReached, { streams: 0, owed: 0 }) == ""
-expect Render.drain_note(RateLimited, { streams: 0, owed: 0 }) == ""
+expect Render.drain_note(Complete, { streams: 0, owed: 0, resume: "" }) == ""
+# the count outranks the reason: a budget stop that empties every queue is done, as
+# `resumable: false` says
+expect Render.drain_note(BudgetReached, { streams: 0, owed: 0, resume: "10:45" }) == ""
+expect Render.drain_note(RateLimited, { streams: 0, owed: 0, resume: "10:45" }) == ""
 # a complete run names only its unreadable streams, and a stop names everything owed
-expect Render.drain_note(Complete, { streams: 2, owed: 9 }) == "2 had unreadable stream data — they retry next sync"
-expect Render.drain_note(BudgetReached, { streams: 0, owed: 9 }) == "filled Strava's 15-minute read window — 9 to go, run `stride sync` again in ~15 minutes"
-expect Render.drain_note(Complete, { streams: 5, owed: 5 }) == "5 had unreadable stream data — they retry next sync"
-expect Render.drain_note(BudgetReached, { streams: 40, owed: 40 }) == "filled Strava's 15-minute read window — 40 to go, run `stride sync` again in ~15 minutes"
-expect Render.drain_note(RateLimited, { streams: 40, owed: 40 }) == "Strava rate-limited this run — 40 to go, try again in ~15 minutes"
-# the ONE arm whose remedy is not fifteen minutes. Full-string, and separately asserted
-# NOT to carry the other arms' wording, because a reader must be able to tell these two
-# stops apart.
-expect Render.drain_note(DailyCapReached, { streams: 40, owed: 40 }) == "used up today's Strava read allowance — 40 to go, run `stride sync` again tomorrow"
-expect !(Str.contains(Render.drain_note(DailyCapReached, { streams: 40, owed: 40 }), "15 minutes"))
+expect Render.drain_note(Complete, { streams: 2, owed: 9, resume: "" }) == "2 had unreadable stream data and retry on the next sync"
+expect Render.drain_note(BudgetReached, { streams: 0, owed: 9, resume: "10:45" }) == "filled Strava's read window with 9 fetches still owed; the next window opens at 10:45"
+expect Render.drain_note(BudgetReached, { streams: 1, owed: 1, resume: "10:45" }) == "filled Strava's read window with 1 fetch still owed; the next window opens at 10:45"
+expect Render.drain_note(RateLimited, { streams: 40, owed: 40, resume: "10:45" }) == "Strava refused reads in a fresh window with 40 fetches still owed; the next window opens at 10:45"
+# the day's stop names the local time midnight UTC falls at, on both queue shapes
+expect Render.drain_note(DailyCapReached, { streams: 40, owed: 40, resume: "18:00" }) == "today's Strava read allowance is used up with 40 fetches still owed; it returns at 18:00, midnight UTC"
+expect Render.drain_note(DailyCapReached, { streams: 0, owed: 0, resume: "18:00" }) == "today's Strava read allowance is used up, so nothing was fetched; it returns at 18:00, midnight UTC"
+# no stop sends the athlete away for a vague while: every one names its time
+expect {
+	notes = [
+		Render.drain_note(BudgetReached, { streams: 4, owed: 4, resume: "10:45" }),
+		Render.drain_note(RateLimited, { streams: 4, owed: 4, resume: "10:45" }),
+		Render.drain_note(DailyCapReached, { streams: 4, owed: 4, resume: "18:00" }),
+		Render.drain_note(DailyCapReached, { streams: 0, owed: 0, resume: "18:00" }),
+	]
+	List.all(notes, |n| !(Str.contains(n, "15 minutes")) and !(Str.contains(n, "tomorrow")) and !(Str.contains(n, "again")))
+}
 
 # The wire strings still have to match the producer — drain_note takes a StopReason,
 # so the compiler already guarantees every reason has a branch; what no type can
 # guarantee is that `stopped_label`'s spellings match schemas/v3/sync.json, a
 # document. Hand-typed on purpose: these pin tag -> Roc literal, and the e2e schema
-# check pins emitted literal -> schema enum. Neither alone catches a rename on the
-# far side.
+# check pins emitted literal -> schema enum.
 expect Drain.stopped_label(Complete) == "complete"
 expect Drain.stopped_label(BudgetReached) == "budget_reached"
 expect Drain.stopped_label(RateLimited) == "rate_limited"
 expect Drain.stopped_label(DailyCapReached) == "daily_cap_reached"
 expect Drain.sync_stopped_label(ListRateLimited) == "list_rate_limited"
 
-# No label may appear RAW in the human line. Enumerated by hand, and that is a COST:
-# a new SyncStop arm forces sync_screen and sync_stopped_label, a new StopReason arm
-# forces stopped_label and drain_note — two DIFFERENT types, so neither compiler
-# error reaches this list, and a compiler-forced branch is a branch, not a correct
-# one. When you add an arm to either type, add it here too. Both `pending` shapes,
-# because the tail dispatches on pending_streams too.
+# No label may appear RAW in the human line. Enumerated by hand: a new SyncStop arm
+# forces sync_screen and sync_stopped_label, a new StopReason arm forces
+# stopped_label and drain_note, and neither compiler error reaches this list. When
+# you add an arm to either type, add it here too. Both `pending` shapes, because the
+# tail dispatches on what is owed.
 expect {
 	stops = [FromDrain(Complete), FromDrain(BudgetReached), FromDrain(RateLimited), FromDrain(DailyCapReached), ListRateLimited, ListDailyCapReached]
 	List.all(
 		stops,
 		|t| {
 			lbl = Drain.sync_stopped_label(t)
-			row = |pending| { synced: 3, new_activities: 1, updated_activities: 0, pruned: 0, streams_fetched: 2, streams_skipped: 0, pending_streams: pending, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 0, stopped: lbl, resumable: pending > 0 }
-			!(Str.contains(Render.sync_screen(row(9), t, False), lbl))
-				and !(Str.contains(Render.sync_screen(row(0), t, False), lbl))
+			row = |pending| { ..Render.sync_fixture, streams_fetched: 2, pending_streams: pending, stopped: lbl, resumable: pending > 0 }
+			!(Str.contains(Render.sync_screen(row(9), t, Render.sync_note_fixture), lbl))
+				and !(Str.contains(Render.sync_screen(row(0), t, Render.sync_note_fixture), lbl))
 		},
 	)
 }
 
 # ADR 0012's boundary rule: a new prose surface joins the denylist sweep. These are
-# tool instructions ("run `stride sync` again tomorrow"), not training advice, but
+# tool instructions (when the next read window opens), not training advice, but
 # the rule is about surfaces rather than intent — and a sweep that skips a surface
 # because someone judged it exempt is how the gap recurs.
 expect {
@@ -2786,21 +2823,22 @@ expect {
 	# only what its kind carries
 	tm_base = { target_kind: "", target_literal: "", target_pace_unit: "", target_rpe: 0, detected_known: Bool.False, detected_reps: 0, detected_mean_dur_s: 0, detected_mean_watts: 0.0, exec_known: Bool.False, exec_reason: "", hr_under_s: 0, hr_in_s: 0, hr_over_s: 0, hr_mean: 0.0, zone_below_s: 0, zone_in_s: 0, zone_above_s: 0, pace_basis: "", pace_actual_s: 0.0, pace_reps: 0, rpe_actual: 0.0 }
 	notes = [
-		Render.drain_note(Complete, { streams: 0, owed: 0 }),
-		Render.drain_note(Complete, { streams: 5, owed: 5 }),
-		Render.drain_note(BudgetReached, { streams: 40, owed: 40 }),
-		Render.drain_note(RateLimited, { streams: 40, owed: 40 }),
+		Render.drain_note(Complete, { streams: 0, owed: 0, resume: "" }),
+		Render.drain_note(Complete, { streams: 5, owed: 5, resume: "" }),
+		Render.drain_note(BudgetReached, { streams: 40, owed: 40, resume: "10:45" }),
+		Render.drain_note(RateLimited, { streams: 40, owed: 40, resume: "10:45" }),
 		# the daily cap, BOTH pending shapes. Its empty-queue arm is the one that says
 		# something where the other three say nothing, so it is prose the others are not.
-		Render.drain_note(DailyCapReached, { streams: 0, owed: 0 }),
-		Render.drain_note(DailyCapReached, { streams: 40, owed: 40 }),
-		# the list-refusal sentence is a prose surface of its own — it does not come
-		# through drain_note, so a sweep over drain_note's arms alone would miss it.
-		Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False),
-		Render.sync_screen({ synced: 100, new_activities: 100, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 100, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False),
-		# ...and the list-plus-spent-day sentence, a fourth prose surface, which the
-		# sweep must cover like the other three.
-		Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 0, stopped: Drain.sync_stopped_label(ListDailyCapReached), resumable: True }, ListDailyCapReached, False),
+		Render.drain_note(DailyCapReached, { streams: 0, owed: 0, resume: "18:00" }),
+		Render.drain_note(DailyCapReached, { streams: 40, owed: 40, resume: "18:00" }),
+		# the list-refusal sentences and the analysis clauses are prose surfaces of
+		# their own — they do not come through drain_note
+		Render.sync_screen({ ..Render.sync_fixture, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, Render.sync_note_fixture),
+		Render.sync_screen({ ..Render.sync_fixture, new_activities: 100, pending_streams: 100, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, Render.sync_note_fixture),
+		Render.sync_screen({ ..Render.sync_fixture, stopped: Drain.sync_stopped_label(ListDailyCapReached), resumable: True }, ListDailyCapReached, Render.sync_note_fixture),
+		Render.sync_screen(Render.sync_fixture, FromDrain(Complete), { ..Render.sync_note_fixture, analysis: NoZones }),
+		Render.sync_screen(Render.sync_fixture, FromDrain(Complete), { ..Render.sync_note_fixture, analysis: Unsettled }),
+		Render.wait_frame({ tick: 0, at: "10:45", left: 252 }),
 		# freshness_note is a prose surface too, and ADR 0012's own consequences say the
 		# sweep is where a new one joins. Every arm, including the empty one: an arm that
 		# is only exercised on a broken config is exactly the one nobody would think to
@@ -2887,97 +2925,60 @@ expect
 	Render.freshness_note({ activities_awaiting_metrics: 0, activities_awaiting_metrics_known: False, activities_awaiting_streams: 4 })
 		== "DATA: awaiting-metrics count unreadable (stride analyze says why) · 4 awaiting streams (stride sync)"
 
-# ── sync's human line ─────────────────────────────────────────
-# Full-string equality, because the e2e check on this line asserts only two
-# unconditional literals and would pass with every number deleted from the format
-# string. These pin each forwarded value, so a hardcoded or dropped field fails here.
+# ── sync's human screen ─────────────────────────────────────────
+# Full-string equality: an e2e `contains` on this line would pass with a number
+# deleted from the format string, and these pin each forwarded value.
+# the routine transcript of ADR 0021, singular where the count is one
 expect
-	Render.sync_screen({ synced: 22, new_activities: 2, updated_activities: 1, pruned: 0, streams_fetched: 5, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 0, stopped: "complete", resumable: False }, FromDrain(Complete), False)
-		== "synced 2 new, 1 updated (22 re-checked in the 30-day window), fetched streams for 5"
-
-# A refused LIST says so, and says it about the LIST. Full-string, because a `contains`
-# on "rate" passes on drain_note's wording too — exactly how an arm can look
-# correct while never running. `stopped` is built by the PRODUCER rather
-# than hand-typed: these are the only expects covering the new arm, so typing the literal
-# here would have checked Render against itself and passed straight through a rename.
+	Render.sync_screen({ ..Render.sync_fixture, synced: 25, new_activities: 1, streams_fetched: 1, notes_fetched: 11 }, FromDrain(Complete), { ..Render.sync_note_fixture, verdict: "→ today: form -1, down 4 from a week ago — balanced" })
+		== "synced 1 new activity, streams for 1, 11 strength descriptions; everything analyzed\n→ today: form -1, down 4 from a week ago — balanced"
 expect
-	Render.sync_screen({ synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False)
-		== "synced 0 new, 0 updated (0 re-checked in the 30-day window), fetched streams for 0 — Strava rate-limited the activity list, so it is incomplete; nothing was pruned. Run `stride sync` again in ~15 minutes"
+	Render.sync_screen({ ..Render.sync_fixture, synced: 22, new_activities: 2, updated_activities: 1, streams_fetched: 5, notes_fetched: 1, routes_fetched: 3 }, FromDrain(Complete), Render.sync_note_fixture)
+		== "synced 2 new activities, 1 updated, streams for 5, 1 strength description, routes for 3; everything analyzed"
+# a sync that brought nothing says so, and still says the history is analyzed
+expect Render.sync_screen({ ..Render.sync_fixture, synced: 3 }, FromDrain(Complete), Render.sync_note_fixture) == "synced, nothing new; everything analyzed"
+expect Render.sync_screen({ ..Render.sync_fixture, pruned: 2 }, FromDrain(Complete), Render.sync_note_fixture) == "synced 2 removed on Strava; everything analyzed"
+# no zones, nothing analyzed, and the command that sets them named
+expect Render.sync_screen({ ..Render.sync_fixture, new_activities: 2 }, FromDrain(Complete), { ..Render.sync_note_fixture, analysis: NoZones }) == "synced 2 new activities; nothing analyzed until heart-rate zones are set (`stride setup` sets them)"
+expect Render.sync_screen(Render.sync_fixture, FromDrain(Complete), { ..Render.sync_note_fixture, analysis: Unsettled }) == "synced, nothing new; scoring did not settle, a stride bug that `stride analyze` describes"
 
-# ...and it still says it with a FULL queue, which is the first-run shape the earlier
-# version got wrong: pending at its maximum, drain_note winning, and the sentence blaming
-# the drain for a list refusal.
+# A refused LIST says so, about the LIST, with the window's time. `stopped` is built by
+# the PRODUCER rather than hand-typed, so a rename on either side fails here.
 expect
-	Render.sync_screen({ synced: 100, new_activities: 100, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 100, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False)
-		== "synced 100 new, 0 updated (100 re-checked in the 30-day window), fetched streams for 0 — Strava rate-limited the activity list, so it is incomplete; nothing was pruned. Run `stride sync` again in ~15 minutes"
-
-# the prune claim comes from `pruned`, not from `stopped`. Strava.sync! returns before
-# prune on this path, so production never builds this payload — which is precisely why
-# the claim must be derived rather than asserted: Render cannot see that early return,
-# and the sentence would go silently false the day it moves. Hardcoding "nothing was
-# pruned" fails here; reading the field passes on both shapes.
+	Render.sync_screen({ ..Render.sync_fixture, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, Render.sync_note_fixture)
+		== "synced, nothing new; everything analyzed — Strava rate-limited the activity list, so it is incomplete; nothing was pruned; the next window opens at 10:45"
+# ...and with a FULL queue, the first-run shape, still blaming the list and not the drain
 expect
-	Render.sync_screen({ synced: 4, new_activities: 0, updated_activities: 0, pruned: 2, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 0, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, False)
-		== "synced 0 new, 0 updated (4 re-checked in the 30-day window) (pruned 2 removed on Strava), fetched streams for 0 — Strava rate-limited the activity list, so it is incomplete. Run `stride sync` again in ~15 minutes"
-
-# ...while a DRAIN rate limit still gets drain_note's wording, so the new arm did not
-# swallow the case it sits in front of.
+	Render.sync_screen({ ..Render.sync_fixture, synced: 100, new_activities: 100, pending_streams: 100, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, Render.sync_note_fixture)
+		== "synced 100 new activities; everything analyzed — Strava rate-limited the activity list, so it is incomplete; nothing was pruned; the next window opens at 10:45"
+# the prune claim comes from `pruned`, not from `stopped`
 expect
-	Render.sync_screen({ synced: 3, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 5, streams_skipped: 0, pending_streams: 7, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 0, stopped: "rate_limited", resumable: True }, FromDrain(RateLimited), False)
-		== "synced 0 new, 0 updated (3 re-checked in the 30-day window), fetched streams for 5 — Strava rate-limited this run — 7 to go, try again in ~15 minutes"
-
-# ...and a COMPLETE run with nothing pending still says nothing, which is the arm the
-# clause above must not have swallowed.
+	Render.sync_screen({ ..Render.sync_fixture, pruned: 2, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, Render.sync_note_fixture)
+		== "synced 2 removed on Strava; everything analyzed — Strava rate-limited the activity list, so it is incomplete; the next window opens at 10:45"
 expect
-	Render.sync_screen({ synced: 3, new_activities: 1, updated_activities: 0, pruned: 0, streams_fetched: 2, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 0, stopped: "complete", resumable: False }, FromDrain(Complete), False)
-		== "synced 1 new, 0 updated (3 re-checked in the 30-day window), fetched streams for 2"
-
-# `--all` re-listed everything, so the window clause must be absent
+	Render.sync_screen({ ..Render.sync_fixture, stopped: Drain.sync_stopped_label(ListDailyCapReached), resumable: True }, ListDailyCapReached, { ..Render.sync_note_fixture, resume: "18:00" })
+		== "synced, nothing new; everything analyzed — Strava refused the activity list with today's read allowance used up, so it is incomplete; nothing was pruned; it returns at 18:00, midnight UTC"
+# a DRAIN refusal gets drain_note's wording, owing every queue
 expect
-	Render.sync_screen({ synced: 22, new_activities: 2, updated_activities: 1, pruned: 0, streams_fetched: 5, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 0, stopped: "complete", resumable: False }, FromDrain(Complete), True)
-		== "synced 2 new, 1 updated (22 re-checked), fetched streams for 5"
-
+	Render.sync_screen({ ..Render.sync_fixture, synced: 3, streams_fetched: 2, pending_streams: 5, pending_routes: 7, stopped: "rate_limited", resumable: True }, FromDrain(RateLimited), Render.sync_note_fixture)
+		== "synced streams for 2; everything analyzed — Strava refused reads in a fresh window with 12 fetches still owed; the next window opens at 10:45"
+# a budget stop states the reason AND the streams that would not decode
 expect
-	Render.sync_screen({ synced: 3, new_activities: 0, updated_activities: 0, pruned: 2, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 0, stopped: "complete", resumable: False }, FromDrain(Complete), False)
-		== "synced 0 new, 0 updated (3 re-checked in the 30-day window) (pruned 2 removed on Strava), fetched streams for 0"
-
-# a budget stop states the reason AND supplements it with the skip count
+	Render.sync_screen({ ..Render.sync_fixture, synced: 9, streams_fetched: 12, streams_skipped: 1, pending_streams: 40, stopped: "budget_reached", resumable: True }, FromDrain(BudgetReached), Render.sync_note_fixture)
+		== "synced streams for 12 (1 stream would not decode); everything analyzed — filled Strava's read window with 40 fetches still owed; the next window opens at 10:45"
+# a COMPLETE run with skips states the fact once: drain_note owns it there
 expect
-	Render.sync_screen({ synced: 9, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 12, streams_skipped: 1, pending_streams: 40, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 0, stopped: "budget_reached", resumable: True }, FromDrain(BudgetReached), False)
-		== "synced 0 new, 0 updated (9 re-checked in the 30-day window), fetched streams for 12 (1 had unreadable stream data) — filled Strava's 15-minute read window — 40 to go, run `stride sync` again in ~15 minutes"
-
-# a COMPLETE run with skips states the fact once: drain_note owns it there, so the
-# sync line leaves it out
-expect
-	Render.sync_screen({ synced: 2, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 1, streams_skipped: 1, pending_streams: 1, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 0, stopped: "complete", resumable: True }, FromDrain(Complete), False)
-		== "synced 0 new, 0 updated (2 re-checked in the 30-day window), fetched streams for 1 — 1 had unreadable stream data — they retry next sync"
-
-# a stop in the routes drain gives its reason and remedy even with the streams queue
-# empty, and the count it owes is the routes the run still owes
-expect
-	Render.sync_screen({ synced: 3, new_activities: 1, updated_activities: 0, pruned: 0, streams_fetched: 1, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 90, routes_skipped: 0, pending_routes: 300, stopped: "budget_reached", resumable: True }, FromDrain(BudgetReached), False)
-		== "synced 1 new, 0 updated (3 re-checked in the 30-day window), fetched streams for 1, fetched 90 routes (300 still queued) — filled Strava's 15-minute read window — 300 to go, run `stride sync` again in ~15 minutes"
-
+	Render.sync_screen({ ..Render.sync_fixture, synced: 2, streams_fetched: 1, streams_skipped: 1, pending_streams: 1, resumable: True }, FromDrain(Complete), Render.sync_note_fixture)
+		== "synced streams for 1; everything analyzed — 1 had unreadable stream data and retry on the next sync"
 # the daily cap reached in the routes drain owes the queued routes, never "nothing was
 # fetched" beside the routes it did fetch
 expect
-	Render.sync_screen({ synced: 3, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 40, routes_skipped: 0, pending_routes: 300, stopped: "daily_cap_reached", resumable: True }, FromDrain(DailyCapReached), False)
-		== "synced 0 new, 0 updated (3 re-checked in the 30-day window), fetched streams for 0, fetched 40 routes (300 still queued) — used up today's Strava read allowance — 300 to go, run `stride sync` again tomorrow"
-
-# a stop before the routes drain owes every queue, and the routes still waiting say so
+	Render.sync_screen({ ..Render.sync_fixture, synced: 3, routes_fetched: 40, pending_routes: 300, stopped: "daily_cap_reached", resumable: True }, FromDrain(DailyCapReached), { ..Render.sync_note_fixture, resume: "18:00" })
+		== "synced routes for 40; everything analyzed — today's Strava read allowance is used up with 300 fetches still owed; it returns at 18:00, midnight UTC"
+# routes that would not decode are named apart from the routes fetched
 expect
-	Render.sync_screen({ synced: 3, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 2, streams_skipped: 0, pending_streams: 5, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 7, stopped: "rate_limited", resumable: True }, FromDrain(RateLimited), False)
-		== "synced 0 new, 0 updated (3 re-checked in the 30-day window), fetched streams for 2, 7 routes queued — Strava rate-limited this run — 12 to go, try again in ~15 minutes"
-
-# routes that would not decode are named apart from the routes still queued
-expect
-	Render.sync_screen({ synced: 3, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 3, routes_skipped: 2, pending_routes: 2, stopped: "complete", resumable: True }, FromDrain(Complete), False)
-		== "synced 0 new, 0 updated (3 re-checked in the 30-day window), fetched streams for 0, fetched 3 routes (2 still queued), 2 routes would not decode"
-
-# once every route is in and none arrived, the clause is gone
-expect
-	Render.sync_screen({ synced: 3, new_activities: 1, updated_activities: 0, pruned: 0, streams_fetched: 1, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 0, stopped: "complete", resumable: False }, FromDrain(Complete), False)
-		== "synced 1 new, 0 updated (3 re-checked in the 30-day window), fetched streams for 1"
+	Render.sync_screen({ ..Render.sync_fixture, synced: 3, routes_fetched: 3, routes_skipped: 2, pending_routes: 2, resumable: True }, FromDrain(Complete), Render.sync_note_fixture)
+		== "synced routes for 3 (2 routes would not decode); everything analyzed"
 
 # the events empty state is a CLOSED output — full-string equality per ADR 0012's hard
 # guard, so no verdict can ever ride into it unpinned
@@ -2986,3 +2987,14 @@ expect Render.events_screen({ projected_from: "2026-08-30", baseline_known: True
 # fixed order; a window with none adds no line
 expect Render.unprojected_tally([{ date: "2026-09-04", target_literal: "3x12:00@230W", reason: "no_ftp" }, { date: "2026-09-02", target_literal: "", reason: "no_target" }, { date: "2026-09-05", target_literal: "3x12:00@230W", reason: "no_ftp" }]) == "\n      no load: 1 no structured target, 2 no 60d best-20min power on file"
 expect Render.unprojected_tally([]) == ""
+
+# the verdict line analyze and sync both print, and none before there is form
+expect Render.today_verdict(Some(-1.2), Known(-4.0)) == "→ today: form -1, down 4 from a week ago — balanced"
+expect Render.today_verdict(None, Known(-4.0)) == ""
+expect Str.contains(Render.unsettled_note(8064), "8064 scores without settling")
+
+# the waiting transcript of ADR 0021, line by line
+expect Render.step_line("activity list", Render.list_result({ checked: 412, new: 412, updated: 0 })) == "activity list       412 checked, 412 new"
+expect Render.progress_bar("scoring", 412, 412) == "scoring             [██████████] 412/412"
+expect Render.progress_bar("streams", 90, 412) == "streams             [██░░░░░░░░]  90/412"
+expect Render.progress_bar("scoring", 90, 90) == "scoring             [██████████] 90/90"

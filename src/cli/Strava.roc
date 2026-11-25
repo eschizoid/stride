@@ -8,6 +8,8 @@ import pf.Cmd
 import pf.Env
 import pf.OsStr
 import pf.Path
+import pf.Sleep
+import pf.Signal
 import http.Request
 import http.Method
 import http.Response
@@ -212,9 +214,6 @@ Strava :: [].{
 		)?
 		ok_body(resp)
 	}
-	get_bearer! : Str, Str => Try(List(U8), _)
-	get_bearer! = |uri, token|
-		ok_body(send_bearer!(uri, token)?)
 
 	ok_body : Response -> Try(List(U8), _)
 	ok_body = |resp|
@@ -242,6 +241,8 @@ Strava :: [].{
 		device_watts : Try(Bool, [Missing]),
 		average_heartrate : Try(F64, [Missing]),
 		weighted_average_watts : Try(F64, [Missing]),
+		# the session's highest heart rate, from which setup proposes zones
+		max_heartrate : Try(F64, [Missing]),
 	}
 
 	opt_real : Try(F64, [Missing]) -> [Real(F64), Null]
@@ -251,12 +252,40 @@ Strava :: [].{
 			Err(_) => Null
 
 		}
+	# What one sync run did, the `sync` payload. ANNOTATED and closed: the human
+	# screen is a pure function over this record, and without the annotation a new
+	# key would compile clean and ship undeclared in schemas/v3/sync.json (ADR 0000
+	# s9c). `synced` is rows re-listed; `resumable` is whether anything is still
+	# owed, re-measured from the database; `resume_at` is when a caller can
+	# continue (ISO-8601 UTC, "" when nothing is owed or nothing waits on a time);
+	# `analyzed` is whether analyze reached its fixed point after the last batch.
+	SyncPayload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, routes_fetched : I64, routes_skipped : I64, pending_routes : I64, stopped : Str, resumable : Bool, resume_at : Str, analyzed : Bool, computed : U64 }
+
+	# what analyze reported after the last batch, as Analyze.settle! returns it
+	Settled : { analysis : [Settled, NoZones, Unsettled], computed : U64, verdict : Str }
+
+	# a run's result: the payload, the tag it was built from (bound once, so the
+	# payload's string and the screen's tag describe the same run), the epoch
+	# second it can continue at (0 for none), and analyze's report
+	SyncResult : { payload : SyncPayload, stop : Drain.SyncStop, resume_epoch : I64, settled : Settled }
+
+	# what the drains stored and skipped, summed over a run's rounds
+	Tally : { streams : I64, streams_skipped : I64, notes : I64, notes_skipped : I64, routes : I64, routes_skipped : I64 }
+
+	no_tally : Tally
+	no_tally = { streams: 0, streams_skipped: 0, notes: 0, notes_skipped: 0, routes: 0, routes_skipped: 0 }
+
+	ListCounts : { relisted : U64, new_n : U64, updated_n : U64 }
+
 	# `all` forces a full re-list: the watermark is ignored, every activity is re-listed
 	# and the prune is unbounded, so a deletion in old history propagates. That is the one
 	# thing an incremental run can never see, and the only reason the flag exists — mostly
 	# a dev-mode start-from-scratch (#232).
-	sync! : Bool => Try({}, _)
-	sync! = |all| {
+	#
+	# `settle!` is analyze as sync runs it (Analyze.settle!), passed in because
+	# analyze sits a layer above this module.
+	sync! : Bool, (Str => Try(Settled, _)) => Try({}, _)
+	sync! = |all, settle!| {
 		path = Db.open_db!({})?
 		match get_valid_token!(path) {
 			Err(NotAuthed) =>
@@ -264,159 +293,288 @@ Strava :: [].{
 
 			Err(other) => Err(other)
 			Ok(token) => {
-				started = Db.now_secs!({})
-				# Incremental with a rolling 30-day overlap so recent edits on Strava
-				# self-heal. `--all` is the full re-pull when one is wanted.
-				#
-				# THREE outcomes, not two. Absent means never synced and a full pull is
-				# right. A db read error propagates rather than silently burning the rate
-				# budget. Collapsing Unreadable into the first would make a bad value
-				# force a full re-pull every run -- conservative, and therefore
-				# invisible forever (#208). arg_i64 rather than I64.from_str, so the
-				# shape accepted here matches what `config set` enforces.
-				after_epoch =
-					if all {
-						# --all: behave exactly as a never-synced install does. No special
-						# path, so the full-pull case stays the one that is exercised on
-						# every fresh install rather than a rarely-run branch of its own.
-						None
-					} else
-						match Db.config_opt!(path, "last_sync_epoch")? {
-							NotFound => None
-							Found(epoch_str) =>
-								match Metrics.arg_i64(epoch_str) {
-									Ok(e) => Some((e - 2592000).max(0))
-									Err(_) => return Err(UnreadableConfig("last_sync_epoch", epoch_str))
-								}
-						}
-				after_param =
-					match after_epoch {
-						Some(a) => "&after=${I64.to_str(a)}"
-						None => ""
-					}
-				# window_start bounds the prune to rows solidly inside the window Strava
-				# re-listed this run. It is the `after` epoch PLUS a one-day margin, rendered
-				# by epoch_to_iso to `YYYY-MM-DDTHH:MM:SSZ` (UTC) and compared lexically to
-				# activities.start_local (Strava's LOCAL start_date_local). The margin is the
-				# fix for that UTC-vs-local mismatch: without it, timezone skew (up to ~14h) at
-				# the boundary could mark an activity that is merely just OUTSIDE Strava's
-				# `after` window — still present upstream, only older — as a deletion and prune
-				# it. A full day exceeds any offset, so only rows definitely in the response are
-				# eligible. A deletion in that one-day sliver at the far edge is caught by the
-				# next `sync --all` (full pull), which prunes all unseen ("" window_start). NULL
-				# synced_at rows (imports, pre-migration) are exempt regardless of the window.
-				window_start =
-					match after_epoch {
-						Some(a) => Metrics.epoch_to_iso(a + 86400)
-						None => ""
-					}
-				# BEFORE the first request: a run that STARTS with the day's allowance spent has
-				# nothing it can do and costs nothing to find out — same stop, same remedy as one
-				# that spends its last read. (The LIST can still push the counter past the cap
-				# mid-run, and the drain then spends exactly one wasted stream read before
-				# `decide` stops it — one read is not worth a branch.)
-				# `pending_streams!` rather than 0, so `resumable` and the queue count stay true:
-				# the work is outstanding, it just cannot be done today.
-				if day_spent!(path)? {
-					pend0 = pending_streams!(path)?
-					pendn0 = pending_notes!(path)?
-					pendr0 = pending_routes!(path)?
-					cap_stop = FromDrain(DailyCapReached)
-					cap_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, routes_fetched : I64, routes_skipped : I64, pending_routes : I64, stopped : Str, resumable : Bool }
-					cap_payload = { synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pend0, notes_fetched: 0, notes_skipped: 0, pending_notes: pendn0, routes_fetched: 0, routes_skipped: 0, pending_routes: pendr0, stopped: Drain.sync_stopped_label(cap_stop), resumable: True }
-					Output.out!(cap_payload, |p| Render.sync_screen(p, cap_stop, all))
+				waits = !(Output.json_mode!({}))
+				r = interruptible!(waits, |{}| sync_run!(path, token, all, settle!, waits))?
+				note = sync_note!(path, r)
+				Output.out!(r.payload, |p| Render.sync_screen(p, r.stop, note))
+			}
+		}
+	}
+
+	# A human run waits for Strava's next read window, so Ctrl-C has to stop it
+	# cleanly: catching the interrupt makes the sleep and any request in flight
+	# return Interrupted, and every fetch before it is already stored, so the
+	# next run resumes from there. A caught interrupt keeps every blocking effect
+	# returning Interrupted until it is acknowledged, so it is polled before the
+	# closing line is written. 130 is the status a shell gives an interrupted
+	# command.
+	interruptible! : Bool, ({} => Try(a, _)) => Try(a, _)
+	interruptible! = |waits, run!| {
+		_ = if waits {
+			match Signal.catch!([Interrupt]) {
+				Ok(_) => {}
+				Err(_) => {}
+			}
+		} else {
+			{}
+		}
+		match run!({}) {
+			Err(Interrupted) => {
+				_ = Signal.poll!()
+				_ = Output.narrate_done!({})
+				_ = Output.say!("sync stopped — every fetch so far is stored, and the next `stride sync` resumes from there")
+				Err(Exit(130))
+			}
+			other => other
+		}
+	}
+
+	# the screen's note: the local time the run continues, and how analyze ended
+	sync_note! : Str, SyncResult => Render.SyncNote
+	sync_note! = |path, r| {
+		resume = if (r.resume_epoch == 0) "" else Render.local_time(r.resume_epoch, Db.time_mode_offset(Db.resolve_time_mode!(path)), Db.now_secs!({}))
+		{ resume, analysis: r.settled.analysis, verdict: r.settled.verdict }
+	}
+
+	# One sync, to its end. The list first: every page of the activity list before any
+	# stream, so a first sync's summaries are listed and scored in its first window.
+	# Then rounds of streams, descriptions and routes, one read window each, with
+	# analyze run after each round. A human run (`waits`) waits for the next window
+	# between rounds; a `--json` run does one round and names the time the next window
+	# opens.
+	sync_run! : Str, Str, Bool, (Str => Try(Settled, _)), Bool => Try(SyncResult, _)
+	sync_run! = |path, token, all, settle!, waits|
+		match list_phase!(path, token, all, waits)? {
+			# a run that STARTS with the day's allowance spent made no request, so it
+			# is resumable regardless of the queue: it has not looked
+			DaySpent => {
+				settled = settle!(path)?
+				finish!(path, { stop: FromDrain(DailyCapReached), counts: { relisted: 0, new_n: 0, updated_n: 0 }, pruned: 0, tally: no_tally, settled, owed_anyway: True })
+			}
+			# what is owed after a refused list is the LISTING, so the run is resumable
+			# whatever the queue says
+			Refused(r) => {
+				settled = settle!(path)?
+				finish!(path, { stop: r.stop, counts: r.counts, pruned: 0, tally: no_tally, settled, owed_anyway: True })
+			}
+			Listed(l) => {
+				owed = pending_streams!(path)? + pending_notes!(path)? + pending_routes!(path)?
+				_ = if Drain.score_first(owed, (read_limits!({})).reads_per_window - l.window0) {
+					_ = settle!(path)?
+					{}
 				} else {
-					counts = fetch_pages!(path, token, after_param, started, 1, { relisted: 0, new_n: 0, updated_n: 0, rate_limited: False })?
-					# A rate-limited list stops the run HERE, before pruning and before the
-					# drain (#235). Three reasons, and the first is the one that matters:
-					#
-					#   • PRUNE. prune_deleted! removes what the listing did not re-list, so
-					#     running it against a PARTIAL list would delete activities that exist
-					#     and simply were not reached. That is destructive and unrecoverable
-					#     from the mirror side; everything else here is merely wasted.
-					#   • the watermark. last_sync_epoch must not advance on a partial list, or
-					#     the next run starts after activities it never saw.
-					#   • the drain. It reads from the same budget that just refused us, so it
-					#     would spend the run's remaining requests failing.
-					#
-					# The pages already upserted are kept — upsert_all! ran per page — and are
-					# reported below, so the caller sees what landed rather than nothing.
-					if counts.rate_limited {
-						# `resumable: True` unconditionally, and that is a DEPARTURE from the rule
-						# stated below — "resumable is pending_streams > 0, measured from the queue".
-						# Two of the three exit arms depart from it: this one and the daily-cap arm
-						# above. Only the third measures.
-						#
-						# Here the thing left undone is the LIST, not the queue: a run refused on
-						# page one has zero pending streams and absolutely must be repeated. The
-						# field's definition widens to "something is still owed", and the queue is
-						# only one of the things that can owe it.
-						pending = pending_streams!(path)?
-						pending_n = pending_notes!(path)?
-						pending_r = pending_routes!(path)?
-						# BOUND once, then used twice: the payload's string and the screen's tag must
-						# describe the same run, and writing the tag at both spots made that a
-						# coincidence. (Above the annotation — Roc reads a separated annotation as a
-						# declaration with no value.)
-						# WHICH limit refused the list? The drain's 429 arm asks; the list's did not, so
-						# "~15 minutes" survived on the other endpoint that can 429 (#246's defect, one
-						# endpoint over). Its own tag, because both facts are load-bearing: the listing
-						# is incomplete (rows are missing) AND the remedy is tomorrow. A tag carrying
-						# one of them forces Render to guess the other from `pending_streams`, which is
-						# what this type was introduced to stop.
-						rl_stop = if (day_spent!(path)?) ListDailyCapReached else ListRateLimited
-						rl_payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, routes_fetched : I64, routes_skipped : I64, pending_routes : I64, stopped : Str, resumable : Bool }
-						rl_payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: pending, notes_fetched: 0, notes_skipped: 0, pending_notes: pending_n, routes_fetched: 0, routes_skipped: 0, pending_routes: pending_r, stopped: Drain.sync_stopped_label(rl_stop), resumable: True }
-						Output.out!(rl_payload, |p| Render.sync_screen(p, rl_stop, all))
-					} else {
-						pruned = prune_deleted!(path, started, window_start)?
-						Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
-						pull = drain_missing!(path, token, Streams, all, 0)?
-						# notes drain only after a COMPLETE streams drain: both draw on the
-						# one read budget, and a run that stopped on it would spend its
-						# refusal a second time. The queue is still measured, so resumable
-						# and pending_notes stay true while the work waits its turn.
-						notes =
-							match pull.stopped {
-								Complete => drain_missing!(path, token, Notes, all, pull.window)?
-								_ => { stored: 0, skipped: 0, pending: pending_notes!(path)?, stopped: pull.stopped, window: pull.window }
-							}
-						# routes drain last, under the same rule one step on: only after a
-						# COMPLETE notes drain, with the queue measured either way
-						routes =
-							match notes.stopped {
-								Complete => drain_missing!(path, token, Routes, all, notes.window)?
-								_ => { stored: 0, skipped: 0, pending: pending_routes!(path)?, stopped: notes.stopped, window: notes.window }
-							}
-						# `synced` keeps its meaning (rows re-listed) so existing consumers are
-						# untouched; new/updated/streams_skipped are ADDITIVE (#112, #224). `stopped` and
-						# `resumable` moved here from the retired `backfill` (#232): "should I run it
-						# again?" must be answerable without parsing prose. `resumable` is
-						# `pending_streams > 0`, re-measured from the database in EVERY arm — a hardcoded
-						# 0 is a way to silently zero an absence.
-						#
-						# ANNOTATED, and closed on purpose: the renderer below is an inline closure,
-						# which infers an OPEN record — without this line a new payload key compiles
-						# clean and ships undeclared in schemas/v3/sync.json (ADR 0000 s9c).
-						# BOUND once — see the note at the rate-limited payload above.
-						# the run's terminal reason is whichever drain stopped it: a drain
-						# that never ran inherits the stop of the one before it, so the
-						# routes arm holds the LAST stop either way
-						stop = FromDrain(routes.stopped)
-						payload : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, routes_fetched : I64, routes_skipped : I64, pending_routes : I64, stopped : Str, resumable : Bool }
-						payload = { synced: counts.relisted, new_activities: counts.new_n, updated_activities: counts.updated_n, pruned, streams_fetched: pull.stored, streams_skipped: pull.skipped, pending_streams: pull.pending, notes_fetched: notes.stored, notes_skipped: notes.skipped, pending_notes: notes.pending, routes_fetched: routes.stored, routes_skipped: routes.skipped, pending_routes: routes.pending, stopped: Drain.sync_stopped_label(stop), resumable: pull.pending > 0 or notes.pending > 0 or routes.pending > 0 }
-						Output.out!(payload, |p| Render.sync_screen(p, stop, all))
-					}
+					{}
+				}
+				done = rounds!(path, token, all, settle!, waits, { window: l.window0, after_wait: False, tally: no_tally })?
+				finish!(path, { stop: FromDrain(done.stop), counts: l.counts, pruned: l.pruned, tally: done.tally, settled: done.settled, owed_anyway: False })
+			}
+		}
+
+	# The activity list, the first step of every sync and setup's `activities` step:
+	# every page, then the prune of what Strava no longer lists and the watermark.
+	# `window0` is the reads the list spent in the window the drain starts in.
+	ListPhase : [DaySpent, Refused({ counts : ListCounts, stop : Drain.SyncStop }), Listed({ counts : ListCounts, pruned : U64, window0 : I64 })]
+
+	list_phase! : Str, Str, Bool, Bool => Try(ListPhase, _)
+	list_phase! = |path, token, all, waits| {
+		started = Db.now_secs!({})
+		# Incremental with a rolling 30-day overlap so recent edits on Strava
+		# self-heal. `--all` is the full re-pull when one is wanted.
+		#
+		# THREE outcomes, not two. Absent means never synced and a full pull is
+		# right. A db read error propagates rather than silently burning the rate
+		# budget. Collapsing Unreadable into the first would make a bad value
+		# force a full re-pull every run, conservative and therefore invisible.
+		# arg_i64 rather than I64.from_str, so the shape accepted here matches
+		# what `config set` enforces.
+		after_epoch =
+			if all {
+				# --all: behave exactly as a never-synced install does, so the full-pull
+				# case stays the one exercised on every fresh install
+				None
+			} else
+				match Db.config_opt!(path, "last_sync_epoch")? {
+					NotFound => None
+					Found(epoch_str) =>
+						match Metrics.arg_i64(epoch_str) {
+							Ok(e) => Some((e - 2592000).max(0))
+							Err(_) => return Err(UnreadableConfig("last_sync_epoch", epoch_str))
+						}
+				}
+		after_param =
+			match after_epoch {
+				Some(a) => "&after=${I64.to_str(a)}"
+				None => ""
+			}
+		# window_start bounds the prune to rows solidly inside the window Strava
+		# re-listed this run: the `after` epoch PLUS a one-day margin, rendered by
+		# epoch_to_iso as UTC and compared lexically to activities.start_local
+		# (Strava's LOCAL start_date_local). A full day exceeds any timezone offset,
+		# so an activity merely just outside Strava's `after` window — still present
+		# upstream, only older — is never pruned as a deletion. A deletion in that
+		# one-day sliver is caught by the next `sync --all`, which prunes all unseen
+		# ("" window_start). NULL synced_at rows (imports) are exempt regardless.
+		window_start =
+			match after_epoch {
+				Some(a) => Metrics.epoch_to_iso(a + 86400)
+				None => ""
+			}
+		# BEFORE the first request: a run that STARTS with the day's allowance spent has
+		# nothing it can do and costs nothing to find out
+		if day_spent!(path)? {
+			Ok(DaySpent)
+		} else {
+			listed = list_all!(path, token, after_param, started, waits, { relisted: 0, new_n: 0, updated_n: 0, rate_limited: False, page: 1, reads: 0, usage: Unreported }, False)?
+			counts = { relisted: listed.relisted, new_n: listed.new_n, updated_n: listed.updated_n }
+			match listed.stop {
+				# A refused list stops the run HERE, before pruning and before the drain
+				# (#235). PRUNE removes what the listing did not re-list, so running it on a
+				# partial list would delete activities that exist and were simply not
+				# reached; the watermark must not advance past activities the run never
+				# saw; and the drain would spend a refused budget. The pages already
+				# upserted are kept and reported.
+				Refused(stop) => Ok(Refused({ counts, stop }))
+				Listed => {
+					pruned = prune_deleted!(path, started, window_start)?
+					Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
+					Ok(Listed({ counts, pruned, window0: (Drain.floor_counts({ window: listed.reads, today: 0 }, listed.usage)).window }))
 				}
 			}
 		}
 	}
+
+	# The payload, with every queue re-measured from the database: a hardcoded 0 is a
+	# way to silently zero an absence.
+	finish! : Str, { stop : Drain.SyncStop, counts : ListCounts, pruned : U64, tally : Tally, settled : Settled, owed_anyway : Bool } => Try(SyncResult, _)
+	finish! = |path, f| {
+		ps = pending_streams!(path)?
+		pn = pending_notes!(path)?
+		pr = pending_routes!(path)?
+		resumable : Bool
+		resumable = f.owed_anyway or ps > 0 or pn > 0 or pr > 0
+		resume_epoch = Drain.resume_epoch(f.stop, resumable, Db.now_secs!({}), window_secs!({}))
+		analyzed : Bool
+		analyzed = f.settled.analysis == Settled
+		payload : SyncPayload
+		payload = {
+			synced: f.counts.relisted,
+			new_activities: f.counts.new_n,
+			updated_activities: f.counts.updated_n,
+			pruned: f.pruned,
+			streams_fetched: f.tally.streams,
+			streams_skipped: f.tally.streams_skipped,
+			pending_streams: ps,
+			notes_fetched: f.tally.notes,
+			notes_skipped: f.tally.notes_skipped,
+			pending_notes: pn,
+			routes_fetched: f.tally.routes,
+			routes_skipped: f.tally.routes_skipped,
+			pending_routes: pr,
+			stopped: Drain.sync_stopped_label(f.stop),
+			resumable,
+			resume_at: if (resume_epoch == 0) "" else Metrics.epoch_to_iso(resume_epoch),
+			analyzed,
+			computed: f.settled.computed,
+		}
+		Ok({ payload, stop: f.stop, resume_epoch, settled: f.settled })
+	}
+
+	# One read window's worth of fetches, then analyze, then either the next window
+	# (a human run) or the end. Descriptions drain only after a COMPLETE streams
+	# drain, and routes after complete descriptions: all three draw on one read
+	# window, and a drain that stopped on it would spend its refusal a second time.
+	# The run's stop is whichever drain stopped it: a drain that never ran inherits
+	# the stop of the one before it.
+	rounds! : Str, Str, Bool, (Str => Try(Settled, _)), Bool, { window : I64, after_wait : Bool, tally : Tally } => Try({ stop : Drain.StopReason, tally : Tally, settled : Settled }, _)
+	rounds! = |path, token, all, settle!, waits, r| {
+		t = r.tally
+		pull = drain_missing!(path, token, Streams, all, r.window, (t.streams + t.streams_skipped).to_u64_wrap())?
+		notes =
+			match pull.stopped {
+				Complete => drain_missing!(path, token, Notes, all, pull.window, (t.notes + t.notes_skipped).to_u64_wrap())?
+				_ => { stored: 0, skipped: 0, stopped: pull.stopped, window: pull.window }
+			}
+		routes =
+			match notes.stopped {
+				Complete => drain_missing!(path, token, Routes, all, notes.window, (t.routes + t.routes_skipped).to_u64_wrap())?
+				_ => { stored: 0, skipped: 0, stopped: notes.stopped, window: notes.window }
+			}
+		tally = {
+			streams: t.streams + pull.stored,
+			streams_skipped: t.streams_skipped + pull.skipped,
+			notes: t.notes + notes.stored,
+			notes_skipped: t.notes_skipped + notes.skipped,
+			routes: t.routes + routes.stored,
+			routes_skipped: t.routes_skipped + routes.skipped,
+		}
+		settled = settle!(path)?
+		progressed = pull.stored + pull.skipped + notes.stored + notes.skipped + routes.stored + routes.skipped > 0
+		owed = pending_streams!(path)? + pending_notes!(path)? + pending_routes!(path)? > 0
+		match Drain.after_round({ stop: FromDrain(routes.stopped), owed, progressed, after_wait: r.after_wait, waits }) {
+			Finish => Ok({ stop: routes.stopped, tally, settled })
+			Wait => {
+				wait_for_window!(path)?
+				rounds!(path, token, all, settle!, waits, { window: 0, after_wait: True, tally })
+			}
+		}
+	}
+
+	# Wait for the next read window: a spinner beside the local time the next batch
+	# starts and the time left, redrawn about once a second, replaced by its result
+	# when the window opens.
+	wait_for_window! : Str => Try({}, _)
+	wait_for_window! = |path| {
+		now = Db.now_secs!({})
+		until = Drain.next_window_at(now, window_secs!({}))
+		at = Render.local_time(until, Db.time_mode_offset(Db.resolve_time_mode!(path)), now)
+		wait_ticks!(until, at, 0)?
+		Output.step_done!("waiting for Strava", "next batch started at ${at}")
+	}
+
+	wait_ticks! : I64, Str, U64 => Try({}, _)
+	wait_ticks! = |until, at, tick| {
+		left_ms = until * 1000 - Db.now_millis!({})
+		if left_ms <= 0 {
+			Ok({})
+		} else {
+			Output.wait_frame!({ tick, at, left: (left_ms + 999) // 1000 })?
+			Sleep.millis!((left_ms.min(1000)).to_u64_wrap())?
+			wait_ticks!(until, at, tick + 1)
+		}
+	}
+
+	# The whole activity list, behind a spinner that turns once per page. A human
+	# run refused by the window waits for the next one and asks for the refused page
+	# again; the pages already listed are kept, so nothing is listed twice.
+	list_all! : Str, Str, Str, I64, Bool, PageAcc, Bool => Try({ relisted : U64, new_n : U64, updated_n : U64, reads : I64, usage : Drain.Usage, stop : [Listed, Refused(Drain.SyncStop)] }, _)
+	list_all! = |path, token, after_param, stamp, waits, acc, after_wait| {
+		got = fetch_pages!(path, token, after_param, stamp, acc)?
+		result = Render.list_result({ checked: got.relisted, new: got.new_n, updated: got.updated_n })
+		out = |stop| { relisted: got.relisted, new_n: got.new_n, updated_n: got.updated_n, reads: got.reads, usage: got.usage, stop }
+		if !(got.rate_limited) {
+			Output.step_done!("activity list", result)?
+			Ok(out(Listed))
+		} else {
+			# WHICH limit refused the list: the day's allowance spent means its
+			# remedy is midnight UTC, and its own tag says both facts at once
+			stop = if (day_spent!(path)?) ListDailyCapReached else ListRateLimited
+			Output.step_done!("activity list", "${result} so far, refused by Strava")?
+			match Drain.after_round({ stop, owed: True, progressed: got.relisted > acc.relisted, after_wait, waits }) {
+				Finish => Ok(out(Refused(stop)))
+				Wait => {
+					wait_for_window!(path)?
+					list_all!(path, token, after_param, stamp, waits, { ..got, rate_limited: False, reads: 0, usage: Unreported }, True)
+				}
+			}
+		}
+	}
+
 	# close the bar before anything else prints, or the line lands on the bar's row.
 	# Swallows its own failure, same policy as the boundary reporter: a failed stderr
 	# write must not convert a successful arm into an error envelope.
 	bar_done! : DrainState => {}
 	bar_done! = |st|
-		if st.total > 0 {
+		if st.opened {
 			match Output.narrate_done!({}) {
 				Ok(_) => {}
 				Err(_) => {}
@@ -425,21 +583,21 @@ Strava :: [].{
 			{}
 		}
 
-	# ONE stream loop for the whole engine (#232). Separate loops — a capped unpaced
-	# one for `sync`, a paced one for `backfill` — drift, and every rate-limit
-	# inconsistency lives in that drift. No per-run cap: `sync` drains what is
-	# missing, paced against Strava's limits, and stops on the read budget with
-	# `resumable: true`. Steady state is a handful of reads; `stride import` and a
-	# deleted streams table both walk into a full drain, one run per 15-minute
-	# window until the queue empties.
+	# ONE stream loop for the whole engine (#232). Separate loops drift, and every
+	# rate-limit inconsistency lives in that drift. No per-run cap: one drain walks
+	# its queue until the read window fills, and sync! decides whether the run waits
+	# for the next window or ends there.
 	#
 	# fetch time/HR/watts/altitude/distance streams for the activities
 	# stream_queue_where selects; pacing bounds the run (see read_limits!). altitude
 	# + distance are requested EXPLICITLY — they feed grade-adjusted pace / NGP (ADR
 	# 0003). To force a re-pull, DELETE FROM streams (mirror tier) and let the next
 	# sync refetch.
-	drain_missing! : Str, Str, DrainKind, Bool, I64 => Try(DrainOutcome, _)
-	drain_missing! = |path, token, kind, all, window0| {
+	#
+	# `base` is how many of this kind earlier rounds of the run already retired, so
+	# the bar counts the whole run rather than restarting each window.
+	drain_missing! : Str, Str, DrainKind, Bool, I64, U64 => Try(DrainOutcome, _)
+	drain_missing! = |path, token, kind, all, window0, base| {
 		ids =
 			match kind {
 				# Fewest failed fetches first, then newest first. The queue is walked
@@ -520,29 +678,11 @@ Strava :: [].{
 						rows: Sql.i64("id"),
 					})?
 			}
-		total = List.len(ids)
-		# No `total == 0` short-circuit. One existed, returning a hardcoded `pending: 0`
-		# that was right only because this query's WHERE clause is character-identical to
-		# `pending_streams!`'s — an invariant nothing pinned, whose explaining comment was
-		# deleted along with the command that carried it. Falling through to the `[]` arm
-		# MEASURES pending instead of asserting it, and `bar_done!` is a no-op at total 0,
-		# so the branch bought nothing but a way to silently zero an absence.
-		_ = if total > 0 {
-			# ORDER MATTERS. Say the sentence FIRST, then open the bar. narrate! writes a
-			# bar frame with no trailing newline, so a say! after it lands on the bar's row
-			# — and since the next frame's \r rewrites only the frame's own width, the tail
-			# of a message longer than the bar stays welded to the right of it
-			# for the whole drain. That is the failure bar_done!'s comment names, and it
-			# shipped because nothing asserts on stderr framing.
-			_ =
-				match kind {
-					Streams => Output.say!("draining ${U64.to_str(total)} activities' streams — Strava caps reads per 15-minute window, so a large first pull takes several runs; every stream stored is kept")?
-					Notes => Output.say!("fetching ${U64.to_str(total)} strength sessions' descriptions — the pasted set breakdown lives there; same read budget as the streams")?
-					Routes => Output.say!("fetching ${U64.to_str(total)} activities' GPS routes — on what the streams and descriptions left of the read window; a session with no GPS is asked once")?
-				}
-			# an immediate 0/total frame BEFORE the first request: narrating only after a
-			# response returns shows nothing for exactly as long as a stall lasts
-			Output.narrate!(drain_label(kind), 0, total)?
+		total = base + List.len(ids)
+		# an immediate frame BEFORE the first request: narrating only after a response
+		# returns shows nothing for exactly as long as a stall lasts
+		_ = if List.len(ids) > 0 {
+			Output.narrate!(drain_label(kind), base, total)?
 		} else {
 			{}
 		}
@@ -552,15 +692,17 @@ Strava :: [].{
 		# it needs no scheduled job.
 		day0 = Db.utc_today_days!({})
 		today0 = reads_today!(path, day0)?
-		match drain_queue!(path, token, kind, ids, { window: window0, day: day0, today: today0, stored: 0, skipped: 0, total, refreshes: 0 }) {
+		wsecs = window_secs!({})
+		match drain_queue!(path, token, kind, ids, { window: window0, widx: Drain.window_index(Db.now_secs!({}), wsecs), wsecs, day: day0, today: today0, stored: 0, skipped: 0, total, opened: List.len(ids) > 0, refreshes: 0 }) {
 			Ok(o) => Ok(o)
+			# an interrupt is not a failure to report: the caller says what it means
+			Err(Interrupted) => Err(Interrupted)
 			Err(e) => {
-				# ONE place covering every propagating `?` in the drain — the token refresh, the
-				# terminal pending read and the narration calls were all uncovered, and
-				# the refresh is the realistic one: the mid-run network call on a long drain.
-				# Nothing here uses `?`: this runs on the way out of a failure already being
-				# reported, so a broken stderr must not replace that error with its own.
-				_ = say_partial_stored!(total)
+				# ONE place covering every propagating `?` in the drain — the token refresh
+				# and the narration calls, the refresh being the realistic one on a long
+				# drain. Nothing here uses `?`: this runs on the way out of a failure
+				# already being reported, so a broken stderr must not replace that error.
+				_ = say_partial_stored!(List.len(ids))
 				Err(e)
 			}
 		}
@@ -569,9 +711,9 @@ Strava :: [].{
 	drain_label : DrainKind -> Str
 	drain_label = |kind|
 		match kind {
-			Streams => "fetching streams"
-			Notes => "fetching descriptions"
-			Routes => "fetching routes"
+			Streams => "streams"
+			Notes => "descriptions"
+			Routes => "routes"
 		}
 
 	# what a skip line calls the body that would not decode, so a stream and a route
@@ -582,14 +724,6 @@ Strava :: [].{
 			Streams => "stream data"
 			Notes => "description"
 			Routes => "route data"
-		}
-
-	pending_for! : Str, DrainKind => Try(I64, _)
-	pending_for! = |path, kind|
-		match kind {
-			Streams => pending_streams!(path)
-			Notes => pending_notes!(path)
-			Routes => pending_routes!(path)
 		}
 
 	store_response! : Str, DrainKind, I64, Response.Response => Try([Stored, Skipped, SkippedFinal(I64)], _)
@@ -964,17 +1098,18 @@ Strava :: [].{
 		})
 	}
 
-	# ── read pacing (Strava's limits, counted by us) ─────────────────────
-	# Pacing counts OUR OWN reads BY CHOICE, never depending on rate-limit headers:
-	# 100 reads per 15 minutes, 1000 per day; a run fills one window and stops, and
-	# 429 is a backstop for when the counts disagree, not the mechanism.
+	# ── read pacing (Strava's limits) ────────────────────────────────────
+	# 100 reads per 15-minute window, 1000 per UTC day. The engine counts its own
+	# reads and paces by the larger of that count and what Strava's
+	# X-ReadRateLimit-Usage header reports (Drain.decide); a 429 is a backstop
+	# for when both under-count, not the mechanism.
 	# ── test seams, same species as STRIDE_API_BASE ─────────────────────
 	# Without these, reaching the budget stops honestly costs a full window (95) —
-	# and the daily cap a full day (1000) — of real HTTP reads, so a transposed
-	# counter in a terminal arm cannot be caught.
-	# An override may only LOWER a limit, never raise it: a raised cap lets a typo
-	# hammer the API and get the athlete's own API app suspended. Lowering is all a
-	# test needs, so the useful direction is the safe one.
+	# and the daily cap a full day (1000) — of real HTTP reads, and the wait a
+	# real quarter-hour, so a transposed counter in a terminal arm cannot be caught.
+	# An override may only LOWER a limit or SHORTEN the window, never raise either:
+	# a raised cap lets a typo hammer the API and get the athlete's own API app
+	# suspended. Lowering is all a test needs, so the useful direction is the safe one.
 	env_i64! : Str, I64 => I64
 	env_i64! = |name, fallback|
 		match Env.var_str!(OsStr.from_str(name)) {
@@ -1109,25 +1244,21 @@ Strava :: [].{
 
 	read_limits! : {} => Drain.Limits
 	read_limits! = |{}| {
-		# stop before Strava's 100-reads-per-15-minutes window fills. There is no second
-		# per-run budget: `window` is never reset inside a run, so a larger one could
-		# never fire. The day gets no margin because it counts the list read directly
-		# (#246). "Respected by arithmetic" assumes ten runs a day and enforces
-		# nothing.
-		#
-		# The 5-read margin does NOT reliably absorb the list read.
-		# `window` only advances in the drain's Store arm —
-		# fetch_pages! never touches it, and neither do the 401/429 charges — so a first
-		# run on a 2,000-activity history issues 20 list pages plus 95 stream reads inside
-		# one window, against Strava's 100. That is C-1's shape one limit over: a counter
-		# counting a strict subset of what the limit counts. It degrades gracefully, since
-		# the 429 that follows really is a window refusal and ~15 minutes really is the
-		# remedy, so it is a follow-up rather than part of #246.
+		# stop before Strava's 100-reads-per-15-minutes window fills; the margin
+		# absorbs a read or two another app makes between the engine's. The list's
+		# reads count into the window the drain starts in. The day gets no margin
+		# because every read, the list's included, is counted against it.
 		reads_per_window: env_i64!("STRIDE_READS_PER_WINDOW", 95),
 		# Strava's documented daily read cap. Overridable for the same reason the window
 		# is: the e2e suite drives this arm at a limit small enough to reach in a fixture.
 		reads_per_day: env_i64!("STRIDE_READS_PER_DAY", 1000),
 	}
+
+	# the read window's length in seconds; STRIDE_WINDOW_SECONDS can only shorten
+	# it, which shortens the wait with it, so the e2e drivers can cross several
+	# windows in seconds
+	window_secs! : {} => I64
+	window_secs! = |{}| env_i64!("STRIDE_WINDOW_SECONDS", Drain.window_secs_default)
 
 	send_bearer! = |uri, token|
 		Http.send!(
@@ -1162,30 +1293,26 @@ Strava :: [].{
 			text = Str.from_utf8(Response.body(resp)).ok_or("<non-utf8 body>")
 			Err(HttpStatus(Response.status(resp), text))
 		}
-	# Per-run drain state: `window` = reads this run against the 15-minute cap, carried
-	# from one drain into the next so the streams, notes and routes drains share one
-	# window (a run does not span windows); `stored`/`skipped` = what the reads produced.
-	# `window` and `stored` are deliberately different: pacing is about READS (a 404
-	# spends a read and stores a marker) while the payload reports WORK — publishing
-	# `window` as `streams_fetched` reported rows that do not exist. `total` is the
-	# queue length at start, for a real progress bar; nothing decrements it.
+	# Per-drain state. `window` = reads spent in the current read window, carried
+	# from one drain into the next so the streams, notes and routes drains of a
+	# round share one window; `widx` is that window's index (Drain.window_index over
+	# `wsecs`, the window's length), and a drain that crosses a mark starts its count
+	# over (Drain.roll_window). `stored`/`skipped` = what the reads produced, which
+	# is not the same as `window`: pacing is about READS (a 404 spends a read and
+	# stores a marker) while the payload reports WORK. `total` is the bar's
+	# denominator and `opened` whether a bar was drawn, so it is closed exactly once.
 	# `day` is the UTC day the count belongs to, RE-READ at the top of each iteration
 	# and reset with its count when it changes (Drain.roll_day); `today` is the
-	# running count against it, as distinct from the per-run `window`.
-	DrainState : { window : I64, day : I64, today : I64, stored : I64, skipped : I64, total : U64, refreshes : I64 }
+	# running count against it.
+	DrainState : { window : I64, widx : I64, wsecs : I64, day : I64, today : I64, stored : I64, skipped : I64, total : U64, opened : Bool, refreshes : I64 }
 
-	# Walk the missing-streams list once per run — walking a LIST (not re-querying
-	# "next missing") means an unstorable body is skipped, not refetched forever. The
-	# pacing DECISION is pure (Drain.decide, unit-tested); this is the thin effectful
-	# skin. The FOUR ways a drain ends, RETURNED rather than printed, because "why
-	# did it stop?" is not derivable from the counts. Two of the non-complete reasons
-	# clear on the 15-minute window; `DailyCapReached` clears at UTC midnight, and
-	# fifteen minutes there is an instruction that cannot succeed (#246). `stopped`
-	# has exactly four arms, so a drain CANNOT report the list refusal — that arm
-	# lives on Drain.SyncStop, and sync! wraps this outcome in FromDrain.
-	# `window` is the run's read count on return, and the next drain of the run
-	# starts from it.
-	DrainOutcome : { stored : I64, skipped : I64, pending : I64, stopped : Drain.StopReason, window : I64 }
+	# Walk the queue once — walking a LIST (not re-querying "next missing") means an
+	# unstorable body is skipped, not refetched forever. The pacing DECISION is pure
+	# (Drain.decide); this is the thin effectful skin. The four ways a drain ends are
+	# RETURNED, because "why did it stop?" is not derivable from the counts; a drain
+	# CANNOT report a list refusal, which lives on Drain.SyncStop. `window` is the
+	# window's read count on return, and the next drain of the round starts from it.
+	DrainOutcome : { stored : I64, skipped : I64, stopped : Drain.StopReason, window : I64 }
 
 	# what one queue item asks Strava for, and what storing the answer means.
 	# ONE loop serves every kind — the pacing, refresh, 429 and skip policies
@@ -1198,16 +1325,17 @@ Strava :: [].{
 	drain_queue! : Str, Str, DrainKind, List(I64), DrainState => Try(DrainOutcome, _)
 	drain_queue! = |path, token, kind, ids, st_in| {
 		# RE-READ each iteration, not captured once: a drain can outlive UTC midnight,
-		# and when it does the allowance has genuinely reset. Carrying the old day
-		# advised "come back tomorrow" sixty seconds after the reset and stamped the
-		# post-midnight reads onto the day before. The rule is Drain.roll_day and it is
-		# pure, so both directions are pinned by expects without a fake clock.
-		rolled = Drain.roll_day({ day: st_in.day, today: st_in.today }, Db.utc_today_days!({}))
-		st = { ..st_in, day: rolled.day, today: rolled.today }
+		# and when it does the allowance has genuinely reset, and it can cross a
+		# quarter-hour mark, after which its window's own count no longer applies. Both
+		# rules are pure (Drain.roll_day, Drain.roll_window) and pinned by expects.
+		now = Db.now_secs!({})
+		rolled = Drain.roll_day({ day: st_in.day, today: st_in.today }, now // 86400)
+		rolled_w = Drain.roll_window({ idx: st_in.widx, window: st_in.window }, Drain.window_index(now, st_in.wsecs))
+		st = { ..st_in, day: rolled.day, today: rolled.today, widx: rolled_w.idx, window: rolled_w.window }
 		match ids {
 			[] => {
 				bar_done!(st)
-				Ok({ stored: st.stored, skipped: st.skipped, pending: pending_for!(path, kind)?, stopped: Complete, window: st.window })
+				Ok({ stored: st.stored, skipped: st.skipped, stopped: Complete, window: st.window })
 			}
 			[id, .. as rest] => {
 				uri =
@@ -1217,12 +1345,13 @@ Strava :: [].{
 						Routes => "${api_base!({})}/api/v3/activities/${I64.to_str(id)}/streams?keys=latlng,time&key_by_type=true"
 					}
 				resp = send_bearer!(uri, token)?
-				match Drain.decide({ status: Response.status(resp), window: st.window, today: st.today }, read_limits!({})) {
+				usage = Drain.usage_of(List.map(Response.headers(resp), |h| h.to_str()))
+				match Drain.decide({ status: Response.status(resp), window: st.window, today: st.today, usage }, read_limits!({})) {
 					Refresh => {
 						# the 401'd read is spent too, and this arm RETRIES the same id —
 						# so the read is charged here and the retry charges its own. Two
 						# reads at Strava, two on the counter.
-						_ = save_reads_for_day!(path, st.day, st.today + 1)?
+						_ = save_reads_for_day!(path, st.day, Drain.charged(st.today, usage))?
 						# Long runs outlive the ~6h access token; refresh and retry the same id.
 						# BOUNDED, like the 429 retry beside it: this arm recurses on the same id, so a
 						# persistently 401ing activity (revoked scope, private without activity:read_all)
@@ -1246,30 +1375,28 @@ Strava :: [].{
 								# and not the running total would leave `decide` comparing
 								# a stale count on the retry — the disk and the loop would
 								# disagree about how much of the day is left.
-								drain_queue!(path, fresh, kind, ids, { ..st, today: st.today + 1, refreshes: st.refreshes + 1 })
+								drain_queue!(path, fresh, kind, ids, { ..st, today: Drain.charged(st.today, usage), refreshes: st.refreshes + 1 })
 							}
 						}
 					}
-					# A 429 STOPS the run. It does not sleep: that made a routine sync
-					# block ~30 minutes in the foreground, measured on a two-activity
-					# queue. The rows already stored are durable and `resumable` says
-					# there is more, so the honest move is to hand the terminal back.
-					# the daily allowance, recognised from the 429 rather than only from
-					# our own count — see Drain.decide. Same stop, different remedy.
+					# A 429 ends this drain, never by sleeping here: the rows already
+					# stored are durable, and sync! decides whether the run waits for the
+					# next window or ends there. The daily allowance is recognised from
+					# the 429 as well as from the count — see Drain.decide.
 					DailyCapReached => {
 						# the 429'd read is a REAL read. It never reaches the Store arm, so
 						# without this the counter sits below the cap while Strava is
 						# already refusing — and since #246's whole comparison is
 						# `today >= reads_per_day`, an undercount makes it false at exactly
 						# the moment it needs to be true.
-						_ = save_reads_for_day!(path, st.day, st.today + 1)?
+						_ = save_reads_for_day!(path, st.day, Drain.charged(st.today, usage))?
 						bar_done!(st)
-						Ok({ stored: st.stored, skipped: st.skipped, pending: pending_for!(path, kind)?, stopped: DailyCapReached, window: st.window })
+						Ok({ stored: st.stored, skipped: st.skipped, stopped: DailyCapReached, window: st.window })
 					}
 					RateLimited => {
-						_ = save_reads_for_day!(path, st.day, st.today + 1)?
+						_ = save_reads_for_day!(path, st.day, Drain.charged(st.today, usage))?
 						bar_done!(st)
-						Ok({ stored: st.stored, skipped: st.skipped, pending: pending_for!(path, kind)?, stopped: RateLimited, window: st.window })
+						Ok({ stored: st.stored, skipped: st.skipped, stopped: RateLimited, window: st.window })
 					}
 					Store({ window, today, after }) => {
 						save_reads_for_day!(path, st.day, today)?
@@ -1296,25 +1423,22 @@ Strava :: [].{
 						# narrate on the id just RETIRED, counting attempts: a 404 or an
 						# undecodable body is progress through the queue too, so counting
 						# only stores would stall the bar on a run full of skips.
-						_ = if st.total > 0 {
+						_ = if st.opened {
 							Output.narrate!(drain_label(kind), st.total - List.len(rest), st.total)?
 						} else {
 							{}
 						}
 						match after {
-							# the 15-minute window is full. Stop and let the next run
-							# continue — this is the arm a real drain always takes, so
-							# the message it produces is the one users actually read.
+							# the read window is full: the round ends, and the run waits
+							# for the next window or names when it opens
 							WindowFull => {
 								bar_done!(st)
-								Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_for!(path, kind)?, stopped: BudgetReached, window })
+								Ok({ stored: counted.stored, skipped: counted.skipped, stopped: BudgetReached, window })
 							}
-							# the DAILY allowance, which is a different stop with a
-							# different remedy: the window clears in fifteen minutes, this
-							# one clears at UTC midnight.
+							# the DAILY allowance, which ends the run until midnight UTC
 							DayFull => {
 								bar_done!(st)
-								Ok({ stored: counted.stored, skipped: counted.skipped, pending: pending_for!(path, kind)?, stopped: DailyCapReached, window })
+								Ok({ stored: counted.stored, skipped: counted.skipped, stopped: DailyCapReached, window })
 							}
 							Continue =>
 								drain_queue!(path, token, kind, rest, { ..st, window, today, stored: counted.stored, skipped: counted.skipped })
@@ -1327,61 +1451,65 @@ Strava :: [].{
 	}
 	per_page = 100
 
-	# acc carries the re-listed total AND the new/updated split (#112): the first is
-	# training frequency, the second is what happened this run.
-	# A 429 on the LIST stops the run the way a 429 on a stream does (#235): pages
-	# already upserted are kept and reported, `rate_limited` rides the accumulator,
-	# and the caller reports a successful partial run. Propagating instead made one
-	# upstream condition behave two ways in one invocation — exit 1 on the list, a
-	# success envelope on a stream — breaking every cron wrapper on the run that
-	# issues the most list reads.
-	fetch_pages! : Str, Str, Str, I64, U64, { relisted : U64, new_n : U64, updated_n : U64, rate_limited : Bool } => Try({ relisted : U64, new_n : U64, updated_n : U64, rate_limited : Bool }, _)
-	fetch_pages! = |path, token, after_param, stamp, page, acc| {
-		page_str = (page).to_str()
-		per_str = (per_page).to_str()
-		uri = "${api_base!({})}/api/v3/athlete/activities?per_page=${per_str}&page=${page_str}${after_param}"
-		# page 1 only, and BEFORE the request: the per-page lines below report pages that
-		# already landed, so a stalled first request would otherwise print nothing at all.
-		# Later pages need no such line — by then the reader has seen output.
-		_ = if page == 1 {
-			Output.say!("fetching activity list…")?
-		} else {
-			{}
-		}
+	# The listing's accumulator. The re-listed total AND the new/updated split (#112):
+	# the first is training frequency, the second is what happened this run. `page`
+	# is the next page to ask for, and after a refusal the page that was refused;
+	# `reads` counts the pages asked for, which the drain's window starts from;
+	# `usage` is what the last page's rate-limit header reported.
+	PageAcc : { relisted : U64, new_n : U64, updated_n : U64, rate_limited : Bool, page : U64, reads : I64, usage : Drain.Usage }
+
+	# A 429 on the LIST ends the listing the way a 429 on a stream ends a drain
+	# (#235): pages already upserted are kept and reported, `rate_limited` rides the
+	# accumulator, and the caller reports a successful partial run. Propagating
+	# instead would make one upstream condition behave two ways in one invocation —
+	# exit 1 on the list, a success envelope on a stream.
+	fetch_pages! : Str, Str, Str, I64, PageAcc => Try(PageAcc, _)
+	fetch_pages! = |path, token, after_param, stamp, acc| {
+		page = acc.page
+		uri = "${api_base!({})}/api/v3/athlete/activities?per_page=${(per_page).to_str()}&page=${(page).to_str()}${after_param}"
+		# BEFORE the request, so a stalled request shows a frame rather than nothing
+		Output.spin!("activity list", page)?
 		# COUNTED, because Strava counts it: the list and the streams draw on ONE read
-		# limit, and counting only the streams made stride's number a strict subset of
-		# Strava's — Strava reaches 1000 first, answers 429, the drain stops on
-		# RateLimited, the counter freezes below the cap, and DayFull becomes dead code
-		# (the last ~11 reads of the allowance were unspendable).
+		# limit, and counting only the streams makes stride's number a strict subset
+		# of Strava's, so Strava reaches the cap first and the last reads of the day
+		# are unspendable.
 		_ = charge_read!(path)?
-		body =
-			match get_bearer!(uri, token) {
-				Ok(b) => b
-				# Only 429. Every other status propagates, including a 401 — this function
-				# has NO refresh arm, and does not need one: get_valid_token! refreshes
-				# proactively at run start with a 60-second margin, and the listing takes
-				# seconds where the drain takes fifteen minutes, so a mid-list expiry is not
-				# the case drain_streams!'s arm was built for. A 500 is not something to
-				# report as a successful partial run.
-				Err(HttpStatus(429, _)) => return Ok({ ..acc, rate_limited: True })
-				Err(e) => return Err(e)
-			}
-		text = Str.from_utf8(body).map_err(|_| ActivityDecodeFailed(page))?
-		decoded : Try(List(ActivitySummary), _)
-		decoded = Json.parse(text)
-		acts = decoded.map_err(|_| ActivityDecodeFailed(page))?
-		counts = upsert_all!(path, stamp, acts, { new_n: acc.new_n, updated_n: acc.updated_n })?
-		got = List.len(acts)
-		total = acc.relisted + got
-		# a plain line per page, not a bar: Strava's activity list is paged and its length
-		# is unknowable until the short page arrives, so any denominator here would be
-		# invented. Pages are few at `per_page` (100) a page, so the lines stay countable.
-		_ = Output.say!("fetched activities page ${(page).to_str()} — ${(total).to_str()} so far")?
-		next = { ..acc, relisted: total, new_n: counts.new_n, updated_n: counts.updated_n }
-		if (got < per_page)
-			Ok(next)
-		else
-			fetch_pages!(path, token, after_param, stamp, page + 1, next)
+		resp = send_bearer!(uri, token)?
+		usage = Drain.usage_of(List.map(Response.headers(resp), |h| h.to_str()))
+		_ = floor_day!(path, usage)?
+		read = { ..acc, reads: acc.reads + 1, usage }
+		# Only 429 is a partial run. Every other status propagates, including a 401 —
+		# this function has NO refresh arm, and does not need one: get_valid_token!
+		# refreshes proactively at run start with a 60-second margin, and the listing
+		# takes seconds. A 500 is not something to report as a successful partial run.
+		if Response.status(resp) == 429 {
+			Ok({ ..read, rate_limited: True })
+		} else {
+			body = ok_body(resp)?
+			text = Str.from_utf8(body).map_err(|_| ActivityDecodeFailed(page))?
+			decoded : Try(List(ActivitySummary), _)
+			decoded = Json.parse(text)
+			acts = decoded.map_err(|_| ActivityDecodeFailed(page))?
+			counts = upsert_all!(path, stamp, acts, { new_n: acc.new_n, updated_n: acc.updated_n })?
+			got = List.len(acts)
+			next = { ..read, relisted: acc.relisted + got, new_n: counts.new_n, updated_n: counts.updated_n, page: page + 1 }
+			# Strava's list is paged and its length unknowable until a short page
+			# arrives, which ends it
+			if (got < per_page)
+				Ok(next)
+			else
+				fetch_pages!(path, token, after_param, stamp, next)
+		}
+	}
+
+	# raise the day's stored count to what the rate-limit header reports, when it
+	# reports more: the header also counts other apps' reads on the same token
+	floor_day! : Str, Drain.Usage => Try({}, _)
+	floor_day! = |path, usage| {
+		day = Db.utc_today_days!({})
+		n = reads_today!(path, day)?
+		seen = (Drain.floor_counts({ window: 0, today: n }, usage)).today
+		if (seen > n) save_reads_for_day!(path, day, seen) else Ok({})
 	}
 	# What a sync did to one row. Most rows on most days are Unchanged: sync re-lists a
 	# rolling 30-day window every run, so the re-listed count is a function of how often
@@ -1441,7 +1569,7 @@ Strava :: [].{
 				\\     AND name IS :name AND sport_type IS :sport AND start_local IS :start
 				\\     AND moving_time IS :mt AND distance IS :dist AND elevation IS :elev
 				\\     AND relative_effort IS :re AND avg_watts IS :aw AND avg_hr IS :ahr
-				\\     AND weighted_avg_watts IS :waw AND device_watts IS :dw) AS same
+				\\     AND weighted_avg_watts IS :waw AND device_watts IS :dw AND max_hr IS :mhr) AS same
 			,
 			bindings: activity_bindings(a),
 			rows: |cols| |stmt| {
@@ -1479,6 +1607,7 @@ Strava :: [].{
 		{ name: ":aw", value: opt_real(a.average_watts) },
 		{ name: ":ahr", value: opt_real(a.average_heartrate) },
 		{ name: ":waw", value: opt_real(a.weighted_average_watts) },
+		{ name: ":mhr", value: opt_real(a.max_heartrate) },
 		# NULL = Strava did not say (old data); 1 = real meter; 0 = estimated
 		{
 			name: ":dw",
@@ -1497,8 +1626,8 @@ Strava :: [].{
 		synced_val = if (stamp == 0) Null else Integer(stamp)
 		Sql.execute!({
 			path: Path.utf8(path),
-			query: \\INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance, elevation, relative_effort, avg_watts, avg_hr, weighted_avg_watts, device_watts, synced_at)
-				\\VALUES (:id, :name, :sport, :start, :mt, :dist, :elev, :re, :aw, :ahr, :waw, :dw, :synced)
+			query: \\INSERT OR REPLACE INTO activities (id, name, sport_type, start_local, moving_time, distance, elevation, relative_effort, avg_watts, avg_hr, weighted_avg_watts, device_watts, max_hr, synced_at)
+				\\VALUES (:id, :name, :sport, :start, :mt, :dist, :elev, :re, :aw, :ahr, :waw, :dw, :mhr, :synced)
 			,
 			# the SAME values classify_activity! compared against, so the check and the
 			# write cannot disagree about what "changed" means. :synced is appended here

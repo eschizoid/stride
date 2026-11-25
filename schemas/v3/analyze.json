@@ -1,6 +1,6 @@
 {
   "title": "analyze",
-  "description": "Result of `stride analyze`. `form_*` describe the state AFTER scoring; `converged: false` means fuel ran out and another run will continue.",
+  "description": "Result of `stride analyze`, and of the analyze `stride sync` runs after each batch. Scoring runs to its fixed point; `form_*` describe the state AFTER it.",
   "type": "object",
   "additionalKeys": false,
   "required": [
@@ -27,7 +27,8 @@
       "description": "How many of stream_errors have failed 3 or more fetches, so a plain sync no longer asks for them; `stride sync --all` does. The rest are queued for the next sync."
     },
     "converged": {
-      "type": "boolean"
+      "type": "boolean",
+      "description": "true when scoring reached its fixed point, which every run does unless its rescores never settle: past eight scores per activity the run stops with false, which is a stride bug to report rather than something to run again."
     },
     "form_tsb": {
       "type": "number"

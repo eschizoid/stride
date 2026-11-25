@@ -30,30 +30,7 @@ Analyze :: [].{
 				# the very first moment of the command silent, which is where "it looks
 				# hung" starts.
 				Output.say!("checking what needs scoring…")?
-				# the denominator is read ONCE up front: without a denominator a long,
-				# healthy rebuild looks hung, and a rebuild killed as hung dies
-				# mid-transaction
-				goal = pending_metrics_count!(path, zb)?
-				# Close the bar's line before anything else prints, or the next line lands
-				# on the same terminal row as the final frame. The result is CAPTURED and
-				# the close runs before it is unwrapped, so an error propagating out of the
-				# passes closes the line too — otherwise the error message itself would be
-				# the thing printed on top of a half-drawn frame.
-				# same reasoning as the stream backfill: the FIRST batch is the slowest
-				# (cold streams, 64 rows) and narrating only on its completion leaves the
-				# command silent through the longest single wait of the run
-				_ = if goal > 0 {
-					Output.narrate!("rescoring", 0, goal)?
-				} else {
-					{}
-				}
-				passes = converge_metrics!(path, zb, 1000, { computed: 0, failed: [] }, goal)
-				_ = if goal > 0 {
-					Output.narrate_done!({})?
-				} else {
-					{}
-				}
-				res = passes?
+				res = score!(path, zb)?
 				# distinct activities, and of those the ones whose stream has failed
 				# Strava.stream_attempt_cap fetches: a plain sync does not ask for those, so
 				# they get their own line and their own count
@@ -63,59 +40,13 @@ Analyze :: [].{
 				rebuild_daily_load!(path)?
 				rebuild_strength_sets!(path)?
 				after!(path)?
-				# The last 10 days, not just today: the verdict carries the weekly delta,
-				# which needs the value 7 days back. query_many rather than query! because
-				# an empty daily_load is a normal state (nothing analyzed yet), and the
-				# empty list says so without an error to translate.
-				form_rows = Sql.query_many!({
-					path: Path.utf8(path),
-					query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, CAST(tsb AS REAL) AS tsb FROM daily_load ORDER BY day DESC LIMIT 10",
-					bindings: [],
-					rows: |cols| |stmt| {
-						day = Sql.str("day")(cols)(stmt)?
-						tsb = Sql.f64("tsb")(cols)(stmt)?
-						Ok({ day, tsb })
-					},
-				})?
-				# ORDER BY day DESC, so the head is today
-				tsb_opt =
-					match List.first(form_rows) {
-						Ok(latest) => Some(latest)
-						Err(_) => None
-					}
-				# DROP rows whose day will not parse rather than mapping them to epoch day
-				# 0. Day 0 is a perfectly valid day number, so a collapsed row becomes a
-				# legitimate-looking candidate for the 7-days-back lookup: on a young
-				# database that turns "no history to compare" into a confident
-				# `up 34 from a week ago`, certified by form_delta_known: true. Dropping
-				# leaves a genuine gap, and a gap is what form_delta_7d reports honestly.
-				dated_form_rows = List.keep_oks(
-					form_rows,
-					|r|
-						match Metrics.date_str_to_days(r.day) {
-							Ok(day) => Ok({ day, tsb: r.tsb })
-							Err(_) => Err({})
-						},
-				)
-				form_delta =
-					match tsb_opt {
-						None => Unknown
-						Some(latest) =>
-							match Metrics.date_str_to_days(latest.day) {
-								# an unparseable anchor is not an anchor — no comparison is
-								# possible, and Unknown is the honest report
-								Err(_) => Unknown
-								Ok(anchor) => Metrics.form_delta_7d(dated_form_rows, anchor)
-							}
-					}
+				form = form_now!(path)?
 				# ANNOTATED Bool, not a bare `True`/`False` tag. The builtin JSON serializes
 				# an unconstrained tag as the STRING "True", and this payload is
-				# ENCODE-ONLY, so nothing else constrains it. summary's identical expression
-				# is constrained only because `Render.summary_screen` consumes the field as
-				# an `if` condition. A neighbouring Bool field does not help: record fields
-				# do not constrain each other.
+				# ENCODE-ONLY, so nothing else constrains it. A neighbouring Bool field
+				# does not help: record fields do not constrain each other.
 				delta_known : Bool
-				delta_known = match form_delta {
+				delta_known = match form.delta {
 					Known(_) => True
 					Unknown => False
 				}
@@ -125,21 +56,20 @@ Analyze :: [].{
 				# yet. The human branch prints nothing in that case, and the flag makes the
 				# JSON say the same.
 				tsb_known : Bool
-				tsb_known = match tsb_opt {
+				tsb_known = match form.tsb {
 					Some(_) => True
 					None => False
 				}
 				if Output.json_mode!({}) {
 					form_tsb =
-						match tsb_opt {
-							Some(latest) => latest.tsb
+						match form.tsb {
+							Some(t) => t
 							None => 0.0
 						}
-					# `converged` is an ADDITIVE field — existing consumers keep working, so the
-					# envelope version stays. False = fuel ran out; run analyze again to continue.
-					# form_delta_7d/known and form_tsb_known are additive on the same grounds;
-					# each flag exists because its number has a legitimate value (0.0) that
-					# collides with "not available".
+					# `converged` is false only when the guard in converge_metrics! stopped
+					# a run that kept rescoring without settling. form_delta_7d/known and
+					# form_tsb_known each exist because their number has a legitimate value
+					# (0.0) that collides with "not available".
 					Output.emit_ok!({
 						computed: res.computed,
 						stream_errors,
@@ -148,7 +78,7 @@ Analyze :: [].{
 						# stable band id; "" when TSB itself is unknown — an id derived
 						# from a placeholder 0.0 would claim a band nobody measured
 						form_state: if (tsb_known) Metrics.form_state(form_tsb) else "",
-						form_delta_7d: match form_delta {
+						form_delta_7d: match form.delta {
 							Known(d) => d
 							Unknown => 0.0
 						},
@@ -159,7 +89,7 @@ Analyze :: [].{
 				} else {
 					Stdout.line!("computed metrics for ${U64.to_str(res.computed)} activities")?
 					(if (!(res.converged))
-						Stdout.line!("⚠ more activities still pending — run `stride analyze` again to continue")
+						Stdout.line!("⚠ ${Render.unsettled_note(res.computed)}")
 					else
 						Ok({}))?
 					queued = stream_errors - stream_errors_capped
@@ -172,15 +102,105 @@ Analyze :: [].{
 					else
 						Ok({}))?
 					# one verdict line; the full report lives in `stride summary`
-					match tsb_opt {
-						Some(latest) =>
-							Stdout.line!("→ today: form ${Render.fmt0(latest.tsb)}${Render.form_trend_phrase(form_delta)} — ${Metrics.form_label(latest.tsb)}")
-
-						None => Ok({})
-
-					}
+					verdict = Render.today_verdict(form.tsb, form.delta)
+					if (Str.is_empty(verdict)) Ok({}) else Stdout.line!(verdict)
 				}
 			}
+		}
+	}
+
+	# Analyze as `stride sync` runs it after each batch: the same scoring, daily
+	# load and strength rebuild, with nothing printed but the scoring bar, and
+	# the verdict line returned for sync's own screen. No zones is not an error
+	# here: a sync without zones still stores what it fetched, and says that
+	# nothing was analyzed.
+	settle! : Str, (Str => Try({}, _)) => Try({ analysis : [Settled, NoZones, Unsettled], computed : U64, verdict : Str }, _)
+	settle! = |path, after!|
+		match load_zone_config!(path) {
+			Err(MissingConfig) => Ok({ analysis: NoZones, computed: 0, verdict: "" })
+			Err(other) => Err(other)
+			Ok(zb) => {
+				res = score!(path, zb)?
+				rebuild_daily_load!(path)?
+				rebuild_strength_sets!(path)?
+				after!(path)?
+				form = form_now!(path)?
+				Ok({ analysis: if (res.converged) Settled else Unsettled, computed: res.computed, verdict: Render.today_verdict(form.tsb, form.delta) })
+			}
+		}
+
+	# score every activity that needs it, to the fixed point, behind the
+	# `scoring` bar. The denominator is read ONCE up front: without one a long,
+	# healthy rebuild looks hung, and a rebuild killed as hung dies
+	# mid-transaction.
+	score! : Str, Metrics.ZoneBounds => Try({ computed : U64, failed : List(I64), converged : Bool }, _)
+	score! = |path, zb| {
+		goal = pending_metrics_count!(path, zb)?
+		activities = Sql.query!({
+			path: Path.utf8(path),
+			query: "SELECT COUNT(*) AS n FROM activities",
+			bindings: [],
+			row: Sql.i64("n"),
+		})?
+		# the FIRST batch is the slowest (cold streams, 64 rows), and narrating
+		# only on its completion leaves the step silent through its longest wait
+		_ = if goal > 0 {
+			Output.narrate!("scoring", 0, goal)?
+		} else {
+			{}
+		}
+		# CAPTURED, and the bar's line closed before it is unwrapped, so an error
+		# propagating out of the passes is not printed on top of a half-drawn frame
+		passes = converge_metrics!(path, zb, Metrics.rescore_cap((activities).max(0).to_u64_wrap()), { computed: 0, failed: [] }, goal)
+		_ = if goal > 0 {
+			Output.narrate_done!({})?
+		} else {
+			{}
+		}
+		passes
+	}
+
+	# the last ten days of form: today's TSB, and its change from a week ago
+	form_now! : Str => Try({ tsb : [Some(F64), None], delta : [Known(F64), Unknown] }, _)
+	form_now! = |path| {
+		# The last 10 days, not just today: the verdict carries the weekly delta,
+		# which needs the value 7 days back. query_many rather than query! because
+		# an empty daily_load is a normal state (nothing analyzed yet), and the
+		# empty list says so without an error to translate.
+		form_rows = Sql.query_many!({
+			path: Path.utf8(path),
+			query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day, CAST(tsb AS REAL) AS tsb FROM daily_load ORDER BY day DESC LIMIT 10",
+			bindings: [],
+			rows: |cols| |stmt| {
+				day = Sql.str("day")(cols)(stmt)?
+				tsb = Sql.f64("tsb")(cols)(stmt)?
+				Ok({ day, tsb })
+			},
+		})?
+		# DROP rows whose day will not parse rather than mapping them to epoch day
+		# 0. Day 0 is a perfectly valid day number, so a collapsed row becomes a
+		# legitimate-looking candidate for the 7-days-back lookup: on a young
+		# database that turns "no history to compare" into a confident
+		# `up 34 from a week ago`, certified by form_delta_known: true. Dropping
+		# leaves a genuine gap, and a gap is what form_delta_7d reports honestly.
+		dated_form_rows = List.keep_oks(
+			form_rows,
+			|r|
+				match Metrics.date_str_to_days(r.day) {
+					Ok(day) => Ok({ day, tsb: r.tsb })
+					Err(_) => Err({})
+				},
+		)
+		# ORDER BY day DESC, so the head is today
+		match List.first(form_rows) {
+			Err(_) => Ok({ tsb: None, delta: Unknown })
+			Ok(latest) =>
+				match Metrics.date_str_to_days(latest.day) {
+					# an unparseable anchor is not an anchor — no comparison is
+					# possible, and Unknown is the honest report
+					Err(_) => Ok({ tsb: Some(latest.tsb), delta: Unknown })
+					Ok(anchor) => Ok({ tsb: Some(latest.tsb), delta: Metrics.form_delta_7d(dated_form_rows, anchor) })
+				}
 		}
 	}
 
@@ -244,46 +264,46 @@ Analyze :: [].{
 		s_slen : I64,
 	}
 
-	# analyze runs compute_missing_metrics! to a FIXED POINT (bounded), not
-	# once. A batch can change a sport's DERIVED FTP (its best_20min_w gets
-	# populated), which invalidates rows the next pass must rescore; iterate
-	# until a pass computes 0 (converged) or fuel runs out.
-	# compute_missing_metrics! selects a bounded batch: account exports can hold
-	# millions of samples, so bounded batches avoid retaining the whole
-	# history's raw streams in memory. Re-querying also revisits rows whose
-	# newly derived FTP or pace threshold invalidated them. `converged: False`
-	# means fuel ran out with work remaining, and the caller says so instead of
-	# presenting a partial recompute as a finished one.
+	# analyze runs compute_missing_metrics! to a FIXED POINT, not once. A batch can
+	# change a sport's DERIVED FTP or pace threshold (its best efforts get
+	# populated), which invalidates rows the next pass must rescore; passes repeat
+	# until one computes nothing. compute_missing_metrics! selects a bounded batch:
+	# account exports can hold millions of samples, so bounded batches avoid
+	# retaining the whole history's raw streams in memory.
+	#
+	# Within one run only the derived thresholds can move: zones, metrics_rev and
+	# every activity input are fixed. Rows are scored oldest first, so a row is
+	# rescored when a session in its own threshold window gains a best, which a
+	# converging history does a few times per row. `cap` (Metrics.rescore_cap) is
+	# far above that; a run that reaches it is rows invalidating each other
+	# without end, and it stops with `converged: False` for the caller to report
+	# as the bug it is, rather than spinning or stopping silently.
 	converge_metrics! : Str, Metrics.ZoneBounds, U64, { computed : U64, failed : List(I64) }, U64 => Try({ computed : U64, failed : List(I64), converged : Bool }, _)
-	converge_metrics! = |path, zb, fuel, acc, goal|
-		if fuel == 0 {
-			Ok({ computed: acc.computed, failed: acc.failed, converged: False })
-		} else {
-			r = compute_missing_metrics!(path, zb)?
-			# accumulate BOTH across passes: the final converged pass computes 0 rows, so
-			# taking only its failures would erase unreadable-stream warnings raised in
-			# earlier passes. `failed` holds distinct ACTIVITY ids — a row is rescored in
-			# more than one pass when an earlier pass moves its derived FTP, and one bad
-			# body is one activity, not one per pass.
-			total = {
-				computed: acc.computed + r.computed,
-				failed: List.fold(r.failed, acc.failed, |ids, id| if (List.contains(ids, id)) ids else List.append(ids, id)),
-			}
-			# narrate AFTER the batch lands, so the number on screen is work actually done
-			# rather than work announced. A run with nothing to score says nothing.
-			# ...and a pass that scored NOTHING reports nothing: the final converged pass
-			# computes 0 rows, so narrating it would redraw an identical frame (invisible
-			# under `\r`, a duplicated line in machine mode). The last frame drawn is
-			# already the finished state.
-			_ = if goal > 0 and r.computed > 0 {
-				Output.narrate!("rescoring", total.computed, goal)?
-			} else {
-				{}
-			}
-			if r.computed == 0 {
-				Ok({ computed: total.computed, failed: total.failed, converged: True })
-			} else converge_metrics!(path, zb, fuel - 1, total, goal)
+	converge_metrics! = |path, zb, cap, acc, goal| {
+		r = compute_missing_metrics!(path, zb)?
+		# accumulate BOTH across passes: the final converged pass computes 0 rows, so
+		# taking only its failures would erase unreadable-stream warnings raised in
+		# earlier passes. `failed` holds distinct ACTIVITY ids — a row is rescored in
+		# more than one pass when an earlier pass moves its derived FTP, and one bad
+		# body is one activity, not one per pass.
+		total = {
+			computed: acc.computed + r.computed,
+			failed: List.fold(r.failed, acc.failed, |ids, id| if (List.contains(ids, id)) ids else List.append(ids, id)),
 		}
+		# narrate AFTER the batch lands, so the number on screen is work actually done
+		# rather than work announced. A pass that scored NOTHING reports nothing: the
+		# last frame drawn is already the finished state.
+		_ = if goal > 0 and r.computed > 0 {
+			Output.narrate!("scoring", total.computed, goal)?
+		} else {
+			{}
+		}
+		match Metrics.converge_step({ pass: r.computed, total: total.computed, cap }) {
+			Settled => Ok({ computed: total.computed, failed: total.failed, converged: True })
+			Runaway => Ok({ computed: total.computed, failed: total.failed, converged: False })
+			Again => converge_metrics!(path, zb, cap, total, goal)
+		}
+	}
 
 	compute_missing_metrics! : Str, Metrics.ZoneBounds => Try({ computed : U64, failed : List(I64) }, _)
 	compute_missing_metrics! = |path, zb| {

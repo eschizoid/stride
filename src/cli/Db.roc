@@ -114,6 +114,9 @@ Db :: [].{
 			],
 		})
 
+	now_millis! : {} => I64
+	now_millis! = |{}| (Utc.to_millis_since_epoch(Utc.now!())).to_i64_wrap()
+
 	now_secs! : {} => I64
 	now_secs! = |{}| {
 		millis = Utc.to_millis_since_epoch(Utc.now!())
@@ -312,7 +315,7 @@ Db :: [].{
 	# bump when the schema changes; ensure_schema! re-runs migrations when the db's
 	# PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 	# that post-date the original CREATE statements in Schema.roc.)
-	schema_version = 50
+	schema_version = 51
 
 	run_migrations! : Str => Try({}, _)
 	run_migrations! = |path| {
@@ -346,6 +349,10 @@ Db :: [].{
 		# them.
 		Sql.execute!({ path: Path.utf8(path), query: "DROP TABLE IF EXISTS map_ways", bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: "DROP TABLE IF EXISTS map_blocks", bindings: [] })?
+		# v51: each session's maximum heart rate from the activity list, which setup
+		# proposes zones from. Mirror tier: the next sync fills it for the activities
+		# in its window, and `sync --all` for the whole history.
+		alter_add_column!(path, "ALTER TABLE activities ADD COLUMN max_hr REAL")?
 		# v41: a hold's seconds; the next analyze rebuilds every row with it
 		alter_add_column!(path, "ALTER TABLE strength_sets ADD COLUMN hold_s INTEGER NOT NULL DEFAULT 0")?
 		# v38: structured strength logs imported from Strava's connector (mirror)

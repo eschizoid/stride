@@ -2091,6 +2091,26 @@ Metrics :: [].{
 			VeryFresh => "very_fresh"
 		}
 
+	# ── analyze's fixed point ────────────────────────────────────────────
+	# How many scores one analyze run may compute before it is called a loop
+	# rather than a rescore: eight per activity, plus one batch so an empty or
+	# tiny history still runs a full pass. See Analyze.converge_metrics! for why
+	# a converging history stays far below it.
+	rescore_cap : U64 -> U64
+	rescore_cap = |activities| activities * 8 + 64
+
+	# after one pass: nothing scored is the fixed point; reaching the cap with
+	# work still appearing is a run that will not settle
+	converge_step : { pass : U64, total : U64, cap : U64 } -> [Settled, Again, Runaway]
+	converge_step = |s|
+		if s.pass == 0 {
+			Settled
+		} else if s.total >= s.cap {
+			Runaway
+		} else {
+			Again
+		}
+
 	form_label : F64 -> Str
 	form_label = |tsb|
 		match form_band(tsb) {
@@ -6521,3 +6541,11 @@ expect {
 	days = Metrics.family_fitness([{ day: 0, family: "Ride", tss: 100.0 }], 30, 31)
 	List.len(days) == 2 and List.all(days, |d| List.is_empty(d.families))
 }
+
+# analyze's fixed point: a pass that scores nothing settles, whatever came before
+expect Metrics.converge_step({ pass: 0, total: 5000, cap: 100 }) == Settled
+expect Metrics.converge_step({ pass: 64, total: 64, cap: 100 }) == Again
+# work still appearing at the cap is the loop the guard exists for
+expect Metrics.converge_step({ pass: 64, total: 128, cap: 100 }) == Runaway
+expect Metrics.converge_step({ pass: 1, total: 100, cap: 100 }) == Runaway
+expect Metrics.rescore_cap(0) == 64 and Metrics.rescore_cap(1000) == 8064

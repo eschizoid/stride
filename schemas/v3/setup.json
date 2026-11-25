@@ -1,6 +1,6 @@
 {
   "title": "setup",
-  "description": "Payload of `stride setup [key=value]`: where the first-run walk stands and what the next step needs. The steps run in order (init, strava_app, authorize, timezone, zones, sync); a step is done when the database already holds what it would write.",
+  "description": "Payload of `stride setup [key=value]`: where the first-run walk stands and what the next step needs. The steps run in order (init, strava_app, authorize, timezone, activities, zones, sync); a step is done when the database already holds what it would write. A call with no value runs a step that needs none (activities, or one read window of sync) before answering.",
   "type": "object",
   "additionalKeys": false,
   "required": [
@@ -12,7 +12,11 @@
     "next_step",
     "ran",
     "steps",
-    "timezone_detected"
+    "timezone_detected",
+    "max_hr_proposed",
+    "zone_bounds_proposed",
+    "owed",
+    "resume_at"
   ],
   "properties": {
     "complete": {
@@ -25,6 +29,7 @@
         "strava_app",
         "authorize",
         "timezone",
+        "activities",
         "zones",
         "sync",
         "done"
@@ -37,7 +42,7 @@
     },
     "needs": {
       "type": "array",
-      "description": "The `key=value` inputs the next step takes, one per `stride setup` call. For zones either one of threshold_hr and max_hr does. Empty for sync, which is `stride sync` then `stride analyze`, and when complete.",
+      "description": "The `key=value` inputs the next step takes, one per `stride setup` call. For zones either one of threshold_hr and max_hr does. Empty for activities and sync, which the next `stride setup` call with no value runs, and when complete.",
       "items": {
         "type": "string",
         "enum": [
@@ -64,7 +69,7 @@
     },
     "ran": {
       "type": "array",
-      "description": "What this call did: init when it created the database, and the key it applied when one was passed.",
+      "description": "What this call did: init when it created the database, the key it applied when one was passed, and activities or sync when it ran that step.",
       "items": {
         "type": "string"
       }
@@ -87,6 +92,7 @@
               "strava_app",
               "authorize",
               "timezone",
+              "activities",
               "zones",
               "sync"
             ]
@@ -96,6 +102,25 @@
           }
         }
       }
+    },
+    "max_hr_proposed": {
+      "type": "integer",
+      "description": "When the next step is zones: the maximum heart rate the activity list supports, the highest reached in at least two sessions so one session's strap spike is ignored. `stride setup max_hr=<this>` accepts it. 0 when the step is not zones or fewer than two sessions carry a heart rate, and then a number has to be asked for."
+    },
+    "zone_bounds_proposed": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      },
+      "description": "The four zone upper bounds (z1..z4, bpm) max_hr_proposed gives, through the max-HR rule of 90 % of max as threshold. Empty when max_hr_proposed is 0."
+    },
+    "owed": {
+      "type": "integer",
+      "description": "Fetches the first sync still owes: streams, strength descriptions and GPS routes. The sync step is done when this is 0."
+    },
+    "resume_at": {
+      "type": "string",
+      "description": "When this call ran a sync step or the activity list and Strava's limits stopped it: the time the next `stride setup` call can continue, as ISO-8601 UTC. Empty otherwise."
     }
   }
 }
