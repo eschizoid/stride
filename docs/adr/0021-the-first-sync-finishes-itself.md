@@ -1,6 +1,6 @@
 # 0021. the first sync finishes itself
 
-Proposed 2026-11-25. Amends the stream drain's stop-and-rerun rule (`Drain.roc`, #246)
+Accepted 2026-11-25. Amends the stream drain's stop-and-rerun rule (`Drain.roc`, #246)
 and the first-run steps of `stride setup`.
 
 ## Context
@@ -39,12 +39,16 @@ what the athlete wants and re-running is busywork.
    report work within the first window. Streams and routes follow and refine what is
    already there.
 
-2. **A human sync waits instead of stopping.** When the read window is spent and work is
-   still owed, `stride sync` waits until the next quarter-hour mark (plus a short
-   margin) and continues, with one live progress line: activities and streams done of
-   the total owed, and the local time the next batch starts. Ctrl-C stops it cleanly,
-   and the next run resumes where it stopped, since every fetch is already stored as it
-   lands. A routine sync owes less than a window and never waits.
+2. **A human sync waits instead of stopping, behind a progress bar.** When the read
+   window is spent and work is still owed, `stride sync` waits until the next
+   quarter-hour mark (plus a short margin) and continues. On a terminal it paints one
+   line that redraws in place: a bar of plain ASCII (`[#######-------]`), since every
+   glyph stride prints is single-width and a Windows console renders block characters
+   badly, beside the numbers it stands for: activities and streams done of the total
+   owed, and while waiting, the local time the next batch starts. When stdout is not a
+   terminal it prints those numbers as plain lines instead, one per batch. Ctrl-C stops
+   it cleanly, and the next run resumes where it stopped, since every fetch is already
+   stored as it lands. A routine sync owes less than a window and never waits.
 
 3. **The headers set the pace.** Where Strava sends `X-ReadRateLimit-Usage`, it is the
    usage the engine paces by; its own count remains the fallback when the header is
