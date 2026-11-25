@@ -97,6 +97,10 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
+      # sips is macOS's: every icon must be the master's (img/stride-icon.png) by
+      # its transform in img/make-icons.sh, with no light fringe at its edge
+      - name: The committed icons are their master's by their transforms
+        run: sh img/make-icons.sh --check
       - name: Install Roc (new compiler)
         uses: ./.github/actions/setup-roc
       # sqlite3/jq/awk/curl ship on the macOS runner; just does not

@@ -538,9 +538,29 @@ on `main`. You never tag or edit the version by hand.
   artifacts ship beside them: macOS `.app` zips (both arches), a linux tarball and a
   windows zip, each carrying the viz binary, brand fonts, the splash's mark and the
   streak flame (`img/stride-icon.png`, `img/flame.png`), and a launcher that seeds
-  `~/.stride/fonts` and `~/.stride/img`. Each package job fails when its package
-  lacks a face or image the window loads, or its launcher does not seed one into a
-  fake home. `tools/package-viz.sh` builds and proves the linux and windows
+  `~/.stride/fonts` and `~/.stride/img`. The linux and windows packages also carry
+  an install step the athlete runs once, which puts the app in the system menu with
+  its icon: linux `install.sh` writes a desktop entry and the 256 px icon under
+  `~/.local/share`, windows `install.cmd` writes a Start-menu shortcut (required)
+  and a Desktop one (skipped when that folder is missing), each carrying
+  `stride.ico` and running `stride-app.bat` through cmd, minimized. All three
+  platforms match: `img/make-icons.sh` (macOS `sips`) renders every icon from
+  `img/stride-icon.png`, the 512 px master, as the frame alone, masked at the
+  target size just inside its outer edge and sized to each platform's grid (macOS
+  and linux 80.5%, Apple's tile and GNOME's keyline; windows 87.5%, its 42-of-48
+  grid), each transform stated once in the script. The windows and linux icons are
+  committed; `tools/make-viz-app.sh` renders the macOS iconset through it at build
+  time. It pins the hashes in `img/stride-icons.sha256`, and with `--check`, which
+  CI's macOS job runs, fails when an icon is not the master's by its transform or
+  carries a light edge fringe;
+  every launcher carries the macOS launcher's
+  `step:`-marked steps (windows lacks only `path`); every package ships exactly
+  `assets/fonts`. Each package job fails when its package lacks or alters a font,
+  image, icon or install step, when an icon hash or a launcher step drifts from the
+  macOS app, when the desktop entry is malformed, when its launcher does not seed a
+  fake home, or when its install step does not register the app. The windows
+  runner has no OpenGL context, so no job requires the window to start there.
+  `tools/package-viz.sh` builds and proves the linux and windows
   packages, and `build.yml`'s `viz-link-linux` and `viz-link-windows` jobs run it on
   every pull request, so a packaging defect fails a PR rather than a release.
   `fail-fast: false` plus an `always()` upload means one bad target still lets the
