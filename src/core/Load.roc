@@ -38,8 +38,14 @@ Load :: [].{
 	# running counts only its elapsed days, so it is held to a partial level.
 	#
 	# The step weighs a late day above an early one and the hold weighs every
-	# day alike, so a week whose load lands early can sit a hair above its
-	# hold and still lose CTL. The expects below bound that miss.
+	# day alike, so the tick can miss either way. With a = ctl_alpha and
+	# r = 1 - a, a week's change in CTL is a times its loads weighted r^6 for
+	# the first day down to 1 for the last, less (1 - r^7) of its start. A
+	# week whose whole load lands on its first day can top its hold and still
+	# lose up to (1 - r^7) - 7a*r^6 of its starting CTL (1.07%); one whose
+	# whole load lands on its last day can fall short and still gain up to
+	# 7a - (1 - r^7) (1.12%). Every other placement misses by less, and so
+	# does a shorter span. The last expect below pins both bounds.
 	hold : F64, I64 -> F64
 	hold = |ctl_start, days| if (days <= 0) 0.0 else ctl_start * days.to_f64()
 
@@ -102,11 +108,27 @@ Load :: [].{
 	# load tops its hold gained CTL and one under it lost CTL
 	expect List.all(real_weeks, |w| (w.ctl_end > w.ctl_start) == (w.total > hold(w.ctl_start, w.days)))
 
-	# the miss the hold allows: a week's whole load on its Monday, a hundredth
-	# over its hold, loses CTL, and by under 1.1% of where it started
+	# the tick's miss, both ways, at its exact bound: a week's whole load on
+	# its first day, a hair over its hold, loses close to (1 - r^7) - 7a*r^6
+	# of its starting CTL and no more; on its last day, a hair under, it gains
+	# close to 7a - (1 - r^7) and no more; and a week's load on any one day,
+	# exactly at its hold, lands between the two
 	expect {
+		a = ctl_alpha
+		r = 1.0 - a
+		r6 = r * r * r * r * r * r
+		lose_bound = (1.0 - r6 * r) - 7.0 * a * r6
+		gain_bound = 7.0 * a - (1.0 - r6 * r)
 		c = 50.0
-		lost = walk(c, [hold(c, 7) * 1.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-		lost < c and c - lost < c * 0.011
+		e = 0.000001
+		days7 = [0.U64, 1, 2, 3, 4, 5, 6]
+		on_day = |i, total| List.map(days7, |d| if (d == i) total else 0.0)
+		lost = (c - walk(c, on_day(0, hold(c, 7) * (1.0 + e)))) / c
+		gained = (walk(c, on_day(6, hold(c, 7) * (1.0 - e))) - c) / c
+		(lose_bound - 0.010745).abs() < 0.000005
+			and (gain_bound - 0.011180).abs() < 0.000005
+			and lost > 0.0 and lost <= lose_bound and lost > lose_bound - 0.00001
+			and gained > 0.0 and gained <= gain_bound and gained > gain_bound - 0.00001
+			and List.all(days7, |i| (walk(c, on_day(i, hold(c, 7))) - c) / c >= 0.0 - lose_bound - 0.000000001 and (walk(c, on_day(i, hold(c, 7))) - c) / c <= gain_bound + 0.000000001)
 	}
 }

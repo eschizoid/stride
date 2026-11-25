@@ -160,7 +160,7 @@ Ramp :: [].{
 						fix(Scene.data("ctl now", 11.0, ink_faint), card.x + 16.0, 102.0, Left, card),
 						fix(Scene.data(Fmt.tenths_signed(last.ramp10), 28.0, verdict(I64.to_f32(last.ramp10) / 10.0, last.days)), win_w - pad - 16.0, 68.0, Right, card),
 						fix(Scene.data(if (Weeks.partial(last.days)) "ctl per week so far" else "ctl per week", 11.0, ink_faint), win_w - pad - 16.0, 102.0, Right, card),
-						Scene.free(measure, Scene.data("${I64.to_str(F64.round_to_i64_try(top) ?? 0)} tss", 10.0, ink_faint), [{ x: pad, y: Weeks.bars_top - 14.0, align: Left }], 1, panel),
+						Scene.free(measure, Scene.data("${I64.to_str(F64.round_to_i64_try(top) ?? 0)} load", 10.0, ink_faint), [{ x: pad, y: Weeks.bars_top - 14.0, align: Left }], 1, panel),
 						fix(Scene.data("0", 10.0, ink_faint), pad, bot - 12.0, Left, panel),
 						Weeks.focus_text(model, measure, key_text),
 						fix(Scene.data(tick_text, 10.0, ink_faint), tick_swatch.x + tick_swatch.w + 6.0, 117.0, Left, panel),
@@ -301,4 +301,14 @@ expect {
 expect {
 	bs = Ramp.bars_of(Ramp.real_weeks, { w: 980.0, h: 600.0 })
 	List.all(bs, |b| (Ramp.chip_box(b)).y + (Ramp.chip_box(b)).h <= F32.min(b.top, (Ramp.tick_box(b)).y))
+}
+
+# a new athlete's first week, whose history starts mid-week, started from
+# zero CTL whatever end-of-week CTL and ramp the view reports for it, so it
+# holds at zero and draws no tick; a later week reads its start as its end
+# less its ramp
+expect {
+	first = { wk: "2026-11-02", days: 7, tss: 160, ctl10: 21, ramp10: 0, ctl_start: Db.week_start_ctl(Bool.True, 2.07, 0.0) }
+	bs = Ramp.bars_of([first], { w: 980.0, h: 600.0 })
+	Ramp.hold(first).abs() < 0.000001 and List.len(bs) == 1 and List.all(bs, |b| !(Ramp.ticked(b))) and (Db.week_start_ctl(Bool.False, 51.61, -2.17) - 53.78).abs() < 0.001
 }

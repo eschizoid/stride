@@ -163,21 +163,26 @@ the week's start times the days the week counts (`core.Load.hold`), since a
 day whose load equals CTL is the fixed point of the recurrence the engine
 builds `daily_load` with, and that recurrence lives in the same module. A
 bar over its tick gained fitness and one under it lost fitness, whatever
-its height beside the other weeks. The recurrence weighs a late day above an
-early one and the tick weighs every day alike, so a week whose load lands
-early can sit a hair above its tick and still lose a little CTL; `core.Load`
-pins that miss under 1.1% of CTL. The scale tops out at the heavier of the
-biggest week and the highest tick, so a rest week after a block keeps its
-tick on the plot, and a chip rides above its bar or its tick, whichever
-stands higher. The card carries where fitness stands and how fast it is
-moving; a week with no load keeps a base stub, so the current partial week
-never vanishes from the row. That week, until the series covers all seven
-of its days, is judged by neither: its bar, tick and chip are muted, the
-chip says "so far", the card reads "ctl per week so far", and its tick is
-held to the days it has had, since a partial week's load is not a low one.
-The weeks come from the `weekly_ramp` view - the one definition of weekly
-ramp; a week's start is its end-of-week CTL less its ramp. A directive with
-view 7 opens it.
+its height beside the other weeks, except within a narrow band around the
+tick: the recurrence weighs a late day above an early one and the tick
+weighs every day alike, so a week whose load lands on its first day can top
+its tick and still lose up to 1.07% of its starting CTL, and one whose load
+lands on its last day can fall short of its tick and still gain up to
+1.12%. `core.Load` derives both bounds from the recurrence and pins them.
+The scale tops out at the heavier of the biggest week and the highest tick,
+so a rest week after a block keeps its tick on the plot, and a chip rides
+above its bar or its tick, whichever stands higher. The card carries where
+fitness stands and how fast it is moving; a week with no load keeps a base
+stub, so the current partial week never vanishes from the row. That week,
+until the series covers all seven of its days, is judged by neither: its
+bar, tick and chip are muted, the chip says "so far", the card reads "ctl
+per week so far", and its tick is held to the days it has had, since a
+partial week's load is not a low one. The weeks come from the `weekly_ramp`
+view - the one definition of weekly ramp; a week's start is its
+end-of-week CTL less its ramp, except a week that begins on or before the
+first day of history, which started from zero CTL (the engine walks
+`daily_load` from zero) and so holds at zero and draws no tick. A directive
+with view 7 opens it.
 
 ![The ramp view](img/ramp.png)
 
