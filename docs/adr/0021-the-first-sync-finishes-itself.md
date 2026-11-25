@@ -97,13 +97,17 @@ what the athlete wants and re-running is busywork.
    → today: form -1, down 4 from a week ago — balanced
    ```
 
-   A first sync across a window, while it waits:
+   A first sync across a window, while it waits. The list's five pages are five reads of
+   the first window, so the streams get the other 90; the bar pads its count to the
+   width of the total, so a redrawn frame never leaves the tail of a longer one behind;
+   and the batch is scored before the wait, as decision 5 has it:
 
    ```terminaloutput
    $ stride sync
    activity list       412 checked, 412 new
    scoring             [██████████] 412/412
-   streams             [██░░░░░░░░] 95/412
+   streams             [██░░░░░░░░]  90/412
+   scoring             [██████████] 90/90
    waiting for Strava  / next batch at 10:45, 4:12 left
    ```
 
