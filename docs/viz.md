@@ -469,7 +469,7 @@ linux-arm64 app.
 The windows zip holds `stride-viz.exe`, the fonts, the images, a
 `stride-app.bat` launcher that seeds `%USERPROFILE%\.stride\fonts` and
 `%USERPROFILE%\.stride\img` and starts the window, `shortcut.ps1`, the
-icon (`stride.ico`: 16, 32, 48 and 256 px) and `install.cmd`.
+icon (`stride.ico`: 16, 24, 32, 48 and 256 px) and `install.cmd`.
 Double-click `install.cmd`: through `shortcut.ps1` it writes a `Stride`
 shortcut to the Start menu, creating that folder when it is absent, and to
 the Desktop when that folder exists, then runs the launcher. Each shortcut
@@ -483,16 +483,25 @@ opens beside the window. The running window's title bar and taskbar
 button show the generic program icon: roc-ray has no call that sets a
 window's icon, and the exe carries no icon resource.
 
-All three packages show one icon and run one launcher. `img/make-icons.sh`
-builds `stride.ico` and the linux `stride.png` from
-`img/stride-icon-macos.png`, the image the macOS icon is built from, so
-every platform shows its artwork, inset tile and rounded corners included,
-and pins the SHA-256 of the source and both outputs in
-`img/stride-icons.sha256`; both outputs are committed, so packaging needs
-no image tool. The three launchers carry the same steps, in order, each
-marked `step:` in the launcher: `path` (widen PATH, which the linux and
-macOS launchers do and windows needs not, since a program started from
-Explorer inherits the user's whole PATH), `locate`, `log`
+All three packages show one icon and run one launcher. Every icon is
+`img/stride-icon-macos.png`, the image the macOS icon is built from,
+cropped to a square its platform's guidance expects and then scaled.
+macOS takes the whole 1024 px canvas, whose 824 px tile sits on Apple's
+icon grid. Linux takes it too: GNOME's app icon template draws its square
+keyline at 103 of 128 px, the same 80.5% the tile fills. Windows takes the
+centered 942 px square, in which the tile fills 87.5%, the 42 of 48 px of
+the square keyline on Windows' icon grid. `img/make-icons.sh` states each
+crop once, builds `stride.ico` and the linux `stride.png` with macOS's
+`sips`, and pins the SHA-256 of the source, itself and both outputs in
+`img/stride-icons.sha256`; the outputs are committed, so packaging needs
+no image tool. `sh img/make-icons.sh --check` renders both again and fails
+when a committed image's pixels differ from its rendering, and CI's macOS
+job runs it on every pull request, so an icon edited by hand fails. At
+16 px the tile's frame outweighs the S, which reads as a faint line; from
+24 px up the mark is clear. The three launchers carry the same steps, in
+order, each marked `step:` in the launcher: `path` (widen PATH, which the
+linux and macOS launchers do and windows needs not, since a program
+started from Explorer inherits the user's whole PATH), `locate`, `log`
 (`~/.stride/seed.log`), `seed-fonts`, `seed-img`, `home` (change to the
 athlete's home) and `start` (the athlete's directory first, the home
 second). The linux and macOS launchers match line for line in every step

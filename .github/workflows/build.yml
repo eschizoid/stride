@@ -97,6 +97,10 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
+      # sips is macOS's: the windows and linux icons must be what img/make-icons.sh
+      # renders from the macOS icon's source, through each platform's recorded crop
+      - name: The committed icons are their regeneration from the macOS source
+        run: sh img/make-icons.sh --check
       - name: Install Roc (new compiler)
         uses: ./.github/actions/setup-roc
       # sqlite3/jq/awk/curl ship on the macOS runner; just does not

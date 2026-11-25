@@ -112,17 +112,22 @@ check_fonts_dir() {
   done
 }
 
-# the windows and linux icons are the ones img/make-icons.sh built from the
-# macOS icon's source image: every hash in img/stride-icons.sha256 (the
-# source's and both outputs') matches its file
+# the windows and linux icons are the ones img/make-icons.sh built: every
+# hash in img/stride-icons.sha256 (the source's, the script's, holding each
+# platform's crop, and both outputs') matches its file. The script is
+# hashed with carriage returns dropped, since a windows checkout may write
+# its lines with CRLF; the images are binary and checked out as they are
 check_icons() {
   local sum line want file got
   if command -v sha256sum >/dev/null 2>&1; then sum="sha256sum"; else sum="shasum -a 256"; fi
-  for file in stride-icon-macos.png stride.ico stride-icon-256.png; do
+  for file in stride-icon-macos.png make-icons.sh stride.ico stride-icon-256.png; do
     line="$(tr -d '\r' < img/stride-icons.sha256 | grep "  $file\$" || true)"
     [ -n "$line" ] || { echo "::error::img/stride-icons.sha256 pins no hash for $file; rerun img/make-icons.sh"; exit 1; }
     want="${line%%  *}"
-    got="$($sum "img/$file" | cut -d' ' -f1)"
+    case "$file" in
+      *.sh) got="$(tr -d '\r' < "img/$file" | $sum | cut -d' ' -f1)" ;;
+      *) got="$($sum "img/$file" | cut -d' ' -f1)" ;;
+    esac
     [ "$got" = "$want" ] || { echo "::error::img/$file is not the file img/make-icons.sh pinned; rerun img/make-icons.sh"; exit 1; }
   done
 }
@@ -193,9 +198,9 @@ check_parity() {
     'locate|set "here=%~dp0"' \
     'log|set "log=%USERPROFILE%\.stride\seed.log"' \
     'seed-fonts|for %%f in ("%here%fonts\*.ttf") do call :seed "%%~ff" fonts' \
-    'seed-fonts|if not exist "%USERPROFILE%\.stride\fonts" mkdir "%USERPROFILE%\.stride\fonts" >nul 2>&1 || echo %date% %time%: could not create %USERPROFILE%\.stride\fonts - the window will use its fallback font>>"%log%" 2>nul' \
+    'seed-fonts|if not exist "%USERPROFILE%\.stride\fonts" mkdir "%USERPROFILE%\.stride\fonts" >nul 2>&1 || echo %date% %time%: could not create "%USERPROFILE%\.stride\fonts" - the window will use its fallback font>>"%log%" 2>nul' \
     'seed-img|for %%f in ("%here%img\*.png") do call :seed "%%~ff" img' \
-    'seed-img|if not exist "%USERPROFILE%\.stride\img" mkdir "%USERPROFILE%\.stride\img" >nul 2>&1 || echo %date% %time%: could not create %USERPROFILE%\.stride\img - the splash and the streak chip will show text alone>>"%log%" 2>nul' \
+    'seed-img|if not exist "%USERPROFILE%\.stride\img" mkdir "%USERPROFILE%\.stride\img" >nul 2>&1 || echo %date% %time%: could not create "%USERPROFILE%\.stride\img" - the splash and the streak chip will show text alone>>"%log%" 2>nul' \
     'home|cd /d "%USERPROFILE%"' \
     'start|start "" "%here%stride-viz.exe" "%USERPROFILE%\.stride" "%USERPROFILE%"'; do
     grep -qxF -- "${k#*|}" <<<"$(step_block "$win" rem "${k%%|*}")" ||
@@ -225,15 +230,16 @@ le() {
 }
 
 # an ICO whose header is an icon directory, whose every entry points at a
-# PNG inside the file, which holds a 256 px image, and whose 256 px image is
-# the linux icon byte for byte, so the two icons cannot drift apart
+# PNG inside the file, and which holds the sizes Windows asks an app for at
+# the least: 16, 24, 32, 48 and 256 px. Whether its pixels are the source's
+# is img/make-icons.sh --check's to say
 check_ico() {
-  local ico="$1" size n big e len off sig i
+  local ico="$1" size n e len off sig i w have want
   size=$(wc -c < "$ico" | tr -d ' ')
   [ "$(le "$ico" 0 2)" = 0 ] && [ "$(le "$ico" 2 2)" = 1 ] || { echo "::error::$ico is not an icon file"; exit 1; }
   n=$(le "$ico" 4 2)
   [ "$n" -gt 0 ] || { echo "::error::$ico holds no image"; exit 1; }
-  big=""
+  have=" "
   for i in $(seq 0 $((n - 1))); do
     e=$((6 + 16 * i))
     len=$(le "$ico" $((e + 8)) 4)
@@ -241,12 +247,13 @@ check_ico() {
     [ $((off + len)) -le "$size" ] || { echo "::error::$ico entry $i points past the end of the file"; exit 1; }
     sig=$(od -An -tx1 -j "$off" -N 8 "$ico" | tr -d ' \n')
     [ "$sig" = 89504e470d0a1a0a ] || { echo "::error::$ico entry $i is not a PNG"; exit 1; }
-    [ "$(le "$ico" "$e" 1)" = 0 ] && big="$off $len"
+    w=$(le "$ico" "$e" 1)
+    [ "$w" = 0 ] && w=256
+    have="$have$w "
   done
-  [ -n "$big" ] || { echo "::error::$ico has no 256 px image"; exit 1; }
-  set -- $big
-  tail -c +$(($1 + 1)) "$ico" | head -c "$2" | cmp -s - img/stride-icon-256.png ||
-    { echo "::error::$ico's 256 px image is not img/stride-icon-256.png; rerun img/make-icons.sh"; exit 1; }
+  for want in 16 24 32 48 256; do
+    case "$have" in *" $want "*) ;; *) echo "::error::$ico has no $want px image"; exit 1 ;; esac
+  done
 }
 
 # the window's title, which X11 reports as its WM_CLASS; a desktop entry's
@@ -429,12 +436,12 @@ rem step: seed-fonts
 rem the window reads %USERPROFILE%\.stride\fonts; seed it from the copies
 rem shipped beside this script, copying any that are missing or differ in
 rem size, so a copy cut short is repaired on the next launch
-if not exist "%USERPROFILE%\.stride\fonts" mkdir "%USERPROFILE%\.stride\fonts" >nul 2>&1 || echo %date% %time%: could not create %USERPROFILE%\.stride\fonts - the window will use its fallback font>>"%log%" 2>nul
+if not exist "%USERPROFILE%\.stride\fonts" mkdir "%USERPROFILE%\.stride\fonts" >nul 2>&1 || echo %date% %time%: could not create "%USERPROFILE%\.stride\fonts" - the window will use its fallback font>>"%log%" 2>nul
 for %%f in ("%here%fonts\*.ttf") do call :seed "%%~ff" fonts
 rem step: seed-img
 rem the splash's mark and the streak flame render from
 rem %USERPROFILE%\.stride\img, seeded the same way
-if not exist "%USERPROFILE%\.stride\img" mkdir "%USERPROFILE%\.stride\img" >nul 2>&1 || echo %date% %time%: could not create %USERPROFILE%\.stride\img - the splash and the streak chip will show text alone>>"%log%" 2>nul
+if not exist "%USERPROFILE%\.stride\img" mkdir "%USERPROFILE%\.stride\img" >nul 2>&1 || echo %date% %time%: could not create "%USERPROFILE%\.stride\img" - the splash and the streak chip will show text alone>>"%log%" 2>nul
 for %%f in ("%here%img\*.png") do call :seed "%%~ff" img
 rem step: home
 cd /d "%USERPROFILE%"
@@ -462,9 +469,10 @@ goto :eof
 BAT
 }
 
-# written with CRLF like the launcher. It reads its own folder from
-# $PSScriptRoot and the home from the environment, so cmd quotes no path
-# for it, whatever characters the folder's name holds
+# written with CRLF like the launcher. install.cmd hands it the app's
+# folder and the home through the environment, so cmd quotes no path for
+# it, whatever characters the folder's name holds, and runs its text as a
+# script block, which no execution policy governs, as a script file is
 windows_shortcut() {
   cat <<'PS'
 # Writes Stride's shortcut into the Start menu (created when absent, and
@@ -476,7 +484,7 @@ windows_shortcut() {
 # stdin is a console.
 $ErrorActionPreference = 'Stop'
 $q = [char]34
-$app = $PSScriptRoot
+$app = $env:STRIDE_APP
 $h = $env:USERPROFILE
 $target = Join-Path $env:SystemRoot 'System32\cmd.exe'
 $arguments = '/d /c call ' + $q + (Join-Path $app 'stride-app.bat') + $q
@@ -502,7 +510,7 @@ foreach ($f in 'Programs', 'Desktop') {
     }
     Write-Host ('Stride: could not write the Start-menu shortcut in ' + $d + ': ' + $_.Exception.Message)
     if (-not [Console]::IsInputRedirected) { [void](Read-Host 'Press Enter to close') }
-    exit 1
+    throw 'Stride: the Start-menu shortcut was not written'
   }
 }
 PS
@@ -516,7 +524,9 @@ rem puts Stride in the Start menu, and on the Desktop when there is one,
 rem then seeds the athlete's directory and starts the app through
 rem stride-app.bat. The shortcuts name this folder, so run this again
 rem after moving it.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0shortcut.ps1"
+setlocal
+set "STRIDE_APP=%~dp0"
+powershell -NoProfile -Command "$ErrorActionPreference = 'Stop'; & ([scriptblock]::Create((Get-Content -LiteralPath (Join-Path $env:STRIDE_APP 'shortcut.ps1') -Raw)))"
 if errorlevel 1 exit /b 1
 call "%~dp0stride-app.bat"
 BAT
@@ -548,18 +558,23 @@ check_lnk() {
   [ "$style" = 7 ] || { echo "::error::the $name shortcut's window style is $style, not 7 (minimized)"; exit 1; }
 }
 
-# the staged launcher and shortcut script (posix paths): the launcher starts
-# one program, the window (check_parity holds its start line to the macOS
-# launcher's); the shortcut runs that launcher through cmd, minimized, from
-# the home
+# the staged launcher, shortcut script and install step (posix paths). The
+# launcher starts one program, the window (check_parity holds its start
+# line to the macOS launcher's). The shortcut runs that launcher through
+# cmd, minimized, from the home. The install step hands the script its
+# folder through the environment and runs the script's text, never the file,
+# since an execution policy set by Group Policy blocks a script file whatever
+# -ExecutionPolicy says. cmd splits an unquoted path at & and parentheses,
+# so in both cmd files no path variable appears outside double quotes.
 check_launcher() {
-  local bat ps k starts
+  local bat ps inst k starts f code bare
   bat="$(tr -d '\r' < "$1")"
   ps="$(tr -d '\r' < "$2")"
+  inst="$(tr -d '\r' < "$3")"
   starts="$(grep -v '^rem ' <<<"$bat" | grep -ciF 'start ' || true)"
   [ "$starts" = 1 ] || { echo "::error::the launcher has $starts start lines; it must have only the window's"; exit 1; }
   for k in \
-    '$app = $PSScriptRoot' \
+    '$app = $env:STRIDE_APP' \
     '$h = $env:USERPROFILE' \
     "\$target = Join-Path \$env:SystemRoot 'System32\\cmd.exe'" \
     "\$arguments = '/d /c call ' + \$q + (Join-Path \$app 'stride-app.bat') + \$q" \
@@ -567,6 +582,18 @@ check_launcher() {
     "    \$s.IconLocation = (Join-Path \$app 'stride.ico') + ',0'" \
     '    $s.WindowStyle = 7'; do
     grep -qxF -- "$k" <<<"$ps" || { echo "::error::shortcut.ps1 lacks the line: $k"; exit 1; }
+  done
+  for k in \
+    'set "STRIDE_APP=%~dp0"' \
+    "powershell -NoProfile -Command \"\$ErrorActionPreference = 'Stop'; & ([scriptblock]::Create((Get-Content -LiteralPath (Join-Path \$env:STRIDE_APP 'shortcut.ps1') -Raw)))\"" \
+    'if errorlevel 1 exit /b 1'; do
+    grep -qxF -- "$k" <<<"$inst" || { echo "::error::install.cmd lacks the line: $k"; exit 1; }
+  done
+  ! grep -qiE -- '-File( |$)' <<<"$inst" || { echo "::error::install.cmd runs a script file, which an execution policy can block"; exit 1; }
+  for f in launcher install.cmd; do
+    if [ "$f" = launcher ]; then code="$bat"; else code="$inst"; fi
+    bare="$(grep -v '^rem ' <<<"$code" | sed -e 's/"[^"]*"//g' | grep -n -E '%(USERPROFILE|here|STRIDE_APP)%|%~dp0' || true)"
+    [ -z "$bare" ] || { echo "::error::the $f names a path outside double quotes: $bare"; exit 1; }
   done
 }
 
@@ -628,7 +655,7 @@ case "$os $step" in
     windows_launcher | crlf > stage/stride-app/stride-app.bat
     windows_shortcut | crlf > stage/stride-app/shortcut.ps1
     windows_install | crlf > stage/stride-app/install.cmd
-    check_launcher stage/stride-app/stride-app.bat stage/stride-app/shortcut.ps1
+    check_launcher stage/stride-app/stride-app.bat stage/stride-app/shortcut.ps1 stage/stride-app/install.cmd
     rm -f stride-app-windows-x86_64.zip
     7z a -bso0 stride-app-windows-x86_64.zip ./stage/stride-app
     # shellcheck disable=SC2046

@@ -545,8 +545,12 @@ on `main`. You never tag or edit the version by hand.
   and a Desktop one (skipped when that folder is missing), each carrying
   `stride.ico` and running `stride-app.bat` through cmd, minimized. All three
   platforms match: `img/make-icons.sh` (macOS `sips`) builds the windows and linux
-  icons from `img/stride-icon-macos.png`, the macOS icon's source, and pins the
-  hashes in `img/stride-icons.sha256`; every launcher carries the macOS launcher's
+  icons from `img/stride-icon-macos.png`, the macOS icon's source, through a crop
+  per platform stated once in the script (linux the whole canvas, as GNOME's
+  keyline matches it; windows a centered 942 px square, for its 42-of-48 grid),
+  pins the hashes in `img/stride-icons.sha256`, and with `--check`, which CI's
+  macOS job runs, fails when a committed icon is not its regeneration; every
+  launcher carries the macOS launcher's
   `step:`-marked steps (windows lacks only `path`); every package ships exactly
   `assets/fonts`. Each package job fails when its package lacks or alters a font,
   image, icon or install step, when an icon hash or a launcher step drifts from the
