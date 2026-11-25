@@ -509,9 +509,12 @@ profile that has a Desktop folder and once into one that does not. The
 first must get both shortcuts, the second the Start-menu one and a
 skipped-Desktop note; every shortcut must target conhost with the exe's
 path, the athlete's directory and the home, start in the home and show the
-icon. Each launch must seed the profile and leave the window running under
-conhost, and the Start-menu shortcut must start it the same way. The prove
-step prints where each profile's folders resolve. CI runs it on every pull
+icon, and each install must seed the profile through the launcher. The
+launcher must carry its two start lines, checked when the package is built,
+and must read a build of 17763 or later from `ver` on the runner. The
+runner has no OpenGL context, so the window cannot start there; starting it
+is verified on a real machine. The prove step prints where each profile's
+folders resolve. CI runs it on every pull
 request as well as at release. `img/make-icons.sh` regenerates `stride.ico`
 and `stride-icon-256.png` from `img/stride-icon-macos.png`; both are
 committed, so packaging needs no image tool.
