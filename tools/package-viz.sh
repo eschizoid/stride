@@ -24,16 +24,15 @@
 # `package` stages under stage/stride-app (git-ignored: `prove` runs from it in
 # a later step), archives it with stride-app/ at the archive's root, and fails
 # when an input is missing, when the icon or desktop entry is malformed, when
-# the windows launcher lacks a line that starts the window, or when the
-# archive lacks any file listed above. `prove` runs the staged launcher
+# the windows launcher does not start the window as a shortcut does, or when
+# the archive lacks any file listed above. `prove` runs the staged launcher
 # against an empty home, checks that every face and image arrives, truncates
 # one of each and checks that the next launch repairs them; then it runs the
 # install step against fresh homes from a folder whose path needs quoting and
-# checks the menu entries, the icon and that the launcher seeded the home.
-# The windows CI runner has no OpenGL context, so the window cannot start
-# there: on windows `prove` checks what the shortcuts would start and the
-# Windows build the launcher reads, and starting the window is verified on a
-# real machine.
+# checks the menu entries, the icon and that the launcher seeded the home. On
+# windows it also requires every start, from the launcher, from install.cmd
+# and from the Start-menu shortcut, to leave the window running under conhost
+# with the athlete's directory as its first argument.
 set -euo pipefail
 
 faces="Quicksand-Medium.ttf JetBrainsMono-Regular.ttf"
@@ -300,6 +299,10 @@ rem stays open behind its window. From Windows 10 version 1809 (build
 rem 17763) conhost.exe --headless hosts it in a console with no window,
 rem which the programs it runs share; an older conhost reads that flag as
 rem the program to run, so there the window gets a console of its own.
+rem PowerShell's Start-Process starts it through ShellExecute, as a
+rem shortcut does, so it inherits none of this script's standard handles,
+rem and it reads the window's path from the environment, so no path is
+rem quoted by cmd.
 set "here=%~dp0"
 set "log=%USERPROFILE%\.stride\seed.log"
 if not exist "%USERPROFILE%\.stride\fonts" mkdir "%USERPROFILE%\.stride\fonts" >nul 2>&1
@@ -307,14 +310,8 @@ for %%f in ("%here%fonts\*.ttf") do call :seed "%%~ff" fonts
 if not exist "%USERPROFILE%\.stride\img" mkdir "%USERPROFILE%\.stride\img" >nul 2>&1
 for %%f in ("%here%img\*.png") do call :seed "%%~ff" img
 cd /d "%USERPROFILE%"
-set "build=0"
-for /f "tokens=2 delims=[]" %%v in ('ver') do set "winver=%%v"
-for /f "tokens=4 delims=. " %%b in ("%winver%") do set "build=%%b"
-if %build% GEQ 17763 (
-  start "" "%SystemRoot%\System32\conhost.exe" --headless "%here%stride-viz.exe" "%USERPROFILE%\.stride" "%USERPROFILE%"
-) else (
-  start "" "%here%stride-viz.exe" "%USERPROFILE%\.stride" "%USERPROFILE%"
-)
+set "STRIDE_EXE=%here%stride-viz.exe"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$q = [char]34; $h = $env:USERPROFILE; $pass = $q + (Join-Path $h '.stride') + $q + ' ' + $q + $h + $q; if ([Environment]::OSVersion.Version.Build -ge 17763) { $file = Join-Path $env:SystemRoot 'System32\conhost.exe'; $arguments = '--headless ' + $q + $env:STRIDE_EXE + $q + ' ' + $pass } else { $file = $env:STRIDE_EXE; $arguments = $pass }; Start-Process -FilePath $file -ArgumentList $arguments -WorkingDirectory $h"
 exit /b 0
 :seed
 rem every %var% read below sits on its OWN line - cmd expands at
@@ -386,42 +383,91 @@ check_lnk() {
   [ "$wd" = "$home" ] || { echo "::error::the $name shortcut starts in $wd, not $home"; exit 1; }
 }
 
-# the staged launcher (a posix path) carries the lines that start the
-# window: from the launcher's folder and the home, under conhost --headless
-# from build 17763 and in a console of its own before it, passing the
-# athlete's directory and then the home, every path quoted
+# the staged launcher (a posix path) starts the window from the home
+# through Start-Process, which uses ShellExecute, never through cmd's
+# start; it reads the exe's path from the environment, passes the
+# athlete's directory and then the home, each quoted, and uses
+# conhost --headless from build 17763
 check_launcher() {
-  local bat k
+  local bat k code
   bat="$(tr -d '\r' < "$1")"
   for k in \
     'set "here=%~dp0"' \
     'cd /d "%USERPROFILE%"' \
-    'if %build% GEQ 17763 (' \
-    '  start "" "%SystemRoot%\System32\conhost.exe" --headless "%here%stride-viz.exe" "%USERPROFILE%\.stride" "%USERPROFILE%"' \
-    ') else (' \
-    '  start "" "%here%stride-viz.exe" "%USERPROFILE%\.stride" "%USERPROFILE%"'; do
+    'set "STRIDE_EXE=%here%stride-viz.exe"'; do
     grep -qxF -- "$k" <<<"$bat" || { echo "::error::the launcher lacks the line: $k"; exit 1; }
   done
+  for k in \
+    "\$pass = \$q + (Join-Path \$h '.stride') + \$q + ' ' + \$q + \$h + \$q" \
+    "[Environment]::OSVersion.Version.Build -ge 17763" \
+    "\$arguments = '--headless ' + \$q + \$env:STRIDE_EXE + \$q + ' ' + \$pass" \
+    "Start-Process -FilePath \$file -ArgumentList \$arguments -WorkingDirectory \$h"; do
+    grep -qF -- "$k" <<<"$bat" || { echo "::error::the launcher's start lacks: $k"; exit 1; }
+  done
+  code="$(grep -v '^rem ' <<<"$bat")"
+  ! grep -qiF 'start ""' <<<"$code" || { echo "::error::the launcher starts a program through cmd's start"; exit 1; }
 }
 
-# the Windows build the staged launcher (a posix path) reads, by running
-# its own two `ver`-parsing lines in cmd
-launcher_build() {
-  local dir bat
-  dir="$(mktemp -d)"
-  bat="$(tr -d '\r' < "$1")"
-  { echo '@echo off'
-    echo 'set "build=0"'
-    grep -F "in ('ver')" <<<"$bat"
-    grep -F 'in ("%winver%")' <<<"$bat"
-    echo 'echo %build%'; } | crlf > "$dir/build.cmd"
-  cmd //C "$(cygpath -w "$dir/build.cmd")" </dev/null | tr -d '\r'
+# the command line and parent program of a running stride-viz.exe whose
+# command line contains the text given, one per line; nothing when none
+# runs. The query is a script file, so no quote in it crosses a command
+# line, and PowerShell's own errors reach stderr
+viz_process() {
+  local ps
+  ps="$(mktemp -d)/viz_process.ps1"
+  cat > "$ps" <<'PS'
+$all = Get-CimInstance Win32_Process
+$p = $all | Where-Object { $_.Name -eq 'stride-viz.exe' -and $_.CommandLine -and $_.CommandLine.Contains($env:NEEDLE) } | Select-Object -First 1
+if ($p) {
+  $p.CommandLine
+  $parent = $all | Where-Object { $_.ProcessId -eq $p.ParentProcessId } | Select-Object -First 1
+  if ($parent) { $parent.Name } else { '(no parent)' }
+}
+PS
+  NEEDLE="$1" powershell -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$ps")" | tr -d '\r'
+}
+
+# what is running, for a log that has to explain a missing window
+show_processes() {
+  echo "package-viz: [$1] stride-viz.exe and conhost.exe processes:"
+  tasklist //v //fi "imagename eq stride-viz.exe" 2>&1 | tr -d '\r' | sed 's/^/    /'
+  tasklist //fi "imagename eq conhost.exe" 2>&1 | tr -d '\r' | sed 's/^/    /'
+}
+
+# waits up to 20 s for stride-viz.exe to run with the athlete directory
+# given (a windows path) as its first argument, under conhost.exe, the
+# windowless host on every build the runner has. A miss is recorded in
+# $failed and the run goes on, so one run reports every start path
+failed=""
+wait_headless() {
+  local what="$1" dir="$2" found="" parent line i
+  for i in $(seq 20); do
+    found="$(viz_process "$dir")"
+    [ -n "$found" ] && break
+    case "$i" in 1|20) show_processes "$what, second $i" ;; esac
+    sleep 1
+  done
+  if [ -z "$found" ]; then
+    echo "::error::$what: stride-viz.exe did not start with $dir"
+    failed="$failed; $what"
+    return 0
+  fi
+  line="$(sed -n 1p <<<"$found")"; parent="$(sed -n 2p <<<"$found")"
+  echo "package-viz: $what: $line runs under $parent"
+  if [ "${parent,,}" != conhost.exe ]; then
+    echo "::error::$what: stride-viz.exe runs under $parent, not conhost.exe"
+    failed="$failed; $what under $parent"
+  elif [[ "$line" != *"stride-viz.exe"*" $dir "* && "$line" != *"stride-viz.exe"*" \"$dir\" "* ]]; then
+    echo "::error::$what: the athlete directory is not the window's first argument"
+    failed="$failed; $what argument order"
+  fi
+  taskkill //IM stride-viz.exe //F >/dev/null 2>&1 || true
 }
 
 # runs install.cmd (a windows path) as a fake profile (a posix path) with
 # stdin closed, after printing where that profile's Programs and Desktop
 # folders resolve; sets $log to what it printed, and fails when it fails
-# or does not seed the profile through the launcher
+# or does not seed the profile and start the window through the launcher
 install_as() {
   local fake="$1" install="$2" fakewin
   fakewin="$(cygpath -w "$fake")"
@@ -430,7 +476,7 @@ install_as() {
     { printf '%s\n' "$log"; echo "::error::install.cmd failed"; exit 1; }
   printf '%s\n' "$log"
   wait_seeded "$fake"
-  taskkill //IM stride-viz.exe //F >/dev/null 2>&1 || true
+  wait_headless "install.cmd into $fakewin" "$fakewin\\.stride"
 }
 
 # a special folder as a profile (a windows path) resolves it
@@ -511,17 +557,12 @@ case "$os $step" in
     rm -rf "$fake"
     ;;
   "windows prove")
-    # the runner has no OpenGL context, so starting the window is verified on a real machine, not here
-    build="$(launcher_build stage/stride-app/stride-app.bat)"
-    echo "package-viz: the launcher reads Windows build '$build'"
-    [[ "$build" =~ ^[0-9]+$ ]] && [ "$build" -ge 17763 ] ||
-      { echo "::error::the launcher reads build '$build' from ver, so it would not use conhost --headless"; exit 1; }
     fake="$(mktemp -d)"
     fakewin="$(cygpath -w "$fake")"
     bat="$(cygpath -w "$PWD/stage/stride-app/stride-app.bat")"
     USERPROFILE="$fakewin" cmd //C "$bat" </dev/null || true
     wait_seeded "$fake"
-    taskkill //IM stride-viz.exe //F >/dev/null 2>&1 || true
+    wait_headless "the launcher" "$fakewin\\.stride"
     printf 'x' > "$fake/.stride/fonts/Quicksand-Medium.ttf"
     printf 'x' > "$fake/.stride/img/flame.png"
     USERPROFILE="$fakewin" cmd //C "$bat" </dev/null || true
@@ -555,6 +596,11 @@ case "$os $step" in
     grep -q "no Desktop shortcut, skipped" <<<"$log" ||
       { echo "::error::install.cmd did not report the missing Desktop folder"; exit 1; }
     [ ! -e "$nodesk/Desktop/Stride.lnk" ] || { echo "::error::install.cmd wrote a Desktop it reported missing"; exit 1; }
+
+    # the Start-menu shortcut starts the window by itself
+    cmd //C start "" "$programs\\Stride.lnk" </dev/null || true
+    wait_headless "the Start-menu shortcut" "$home\\.stride"
+    [ -z "$failed" ] || { echo "::error::the window did not start as required:$failed"; exit 1; }
     ;;
   *)
     echo "usage: package-viz.sh linux|windows package <binary> | linux|windows prove" >&2

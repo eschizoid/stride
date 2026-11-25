@@ -211,9 +211,9 @@ jobs:
 
   # The window cannot be looked at on a runner, so CI links it, which proves the
   # roc-ray x64win host still works, then packages it with the release's own
-  # script and runs the launcher against a fake home. The grep checks that the
-  # launcher passes a %USERPROFILE% path as the window's first argument, its
-  # read-write grant, which seeding alone does not show. Nothing is uploaded.
+  # script, which checks that the launcher, the install step and the shortcuts
+  # start it with the athlete's directory as its first argument (its read-write
+  # grant) and that it keeps running. Nothing is uploaded.
   viz-link-windows:
     runs-on: windows-2025
     timeout-minutes: 20
@@ -227,10 +227,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # rem and # lines are stripped first, so the match must come from the
-          # launcher the script writes and not from a comment describing it
-          launcher=$(sed -e 's/^ *rem .*//' -e 's/^ *#.*//' tools/package-viz.sh)
-          grep -q 'stride-viz.exe" "%USERPROFILE%' <<<"$launcher" || { echo "::error::the windows launcher does not pass %USERPROFILE% first"; exit 1; }
           sh tools/roc-viz.sh build src/viz/main.roc --output=stride-viz.exe --opt=dev
           test -s stride-viz.exe
 
