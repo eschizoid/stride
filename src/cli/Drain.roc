@@ -162,13 +162,27 @@ Drain :: [].{
 
 	# A limit is adopted only from a response that also reports its usage: the
 	# usage is what the engine's counts are raised to, so a limit taken alone
-	# could raise the cap while the reads other apps spent stayed unseen.
+	# could raise the cap while the reads other apps spent stayed unseen. It is
+	# adopted `held` to the ceiling.
 	adopt : Usage, Usage -> Usage
 	adopt = |usage, limit|
-		match usage {
-			Reported(_) => limit
-			Unreported => Unreported
+		match (usage, limit) {
+			(Reported(_), Reported(l)) => Reported(held(l))
+			_ => Unreported
 		}
+
+	# The most a reported limit is taken to be: ten times the documented limits,
+	# 1,000 a quarter-hour and 10,000 a day. A header is text, and a garbled one
+	# could otherwise lift the caps without bound. A report above the ceiling,
+	# garbled or a real grant, paces as the ceiling: the caps stay below what
+	# Strava reported, so the ceiling can slow a sync and never pass a limit,
+	# and 9,500 reads a day still fetch the streams and routes of thousands of
+	# activities, more than one athlete's history needs in a day.
+	limit_ceiling : { window : I64, day : I64 }
+	limit_ceiling = { window: limit_default.window * 10, day: limit_default.day * 10 }
+
+	held : { window : I64, day : I64 } -> { window : I64, day : I64 }
+	held = |l| { window: (l.window).min(limit_ceiling.window), day: (l.day).min(limit_ceiling.day) }
 
 	# ── the caps a limit gives ─────────────────────────────────────────
 	# A cap is the limit less a margin that absorbs reads another app makes
@@ -192,7 +206,10 @@ Drain :: [].{
 	caps_for : Usage -> { quarter : I64, day : I64 }
 	caps_for = |reported|
 		match reported {
-			Reported(l) => { quarter: cap(l.window), day: cap(l.day) }
+			Reported(l) => {
+				h = held(l)
+				{ quarter: cap(h.window), day: cap(h.day) }
+			}
 			Unreported => caps_default
 		}
 
@@ -251,9 +268,11 @@ Drain :: [].{
 	}
 
 	# ── whether a run waits or ends ────────────────────────────────────
-	# `waits` is false for `--json`, which never holds the caller's shell, and a
-	# run that owes nothing more has nothing to wait for. A human run waits out
-	# a spent window and a spent day alike. A round that read nothing and came
+	# `waits` is false for `--json`, which never holds the caller's shell.
+	# `owed` is whether the activities the run holds still owe fetches: one that
+	# owes nothing, or nothing but the activity list, has nothing worth a wait
+	# and ends at once with the time. A human run that owes fetches waits out a
+	# spent window and a spent day alike. A round that read nothing and came
 	# straight after a wait means Strava is refusing a fresh period (another app
 	# on the token spending it, or a limit lower than stride's): waiting again
 	# would loop, so the run ends and names the time.
@@ -320,23 +339,37 @@ Drain :: [].{
 
 	# A period's stored count as it stands now, from its two rows: the count and
 	# the mark it was stamped with. A mark that is not the current period's, past
-	# or future, means nothing spent in this one; an unreadable mark, or a count
-	# that is unreadable, negative or more than twice the period's limit (no run
-	# could reach it), is reset the same way, and `repaired` says the rows need
-	# writing back, so a damaged row cannot refuse every run while no read is made
-	# to rewrite it. The reads made after a reset are raised again to what Strava
-	# reports on the first response.
+	# or future, means nothing spent in this one. A damaged row is read in the
+	# direction that cannot pass a limit, as the UTC day's two rows are:
+	#
+	# - an unreadable mark is read as the current period's, its count kept. The
+	#   two rows are written together after every read, so a count is never below
+	#   the reads made in the period its mark named, and read against the current
+	#   period it can only overstate what this one spent;
+	# - an unreadable count, or one negative or more than twice the period's limit
+	#   (no run could reach it), says nothing of what was spent, so the period is
+	#   read as spent.
+	#
+	# Either way `repaired` says the rows need writing back, stamped with the
+	# current mark: the period refuses no longer than its next mark, and a damaged
+	# row cannot refuse every run while no read is made to rewrite it.
 	stamped : [Known(I64), Corrupt], [Known(I64), Corrupt], I64, I64 -> { count : I64, repaired : Bool }
-	stamped = |mark, count, mark_now, limit|
+	stamped = |mark, count, mark_now, limit| {
+		plausible = |n| n >= 0 and n <= limit * 2
 		match mark {
 			Known(m) if m == mark_now =>
 				match count {
-					Known(n) if n >= 0 and n <= limit * 2 => { count: n, repaired: Bool.False }
-					_ => { count: 0, repaired: Bool.True }
+					Known(n) if plausible(n) => { count: n, repaired: Bool.False }
+					_ => { count: limit, repaired: Bool.True }
 				}
 			Known(_) => { count: 0, repaired: Bool.False }
-			Corrupt => { count: 0, repaired: Bool.True }
+			Corrupt =>
+				match count {
+					Known(n) if plausible(n) => { count: n, repaired: Bool.True }
+					_ => { count: limit, repaired: Bool.True }
+				}
 		}
+	}
 	# A first sync owes more than the window it starts in, so its summaries are
 	# scored before the first stream is fetched: load, form and every report
 	# work from the first window on. A routine sync owes less and scores once,
@@ -526,6 +559,11 @@ expect Drain.after_round({ stop: ListDailyCapReached, owed: True, progressed: Tr
 expect Drain.after_round({ stop: FromDrain(Complete), owed: True, progressed: True, after_wait: True, waits: True }) == Finish
 # a window that fills on the read that empties every queue has nothing to wait for
 expect Drain.after_round({ stop: FromDrain(BudgetReached), owed: False, progressed: True, after_wait: False, waits: True }) == Finish
+# a spent period with nothing owed by the activities a run holds ends it at
+# once, the day and the list alike, so a routine sync never waits for a reset
+expect Drain.after_round({ stop: FromDrain(DailyCapReached), owed: False, progressed: False, after_wait: False, waits: True }) == Finish
+expect Drain.after_round({ stop: ListRateLimited, owed: False, progressed: False, after_wait: False, waits: True }) == Finish
+expect Drain.after_round({ stop: ListDailyCapReached, owed: False, progressed: True, after_wait: False, waits: True }) == Finish
 
 # the time a caller continues: the window's mark, midnight UTC, or none
 expect Drain.resume_epoch(FromDrain(BudgetReached), True, { window: 1795601710, day: 1795651210 }) == 1795601710
@@ -577,6 +615,14 @@ expect Drain.cap(20) == 15 and Drain.cap(10) == 5 and Drain.cap(3) == 1
 expect Drain.caps_for(Reported({ window: 300, day: 3000 })) == { quarter: 285, day: 2850 }
 # before any limit is reported, Strava's documented ones
 expect Drain.caps_for(Unreported) == { quarter: 95, day: 1000 }
+# a reported limit above ten times the documented ones is adopted as that
+# ceiling, and one within it, raised or not, as reported
+expect Drain.adopt(Reported({ window: 0, day: 0 }), Reported({ window: 100000, day: 1000000 })) == Reported({ window: 1000, day: 10000 })
+expect Drain.adopt(Reported({ window: 0, day: 0 }), Reported({ window: 600, day: 30000 })) == Reported({ window: 600, day: 10000 })
+expect Drain.adopt(Reported({ window: 0, day: 0 }), Reported({ window: 1000, day: 10000 })) == Reported({ window: 1000, day: 10000 })
+expect Drain.adopt(Reported({ window: 0, day: 0 }), Reported({ window: 1001, day: 10001 })) == Reported({ window: 1000, day: 10000 })
+# ...and a stored one above it, as a row set by hand would be, paces as the ceiling too
+expect Drain.caps_for(Reported({ window: 100000, day: 1000000 })) == { quarter: 950, day: 9500 }
 # Strava's own day refuses a read whatever the shortened test day says
 expect Drain.may_read({ ..Drain.at({ window: 0, quarter: 0, today: 100 }), dtoday: 0 }, { ..Drain.test_lim, reads_per_day: 1000 }) == DayFull
 expect Drain.may_read({ ..Drain.at({ window: 0, quarter: 0, today: 0 }), dtoday: 100 }, { ..Drain.test_lim, reads_per_utc_day: 1000 }) == DayFull
@@ -587,11 +633,16 @@ expect Drain.next_day_for(Drain.at({ window: 0, quarter: 0, today: 100 }), Drain
 expect Drain.next_day_for({ ..Drain.at({ window: 0, quarter: 0, today: 4 }), dtoday: 100 }, Drain.test_lim, 1795601640, { ..Drain.real, day: 3 }) == 1795601643
 
 # a period's stored count: kept within its period, nothing outside it, and a
-# damaged row reset and flagged for writing back
+# damaged row read in the direction that cannot pass a limit and flagged for
+# writing back: an unreadable mark keeps its count as the current period's,
+# and an unreadable or impossible count reads as the period spent
 expect Drain.stamped(Known(900), Known(60), 900, 100) == { count: 60, repaired: Bool.False }
 expect Drain.stamped(Known(0), Known(60), 900, 100) == { count: 0, repaired: Bool.False }
 expect Drain.stamped(Known(1800), Known(95), 900, 100) == { count: 0, repaired: Bool.False }
-expect Drain.stamped(Corrupt, Known(95), 900, 100) == { count: 0, repaired: Bool.True }
-expect Drain.stamped(Known(900), Corrupt, 900, 100) == { count: 0, repaired: Bool.True }
-expect Drain.stamped(Known(900), Known(201), 900, 100) == { count: 0, repaired: Bool.True }
+expect Drain.stamped(Corrupt, Known(95), 900, 100) == { count: 95, repaired: Bool.True }
+expect Drain.stamped(Corrupt, Known(3), 900, 100) == { count: 3, repaired: Bool.True }
+expect Drain.stamped(Corrupt, Corrupt, 900, 100) == { count: 100, repaired: Bool.True }
+expect Drain.stamped(Corrupt, Known(-1), 900, 100) == { count: 100, repaired: Bool.True }
+expect Drain.stamped(Known(900), Corrupt, 900, 100) == { count: 100, repaired: Bool.True }
+expect Drain.stamped(Known(900), Known(201), 900, 100) == { count: 100, repaired: Bool.True }
 expect Drain.stamped(Known(900), Known(200), 900, 100) == { count: 200, repaired: Bool.False }

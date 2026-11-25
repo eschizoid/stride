@@ -1538,9 +1538,12 @@ run_stops! = || {
 		# fresh queue: the JSON run above already stored one, so without this the
 		# human run drains what is left and renders an EMPTY tail instead. A human run
 		# waits for the next window, shortened here to two seconds, and a fresh window
-		# that refuses its first read ends the run with the time it opens.
+		# that refuses its first read ends the run with the time it opens. Bounded at
+		# 25 seconds, so a run that waited again and again fails this arm (alarm, exit
+		# 142) instead of holding the suite.
 		_ = sql!(db, "DELETE FROM streams;")
-		_ = sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' STRIDE_WINDOW_SECONDS=2 '${bin}' sync >'${bo}' 2>'${home}/rl.err'")
+		rl_rc = Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' STRIDE_WINDOW_SECONDS=2 perl -e 'alarm 25; exec @ARGV' '${bin}' sync >'${bo}' 2>'${home}/rl.err'; echo $?"))
+		check!("a refused window waited for once ends the run within its bound (exit ${rl_rc})", rl_rc == "0")?
 		rl_human = Str.trim(sh!("cat '${bo}'"))
 		check!("a human run waits out the refused window once", Str.contains(sh!("cat '${home}/rl.err'"), "waiting for Strava"))?
 		check!("...and ends when the fresh window refuses too, naming when the next one opens", Str.contains(rl_human, "Strava refused reads in a fresh window with ") and Str.contains(rl_human, " still owed; the next window opens at "))?
@@ -1620,7 +1623,7 @@ run_stops! = || {
 		} else if env_or!("E2E_EXPECT_401", "") == "1" {
 			10
 		} else if rate_limited {
-			16
+			17
 		} else {
 			16
 		},
@@ -1797,13 +1800,15 @@ run_pace! = || {
 	check!("...and another app's run does not inherit it (${hi_q!("SELECT value FROM config WHERE key = 'strava_reads_today';")} reads)", hi_q!("SELECT value FROM config WHERE key = 'strava_reads_today';") == "95")?
 	_ = sh!("rm -rf '${hi}'")
 
-	# ── a damaged count row is repaired rather than read past forever: a
-	# quarter-hour mark that is no mark, beside a count at the cap, would refuse
-	# every run and never be rewritten, since no read is made to rewrite it
+	# ── a damaged count row is read in the direction that cannot pass a limit,
+	# and rewritten so it refuses no longer than its period: a quarter-hour mark
+	# that is no mark keeps its count as this quarter-hour's, so a count at the
+	# cap still refuses the run's first read, and the mark is rewritten with the
+	# current one
 	rp = seeded!({})
 	_ = sql!("${rp}/.stride/db.sqlite", "INSERT OR REPLACE INTO config (key, value) VALUES ('strava_reads_quarter_mark', 'garbage'), ('strava_reads_quarter', '95');")
-	_ = sh!("HOME='${rp}' STRIDE_FORMAT=json STRIDE_API_BASE='${pbase}' '${bin}' sync >/dev/null 2>&1")
-	check!("a damaged quarter-hour row is reset and rewritten, and the run reads", Str.trim(sql!("${rp}/.stride/db.sqlite", "SELECT (SELECT value FROM config WHERE key = 'strava_reads_today') > 0 AND (SELECT value GLOB '[1-9]*' AND CAST(value AS INTEGER) % 900 = 0 FROM config WHERE key = 'strava_reads_quarter_mark');")) == "1")?
+	_ = sh!("HOME='${rp}' STRIDE_FORMAT=json STRIDE_API_BASE='${pbase}' '${bin}' sync >'${rp}/out' 2>/dev/null")
+	check!("a damaged quarter-hour mark keeps its count, refusing the read, and is rewritten with the current mark", Str.trim(sh!("jq -r '.data.stopped' '${rp}/out'")) == "list_rate_limited" and Str.trim(sql!("${rp}/.stride/db.sqlite", "SELECT COALESCE((SELECT value FROM config WHERE key = 'strava_reads_today'), '0') || '/' || (SELECT value GLOB '[1-9]*' AND CAST(value AS INTEGER) % 900 = 0 FROM config WHERE key = 'strava_reads_quarter_mark');")) == "0/1")?
 	# ...and written back even by a run that makes no read, here one that starts
 	# on a spent day
 	_ = sql!("${rp}/.stride/db.sqlite", "INSERT OR REPLACE INTO config (key, value) VALUES ('strava_reads_quarter_mark', 'garbage'), ('strava_reads_quarter', '95'), ('strava_reads_today', '1000');")
@@ -1831,13 +1836,39 @@ run_pace! = || {
 
 	# ── ...and a day that is still spent once its reset has passed (here Strava
 	# reporting the day's reads spent, as another app on the token would) ends the
-	# run naming that, rather than waiting day after day
+	# run naming that, rather than waiting day after day. Bounded at 25 seconds,
+	# so a run that waited again after each two-second day fails this check
+	# (alarm, exit 142) instead of holding the suite.
 	gd = seeded!({})
 	gd_start = str_to_i64(Str.trim(sh!("date +%s")))
-	_ = sh!("HOME='${gd}' STRIDE_API_BASE='${lobase}' STRIDE_DAY_SECONDS=2 '${bin}' sync >'${gd}/out' 2>/dev/null")
+	gd_rc = Str.trim(sh!("HOME='${gd}' STRIDE_API_BASE='${lobase}' STRIDE_DAY_SECONDS=2 perl -e 'alarm 25; exec @ARGV' '${bin}' sync >'${gd}/out' 2>/dev/null; echo $?"))
 	gd_elapsed = str_to_i64(Str.trim(sh!("date +%s"))) - gd_start
-	check!("a day still spent after its reset ends the run after one wait (${I64.to_str(gd_elapsed)} s)", Str.contains(Str.trim(sh!("cat '${gd}/out'")), "was still spent after its reset, so another app on this token may be using it") and gd_elapsed < 20)?
+	check!("a day still spent after its reset ends the run after one wait (exit ${gd_rc}, ${I64.to_str(gd_elapsed)} s)", gd_rc == "0" and Str.contains(Str.trim(sh!("cat '${gd}/out'")), "was still spent after its reset, so another app on this token may be using it") and gd_elapsed < 20)?
 	_ = sh!("rm -rf '${gd}'")
+
+	# ── a routine human sync in a spent period, with nothing owed by the
+	# activities it holds, ends at once and names the time: only the list would be
+	# read, and a fresh look at it is not worth holding the shell until the period
+	# opens. Each run is bounded at 25 seconds, so one that waited for midnight UTC
+	# or for the quarter-hour's next mark fails its check instead of holding the
+	# suite.
+	nq = seeded!({})
+	_ = sh!("HOME='${nq}' STRIDE_FORMAT=json STRIDE_API_BASE='${pbase}' '${bin}' sync >/dev/null 2>&1")
+	nq_day = Str.trim(sh!("date -u +%s | awk '{ print int($1 / 86400) }'"))
+	_ = sql!("${nq}/.stride/db.sqlite", "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_reads_day','${nq_day}'),('strava_reads_today','1000');")
+	nq_rc = Str.trim(sh!("HOME='${nq}' STRIDE_API_BASE='${pbase}' perl -e 'alarm 25; exec @ARGV' '${bin}' sync >'${nq}/out' 2>/dev/null; echo $?"))
+	nq_out = Str.trim(sh!("cat '${nq}/out'"))
+	check!("a routine human sync on a spent day with nothing owed ends at once, naming the time (exit ${nq_rc})", nq_rc == "0" and owed!(nq) == "0" and Str.contains(nq_out, "this run made no request") and Str.contains(nq_out, "it returns at "))?
+	# ...and in a spent quarter-hour, the run's first page refused before it is
+	# asked for. Started clear of a quarter-hour mark, which would rightly open a
+	# fresh window.
+	_ = sh!("s=$(( $(date +%s) % 900 )); if [ $s -gt 870 ]; then sleep $(( 902 - s )); fi")
+	nq_mark = Str.trim(sh!("date -u +%s | awk '{ print int($1 / 900) * 900 }'"))
+	_ = sql!("${nq}/.stride/db.sqlite", "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_reads_today','95'),('strava_reads_quarter_mark','${nq_mark}'),('strava_reads_quarter','95');")
+	nw_rc = Str.trim(sh!("HOME='${nq}' STRIDE_API_BASE='${pbase}' perl -e 'alarm 25; exec @ARGV' '${bin}' sync >'${nq}/out' 2>/dev/null; echo $?"))
+	nw_out = Str.trim(sh!("cat '${nq}/out'"))
+	check!("...and in a spent quarter-hour it ends at once, naming when the next window opens (exit ${nw_rc})", nw_rc == "0" and Str.contains(nw_out, "this run made no request") and Str.contains(nw_out, "the next window opens at "))?
+	_ = sh!("rm -rf '${nq}'")
 
 	# ── Ctrl-C in the first sync setup runs names `stride setup`, which resumes it
 	sc = seeded!({})
@@ -1849,7 +1880,7 @@ run_pace! = || {
 	check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(43)?
+	checks_ran_exactly!(45)?
 	Stdout.line!("PACE E2E CHECKS PASS")
 }
 

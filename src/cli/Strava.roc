@@ -389,13 +389,14 @@ Strava :: [].{
 				Listed({ counts: { relisted: 0, new_n: 0, updated_n: 0 }, pruned: 0 })
 			}
 		match listed {
-			# A run that STARTS with the day's allowance spent has made no request.
-			# A human run waits for the day like any spent period; otherwise the run
-			# ends resumable regardless of the queue, since it has not looked.
+			# A run that STARTS with the day's allowance spent has made no request. A
+			# human run waits for the day while the activities it holds owe fetches
+			# (owed_known!). Otherwise the run ends at once, resumable regardless of
+			# the queue, since it has not looked at the list, and names the time the
+			# allowance returns.
 			DaySpent => {
 				ended = Db.now_secs!({})
-				owed = how.relist or pending_streams!(path)? + pending_notes!(path)? + pending_routes!(path)? > 0
-				match Drain.after_round({ stop: FromDrain(DailyCapReached), owed, progressed: False, after_wait, waits }) {
+				match Drain.after_round({ stop: FromDrain(DailyCapReached), owed: owed_known!(path)?, progressed: False, after_wait, waits }) {
 					Wait => {
 						wait_for_window!(path, ended)?
 						sync_from!(path, token, how, settle!, waits, True)
@@ -407,12 +408,12 @@ Strava :: [].{
 				}
 			}
 			# what is owed after a refused list is the LISTING, so the run is resumable
-			# whatever the queue says; a human run gets here only when a period it
-			# waited for refused the list again
+			# whatever the queue says; a human run gets here when the activities it
+			# holds owe nothing, or when a period it waited for refused the list again
 			Refused(r) => {
 				ended = Db.now_secs!({})
 				settled = settle!(path)?
-				finish!(path, { stop: r.stop, counts: r.counts, pruned: 0, tally: no_tally, settled, owed_anyway: True, ended, requested: r.requested, again: waits })
+				finish!(path, { stop: r.stop, counts: r.counts, pruned: 0, tally: no_tally, settled, owed_anyway: True, ended, requested: r.requested, again: r.again })
 			}
 			Listed(l) => {
 				owed = pending_streams!(path)? + pending_notes!(path)? + pending_routes!(path)?
@@ -433,7 +434,7 @@ Strava :: [].{
 
 	# The activity list, the first step of every sync and setup's `activities` step:
 	# every page, then the prune of what Strava no longer lists and the watermark.
-	ListPhase : [DaySpent, Refused({ counts : ListCounts, stop : Drain.SyncStop, requested : Bool }), Listed({ counts : ListCounts, pruned : U64 })]
+	ListPhase : [DaySpent, Refused({ counts : ListCounts, stop : Drain.SyncStop, requested : Bool, again : Bool }), Listed({ counts : ListCounts, pruned : U64 })]
 
 	list_phase! : Str, Str, Bool, Bool => Try(ListPhase, _)
 	list_phase! = |path, token, all, waits| {
@@ -493,7 +494,7 @@ Strava :: [].{
 				# reached; the watermark must not advance past activities the run never
 				# saw; and the drain would spend a refused budget. The pages already
 				# upserted are kept and reported.
-				Refused(stop) => Ok(Refused({ counts, stop, requested: listed.requested }))
+				Refused(stop) => Ok(Refused({ counts, stop, requested: listed.requested, again: listed.again }))
 				Listed => {
 					pruned = prune_deleted!(path, started, window_start)?
 					Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
@@ -598,6 +599,13 @@ Strava :: [].{
 		}
 	}
 
+	# Whether the activities the database already holds owe a stream, a
+	# description or a route. Only that is worth a wait: a run that owes nothing
+	# but the activity list, in a spent period, ends at once and names the time,
+	# so a routine sync never holds the shell for a reset.
+	owed_known! : Str => Try(Bool, _)
+	owed_known! = |path| Ok(pending_streams!(path)? + pending_notes!(path)? + pending_routes!(path)? > 0)
+
 	# whether any queue still holds an activity this run has not asked for
 	owed_this_run! : Str, Bool, Seen => Try(Bool, _)
 	owed_this_run! = |path, all, seen| {
@@ -638,13 +646,16 @@ Strava :: [].{
 	}
 
 	# The whole activity list, behind a spinner that turns once per page. A human
-	# run refused by the window waits for the next one and asks for the refused page
-	# again; the pages already listed are kept, so nothing is listed twice.
-	list_all! : Str, Str, Str, I64, Bool, PageAcc, Bool => Try({ relisted : U64, new_n : U64, updated_n : U64, requested : Bool, stop : [Listed, Refused(Drain.SyncStop)] }, _)
+	# run refused while the activities it holds owe fetches waits for the next
+	# period and asks for the refused page again; the pages already listed are
+	# kept, so nothing is listed twice. `again` on a refusal: the run waited, and
+	# the period it waited for refused the list before a page landed.
+	list_all! : Str, Str, Str, I64, Bool, PageAcc, Bool => Try({ relisted : U64, new_n : U64, updated_n : U64, requested : Bool, again : Bool, stop : [Listed, Refused(Drain.SyncStop)] }, _)
 	list_all! = |path, token, after_param, stamp, waits, acc, after_wait| {
 		got = fetch_pages!(path, token, after_param, stamp, acc)?
 		result = Render.list_result({ checked: got.relisted, new: got.new_n, updated: got.updated_n })
-		out = |stop| { relisted: got.relisted, new_n: got.new_n, updated_n: got.updated_n, requested: got.requested, stop }
+		progressed = got.relisted > acc.relisted
+		out = |stop| { relisted: got.relisted, new_n: got.new_n, updated_n: got.updated_n, requested: got.requested, again: after_wait and !progressed, stop }
 		if !(got.rate_limited) {
 			Output.step_done!("activity list", result)?
 			Ok(out(Listed))
@@ -653,7 +664,7 @@ Strava :: [].{
 			# remedy is midnight UTC, and its own tag says both facts at once
 			stop = if (day_spent!(path)?) ListDailyCapReached else ListRateLimited
 			Output.step_done!("activity list", "${result} so far, then the read window was spent")?
-			match Drain.after_round({ stop, owed: True, progressed: got.relisted > acc.relisted, after_wait, waits }) {
+			match Drain.after_round({ stop, owed: owed_known!(path)?, progressed, after_wait, waits }) {
 				Finish => Ok(out(Refused(stop)))
 				Wait => {
 					wait_for_window!(path, Db.now_secs!({}))?

@@ -89,7 +89,8 @@ reason `--json` and still answers in JSON).
      `notes_fetched` as progress: it includes the routine re-reads of descriptions
      inside the window.
    - A person running bare `stride sync` at a terminal gets the same work without the
-     calls: it waits for each next window and for the daily reset alike, shows when the
+     calls: while fetches are owed it waits for each next window and for the daily reset
+     alike (with nothing owed but the list it ends at once with the time), shows when the
      next batch starts, and ends with everything fetched and analyzed; only a period
      still spent after its wait (another app on the token) ends it, with the time the
      allowance returns. Ctrl-C stops it, and the next sync resumes there.
