@@ -170,10 +170,12 @@ jobs:
       # through roc-viz.sh, here and in the local viz-test recipe.
       - name: Run the app window's pure expects
         run: sh tools/roc-viz.sh test src/viz/main.roc
-
   # roc-ray's linux host is x64glibc, so the window can link on linux, and a
   # type-check does not prove that. Linking on every PR keeps the release job
-  # from being the first place a missing raylib link dependency shows up.
+  # from being the first place a missing raylib link dependency shows up, and
+  # packaging the linked binary with the release's own script keeps it from
+  # being the first place the tarball or its launcher is exercised. Nothing is
+  # uploaded.
   viz-link-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -201,9 +203,17 @@ jobs:
           test -s stride-viz-linux
           file stride-viz-linux
 
-  # The window cannot run headless on a runner, so CI links it, which proves the
-  # roc-ray x64win host still works. The grep checks that the Windows launcher passes a
-  # %USERPROFILE% path as the window's first argument, its read-write grant.
+      - name: Package it as the release does
+        run: bash tools/package-viz.sh linux package stride-viz-linux
+
+      - name: Prove the launcher seeds a fresh home
+        run: bash tools/package-viz.sh linux prove
+
+  # The window cannot be looked at on a runner, so CI links it, which proves the
+  # roc-ray x64win host still works, then packages it with the release's own
+  # script and runs the launcher against a fake home. The grep checks that the
+  # launcher passes a %USERPROFILE% path as the window's first argument, its
+  # read-write grant, which seeding alone does not show. Nothing is uploaded.
   viz-link-windows:
     runs-on: windows-2025
     timeout-minutes: 20
@@ -218,10 +228,19 @@ jobs:
         run: |
           set -euo pipefail
           # rem and # lines are stripped first, so the match must come from the
-          # launcher the release writes and not from a comment describing it
-          sed -e 's/^ *rem .*//' -e 's/^ *#.*//' .github/workflows/release-please.yml | grep -q 'stride-viz.exe" "%USERPROFILE%'
+          # launcher the script writes and not from a comment describing it
+          launcher=$(sed -e 's/^ *rem .*//' -e 's/^ *#.*//' tools/package-viz.sh)
+          grep -q 'stride-viz.exe" "%USERPROFILE%' <<<"$launcher" || { echo "::error::the windows launcher does not pass %USERPROFILE% first"; exit 1; }
           sh tools/roc-viz.sh build src/viz/main.roc --output=stride-viz.exe --opt=dev
           test -s stride-viz.exe
+
+      - name: Package it as the release does
+        shell: bash
+        run: bash tools/package-viz.sh windows package stride-viz.exe
+
+      - name: Prove the launcher seeds a fresh home
+        shell: bash
+        run: bash tools/package-viz.sh windows prove
 
   # ADR 0016's gate is plain shell over source text and needs no toolchain, so
   # one small job runs it, on linux only.

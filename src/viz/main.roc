@@ -197,7 +197,7 @@ checkout_bytes! = |acc, sub, name|
 	}
 
 # One brand face at one size, from wherever it lives: the repo's assets/ in a
-# dev checkout, ~/.stride/fonts when launched as the app bundle, and the
+# dev checkout, ~/.stride/fonts when launched from a packaged app, and the
 # platform default font when neither answers — the board must open regardless.
 brand_font! : Access, Str, I32, Text.Font => Text.Font
 brand_font! = |acc, name, size, fallback| {
@@ -211,8 +211,8 @@ brand_font! = |acc, name, size, fallback| {
 }
 
 # an authored PNG from img/: the repo's in a dev checkout, ~/.stride/img
-# when launched as the app bundle (the launcher seeds it the way it seeds
-# fonts). Err when neither place has it or it does not decode.
+# when launched from a packaged app (each package's launcher seeds it the
+# way it seeds fonts). Err when neither place has it or it does not decode.
 img_texture! : Access, Str => Try(Texture.Texture, [NoImage])
 img_texture! = |acc, name| {
 	from_checkout = checkout_bytes!(acc, "img", name)
@@ -3339,11 +3339,12 @@ scene! = |model, frame| {
 	drawn
 }
 
-# The boot splash: the stride route drawing itself while the real load runs
-# in its task. The S sweeps bottom-left to top-right through the brand
-# gradient with a comet at the pen, the mountain peak pops when a sweep
-# completes, and the whole figure loops until Reloaded lands. Everything is
-# geometry over the tick - no asset, nothing to load before the loader.
+# The boot splash, shown while the real load runs in its task and until
+# Reloaded lands: the authored mark, img/stride-icon.png, above the words
+# Chrome.splash places. The mark fades in over the first moments and
+# breathes gently while the load works; the glow shader has nothing to add
+# here. Without the PNG the splash is the words alone on the same ground:
+# nothing is drawn in the mark's place.
 splash! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 splash! = |model, frame| {
 	# The splash clears to RGB(1, 2, 9), the ground of img/stride-icon.png's
@@ -3356,35 +3357,10 @@ splash! = |model, frame| {
 	# must be measured again when the asset changes. The app views clear to
 	# Theme.bg.
 	frame.rectangle!({ x: 0.0, y: 0.0, width: model.win.w, height: model.win.h, style: Draw.filled(Color.rgb(1, 2, 9)) })
-	cx = model.win.w / 2.0
-	cy = model.win.h / 2.0 - 30.0
-	pi = 3.14159265
-	# brand gradient along the path: teal through blue to violet
-	mixc = |t| {
-		lerp = |a, b, k| {
-			v = a + (b - a) * k
-			match F32.round_to_u64_try(if (v < 0.0) (0.0) else if (v > 255.0) (255.0) else v) {
-				Ok(u) => match U64.to_u8_try(u) {
-					Ok(c8) => c8
-					Err(_) => 255.U8
-				}
-				Err(_) => 0.U8
-			}
-		}
-		if t < 0.5 {
-			k = t * 2.0
-			Color.rgb(lerp(45.0, 79.0, k), lerp(212.0, 142.0, k), lerp(191.0, 247.0, k))
-		} else {
-			k = (t - 0.5) * 2.0
-			Color.rgb(lerp(79.0, 166.0, k), lerp(142.0, 107.0, k), lerp(247.0, 250.0, k))
-		}
-	}
 	_ = match model.logo {
 		Logo(lt) => {
-			# the authored mark itself, so the splash shows the artwork rather
-			# than a drawing of it. It fades in over the first moments and
-			# breathes gently while the load works; the glow shader has nothing
-			# to add here.
+			cx = model.win.w / 2.0
+			cy = model.win.h / 2.0 - 30.0
 			tf = U64.to_f32(model.tick)
 			ar = if (tf > 42.0) (255.0) else tf * 6.0
 			a8 = match F32.to_u8_try(ar) {
@@ -3396,7 +3372,7 @@ splash! = |model, frame| {
 			frame.texture!({ texture: lt, source: { x: 0.0, y: 0.0, width: lt.width, height: lt.height }, dest: { x: cx - side / 2.0, y: (cy - 16.0) - side / 2.0, width: side, height: side }, origin: { x: 0.0, y: 0.0 }, rotation: 0.0, tint: Color.with_alpha(Color.white, a8) })
 			{}
 		}
-		NoLogo => splash_route!(model, frame, cx, cy, pi, mixc)
+		NoLogo => {}
 	}
 	Scene.draw!(frame, model, Chrome.splash(model, Scene.measure_of(model), splash_slow_note(model.tick)))
 	Ok({})
@@ -3416,107 +3392,6 @@ splash_slow_note = |tick|
 expect splash_slow_note(0) == ""
 expect splash_slow_note(splash_slow_secs * ticks_per_second - 1) == ""
 expect splash_slow_note(splash_slow_secs * ticks_per_second) == "still loading after 20 s - R retries, ESC quits"
-
-# the geometric fallback when the authored PNG cannot be found: the route
-# drawing itself with a comet, the mountain popping in on completion
-splash_route! : Ui.Model, Draw.Frame, F32, F32, F32, (F32 -> Color.Rgba) => {}
-splash_route! = |model, frame, cx, cy, pi, mixc| {
-	# two cubic beziers carry the S - a sine reads cramped and mirrored
-	bez = |x0, y0, x1, y1, x2, y2, x3, y3, u| {
-		v = 1.0 - u
-		{
-			x: v * v * v * x0 + 3.0 * v * v * u * x1 + 3.0 * v * u * u * x2 + u * u * u * x3,
-			y: v * v * v * y0 + 3.0 * v * v * u * y1 + 3.0 * v * u * u * y2 + u * u * u * y3,
-		}
-	}
-	# the route is ONE continuous smooth path, exactly as the mark draws it:
-	# the S's two bends, then a rounded upward curl that turns back LEFT into
-	# a squared-off ledge nested inside the peak's V. The route never touches
-	# the mountain - the mountain is its own stroke, and it appears only when
-	# the route completes. E is where the S hands over to the curl.
-	ex = cx + 18.0
-	ey = cy - 96.0
-	n = 72
-	pt = |i| {
-		t = U64.to_f32(i) / U64.to_f32(n)
-		if t < 0.36 {
-			b = bez(cx - 85.0, cy + 85.0, cx + 85.0, cy + 78.0, cx + 98.0, cy + 18.0, cx + 2.0, cy - 6.0, t / 0.36)
-			{ x: b.x, y: b.y, t }
-		} else if t < 0.72 {
-			b = bez(cx + 2.0, cy - 6.0, cx - 98.0, cy - 36.0, cx - 40.0, cy - 92.0, ex, ey, (t - 0.36) / 0.36)
-			{ x: b.x, y: b.y, t }
-		} else if t < 0.90 {
-			# the curl: a semicircle from heading-right to heading-left
-			a = pi * (t - 0.72) / 0.18
-			{ x: ex + 14.0 * F32.sin(a), y: (ey - 14.0) + 14.0 * F32.cos(a), t }
-		} else {
-			{ x: ex - 30.0 * (t - 0.90) / 0.10, y: ey - 28.0, t }
-		}
-	}
-	# the reveal loops, 56 ticks of drawing and 34 of holding: a cycle short
-	# enough to finish inside a quick load, so the mark is seen whole
-	cyc = model.tick % 90
-	p_raw = U64.to_f32(cyc) / 56.0
-	p1 = if (p_raw > 1.0) (1.0) else p_raw
-	p = 1.0 - (1.0 - p1) * (1.0 - p1)
-	start = pt(0)
-	# the start marker is a RING in the logo, not a dot
-	frame.circle!({ center: { x: start.x, y: start.y }, radius: 9.0, style: Draw.filled(Theme.tsb_c) })
-	frame.circle!({ center: { x: start.x, y: start.y }, radius: 5.0, style: Draw.filled(Theme.bg) })
-	List.for_each!(
-		List.map_with_index(List.repeat({}, n), |_u, i| i),
-		|i| {
-			a = pt(i)
-			b = pt(i + 1)
-			if b.t <= p {
-				# a round cap at every joint: bare segment ends leave a notch
-				# per joint that reads as a speckled edge under magnification
-				frame.line!({ start: { x: a.x, y: a.y }, end: { x: b.x, y: b.y }, stroke: Draw.stroke(mixc(a.t), 6) })
-				frame.circle!({ center: { x: b.x, y: b.y }, radius: 2.9, style: Draw.filled(mixc(b.t)) })
-			}
-		},
-	)
-	# the mountain: apex, a left slope ending in a short downward foot, and
-	# the long open right slope - separate from the route, arriving with a
-	# pop once the route has finished drawing
-	vio = mixc(1.0)
-	ax = ex - 24.0
-	ay = ey - 74.0
-	if p >= 1.0 {
-		l1 = { x: ax - 56.0, y: ay + 56.0 }
-		frame.line!({ start: { x: ax, y: ay }, end: { x: l1.x, y: l1.y }, stroke: Draw.stroke(vio, 6) })
-		frame.line!({ start: { x: l1.x, y: l1.y }, end: { x: l1.x, y: l1.y + 14.0 }, stroke: Draw.stroke(vio, 6) })
-		frame.line!({ start: { x: ax, y: ay }, end: { x: ax + 72.0, y: ay + 72.0 }, stroke: Draw.stroke(vio, 6) })
-		frame.circle!({ center: { x: ax, y: ay }, radius: 2.9, style: Draw.filled(vio) })
-		frame.circle!({ center: { x: l1.x, y: l1.y }, radius: 2.9, style: Draw.filled(vio) })
-		hold = U64.to_f32(cyc - 56) / 34.0
-		pop = F32.sin(hold * pi)
-		frame.circle!({
-			center: { x: ax, y: ay },
-			radius: 5.0 + pop * 9.0,
-			style: Draw.filled(
-				Color.with_alpha(
-					vio,
-					match F32.to_u8_try(70.0 * (1.0 - hold)) {
-						Ok(pa) => pa
-						Err(_) => 0
-					},
-				),
-			),
-		})
-	} else {
-		# the comet at the pen, the same one the career view rides
-		head_i = match F32.round_to_u64_try(p * U64.to_f32(n)) {
-			Ok(hi) => hi
-			Err(_) => 0.U64
-		}
-		hp = pt(head_i)
-		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 11.0, style: Draw.filled(Color.with_alpha(Color.white, 26)) })
-		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 6.0, style: Draw.filled(Color.with_alpha(mixc(p), 140)) })
-		frame.circle!({ center: { x: hp.x, y: hp.y }, radius: 3.0, style: Draw.filled(Color.white) })
-	}
-	{}
-}
 
 # UI zoom transforms geometry directly into the framebuffer. The optional
 # bloom target uses window coordinates, with the same camera inside it;

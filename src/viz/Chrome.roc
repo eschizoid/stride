@@ -138,7 +138,8 @@ Chrome :: [].{
 		List.join([[title, scale], pills, rec, leg, lvl])
 	}
 
-	# the boot splash's words under the mark, centred: the wordmark, the
+	# the boot splash's words, centred where they sit under the mark, and
+	# all the splash shows when the mark is missing: the wordmark, the
 	# loading line with its dots on the tick, and the note a slow load earns
 	splash : Ui.Model, Scene.Measure, Str -> List(Labels.Placed(Scene.Item))
 	splash = |model, measure, slow| {
