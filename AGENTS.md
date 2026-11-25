@@ -237,8 +237,8 @@ tab's street-map tiles (ADR 0015's 2026-11-19 update); captures are allowed bene
 undeclared facility stops the app rather than failing quietly. Every launch
 path passes the directory, and the launch directory after it so a capture's status
 row can name its file by an absolute path: the `viz` recipe, the macOS `.app` launcher in
-`tools/make-viz-app.sh`, and the linux and windows launchers the release
-workflow writes. The two apps bind different PLATFORMS
+`tools/make-viz-app.sh`, and the linux and windows launchers
+`tools/package-viz.sh` writes. The two apps bind different PLATFORMS
 (basic-cli vs roc-ray), so effectful modules cannot be shared — each carries
 its own `Db` — but both build on one compiler and import the pure `src/core`
 package (#458): a definition BOTH surfaces state goes there (Fmt, Sports,
@@ -255,7 +255,8 @@ never a doc's copy. `docs/viz.md` is the reference for all of it.
 
 The e2e suite cannot run the window (it is a GUI): its viz passes play the
 window's part by seeding exactly what the window would write, and CI proves
-the app still links per-OS. A window-side behavior change needs a live
+the app still links per-OS and that the linux and windows packages carry and
+seed what it reads. A window-side behavior change needs a live
 `just viz` run before it is called working.
 
 ## Idiomatic Roc (and the traps that actually bit us)
@@ -535,9 +536,15 @@ on `main`. You never tag or edit the version by hand.
   `verify-arm64.yml`), macOS arm64 + Intel, and windows-x86_64 (basic-cli ships an
   x64win host; `OsStr.display` decodes the `WindowsU16s` argv arm). Desktop APP
   artifacts ship beside them: macOS `.app` zips (both arches), a linux tarball and a
-  windows zip, each carrying the viz binary, brand fonts and a launcher that seeds
-  `~/.stride/fonts`. `fail-fast: false` plus an `always()` upload means one bad
-  target still lets the others attach.
+  windows zip, each carrying the viz binary, brand fonts, the splash's mark and the
+  streak flame (`img/stride-icon.png`, `img/flame.png`), and a launcher that seeds
+  `~/.stride/fonts` and `~/.stride/img`. Each package job fails when its package
+  lacks a face or image the window loads, or its launcher does not seed one into a
+  fake home. `tools/package-viz.sh` builds and proves the linux and windows
+  packages, and `build.yml`'s `viz-link-linux` and `viz-link-windows` jobs run it on
+  every pull request, so a packaging defect fails a PR rather than a release.
+  `fail-fast: false` plus an `always()` upload means one bad target still lets the
+  others attach.
 - **Never cut a release without Mariano's explicit go-ahead** — landing feats on main is
   fine, but merging the release PR / tagging waits for a clear yes.
 - **GOTCHA — never write `feat:`/`fix:` as literal text in a commit _body_.** release-please

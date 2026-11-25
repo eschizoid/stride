@@ -420,12 +420,15 @@ just viz-app      # installs ~/Applications/Stride.app
 
 ## Installing the released app
 
-Releases attach `stride-app-macos-arm64.zip`,
-`stride-app-macos-x86_64.zip` and `stride-app-linux-x86_64.tar.gz` — on
-macOS the whole `.app`, brand fonts inside
-it, built from the tagged commit and verified for architecture, signature
-and fonts before it is packaged. A zip missing from a release means its
-build job failed; `just viz-app` builds the same bundle locally. Unzip
+Releases attach `stride-app-macos-arm64.zip`, `stride-app-macos-x86_64.zip`,
+`stride-app-linux-x86_64.tar.gz` and `stride-app-windows-x86_64.zip`, each
+built from the tagged commit. Every package carries the window's binary, the
+brand fonts, the splash's mark and the streak flame (`img/stride-icon.png`
+and `img/flame.png`), and a launcher that seeds those files into
+`~/.stride/fonts` and `~/.stride/img` before it starts the window. On macOS
+the package is the whole `.app`, verified for architecture, signature, fonts
+and images before it is packaged. An archive missing from a release means
+its build job failed; `just viz-app` builds the same bundle locally. Unzip
 anywhere and launch.
 
 A downloaded copy carries macOS's quarantine flag, and only its binary is ad-hoc
@@ -439,8 +442,8 @@ xattr -dr com.apple.quarantine "/Applications/Stride.app"
 A bundle built locally was never downloaded, so it carries no such flag.
 
 The linux tarball has no bundle format to carry: it holds `stride-viz`, the
-fonts and a `stride-app` launcher that widens PATH and seeds the fonts the
-same way.
+fonts, the images and a `stride-app` launcher that widens PATH and seeds the
+fonts and images the same way.
 
 ```
 tar xzf stride-app-linux-x86_64.tar.gz
@@ -448,12 +451,21 @@ tar xzf stride-app-linux-x86_64.tar.gz
 ```
 
 It is built on the current ubuntu runner, so it needs that runner's glibc or
-newer. roc-ray ships an x64glibc host only, so there is no linux-arm64 app,
-and Windows has no app yet for a reason that is not packaging - see #442.
+newer. roc-ray ships an x64glibc host only, so there is no linux-arm64 app.
+The windows zip holds `stride-viz.exe`, the fonts, the images and a
+`stride-app.bat` launcher that seeds `%USERPROFILE%\.stride\fonts` and
+`%USERPROFILE%\.stride\img`. `tools/package-viz.sh` builds the linux and
+windows packages and proves each one: the archive lists the binary, the
+launcher, both faces and both images, and the launcher seeds an empty home and
+repairs a truncated copy. CI runs it on
+every pull request as well as at release.
 
-On first launch the bundle copies its fonts to `~/.stride/fonts`. Failed
-copies are logged to `~/.stride/fonts-seed.log`; if the directory itself
-cannot be created, the window falls back to its default font.
+On every launch the launcher copies a font or image when the athlete's
+directory lacks it or holds a copy of a different size, so an interrupted
+copy is repaired on the next launch. The linux and macOS launchers log a
+failed copy to `~/.stride/fonts-seed.log`. If the fonts cannot be seeded the
+window falls back to its default font; if the images cannot, the splash
+shows its words alone and the streak chip its text.
 
 Both binaries build on **one compiler** — the tag is the `setup-roc` action's
 default, and `tools/pin-check.sh` holds the justfile's local viz default to it,
@@ -470,8 +482,8 @@ Quicksand (the wordmark's rounded face) carries prose — titles, legends,
 captions, hints. JetBrains Mono (the tagline's voice) carries data surfaces —
 KPI digits, axis ticks, readouts and the table, mixed words included, so a
 data line never switches face mid-string. Both ship in `assets/fonts/` (OFL) and
-the app bundle copies them to `~/.stride/fonts`; when neither location
-answers, the platform default font appears instead of a crash.
+every packaged app's launcher copies them to `~/.stride/fonts`; when neither
+location answers, the platform default font appears instead of a crash.
 
 ## Labels: one placer, and a gate
 
