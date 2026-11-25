@@ -41,7 +41,7 @@ export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 # copies and seeds them here, or the window falls back to its default font
 here="$(cd "$(dirname "$0")" && pwd)"
 res="$here/../Resources"
-log="$HOME/.stride/fonts-seed.log"
+log="$HOME/.stride/seed.log"
 if [ -d "$res/fonts" ]; then
   if mkdir -p "$HOME/.stride/fonts" 2>/dev/null; then
     for f in "$res"/fonts/*.ttf; do

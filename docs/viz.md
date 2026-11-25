@@ -441,31 +441,66 @@ xattr -dr com.apple.quarantine "/Applications/Stride.app"
 
 A bundle built locally was never downloaded, so it carries no such flag.
 
-The linux tarball has no bundle format to carry: it holds `stride-viz`, the
-fonts, the images and a `stride-app` launcher that widens PATH and seeds the
-fonts and images the same way.
+Linux and windows have no bundle format, so each package carries an install
+step beside its launcher. Run it once from the unpacked folder: it puts
+Stride in the system's menu with its icon, then starts the app. The menu
+entry names that folder, so run it again after moving the folder.
+
+The linux tarball holds `stride-viz`, the fonts, the images, a `stride-app`
+launcher that widens PATH and seeds the fonts and images, a desktop entry
+(`stride.desktop`), the menu icon (`stride.png`, 256 px) and `install.sh`.
 
 ```
 tar xzf stride-app-linux-x86_64.tar.gz
-./stride-app/stride-app
+./stride-app/install.sh
 ```
 
-It is built on the current ubuntu runner, so it needs that runner's glibc or
-newer. roc-ray ships an x64glibc host only, so there is no linux-arm64 app.
-The windows zip holds `stride-viz.exe`, the fonts, the images and a
+`install.sh` writes the desktop entry to
+`~/.local/share/applications/stride.desktop` (under `$XDG_DATA_HOME` when it
+is set), pointing at the launcher by its absolute path, and copies the icon
+to `~/.local/share/icons/hicolor/256x256/apps/stride.png`. The entry's
+`StartupWMClass` is the window's title, which X11 reports as the window's
+class, so a dock or taskbar shows the menu icon on the running window as
+well. `./stride-app/stride-app` still starts the app without touching the
+menu. The tarball is built on the current ubuntu runner, so it needs that
+runner's glibc or newer. roc-ray ships an x64glibc host only, so there is no
+linux-arm64 app.
+
+The windows zip holds `stride-viz.exe`, the fonts, the images, a
 `stride-app.bat` launcher that seeds `%USERPROFILE%\.stride\fonts` and
-`%USERPROFILE%\.stride\img`. `tools/package-viz.sh` builds the linux and
-windows packages and proves each one: the archive lists the binary, the
-launcher, both faces and both images, and the launcher seeds an empty home and
-repairs a truncated copy. CI runs it on
-every pull request as well as at release.
+`%USERPROFILE%\.stride\img`, the icon (`stride.ico`: 16, 32, 48 and 256 px)
+and `install.cmd`. Double-click `install.cmd`: it writes a `Stride` shortcut
+to the Start menu and to the Desktop, each showing `stride.ico`, and starts
+the app. `stride-viz.exe` is a console program, so a console window opened
+for it stays open behind the app. The launcher therefore starts itself again
+under `conhost.exe --headless`, a console host with no window, and the
+shortcuts start it that way directly; double-clicking `stride-app.bat` shows
+a console only for the moment that takes. The running window's title bar and
+taskbar button show the generic program icon: roc-ray has no call that sets
+a window's icon, and the exe carries no icon resource.
+
+`tools/package-viz.sh` builds the linux and windows packages and proves each
+one. The archive must list the binary, the launcher, both faces, both
+images, the install step and the icon, and the linux archive the desktop
+entry. The icon must be a well-formed icon file whose 256 px image is the
+linux icon byte for byte, and the desktop entry must carry the keys the
+menu reads, with `StartupWMClass` equal to the title `src/viz/main.roc`
+sets. The launcher must seed an empty home and repair a truncated copy. On
+linux, `install.sh`, run from a folder whose path needs every quoting rule
+of the entry's `Exec` line, must write the entry with that path quoted, place
+the icon and start the launcher. On windows, `install.cmd` must write both
+shortcuts with the windowless target, the launcher's path and the icon, and
+the Start-menu shortcut must start the launcher. CI runs it on every pull
+request as well as at release. `img/make-icons.sh` regenerates `stride.ico`
+and `stride-icon-256.png` from `img/stride-icon-macos.png`; both are
+committed, so packaging needs no image tool.
 
 On every launch the launcher copies a font or image when the athlete's
 directory lacks it or holds a copy of a different size, so an interrupted
-copy is repaired on the next launch. The linux and macOS launchers log a
-failed copy to `~/.stride/fonts-seed.log`. If the fonts cannot be seeded the
-window falls back to its default font; if the images cannot, the splash
-shows its words alone and the streak chip its text.
+copy is repaired on the next launch. Every launcher logs a failed copy to
+`~/.stride/seed.log`. If the fonts cannot be seeded the window falls back to
+its default font; if the images cannot, the splash shows its words alone and
+the streak chip its text.
 
 Both binaries build on **one compiler** — the tag is the `setup-roc` action's
 default, and `tools/pin-check.sh` holds the justfile's local viz default to it,

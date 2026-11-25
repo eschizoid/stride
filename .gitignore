@@ -35,3 +35,6 @@
 
 # the app's local screenshot dropbox - curated copies live in docs/img
 /captures/
+
+# tools/package-viz.sh stages each package here, and its prove step runs from it
+/stage/
