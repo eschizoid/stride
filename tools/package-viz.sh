@@ -24,9 +24,9 @@
 # `package` stages under stage/stride-app (git-ignored: `prove` runs from it in
 # a later step), archives it with stride-app/ at the archive's root, and fails
 # when an input is missing, when the icon or desktop entry is malformed, when
-# the windows launcher does not start the window as a shortcut does, or when
-# the archive lacks any file listed above. `prove` runs the staged launcher
-# against an empty home, checks that every face and image arrives, truncates
+# the windows launcher starts anything but its own shortcut or shortcut.ps1
+# does not describe the start, or when the archive lacks any file listed
+# above. `prove` runs the staged launcher against an empty home, checks that every face and image arrives, truncates
 # one of each and checks that the next launch repairs them; then it runs the
 # install step against fresh homes from a folder whose path needs quoting and
 # checks the menu entries, the icon and that the launcher seeded the home. On
@@ -293,16 +293,9 @@ windows_launcher() {
 rem the window reads %USERPROFILE%\.stride\fonts and, for the splash's
 rem mark and the streak flame, %USERPROFILE%\.stride\img; seed each from
 rem the copies shipped beside this script, replacing any that differ in
-rem size, then start the window from the home directory.
-rem stride-viz.exe is a console program, and a console opened for it
-rem stays open behind its window. From Windows 10 version 1809 (build
-rem 17763) conhost.exe --headless hosts it in a console with no window,
-rem which the programs it runs share; an older conhost reads that flag as
-rem the program to run, so there the window gets a console of its own.
-rem PowerShell's Start-Process starts it through ShellExecute, as a
-rem shortcut does, so it inherits none of this script's standard handles,
-rem and it reads the window's path from the environment, so no path is
-rem quoted by cmd.
+rem size. Then write a shortcut to the window into %USERPROFILE%\.stride,
+rem the folder it already writes, and open that shortcut: every start of
+rem the window is a shortcut's start, the one shortcut.ps1 describes.
 set "here=%~dp0"
 set "log=%USERPROFILE%\.stride\seed.log"
 if not exist "%USERPROFILE%\.stride\fonts" mkdir "%USERPROFILE%\.stride\fonts" >nul 2>&1
@@ -310,8 +303,9 @@ for %%f in ("%here%fonts\*.ttf") do call :seed "%%~ff" fonts
 if not exist "%USERPROFILE%\.stride\img" mkdir "%USERPROFILE%\.stride\img" >nul 2>&1
 for %%f in ("%here%img\*.png") do call :seed "%%~ff" img
 cd /d "%USERPROFILE%"
-set "STRIDE_EXE=%here%stride-viz.exe"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$q = [char]34; $h = $env:USERPROFILE; $pass = $q + (Join-Path $h '.stride') + $q + ' ' + $q + $h + $q; if ([Environment]::OSVersion.Version.Build -ge 17763) { $file = Join-Path $env:SystemRoot 'System32\conhost.exe'; $arguments = '--headless ' + $q + $env:STRIDE_EXE + $q + ' ' + $pass } else { $file = $env:STRIDE_EXE; $arguments = $pass }; Start-Process -FilePath $file -ArgumentList $arguments -WorkingDirectory $h"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%here%shortcut.ps1"
+if errorlevel 1 exit /b 1
+start "" "%USERPROFILE%\.stride\Stride.lnk"
 exit /b 0
 :seed
 rem every %var% read below sits on its OWN line - cmd expands at
@@ -331,30 +325,78 @@ goto :eof
 BAT
 }
 
-# written with CRLF like the launcher. cmd splits an unquoted path at &
-# and parentheses, so the install folder reaches PowerShell only through
-# the environment and PowerShell builds every shortcut field. A shortcut
-# starts stride-viz.exe directly, under conhost.exe --headless where the
-# build has it (see the launcher), from the home directory, with the
-# athlete's directory and the home as its arguments; it does not seed,
-# which the install step does through the launcher. A special folder can
-# resolve to an empty path or a missing directory, so each is checked:
-# the Start-menu folder is created when absent and its shortcut is
-# required; a Desktop that cannot take one is reported and skipped. A
-# failure waits for a key only when stdin is a console.
+# the one description of a Stride shortcut, which the launcher and the
+# install step both run. It reads its own folder from $PSScriptRoot and the
+# home from the environment, so cmd quotes no path for it, whatever
+# characters the folder's name holds
+windows_shortcut() {
+  cat <<'PS'
+# Writes the Stride shortcut: into %USERPROFILE%\.stride by default, or with
+# -Menu into the Start menu (created when absent, and required) and onto
+# the Desktop (skipped when that folder is missing). A shortcut starts
+# stride-viz.exe from this folder in the home directory, with the athlete's
+# directory and then the home as its arguments, and shows stride.ico.
+# stride-viz.exe is a console program, and a console opened for it stays
+# open behind its window: from Windows 10 version 1809 (build 17763)
+# conhost.exe --headless hosts it in a console with no window, which the
+# programs it runs share; an older conhost reads that flag as the program
+# to run, so there the shortcut starts the window in a console of its own.
+# A failure waits for a key only when stdin is a console.
+param([switch]$Menu)
+$ErrorActionPreference = 'Stop'
+$q = [char]34
+$app = $PSScriptRoot
+$h = $env:USERPROFILE
+$exe = Join-Path $app 'stride-viz.exe'
+$pass = $q + (Join-Path $h '.stride') + $q + ' ' + $q + $h + $q
+if ([Environment]::OSVersion.Version.Build -ge 17763) {
+  $target = Join-Path $env:SystemRoot 'System32\conhost.exe'
+  $arguments = '--headless ' + $q + $exe + $q + ' ' + $pass
+} else {
+  $target = $exe
+  $arguments = $pass
+}
+if ($Menu) { $places = @('Programs', 'Desktop') } else { $places = @('Stride') }
+$w = New-Object -ComObject WScript.Shell
+foreach ($f in $places) {
+  $d = ''
+  try {
+    if ($f -eq 'Stride') { $d = Join-Path $h '.stride' }
+    elseif ($f -eq 'Programs') { $d = [Environment]::GetFolderPath($f, 'Create') }
+    else { $d = [Environment]::GetFolderPath($f) }
+    if (-not $d -or -not (Test-Path -LiteralPath $d)) { throw ('the ' + $f + ' folder does not exist') }
+    $s = $w.CreateShortcut((Join-Path $d 'Stride.lnk'))
+    $s.TargetPath = $target
+    $s.Arguments = $arguments
+    $s.WorkingDirectory = $h
+    $s.IconLocation = (Join-Path $app 'stride.ico') + ',0'
+    $s.Description = 'Stride'
+    $s.Save()
+    if ($Menu) { Write-Host ('Stride: shortcut written to ' + $d) }
+  } catch {
+    if ($f -eq 'Desktop') {
+      Write-Host ('Stride: no Desktop shortcut, skipped: ' + $_.Exception.Message)
+      continue
+    }
+    Write-Host ('Stride: could not write the shortcut in ' + $d + ': ' + $_.Exception.Message)
+    if (-not [Console]::IsInputRedirected) { [void](Read-Host 'Press Enter to close') }
+    exit 1
+  }
+}
+PS
+}
+
+# written with CRLF like the launcher
 windows_install() {
   cat <<'BAT'
 @echo off
 rem puts Stride in the Start menu, and on the Desktop when there is one,
 rem then seeds the athlete's directory and starts the app through
-rem stride-app.bat. A shortcut starts the app from this folder without
-rem seeding, so run this again after moving the folder or unpacking a
-rem newer release into it.
-setlocal
-set "STRIDE_APP_DIR=%~dp0"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; $q = [char]34; $app = $env:STRIDE_APP_DIR; $h = $env:USERPROFILE; $exe = Join-Path $app 'stride-viz.exe'; $pass = $q + (Join-Path $h '.stride') + $q + ' ' + $q + $h + $q; if ([Environment]::OSVersion.Version.Build -ge 17763) { $target = Join-Path $env:SystemRoot 'System32\conhost.exe'; $arguments = '--headless ' + $q + $exe + $q + ' ' + $pass } else { $target = $exe; $arguments = $pass }; $w = New-Object -ComObject WScript.Shell; foreach ($f in 'Programs', 'Desktop') { try { if ($f -eq 'Programs') { $d = [Environment]::GetFolderPath($f, 'Create') } else { $d = [Environment]::GetFolderPath($f) }; if (-not $d -or -not (Test-Path -LiteralPath $d)) { throw ('the ' + $f + ' folder does not exist') }; $s = $w.CreateShortcut((Join-Path $d 'Stride.lnk')); $s.TargetPath = $target; $s.Arguments = $arguments; $s.WorkingDirectory = $h; $s.IconLocation = (Join-Path $app 'stride.ico') + ',0'; $s.Description = 'Stride'; $s.Save(); Write-Host ('Stride: shortcut written to ' + $d) } catch { if ($f -eq 'Programs') { Write-Host ('Stride: could not write the Start-menu shortcut: ' + $_.Exception.Message); if (-not [Console]::IsInputRedirected) { [void](Read-Host 'Press Enter to close') }; exit 1 }; Write-Host ('Stride: no Desktop shortcut, skipped: ' + $_.Exception.Message) } }"
+rem stride-app.bat. The shortcuts name this folder, so run this again
+rem after moving it.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0shortcut.ps1" -Menu
 if errorlevel 1 exit /b 1
-call "%STRIDE_APP_DIR%stride-app.bat"
+call "%~dp0stride-app.bat"
 BAT
 }
 
@@ -383,29 +425,37 @@ check_lnk() {
   [ "$wd" = "$home" ] || { echo "::error::the $name shortcut starts in $wd, not $home"; exit 1; }
 }
 
-# the staged launcher (a posix path) starts the window from the home
-# through Start-Process, which uses ShellExecute, never through cmd's
-# start; it reads the exe's path from the environment, passes the
-# athlete's directory and then the home, each quoted, and uses
-# conhost --headless from build 17763
+# the staged launcher and shortcut script (posix paths): the launcher
+# writes the athlete-directory shortcut through shortcut.ps1 and opens it,
+# and starts nothing else; the shortcut starts the exe from the script's
+# folder, under conhost --headless from build 17763, in the home, with the
+# athlete's directory and then the home as its arguments, each quoted
 check_launcher() {
-  local bat k code
+  local bat ps k starts
   bat="$(tr -d '\r' < "$1")"
+  ps="$(tr -d '\r' < "$2")"
   for k in \
     'set "here=%~dp0"' \
     'cd /d "%USERPROFILE%"' \
-    'set "STRIDE_EXE=%here%stride-viz.exe"'; do
+    'powershell -NoProfile -ExecutionPolicy Bypass -File "%here%shortcut.ps1"' \
+    'start "" "%USERPROFILE%\.stride\Stride.lnk"'; do
     grep -qxF -- "$k" <<<"$bat" || { echo "::error::the launcher lacks the line: $k"; exit 1; }
   done
+  starts="$(grep -v '^rem ' <<<"$bat" | grep -ciF 'start ' || true)"
+  [ "$starts" = 1 ] || { echo "::error::the launcher has $starts start lines; it must open only its shortcut"; exit 1; }
   for k in \
+    '$app = $PSScriptRoot' \
+    '$h = $env:USERPROFILE' \
+    "\$exe = Join-Path \$app 'stride-viz.exe'" \
     "\$pass = \$q + (Join-Path \$h '.stride') + \$q + ' ' + \$q + \$h + \$q" \
-    "[Environment]::OSVersion.Version.Build -ge 17763" \
-    "\$arguments = '--headless ' + \$q + \$env:STRIDE_EXE + \$q + ' ' + \$pass" \
-    "Start-Process -FilePath \$file -ArgumentList \$arguments -WorkingDirectory \$h"; do
-    grep -qF -- "$k" <<<"$bat" || { echo "::error::the launcher's start lacks: $k"; exit 1; }
+    'if ([Environment]::OSVersion.Version.Build -ge 17763) {' \
+    "  \$target = Join-Path \$env:SystemRoot 'System32\\conhost.exe'" \
+    "  \$arguments = '--headless ' + \$q + \$exe + \$q + ' ' + \$pass" \
+    "    if (\$f -eq 'Stride') { \$d = Join-Path \$h '.stride' }" \
+    '    $s.WorkingDirectory = $h' \
+    "    \$s.IconLocation = (Join-Path \$app 'stride.ico') + ',0'"; do
+    grep -qxF -- "$k" <<<"$ps" || { echo "::error::shortcut.ps1 lacks the line: $k"; exit 1; }
   done
-  code="$(grep -v '^rem ' <<<"$bat")"
-  ! grep -qiF 'start ""' <<<"$code" || { echo "::error::the launcher starts a program through cmd's start"; exit 1; }
 }
 
 # the command line and parent program of a running stride-viz.exe whose
@@ -511,12 +561,13 @@ case "$os $step" in
     cp "$bin" stage/stride-app/stride-viz.exe
     cp img/stride.ico stage/stride-app/stride.ico
     windows_launcher | crlf > stage/stride-app/stride-app.bat
-    check_launcher stage/stride-app/stride-app.bat
+    windows_shortcut | crlf > stage/stride-app/shortcut.ps1
     windows_install | crlf > stage/stride-app/install.cmd
+    check_launcher stage/stride-app/stride-app.bat stage/stride-app/shortcut.ps1
     rm -f stride-app-windows-x86_64.zip
     7z a -bso0 stride-app-windows-x86_64.zip ./stage/stride-app
     # shellcheck disable=SC2046
-    assert_listing "$(7z l stride-app-windows-x86_64.zip)" stride-viz.exe stride-app.bat install.cmd stride.ico $(carried)
+    assert_listing "$(7z l stride-app-windows-x86_64.zip)" stride-viz.exe stride-app.bat shortcut.ps1 install.cmd stride.ico $(carried)
     ;;
   "linux prove")
     fake="$(mktemp -d)"
@@ -562,7 +613,20 @@ case "$os $step" in
     bat="$(cygpath -w "$PWD/stage/stride-app/stride-app.bat")"
     USERPROFILE="$fakewin" cmd //C "$bat" </dev/null || true
     wait_seeded "$fake"
+    check_lnk athlete-directory "$fakewin\\.stride" "$(cygpath -w "$PWD/stage/stride-app")" "$fakewin"
     wait_headless "the launcher" "$fakewin\\.stride"
+    # not a requirement: the launcher's shortcut opened again with the
+    # runner's own USERPROFILE, which tells a failure of the start path
+    # from one of the environment the launcher ran in
+    cmd //C start "" "$fakewin\\.stride\\Stride.lnk" </dev/null || true
+    seen=""
+    for _ in $(seq 20); do
+      seen="$(viz_process "$fakewin\\.stride")"
+      [ -n "$seen" ] && break
+      sleep 1
+    done
+    echo "package-viz: diagnostic: with the runner's USERPROFILE the launcher's shortcut started '$(tr '\n' ' ' <<<"$seen")'"
+    taskkill //IM stride-viz.exe //F >/dev/null 2>&1 || true
     printf 'x' > "$fake/.stride/fonts/Quicksand-Medium.ttf"
     printf 'x' > "$fake/.stride/img/flame.png"
     USERPROFILE="$fakewin" cmd //C "$bat" </dev/null || true

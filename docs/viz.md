@@ -468,36 +468,37 @@ linux-arm64 app.
 
 The windows zip holds `stride-viz.exe`, the fonts, the images, a
 `stride-app.bat` launcher that seeds `%USERPROFILE%\.stride\fonts` and
-`%USERPROFILE%\.stride\img`, the icon (`stride.ico`: 16, 32, 48 and 256 px)
-and `install.cmd`. Double-click `install.cmd`: it writes a `Stride` shortcut
-to the Start menu, creating that folder when it is absent, and to the
-Desktop when that folder exists, each showing `stride.ico`, then seeds the
-athlete's directory and starts the app. A Desktop that cannot take a
-shortcut is named and skipped; only a failed Start-menu shortcut stops the
-install, and its message waits for a key only when the install runs in a
-console. A shortcut starts `stride-viz.exe` directly and does not seed, so
-run `install.cmd` again after moving the folder or unpacking a newer
-release into it.
+`%USERPROFILE%\.stride\img`, `shortcut.ps1`, which writes Stride's
+shortcut, the icon (`stride.ico`: 16, 32, 48 and 256 px) and
+`install.cmd`. Every start of the window is a shortcut's start: the
+launcher writes the shortcut into `%USERPROFILE%\.stride`, a folder it
+already writes, and opens it, so starting the app touches neither the
+Start menu nor the Desktop. Double-click `install.cmd` to put Stride there:
+it writes the shortcut to the Start menu, creating that folder when it is
+absent, and to the Desktop when that folder exists, then runs the launcher,
+which seeds the athlete's directory and starts the app. A Desktop that
+cannot take a shortcut is named and skipped; only a failed Start-menu
+shortcut stops the install, and its message waits for a key only when the
+install runs in a console. A shortcut names the app's folder and does not
+seed, so run `install.cmd` again after moving the folder or unpacking a
+newer release into it.
 
 `stride-viz.exe` is a console program, so a console opened for it stays
 open behind the window. On Windows 10 version 1809 (build 17763) and later
-the shortcuts and the launcher start it under `conhost.exe --headless`, a
-console host with no window, which the programs the window runs (`stride`
-for the CP fit and the projection) share. On an older build conhost lacks
-that flag, so the window gets a visible console of its own. The launcher
-starts it through PowerShell's `Start-Process`, which uses ShellExecute as
-a shortcut does, so the window starts exactly as from a shortcut and
-inherits none of the launcher's standard handles. Marking the exe
-as a windowed program instead would leave it no console to share: roc-ray
-starts each program without the flag that suppresses a new console, so
-every `stride` run would open one. The running window's title bar and
-taskbar button show the generic program icon: roc-ray has no call that
-sets a window's icon, and the exe carries no icon resource.
+the shortcut starts it under `conhost.exe --headless`, a console host with
+no window, which the programs the window runs (`stride` for the CP fit and
+the projection) share. On an older build conhost lacks that flag, so the
+window gets a visible console of its own. Marking the exe as a windowed
+program instead would leave it no console to share: roc-ray starts each
+program without the flag that suppresses a new console, so every `stride`
+run would open one. The running window's title bar and taskbar button show
+the generic program icon: roc-ray has no call that sets a window's icon,
+and the exe carries no icon resource.
 
 `tools/package-viz.sh` builds the linux and windows packages and proves each
 one. The archive must list the binary, the launcher, both faces, both
-images, the install step and the icon, and the linux archive the desktop
-entry. The icon must be a well-formed icon file whose 256 px image is the
+images, the install step and the icon, the windows archive `shortcut.ps1`
+and the linux archive the desktop entry. The icon must be a well-formed icon file whose 256 px image is the
 linux icon byte for byte, and the desktop entry must carry the keys the
 menu reads, with `StartupWMClass` equal to the title `src/viz/main.roc`
 sets. The launcher must seed an empty home and repair a truncated copy. On
@@ -506,17 +507,18 @@ entry's `Exec` line has (a space, a double quote, a backtick, a dollar
 sign, a percent sign and a backslash); the entry must hold the expected
 line, that line must read back, through the key file's string layer and
 then the quoting layer, as exactly the launcher's path, and the icon must be
-placed and the launcher started. On windows, `install.cmd` runs from a
+placed and the launcher started. On windows, when the package is built,
+the launcher must open its shortcut and start nothing else, and
+`shortcut.ps1` must describe the start below. `install.cmd` runs from a
 folder whose path cmd splits when unquoted (`R&D (x) y`), once into a fake
 profile that has a Desktop folder and once into one that does not. The
 first must get both shortcuts, the second the Start-menu one and a
-skipped-Desktop note; every shortcut must target conhost with the exe's
-path, the athlete's directory and the home, start in the home and show the
-icon, and each install must seed the profile through the launcher. When the
-package is built, the launcher must start the window through
-`Start-Process`, never cmd's `start`. On the runner, every start (the
-launcher, each install and the Start-menu shortcut) must leave the window
-running under conhost with the athlete's directory as its first argument.
+skipped-Desktop note; every shortcut, the launcher's included, must target
+conhost with the exe's path, the athlete's directory and the home, start in
+the home and show the icon, and each install must seed the profile through
+the launcher. On the runner, every start (the launcher, each install and
+the Start-menu shortcut) must leave the window running under conhost with
+the athlete's directory as its first argument.
 The prove step prints where each profile's folders resolve. CI runs it on every pull
 request as well as at release. `img/make-icons.sh` regenerates `stride.ico`
 and `stride-icon-256.png` from `img/stride-icon-macos.png`; both are
