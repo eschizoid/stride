@@ -116,16 +116,11 @@ PLIST
 sed -i '' "s/__VERSION__/$VERSION/g" "$C/Info.plist"
 
 # icon: the symbol badge, not the banner - a wordmark does not survive 16px.
-# The -macos variant carries the Big Sur template: artwork inset to 824/1024
-# on a transparent canvas, corners pre-rounded - a full-bleed square shows
-# hard corners in the Dock, where every other icon is a rounded tile.
+# img/make-icons.sh renders each iconset size from the master at that size,
+# the gradient frame alone on Apple's 824/1024 tile, masked just inside the
+# frame's edge; scaling an already-masked image would blur that edge again
 ICONSET="$WORK/stride.iconset"
-mkdir -p "$ICONSET"
-for s in 16 32 64 128 256 512; do
-  sips -z $s $s img/stride-icon-macos.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
-  d=$((s * 2))
-  sips -z $d $d img/stride-icon-macos.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
-done
+sh img/make-icons.sh --iconset "$ICONSET"
 iconutil -c icns "$ICONSET" -o "$C/Resources/stride.icns"
 
 # the window reads assets/fonts (cwd) or ~/.stride/fonts; the bundle carries

@@ -1,37 +1,35 @@
 #!/usr/bin/env sh
-# Writes the app icons the linux and windows packages carry from
-# img/stride-icon.png, the master: a 512 px opaque square, the gradient
-# frame drawn on a dark ground.
+# Renders every app icon from img/stride-icon.png, the master: a 512 px
+# opaque square, the gradient frame drawn on a dark ground.
 #
 #   img/stride-icon-256.png  the linux menu icon
 #   img/stride.ico           the windows icon: 16, 24, 32, 48 and 256 px
-#   img/stride-icons.sha256  the SHA-256 of the master, the macOS icon, this
-#                            script and both outputs
+#   img/stride-icons.sha256  the SHA-256 of the master, this script and both
+#                            outputs
 #
-#   sh img/make-icons.sh          regenerate the linux and windows icons
-#   sh img/make-icons.sh --check  regenerate them into a scratch folder and
-#                                 fail when a committed icon's pixels differ,
-#                                 when the macOS icon is not the master's
-#                                 derivative, or when any icon carries a light
-#                                 fringe at its edge
+#   sh img/make-icons.sh               regenerate the linux and windows icons
+#   sh img/make-icons.sh --iconset D   render the macOS iconset into folder D,
+#                                      which tools/make-viz-app.sh turns into
+#                                      the bundle's stride.icns
+#   sh img/make-icons.sh --check       regenerate the linux and windows icons
+#                                      into a scratch folder and fail when a
+#                                      committed icon's pixels differ, or when
+#                                      any platform's icon carries a light
+#                                      fringe at its edge
 #
-# The outputs are committed, so packaging needs no image tool, and
-# tools/package-viz.sh checks every hash in the pin. It needs macOS's sips.
+# The linux and windows outputs are committed, so packaging needs no image
+# tool, and tools/package-viz.sh checks every hash in the pin. It needs
+# macOS's sips.
 #
-# A linux or windows icon is the frame alone: the master scaled so the
-# frame's taller side spans its platform's share of the canvas, centered,
-# and masked at the target size to a rounded rectangle just inside the
-# frame's outer edge, so no dark ground shows outside the frame and no
-# masked edge is ever scaled again. GNOME's app icon template draws its
-# square keyline at 103 of 128 px, so linux gives the frame 80.5%;
-# Windows' 48 px grid draws its square keyline at 42 of 48, so windows
-# gives it 87.5%.
-#
-# img/stride-icon-macos.png is the macOS-shaped derivative of the same
-# master: the master scaled to 924 px, placed at (50, 50) on a 1024 canvas
-# and masked to Apple's 824 px tile, the master's ground included. It is
-# committed as it is, since 1024 px cannot come from the 512 px master
-# without scaling it up; --check holds its opaque pixels to that transform.
+# Every icon is the frame alone: the master scaled so the frame's taller
+# side spans its platform's share of the canvas, centered, and masked at
+# the target size to a rounded rectangle just inside the frame's outer
+# edge, so no dark ground shows outside the frame and no masked edge is
+# ever scaled again. Apple's macOS icon grid draws its tile at 824 of
+# 1024 px and GNOME's app icon template its square keyline at 103 of 128,
+# so macOS and linux give the frame 80.5%; Windows' 48 px grid draws its
+# square keyline at 42 of 48, so windows gives it 87.5%. Above 512 px the
+# master is scaled up, as any 1024 px icon drawn from it must be.
 #
 # An ICO file may hold PNG images directly (Windows Vista and later read
 # them): a 6-byte header (reserved 0, type 1, image count), one 16-byte
@@ -39,23 +37,24 @@
 # reserved 0; planes 1; bits per pixel 32; byte length; byte offset), then
 # the PNG files back to back. Every integer is little-endian.
 set -eu
-cd "$(dirname "$0")"
+here="$(cd "$(dirname "$0")" && pwd)"
+cd "$here"
 command -v sips >/dev/null || { echo "make-icons: needs sips (macOS)" >&2; exit 1; }
 command -v xxd >/dev/null || { echo "make-icons: needs xxd" >&2; exit 1; }
 
 # the frame's outer edge in the master, in master px as continuous
 # coordinates (left top right bottom), its corner radius, and how far
-# inside that edge the mask runs, past the edge's antialiased pixels
+# inside that edge the mask runs: past the edge's antialiased pixels and
+# the brighter band sips' scaler leaves beside an edge it scales up
 frame_box="33 37 475 486"
 frame_radius=95
-frame_inset=1.5
+frame_inset=2.5
+share_macos=0.8047
 share_linux=0.805
 share_windows=0.875
 ico_sizes="16 24 32 48 256"
-# the macOS icon's transform: the master's size on the 1024 canvas, and
-# its offset
-mac_scale=924
-mac_offset=50
+# Apple's iconset: each point size at 1x and 2x
+iconset_points="16 32 128 256 512"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -64,7 +63,9 @@ trap 'rm -rf "$work"' EXIT
 # BMP (M px square) and prints, as hex, a top-down 32bpp BGRA BMP of N px:
 # each pixel is the master pixel at (x - OX, y - OY), its alpha the share of
 # 4x4 samples inside the rounded rectangle [X0, X1] x [Y0, Y1] with corner
-# radius R, in canvas px
+# radius R, in canvas px. The rectangle is convex, so a pixel whose four
+# corners are inside is wholly inside, and one outside its bounding box is
+# wholly outside; only the rest are sampled
 cat > "$work/mask.awk" <<'AWK'
 function hex4(v) { return sprintf("%02x%02x%02x%02x", v % 256, int(v / 256) % 256, int(v / 65536) % 256, int(v / 16777216) % 256) }
 function inside(px, py,   cx, cy, dx, dy) {
@@ -73,6 +74,14 @@ function inside(px, py,   cx, cy, dx, dy) {
   cy = (py < Y0 + R) ? Y0 + R : (py > Y1 - R) ? Y1 - R : py
   dx = px - cx; dy = py - cy
   return dx * dx + dy * dy <= R * R
+}
+function coverage(x, y,   k, c, sx, sy) {
+  k = inside(x, y) + inside(x + 1, y) + inside(x, y + 1) + inside(x + 1, y + 1)
+  if (k == 4) return 255
+  if (k == 0 && (x + 1 < X0 || x > X1 || y + 1 < Y0 || y > Y1)) return 0
+  c = 0
+  for (sy = 0; sy < 4; sy++) for (sx = 0; sx < 4; sx++) c += inside(x + (sx + 0.5) / 4, y + (sy + 0.5) / 4)
+  return int(c * 255 / 16 + 0.5)
 }
 { for (i = 1; i <= NF; i++) byte[n++] = $i }
 END {
@@ -85,9 +94,7 @@ END {
   for (y = 0; y < N; y++) {
     line = ""
     for (x = 0; x < N; x++) {
-      c = 0
-      for (sy = 0; sy < 4; sy++) for (sx = 0; sx < 4; sx++) c += inside(x + (sx + 0.5) / 4, y + (sy + 0.5) / 4)
-      a = int(c * 255 / 16 + 0.5)
+      a = coverage(x, y)
       mx = x - OX; my = y - OY
       if (a == 0 || mx < 0 || my < 0 || mx >= M || my >= M) { line = line "00000000"; continue }
       o = my * row + mx * 3
@@ -104,7 +111,7 @@ render() {
   # shellcheck disable=SC2086
   set -- "$1" "$2" "$3" $frame_box
   m=$(awk -v N="$n" -v F="$2" -v T="$5" -v B="$7" 'BEGIN { printf "%d", N * F / (B - T) * 512 + 0.5 }')
-  sips -z "$m" "$m" stride-icon.png --out "$work/scaled.png" >/dev/null
+  sips -z "$m" "$m" "$here/stride-icon.png" --out "$work/scaled.png" >/dev/null
   sips -s format bmp "$work/scaled.png" --out "$work/scaled.bmp" >/dev/null
   off=$(od -An -tu4 -j10 -N4 "$work/scaled.bmp" | tr -d ' ')
   geometry=$(awk -v N="$n" -v M="$m" -v L="$4" -v T="$5" -v R="$6" -v B="$7" -v RAD="$frame_radius" -v I="$frame_inset" 'BEGIN {
@@ -118,12 +125,25 @@ render() {
   sips -s format png "$work/masked.bmp" --out "$1" >/dev/null
 }
 
+# the macOS iconset, each size rendered at that size, into the folder given
+iconset() {
+  mkdir -p "$1"
+  for p in $iconset_points; do
+    for scale in 1 2; do
+      s=$((p * scale))
+      [ -s "$work/mac-$s.png" ] || render "$s" "$share_macos" "$work/mac-$s.png"
+      if [ "$scale" = 1 ]; then name="icon_${p}x${p}.png"; else name="icon_${p}x${p}@2x.png"; fi
+      cp "$work/mac-$s.png" "$1/$name"
+    done
+  done
+}
+
 # one byte per call, as an octal escape, which every printf reads
 byte() { printf "\\$(printf '%03o' "$(($1 & 255))")"; }
 u16() { byte "$1"; byte "$(($1 >> 8))"; }
 u32() { u16 "$(($1 & 65535))"; u16 "$(($1 >> 16))"; }
 
-# both icons, rendered into the folder given
+# the linux and windows icons, rendered into the folder given
 build() {
   render 256 "$share_linux" "$1/stride-icon-256.png"
   count=0
@@ -216,62 +236,41 @@ no_light_fringe() {
     }'
 }
 
-# whether the macOS icon's opaque pixels are the master's, scaled to
-# $mac_scale px and placed at $mac_offset: within a mean byte difference of
-# 2 with at most 1.5% of bytes off by more than 32, since it was scaled by
-# another tool; a master moved by 4 px differs by more
-mac_derived() {
-  sips -z "$mac_scale" "$mac_scale" stride-icon.png --out "$work/mac.png" >/dev/null
-  sips -s format bmp "$work/mac.png" --out "$work/mac-master.bmp" >/dev/null
-  sips -s format bmp stride-icon-macos.png --out "$work/mac-icon.bmp" >/dev/null
-  {
-    od -An -tu1 -v -j"$(le "$work/mac-icon.bmp" 10 4)" "$work/mac-icon.bmp"
-    echo SPLIT
-    od -An -tu1 -v -j"$(le "$work/mac-master.bmp" 10 4)" "$work/mac-master.bmp"
-  } | awk -v M="$mac_scale" -v O="$mac_offset" '
-    $0 == "SPLIT" { s = 1; next }
-    { for (i = 1; i <= NF; i++) if (s) b[nb++] = $i; else a[na++] = $i }
-    END {
-      W = 1024; row = int((M * 3 + 3) / 4) * 4
-      for (y = 0; y < W; y++) for (x = 0; x < W; x++) {
-        o = (y * W + x) * 4
-        if (a[o + 3] != 255) continue
-        mx = x - O; my = y - O
-        if (mx < 0 || my < 0 || mx >= M || my >= M) { off++; continue }
-        q = my * row + mx * 3
-        for (c = 0; c < 3; c++) { d = a[o + c] - b[q + c]; if (d < 0) d = -d; sum += d; if (d > 32) big++; cnt++ }
-      }
-      mean = sum / cnt; frac = big / cnt
-      if (off || mean > 2 || frac > 0.015) { printf "make-icons: img/stride-icon-macos.png is not the master scaled to %d px at %d (mean %.3f, %.3f%% of bytes off by more than 32, %d opaque pixels outside it)\n", M, O, mean, frac * 100, off > "/dev/stderr"; exit 1 }
-    }'
-}
-
-if [ "${1:-}" = "--check" ]; then
-  mkdir -p "$work/new" "$work/old"
-  build "$work/new"
-  same_pixels "$work/new/stride-icon-256.png" stride-icon-256.png img/stride-icon-256.png
-  n=$(unpack_ico stride.ico "$work/old")
-  # shellcheck disable=SC2086
-  set -- $ico_sizes
-  [ "$n" = "$#" ] || { echo "make-icons: img/stride.ico holds $n images, not the $# of $ico_sizes" >&2; exit 1; }
-  i=0
-  for s in $ico_sizes; do
-    same_pixels "$work/new/win-$s.png" "$work/old/entry-$i.png" "img/stride.ico's $s px image"
-    [ "$s" -lt 48 ] || no_light_fringe "$work/old/entry-$i.png" "img/stride.ico's $s px image"
-    i=$((i + 1))
-  done
-  no_light_fringe stride-icon-256.png img/stride-icon-256.png
-  # the macOS icon's tile is centered on the canvas while the master's
-  # frame sits below its center, so the tile clips the frame's bottom-left
-  # edge and leaves 5 light pixels there (x 159 to 179, y 875 to 891); it is
-  # held to its transform and its hash, not to this
-  mac_derived
-  echo "make-icons: every icon is the master's by its recorded transform, with no light fringe"
-  exit 0
-fi
-
-build "$work"
-cp "$work/stride-icon-256.png" stride-icon-256.png
-cp "$work/stride.ico" stride.ico
-shasum -a 256 stride-icon.png stride-icon-macos.png make-icons.sh stride.ico stride-icon-256.png > stride-icons.sha256
-echo "make-icons: wrote img/stride.ico ($ico_sizes), img/stride-icon-256.png and img/stride-icons.sha256"
+case "${1:-}" in
+  --iconset)
+    iconset "${2:?the folder to render the macOS iconset into}"
+    ;;
+  --check)
+    mkdir -p "$work/new" "$work/old"
+    build "$work/new"
+    same_pixels "$work/new/stride-icon-256.png" stride-icon-256.png img/stride-icon-256.png
+    n=$(unpack_ico stride.ico "$work/old")
+    # shellcheck disable=SC2086
+    set -- $ico_sizes
+    [ "$n" = "$#" ] || { echo "make-icons: img/stride.ico holds $n images, not the $# of $ico_sizes" >&2; exit 1; }
+    i=0
+    for s in $ico_sizes; do
+      same_pixels "$work/new/win-$s.png" "$work/old/entry-$i.png" "img/stride.ico's $s px image"
+      [ "$s" -lt 48 ] || no_light_fringe "$work/old/entry-$i.png" "img/stride.ico's $s px image"
+      i=$((i + 1))
+    done
+    no_light_fringe stride-icon-256.png img/stride-icon-256.png
+    iconset "$work/iconset"
+    for f in "$work"/iconset/*.png; do
+      w=$(sips -g pixelWidth "$f" | awk '/pixelWidth/ { print $2 }')
+      [ "$w" -lt 48 ] || no_light_fringe "$f" "the macOS iconset's ${f##*/}"
+    done
+    echo "make-icons: every icon is the master's by its recorded transform, with no light fringe"
+    ;;
+  "")
+    build "$work"
+    cp "$work/stride-icon-256.png" stride-icon-256.png
+    cp "$work/stride.ico" stride.ico
+    shasum -a 256 stride-icon.png make-icons.sh stride.ico stride-icon-256.png > stride-icons.sha256
+    echo "make-icons: wrote img/stride.ico ($ico_sizes), img/stride-icon-256.png and img/stride-icons.sha256"
+    ;;
+  *)
+    echo "usage: make-icons.sh [--iconset <folder> | --check]" >&2
+    exit 2
+    ;;
+esac

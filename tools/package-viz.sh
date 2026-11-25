@@ -112,16 +112,17 @@ check_fonts_dir() {
   done
 }
 
-# the windows and linux icons are the ones img/make-icons.sh built: every
-# hash in img/stride-icons.sha256 (the master's, the macOS icon's, the
-# script's, holding each platform's transform, and both outputs') matches
-# its file. The script is hashed with carriage returns dropped, since a
-# windows checkout may write its lines with CRLF; the images are binary
-# and checked out as they are
+# every icon is the one img/make-icons.sh renders from the master: every
+# hash in img/stride-icons.sha256 (the master's, the script's, holding each
+# platform's transform, and the linux and windows outputs') matches its
+# file, and the macOS bundle's iconset is rendered by that script at build
+# time, never scaled from a finished image. The script is hashed with
+# carriage returns dropped, since a windows checkout may write its lines
+# with CRLF; the images are binary and checked out as they are
 check_icons() {
-  local sum line want file got
+  local sum line want file got mva
   if command -v sha256sum >/dev/null 2>&1; then sum="sha256sum"; else sum="shasum -a 256"; fi
-  for file in stride-icon.png stride-icon-macos.png make-icons.sh stride.ico stride-icon-256.png; do
+  for file in stride-icon.png make-icons.sh stride.ico stride-icon-256.png; do
     line="$(tr -d '\r' < img/stride-icons.sha256 | grep "  $file\$" || true)"
     [ -n "$line" ] || { echo "::error::img/stride-icons.sha256 pins no hash for $file; rerun img/make-icons.sh"; exit 1; }
     want="${line%%  *}"
@@ -131,6 +132,11 @@ check_icons() {
     esac
     [ "$got" = "$want" ] || { echo "::error::img/$file is not the file img/make-icons.sh pinned; rerun img/make-icons.sh"; exit 1; }
   done
+  mva="$(tr -d '\r' < tools/make-viz-app.sh)"
+  grep -qxF 'sh img/make-icons.sh --iconset "$ICONSET"' <<<"$mva" ||
+    { echo "::error::tools/make-viz-app.sh does not render its iconset with img/make-icons.sh"; exit 1; }
+  ! grep -qE '^[^#]*sips[^#]*ICONSET' <<<"$mva" ||
+    { echo "::error::tools/make-viz-app.sh scales a finished image into its iconset"; exit 1; }
 }
 
 # the macOS bundle's launcher, as tools/make-viz-app.sh writes it
