@@ -384,25 +384,68 @@ check_lnk() {
 }
 
 # the command line and parent program of a running stride-viz.exe whose
-# command line contains the text given, one per line; nothing when none runs
+# command line contains the text given, one per line; nothing when none
+# runs. The query is a script file, so no quote in it crosses a command
+# line, and PowerShell's own errors reach stderr
 viz_process() {
-  NEEDLE="$1" powershell -NoProfile -Command '$all = Get-CimInstance Win32_Process; $p = $all | Where-Object { $_.Name -eq "stride-viz.exe" -and $_.CommandLine -and $_.CommandLine.Contains($env:NEEDLE) } | Select-Object -First 1; if ($p) { $p.CommandLine; $parent = $all | Where-Object { $_.ProcessId -eq $p.ParentProcessId } | Select-Object -First 1; if ($parent) { $parent.Name } else { "(no parent)" } }' | tr -d '\r'
+  local ps
+  ps="$(mktemp -d)/viz_process.ps1"
+  cat > "$ps" <<'PS'
+$all = Get-CimInstance Win32_Process
+$p = $all | Where-Object { $_.Name -eq 'stride-viz.exe' -and $_.CommandLine -and $_.CommandLine.Contains($env:NEEDLE) } | Select-Object -First 1
+if ($p) {
+  $p.CommandLine
+  $parent = $all | Where-Object { $_.ProcessId -eq $p.ParentProcessId } | Select-Object -First 1
+  if ($parent) { $parent.Name } else { '(no parent)' }
+}
+PS
+  NEEDLE="$1" powershell -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$ps")" | tr -d '\r'
+}
+
+# what is running, for a log that has to explain a missing window
+show_processes() {
+  echo "package-viz: [$1] stride-viz.exe and conhost.exe processes:"
+  tasklist //v //fi "imagename eq stride-viz.exe" 2>&1 | tr -d '\r' | sed 's/^/    /'
+  tasklist //fi "imagename eq conhost.exe" 2>&1 | tr -d '\r' | sed 's/^/    /'
+  echo "package-viz: [$1] the CIM query answers: '$(viz_process "$2" 2>&1 | tr '\n' '|')'"
 }
 
 # waits up to 20 s for stride-viz.exe to run with the athlete directory
-# given (a windows path), then requires that it runs under conhost.exe,
-# the windowless host on every build the runner has
+# given (a windows path) and requires that it runs under conhost.exe, the
+# windowless host on every build the runner has. A miss is recorded in
+# $failed rather than ending the run, so one run reports every case
+failed=""
 wait_headless() {
-  local found="" parent
-  for _ in $(seq 20); do
+  local found="" parent i
+  for i in $(seq 20); do
     found="$(viz_process "$1")"
     [ -n "$found" ] && break
+    case "$i" in 1|10|20) show_processes "poll $i" "$1" ;; esac
     sleep 1
   done
-  [ -n "$found" ] || { echo "::error::stride-viz.exe did not start with $1"; exit 1; }
+  if [ -z "$found" ]; then
+    echo "::error::stride-viz.exe did not start with $1"
+    failed="$failed; no window with $1"
+    return 0
+  fi
   parent="$(sed -n 2p <<<"$found")"
   echo "package-viz: $(sed -n 1p <<<"$found") runs under $parent"
-  [ "${parent,,}" = conhost.exe ] || { echo "::error::stride-viz.exe runs under $parent, not conhost.exe"; exit 1; }
+  if [ "${parent,,}" != conhost.exe ]; then
+    echo "::error::stride-viz.exe runs under $parent, not conhost.exe"
+    failed="$failed; $1 under $parent"
+  fi
+}
+
+# starts the program given with its arguments for at most 8 s and prints
+# how it ended: an exit code under 124 means it quit by itself
+probe() {
+  local label="$1" rc=0 t0 t1
+  shift
+  t0=$(date +%s)
+  timeout 8 "$@" </dev/null >/dev/null 2>&1 || rc=$?
+  t1=$(date +%s)
+  echo "package-viz: probe $label ended with $rc after $((t1 - t0)) s (124 means it was still running)"
+  taskkill //IM stride-viz.exe //F >/dev/null 2>&1 || true
 }
 
 # runs install.cmd (a windows path) as a fake profile (a posix path) with
@@ -501,13 +544,22 @@ case "$os $step" in
     fake="$(mktemp -d)"
     fakewin="$(cygpath -w "$fake")"
     bat="$(cygpath -w "$PWD/stage/stride-app/stride-app.bat")"
-    USERPROFILE="$fakewin" cmd //C "$bat" </dev/null || true
+    exe="$(cygpath -w "$PWD/stage/stride-app/stride-viz.exe")"
+    conhost="$(cygpath -W)\\System32\\conhost.exe"
+    echo "package-viz: launching $bat as $fakewin"
+    rc=0; out="$(USERPROFILE="$fakewin" cmd //C "$bat" </dev/null 2>&1)" || rc=$?
+    echo "package-viz: the launcher exited $rc, printing '$out'"
     wait_seeded "$fake"
     wait_headless "$fakewin\\.stride"
     taskkill //IM stride-viz.exe //F >/dev/null 2>&1 || true
+    # how the window behaves started three ways against the seeded home
+    probe "exe" "$PWD/stage/stride-app/stride-viz.exe" "$fakewin\\.stride" "$fakewin"
+    probe "cmd /c exe" cmd //C "$exe" "$fakewin\\.stride" "$fakewin"
+    probe "conhost --headless exe" "$conhost" --headless "$exe" "$fakewin\\.stride" "$fakewin"
     printf 'x' > "$fake/.stride/fonts/Quicksand-Medium.ttf"
     printf 'x' > "$fake/.stride/img/flame.png"
-    USERPROFILE="$fakewin" cmd //C "$bat" </dev/null || true
+    rc=0; out="$(USERPROFILE="$fakewin" cmd //C "$bat" </dev/null 2>&1)" || rc=$?
+    echo "package-viz: the launcher exited $rc, printing '$out'"
     wait_seeded "$fake"
     taskkill //IM stride-viz.exe //F >/dev/null 2>&1 || true
 
@@ -543,6 +595,7 @@ case "$os $step" in
     cmd //C start "" "$programs\\Stride.lnk" </dev/null || true
     wait_headless "$home\\.stride"
     taskkill //IM stride-viz.exe //F >/dev/null 2>&1 || true
+    [ -z "$failed" ] || { echo "::error::the window did not start as required:$failed"; exit 1; }
     ;;
   *)
     echo "usage: package-viz.sh linux|windows package <binary> | linux|windows prove" >&2
