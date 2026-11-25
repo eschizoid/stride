@@ -76,7 +76,9 @@ reason `--json` and still answers in JSON).
    - `analyzed: true` means every activity synced so far is scored, `computed` how many
      the last analyze scored: no separate analyze is needed. `analyzed: false` means no
      heart-rate zones are set (`stride setup` sets them) or scoring did not settle.
-   - **Never re-run sync in a loop.** Call again at `resume_at`, not before. A
+   - **Never re-run sync in a loop.** Call again at `resume_at`, not before: Stride counts
+     every read it makes in the database, so a call inside a spent window asks Strava for
+     nothing and answers `list_rate_limited` with `synced: 0`. A
      run that fetched nothing (`streams_fetched`, `notes_fetched` and `routes_fetched`
      all 0) while `streams_skipped`, `notes_skipped` or `routes_skipped` is above 0
      read only bodies that would not decode: stop and report it. The next scheduled
@@ -398,7 +400,7 @@ Pick by question: `season` for the shape of a year, `compare` for this week or m
 | `stride tte pace <pace> <sport>` | the critical-speed twin for one exact sport, at a pace like `4:10/km`, `6:45/mi`, `1:40/100m` or `1:55/500m`: `{pace_s, pace_unit, speed, seconds, known, status, cs, d_prime, cs_pace_s, fit_points, fit_r2, window_days, sport, demonstrated_s, demonstrated_speed, demonstrated_known, contradicts_model}`. The fit is the one `stride pace-curve 90 <sport>` prints (today included); `cs_pace_s` is CS as seconds per `pace_unit`, `speed`/`cs`/`demonstrated_speed` are m/s, `d_prime` metres. `status` and `contradicts_model` read as on the power form, with `below_cs` for a pace at or slower than CS. Errors: `bad_pace`, `no_cs_fit` |
 | `stride reps [date]` | the anchor session's work reps beside same-shaped reps of earlier sessions: `{anchor_date, anchor_activity_id, shape, sport_family, matched_total, sessions}`. `shape` `{rep_count, mean_dur_s, band_lo_s, band_hi_s, signal}` is the comparability rule: same sport family, same rep count, mean rep duration inside the band, same signal (watts never beside m/s), never later than the anchor. Sessions (at most 12; `matched_total` counts every match) carry per-rep `avg_signal`/`avg_hr`, `mean_signal`, `fade_signal` (last minus first), `hr_rise_bpm` + `hr_rise_known`, and `min_dur_s`/`max_dur_s`/`uniformity` so you can judge uneven sessions. Errors: `no_detected_intervals`, `no_intervals_on_date`, `irregular_anchor` (the anchor's own reps vary too much in duration to be one repeated shape) |
 | `stride progress [date] [asc\|desc]` | `{anchor_date, anchor_scored, groups}`, each group `{name, grouped_by, lens, sessions, hidden, hidden_lens, hidden_scope}`. `lens` is `ef`, `speed_hr` or `rpe`; each session has a `score`. `grouped_by: structure` (same detected workout shape, names ignored) beats `name` when both could answer. `anchor_scored: false` = the asked-about session is not in the trend. `sessions` is the whole history only when `hidden` is 0. `hidden_scope` rows belong to another distance bucket (more than 10% away) and are not fixable. `hidden_lens` rows lacked what the lens needs (EF: normalized power and HR; speed/HR: distance and HR; RPE: a rating), usually fixable with a power meter, a strap or a rating, except when the stored reading itself is broken (see the heart-rate rule below). The counts carry no ids: find the rows with `stride activities --json`. Errors: `no_workout_on_date`, `unscorable`, `no_scorable_workouts` |
-| `stride doctor` | dataset health: coverage counts, `timezone_known` (as in `summary`), `scored_by` per load model, `strength_unrated`, `strength_without_sets` and its `strength_without_sets_ids` (strength sessions of the last 30 days with no stored sets), `strength_unread_lines` and its `strength_unread_ids` (pieces of recent strength sessions' text that stride could not read, so their sets are missing from tonnage; a fixed pasted line comes in after `stride sync` and `stride analyze`, a logged set after `stride strength import` runs again with a corrected log), the time anchor in use, `undateable_activities` (`date_known: false` rows) and `unrankable_activities` (`rankable: false`, a superset), each repaired by `stride sync --all` when Strava still lists the activity; `pending_streams` and `pending_routes` (what a plain sync still owes) and `streams_retry_capped` and `routes_retry_capped` (streams and routes that failed 3 or more fetches, which only `stride sync --all` asks for again). `unanalyzed` = never scored; `awaiting_metrics` = what `analyze` would recompute now (the one to act on); `awaiting_metrics_known: false` means it could not be computed and `config_error` says why |
+| `stride doctor` | dataset health: coverage counts, `timezone_known` (as in `summary`), `scored_by` per load model, `strength_unrated`, `strength_without_sets` and its `strength_without_sets_ids` (strength sessions of the last 30 days with no stored sets), `strength_unread_lines` and its `strength_unread_ids` (pieces of recent strength sessions' text that stride could not read, so their sets are missing from tonnage; a fixed pasted line comes in with the next `stride sync`, a logged set after `stride strength import` runs again with a corrected log), the time anchor in use, `undateable_activities` (`date_known: false` rows) and `unrankable_activities` (`rankable: false`, a superset), each repaired by `stride sync --all` when Strava still lists the activity; `pending_streams` and `pending_routes` (what a plain sync still owes) and `streams_retry_capped` and `routes_retry_capped` (streams and routes that failed 3 or more fetches, which only `stride sync --all` asks for again). `unanalyzed` = never scored; `awaiting_metrics` = what `analyze` would recompute now (the one to act on); `awaiting_metrics_known: false` means it could not be computed and `config_error` says why |
 | `stride viz` | the desktop window's published capabilities and focus: `{ protocol, published_at, staleness_seconds, focus_staleness_seconds, focus, views, fields, history, captures }`; see the next section |
 
 ## Reading the numbers
@@ -544,8 +546,8 @@ and a rerun resumes at the first one not done (`steps` rows are `{step, done}`):
 - `timezone`: confirm `timezone_detected` with the athlete, then pass `timezone=<Area/City>`.
 - `activities`: call `stride setup --json` with no value; it fetches the activity list,
   a few reads, so the zones can be proposed from it.
-- `zones`: `max_hr_proposed` is the maximum heart rate the list supports, the highest
-  reached in at least two sessions so one strap spike is ignored, and
+- `zones`: `max_hr_proposed` is the maximum heart rate the list supports, the second-highest
+  of the sessions' maxima so a strap spike in one session is set aside (`instruction` names it), and
   `zone_bounds_proposed` the four bounds it gives; show them to the athlete and accept with
   `max_hr=<max_hr_proposed>`. Otherwise, or when it is 0 (no heart-rate data), pass
   `threshold_hr=<bpm>` (the average of an all-out 30 to 60 minute effort), or `max_hr=<bpm>`
@@ -554,7 +556,8 @@ and a rerun resumes at the first one not done (`steps` rows are `{step, done}`):
   per-sport overrides like `hr_z2_max_ride` with `stride config set`.
 - `sync`: call `stride setup --json` with no value. Each call fetches what Strava's read
   window allows and analyzes it; `owed` is the fetches still owed, and `resume_at` the
-  time the next call can continue. When `owed` reaches 0 the answer is `complete: true`.
+  time the next call can continue: do not call again before it, since a call sooner finds
+  the window spent and makes no progress. When `owed` reaches 0 the answer is `complete: true`.
 
 Refusals are envelopes: `bad_value` (an empty or implausible value, a zone the system does
 not know, an address with no code), `unknown_key`, `missing_client_creds` (a `code=` before

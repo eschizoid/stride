@@ -330,6 +330,12 @@ Render :: [].{
 	step_line : Str, Str -> Str
 	step_line = |label, text| "${step_label(label)}${text}"
 
+	# a finished step as a human sees it, redrawn over whatever frame its line
+	# held: padded to the widest frame drawn there, the wait's, so no tail of a
+	# longer frame is left behind it
+	step_result : Str, Str -> Str
+	step_result = |label, text| pad_right(step_line(label, text), wait_frame_width)
+
 	# A `\r`-redrawn progress bar for the steps slow enough to look hung. Reuses the
 	# table's `█` so the glyph vocabulary stays one thing.
 	#
@@ -1045,12 +1051,13 @@ Render :: [].{
 	# from: `p.stopped` is the WIRE string and nothing here reads it, so a new
 	# reason is a non-exhaustive match here and in drain_note. `note` carries
 	# what the payload does not: the local time the run can continue, how the
-	# analysis ended, and the verdict line ("" when there is no form yet).
+	# analysis ended, the verdict line ("" when there is no form yet), and
+	# whether the run asked Strava for anything at all.
 	#
 	# DO NOT, not CANNOT: the signature takes payload and tag independently, so a
 	# caller CAN pass a mismatched pair. The producer binds the tag once and
 	# derives `stopped:` from that binding.
-	SyncNote : { resume : Str, analysis : [Settled, NoZones, Unsettled], verdict : Str }
+	SyncNote : { resume : Str, analysis : [Settled, NoZones, Unsettled], verdict : Str, requested : Bool }
 
 	sync_screen : { synced : U64, new_activities : U64, updated_activities : U64, pruned : U64, streams_fetched : I64, streams_skipped : I64, pending_streams : I64, notes_fetched : I64, notes_skipped : I64, pending_notes : I64, routes_fetched : I64, routes_skipped : I64, pending_routes : I64, stopped : Str, resumable : Bool, resume_at : Str, analyzed : Bool, computed : U64 }, Drain.SyncStop, SyncNote -> Str
 	sync_screen = |p, stop, note| {
@@ -1072,7 +1079,16 @@ Render :: [].{
 			if (p.streams_skipped > 0 and stop != FromDrain(Complete)) [Str.concat(count_noun(p.streams_skipped, "stream", "streams"), " would not decode")] else [],
 			if (p.routes_skipped > 0) [Str.concat(count_noun(p.routes_skipped, "route", "routes"), " would not decode")] else [],
 		])
-		head = if (List.is_empty(landed)) "synced, nothing new" else "synced ${Str.join_with(landed, ", ")}"
+		# a run that asked Strava for nothing says so rather than "nothing new",
+		# which would claim it looked
+		head =
+			if !(note.requested) {
+				"nothing synced: this run made no request"
+			} else if List.is_empty(landed) {
+				"synced, nothing new"
+			} else {
+				"synced ${Str.join_with(landed, ", ")}"
+			}
 		skips = if (List.is_empty(unreadable)) "" else " (${Str.join_with(unreadable, ", ")})"
 		analysis =
 			match note.analysis {
@@ -1090,7 +1106,7 @@ Render :: [].{
 				# a fact about Strava.sync!, which this function never observes
 				ListRateLimited => {
 					prune_claim = if (p.pruned == 0) "; nothing was pruned" else ""
-					" — Strava rate-limited the activity list, so it is incomplete${prune_claim}; the next window opens at ${note.resume}"
+					" — the read window was spent before the activity list ended, so it is incomplete${prune_claim}; the next window opens at ${note.resume}"
 				}
 				ListDailyCapReached => {
 					prune_claim = if (p.pruned == 0) "; nothing was pruned" else ""
@@ -1125,7 +1141,7 @@ Render :: [].{
 	sync_fixture = { synced: 0, new_activities: 0, updated_activities: 0, pruned: 0, streams_fetched: 0, streams_skipped: 0, pending_streams: 0, notes_fetched: 0, notes_skipped: 0, pending_notes: 0, routes_fetched: 0, routes_skipped: 0, pending_routes: 0, stopped: "complete", resumable: False, resume_at: "", analyzed: True, computed: 0 }
 
 	sync_note_fixture : SyncNote
-	sync_note_fixture = { resume: "10:45", analysis: Settled, verdict: "" }
+	sync_note_fixture = { resume: "10:45", analysis: Settled, verdict: "", requested: True }
 
 	# ── load command screen ─────────────────────────────────────────────
 
@@ -2946,15 +2962,15 @@ expect Render.sync_screen(Render.sync_fixture, FromDrain(Complete), { ..Render.s
 # the PRODUCER rather than hand-typed, so a rename on either side fails here.
 expect
 	Render.sync_screen({ ..Render.sync_fixture, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, Render.sync_note_fixture)
-		== "synced, nothing new; everything analyzed — Strava rate-limited the activity list, so it is incomplete; nothing was pruned; the next window opens at 10:45"
+		== "synced, nothing new; everything analyzed — the read window was spent before the activity list ended, so it is incomplete; nothing was pruned; the next window opens at 10:45"
 # ...and with a FULL queue, the first-run shape, still blaming the list and not the drain
 expect
 	Render.sync_screen({ ..Render.sync_fixture, synced: 100, new_activities: 100, pending_streams: 100, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, Render.sync_note_fixture)
-		== "synced 100 new activities; everything analyzed — Strava rate-limited the activity list, so it is incomplete; nothing was pruned; the next window opens at 10:45"
+		== "synced 100 new activities; everything analyzed — the read window was spent before the activity list ended, so it is incomplete; nothing was pruned; the next window opens at 10:45"
 # the prune claim comes from `pruned`, not from `stopped`
 expect
 	Render.sync_screen({ ..Render.sync_fixture, pruned: 2, stopped: Drain.sync_stopped_label(ListRateLimited), resumable: True }, ListRateLimited, Render.sync_note_fixture)
-		== "synced 2 removed on Strava; everything analyzed — Strava rate-limited the activity list, so it is incomplete; the next window opens at 10:45"
+		== "synced 2 removed on Strava; everything analyzed — the read window was spent before the activity list ended, so it is incomplete; the next window opens at 10:45"
 expect
 	Render.sync_screen({ ..Render.sync_fixture, stopped: Drain.sync_stopped_label(ListDailyCapReached), resumable: True }, ListDailyCapReached, { ..Render.sync_note_fixture, resume: "18:00" })
 		== "synced, nothing new; everything analyzed — Strava refused the activity list with today's read allowance used up, so it is incomplete; nothing was pruned; it returns at 18:00, midnight UTC"
@@ -2998,3 +3014,15 @@ expect Render.step_line("activity list", Render.list_result({ checked: 412, new:
 expect Render.progress_bar("scoring", 412, 412) == "scoring             [██████████] 412/412"
 expect Render.progress_bar("streams", 90, 412) == "streams             [██░░░░░░░░]  90/412"
 expect Render.progress_bar("scoring", 90, 90) == "scoring             [██████████] 90/90"
+
+# a finished step redrawn over the wait's frame covers all of it, so the
+# frame's "4:12 left" cannot show past the shorter result
+expect {
+	result = Render.step_result("waiting for Strava", "next batch started at 12:06")
+	Render.display_width(result) >= Render.display_width(Render.wait_frame({ tick: 0, at: "12:06", left: 899 }))
+		and Str.trim_end(result) == "waiting for Strava  next batch started at 12:06"
+}
+# a run that asked Strava for nothing says so instead of "nothing new"
+expect
+	Render.sync_screen({ ..Render.sync_fixture, pending_streams: 11, stopped: "daily_cap_reached", resumable: True }, FromDrain(DailyCapReached), { ..Render.sync_note_fixture, resume: "18:00", requested: False })
+		== "nothing synced: this run made no request; everything analyzed — today's Strava read allowance is used up with 11 fetches still owed; it returns at 18:00, midnight UTC"

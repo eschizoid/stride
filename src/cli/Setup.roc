@@ -65,7 +65,8 @@ Setup :: [].{
 					Pair(_, _) => False
 				}
 				if human and when_bare {
-					walk!(path)?
+					# Ctrl-C anywhere in the walk names `stride setup`, which resumes it
+					Strava.interruptible!(True, "stride setup", |{}| walk!(path))?
 					report!(path, ran, 0)
 				} else if when_bare {
 					# a step with nothing to supply runs in this call, without waiting
@@ -77,7 +78,7 @@ Setup :: [].{
 						}
 						report!(path, List.append(ran, "activities"), at)
 					} else if next == "sync" {
-						r = Strava.interruptible!(False, |{}| sync_step!(path, False))?
+						r = sync_step!(path, False)?
 						report!(path, List.append(ran, "sync"), r.resume_epoch)
 					} else {
 						report!(path, ran, 0)
@@ -267,7 +268,7 @@ Setup :: [].{
 		interactive = next == "strava_app" or next == "authorize"
 		max_hr_proposed =
 			match proposed {
-				Estimate(m) => m
+				Estimate(e) => e.max
 				NoEstimate => 0
 			}
 		Output.out!(
@@ -300,7 +301,7 @@ Setup :: [].{
 			rows: Sql.f64("m"),
 		})
 
-	step_guide : Str, Str, [Estimate(I64), NoEstimate] -> { needs : List(Str), instruction : Str, url : Str }
+	step_guide : Str, Str, [Estimate({ max : I64, set_aside : I64 }), NoEstimate] -> { needs : List(Str), instruction : Str, url : Str }
 	step_guide = |next, client_id, proposed|
 		match next {
 			"strava_app" => {
@@ -325,9 +326,9 @@ Setup :: [].{
 			}
 			"zones" =>
 				match proposed {
-					Estimate(m) => {
+					Estimate(e) => {
 						needs: ["threshold_hr", "max_hr"],
-						instruction: "The activity list puts maximum heart rate at ${m.to_str()} bpm, the highest reached in at least two sessions, giving the zone upper bounds in zone_bounds_proposed. Accept it with `stride setup max_hr=${m.to_str()}`, or give the threshold HR (the average of an all-out 30 to 60 minute effort) with `stride setup threshold_hr=<bpm>` or a known maximum with `stride setup max_hr=<bpm>`.",
+						instruction: "The activity list puts maximum heart rate at ${e.max.to_str()} bpm (${Config.estimate_basis(e)}), giving a threshold heart rate of ${(Config.threshold_from_max(e.max)).to_str()} bpm and the zone upper bounds in zone_bounds_proposed. Accept it with `stride setup max_hr=${e.max.to_str()}`, or give the threshold HR (the average of an all-out 30 to 60 minute effort) with `stride setup threshold_hr=<bpm>` or a known maximum with `stride setup max_hr=<bpm>`.",
 						url: "",
 					}
 					NoEstimate => {
@@ -338,7 +339,7 @@ Setup :: [].{
 				}
 			"sync" => {
 				needs: [],
-				instruction: "Run `stride setup` with no value: each call fetches what Strava's read window allows and analyzes it, and answers with owed, the fetches still owed, and resume_at, the time the next call can continue.",
+				instruction: "Run `stride setup` with no value: each call fetches what Strava's read window allows and analyzes it, and answers with owed, the fetches still owed, and resume_at, the time the next call can continue. Do not call it again before resume_at: a call sooner finds the window spent and makes no progress.",
 				url: "",
 			}
 			_ => { needs: [], instruction: "Setup is complete. `stride doctor` shows the database's health.", url: "" }
@@ -358,8 +359,8 @@ Setup :: [].{
 		token = Strava.get_valid_token!(path)?
 		match Strava.list_phase!(path, token, False, waits)? {
 			Listed(_) => Ok(Listed)
-			DaySpent => Ok(Stopped(Drain.next_day_at(Db.now_secs!({}))))
-			Refused(r) => Ok(Stopped(Drain.resume_epoch(r.stop, True, Db.now_secs!({}), Strava.window_secs!({}))))
+			DaySpent => Ok(Stopped(Strava.resume_for!(path, FromDrain(DailyCapReached), True, Db.now_secs!({}))?))
+			Refused(r) => Ok(Stopped(Strava.resume_for!(path, r.stop, True, Db.now_secs!({}))?))
 		}
 	}
 
@@ -367,7 +368,9 @@ Setup :: [].{
 	sync_step! : Str, Bool => Try(Strava.SyncResult, _)
 	sync_step! = |path, waits| {
 		token = Strava.get_valid_token!(path)?
-		Strava.sync_run!(path, token, False, settle!, waits)
+		# the activities step listed them, so the sync step only fetches: one list
+		# a setup
+		Strava.sync_run!(path, token, { all: False, relist: False }, settle!, waits)
 	}
 
 	# ── the human walk ─────────────────────────────────────────────────
@@ -454,18 +457,21 @@ Setup :: [].{
 			}
 		} else if next == "activities" {
 			Output.human_line!("Listing your activities, so the zones can be proposed from them.")?
-			match Strava.interruptible!(True, |{}| list_step!(path, True))? {
+			match list_step!(path, True)? {
 				Listed => Ok({})
-				Stopped(at) => Output.human_line!("Strava refused the activity list; run `stride setup` again after ${local!(path, at)} and it carries on.")
+				Stopped(at) => Output.human_line!("The read limits stopped the activity list; run `stride setup` again after ${local!(path, at)} and it carries on.")
 			}
 		} else if next == "zones" {
 			match Config.max_hr_estimate(session_maxima!(path)?) {
-				Estimate(m) => {
-					bounds = Config.zone_bounds(Max(m))
-					Output.human_line!("Your activities put your maximum heart rate at ${m.to_str()} bpm, the highest reached in at least two sessions. That gives a threshold of ${(Config.threshold_from_max(m)).to_str()} and zone upper bounds (z1..z4) of ${Str.join_with(List.map(bounds, b_str), " / ")} bpm.")?
+				Estimate(e) => {
+					bounds = Config.zone_bounds(Max(e.max))
+					Output.human_line!("Your activities put your maximum heart rate at ${e.max.to_str()} bpm: ${Config.estimate_basis(e)}. That gives a threshold heart rate of ${(Config.threshold_from_max(e.max)).to_str()} bpm and zone upper bounds (z1..z4) of ${Str.join_with(List.map(bounds, b_str), " / ")} bpm.")?
 					answer = ask!("Use these zones? [Y/n], or type your threshold HR, or max <bpm>: ")?
 					match Config.zone_answer(answer) {
-						Accept => keep_zones!(path, bounds)
+						Accept => {
+							store_zones!(path, bounds)?
+							Output.human_line!("Zones saved. Adjust any with `stride config set hr_z<N>_max <bpm>`.")
+						}
 						Threshold(b) => keep_zones!(path, Config.zone_bounds(Threshold(b)))
 						Max(b) => keep_zones!(path, Config.zone_bounds(Max(b)))
 						Decline => ask_zones!(path)
@@ -476,7 +482,7 @@ Setup :: [].{
 			}
 		} else if next == "sync" {
 			Output.human_line!("First sync. Ctrl-C stops it, and `stride setup` carries on from there.")?
-			r = Strava.interruptible!(True, |{}| sync_step!(path, True))?
+			r = sync_step!(path, True)?
 			Output.human_line!(Render.sync_screen(r.payload, r.stop, Strava.sync_note!(path, r)))?
 			if r.resume_epoch == 0 {
 				ReportHealth.doctor!({})

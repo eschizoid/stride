@@ -160,7 +160,7 @@ Output :: [].{
 	# ...and its result, which replaces the spinner on the same line
 	step_done! : Str, Str => Try({}, _)
 	step_done! = |label, text|
-		if (json_mode!({})) Stderr.line!(Render.step_line(label, text)) else Stderr.line!("\r${Render.step_line(label, text)}")
+		if (json_mode!({})) Stderr.line!(Render.step_line(label, text)) else Stderr.line!("\r${Render.step_result(label, text)}")
 
 	# the wait's frame, redrawn in place; only a human run ever waits
 	wait_frame! : { tick : U64, at : Str, left : I64 } => Try({}, _)

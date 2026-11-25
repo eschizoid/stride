@@ -160,7 +160,7 @@ Board :: [].{
 	hint_text = "1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   V record   G glow   ESC quit"
 
 	empty_text : Str
-	empty_text = "no data yet - sync and analyze first, then reopen"
+	empty_text = "no data yet - stride sync fills it, then reopen"
 
 	zero_text : Str
 	zero_text = "fresh above"

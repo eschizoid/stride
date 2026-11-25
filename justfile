@@ -420,16 +420,17 @@ e2e-sync: build
     trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK $P5MOCK $L429MOCK $L429P $STRMOCK 2>/dev/null' EXIT
     E2E_MODE=notes STRIDE_API_BASE=http://127.0.0.1:{{strength_port}} ./e2e || exit 1
     # the waiting first sync (ADR 0021), against two mocks that send Strava's
-    # read-limit headers, plus the main one, which sends none. Their read counts
+    # read-limit headers, plus the main one, which sends none, and the strength
+    # one, whose descriptions `sync --all` re-reads. The header mocks' read counts
     # live in files keyed by port, cleared first so a previous run's reads do not
     # count against this one.
     rm -f .e2e-mock-reads.{{pace_port}} .e2e-mock-reads.{{paced_port}}
     E2E_MODE=mock E2E_RATE_HEADERS=1 E2E_WINDOW_SECONDS=2 MOCK_PORT={{pace_port}} ./e2e &
     PACEMOCK=$!
-    E2E_MODE=mock E2E_RATE_HEADERS=1 E2E_WINDOW_SECONDS=86400 E2E_EXTERNAL_READS=90 E2E_EXTERNAL_LIST_DAY=500 MOCK_PORT={{paced_port}} ./e2e &
+    E2E_MODE=mock E2E_RATE_HEADERS=1 E2E_WINDOW_SECONDS=86400 E2E_EXTERNAL_READS=90 E2E_EXTERNAL_LIST_DAY=500 E2E_ODD_MAX_HR=1 MOCK_PORT={{paced_port}} ./e2e &
     PACEDMOCK=$!
     trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK $P5MOCK $L429MOCK $L429P $STRMOCK $PACEMOCK $PACEDMOCK 2>/dev/null; rm -f .e2e-mock-reads.{{pace_port}} .e2e-mock-reads.{{paced_port}}' EXIT
-    E2E_MODE=pace STRIDE_API_BASE=http://127.0.0.1:{{pace_port}} E2E_HEADER_BASE=http://127.0.0.1:{{paced_port}} E2E_PLAIN_BASE=http://127.0.0.1:{{mock_port}} ./e2e || exit 1
+    E2E_MODE=pace STRIDE_API_BASE=http://127.0.0.1:{{pace_port}} E2E_HEADER_BASE=http://127.0.0.1:{{paced_port}} E2E_PLAIN_BASE=http://127.0.0.1:{{mock_port}} E2E_STRENGTH_BASE=http://127.0.0.1:{{strength_port}} ./e2e || exit 1
 
 # build + refresh the ~/.local/bin symlink
 install: build

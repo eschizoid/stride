@@ -1,22 +1,33 @@
 Drain :: [].{
 	# ── the stream drain's pure half ────────────────────────────────────
 	# Every decision the sync loop makes about Strava's read limits, all pure:
-	# the per-read pacing (`decide`), what the rate-limit headers report
-	# (`usage_of`), when the next read window opens (`next_window_at`,
-	# `next_day_at`), whether a run waits for it or ends (`after_round`), and
-	# the wire vocabulary (`StopReason`, `SyncStop`, `stopped_label`). The loop
-	# in Strava.drain_queue! and the rounds in Strava.sync! are thin effectful
-	# skins over these.
+	# whether a read may be made (`may_read`), the pacing after one (`decide`),
+	# what the rate-limit headers report (`usage_of`), the counts each read
+	# window and day carries (`roll_reads`, `charge`), when the next window
+	# opens (`next_window_at`, `next_day_at`), whether a run waits for it or
+	# ends (`after_round`), and the wire vocabulary (`StopReason`, `SyncStop`,
+	# `stopped_label`). Strava.drain_queue!, Strava.fetch_pages! and the rounds
+	# in Strava.sync_run! are thin effectful skins over these.
 	#
-	# TWO limits, ending a run for different lengths. Strava's 15-minute read
-	# window resets at :00, :15, :30 and :45 past the hour; a run that fills it
-	# either waits for the next mark (a human run) or ends and names the mark
-	# (a `--json` run). The daily allowance resets at midnight UTC, and a run
-	# that spends it always ends and names that time. The day's reads are
-	# counted against a persisted per-UTC-day total, raised to what the
-	# `X-ReadRateLimit-Usage` header reports when Strava sends it, since the
-	# header also counts reads other apps made on the same token.
-	Limits : { reads_per_window : I64, reads_per_day : I64 }
+	# Strava allows 100 reads in each 15-minute window, which resets at :00,
+	# :15, :30 and :45 past the hour, and 1,000 in a UTC day. Stride counts
+	# every read it makes against both, in the database, so a count survives
+	# the run that made it, and it checks the counts BEFORE each read, so no
+	# run of its own can pass either limit. Where Strava sends the
+	# `X-ReadRateLimit-Usage` header, the counts are raised to what it reports,
+	# since it also sees reads other apps made on the same token.
+	#
+	# `reads_per_quarter` is that 15-minute limit with a margin, and no seam
+	# can loosen it. `reads_per_window` paces the window a test may shorten
+	# (STRIDE_WINDOW_SECONDS) and lower (STRIDE_READS_PER_WINDOW); outside a
+	# test the two windows are the same quarter-hour.
+	Limits : { reads_per_window : I64, reads_per_quarter : I64, reads_per_day : I64 }
+
+	# The read counts that pace a run, each stamped with the period it belongs
+	# to: `today` with the UTC `day` number, `window` with `wmark` (the epoch
+	# second the read window started), and `quarter` with `qmark` (the epoch
+	# second Strava's own quarter-hour started).
+	Reads : { day : I64, today : I64, wmark : I64, window : I64, qmark : I64, quarter : I64 }
 
 	# what to do after a successful fetch has been stored
 	PostStore : [Continue, WindowFull, DayFull]
@@ -43,17 +54,30 @@ Drain :: [].{
 		Refresh, # 401: refresh the access token, retry the same id (bounded by the caller)
 		RateLimited, # 429 with allowance left: the window refused this read
 		DailyCapReached, # 429 with the day spent: the same refusal, a later remedy
-		Store({ window : I64, today : I64, after : PostStore }), # success: store, then advance
+		Store({ reads : Reads, after : PostStore }), # success: store, then advance
 	]
 
-	# A 429 is a backstop for when the counts disagree with Strava's, not the
-	# mechanism: the Store arm reaches each limit on the read that fills it.
-	decide : { status : U16, window : I64, today : I64, usage : Usage }, Limits -> Action
+	# Before a read: the day first, because a spent day has no window to wait
+	# for, then either window.
+	may_read : Reads, Limits -> [Go, WindowFull, DayFull]
+	may_read = |r, lim|
+		if r.today >= lim.reads_per_day {
+			DayFull
+		} else if r.window >= lim.reads_per_window or r.quarter >= lim.reads_per_quarter {
+			WindowFull
+		} else {
+			Go
+		}
+
+	# After a read. A 429 is a backstop for when the counts disagree with
+	# Strava's, not the mechanism: may_read refuses the read that would pass a
+	# limit, and the Store arm ends a batch on the read that fills one.
+	decide : { status : U16, reads : Reads, usage : Usage }, Limits -> Action
 	decide = |s, lim|
 		if s.status == 429 {
 			# WHICH limit refused the read. The day's allowance spent means the
 			# daily cap, whose remedy is midnight UTC rather than the next mark.
-			if (floor_counts({ window: s.window, today: s.today }, s.usage)).today >= lim.reads_per_day {
+			if (floor_reads(s.reads, s.usage)).today >= lim.reads_per_day {
 				DailyCapReached
 			} else {
 				RateLimited
@@ -63,35 +87,31 @@ Drain :: [].{
 		} else {
 			# any other status is handled by the store step (404 → empty marker,
 			# 2xx → body, other → error propagated there); here we advance counters
-			next = floor_counts({ window: s.window + 1, today: s.today + 1 }, s.usage)
-			# DAY before WINDOW: a run that fills both has nothing to wait for
-			# until midnight UTC, so waiting for the next quarter-hour would fail
+			next = charge(s.reads, s.usage)
 			after =
-				if next.today >= lim.reads_per_day {
-					DayFull
-				} else if next.window >= lim.reads_per_window {
-					WindowFull
-				} else {
-					Continue
+				match may_read(next, lim) {
+					DayFull => DayFull
+					WindowFull => WindowFull
+					Go => Continue
 				}
-			Store({ window: next.window, today: next.today, after })
+			Store({ reads: next, after })
 		}
 
 	# The header sets the pace where Strava sends it, and the engine's own count
 	# is the floor: the larger of the two is the usage, so a header that lags
 	# the engine never buys extra reads and one that sees other apps' reads
-	# stops the run sooner.
-	floor_counts : { window : I64, today : I64 }, Usage -> { window : I64, today : I64 }
-	floor_counts = |own, usage|
+	# stops the run sooner. The header's window is Strava's quarter-hour, and it
+	# raises the shortened test window too, which is never longer.
+	floor_reads : Reads, Usage -> Reads
+	floor_reads = |r, usage|
 		match usage {
-			Reported(u) => { window: (own.window).max(u.window), today: (own.today).max(u.day) }
-			Unreported => own
+			Reported(u) => { ..r, window: (r.window).max(u.window), quarter: (r.quarter).max(u.window), today: (r.today).max(u.day) }
+			Unreported => r
 		}
 
-	# the day's count to persist after a read that was refused or retried: the
-	# read itself, raised to the header's day count when it reports more
-	charged : I64, Usage -> I64
-	charged = |today, usage| (floor_counts({ window: 0, today: today + 1 }, usage)).today
+	# one read spent, on every count, raised to what the header reports
+	charge : Reads, Usage -> Reads
+	charge = |r, usage| floor_reads({ ..r, today: r.today + 1, window: r.window + 1, quarter: r.quarter + 1 }, usage)
 
 	# The usage from a response's headers, each given as `Name: value`. The name
 	# is matched without regard to case, as HTTP header names are; the value is
@@ -126,7 +146,8 @@ Drain :: [].{
 	# ── when the next window opens ─────────────────────────────────────
 	# Strava's read window is the quarter-hour of the clock, not fifteen minutes
 	# from the last read: it resets at :00, :15, :30 and :45. `window_secs` is
-	# its length, 900 outside the test seam that can only shorten it.
+	# the length of the window a run waits for, 900 outside the test seam that
+	# can only shorten it.
 	window_secs_default : I64
 	window_secs_default = 900
 
@@ -135,24 +156,39 @@ Drain :: [].{
 	window_margin : I64 -> I64
 	window_margin = |window_secs| window_secs // 90
 
+	# the epoch second a window of `window_secs` started, the one `now` is in
+	window_mark : I64, I64 -> I64
+	window_mark = |now, window_secs| (now // window_secs) * window_secs
+
 	# the epoch second a run that filled the window at `now` can read again
 	next_window_at : I64, I64 -> I64
-	next_window_at = |now, window_secs| (now // window_secs + 1) * window_secs + window_margin(window_secs)
+	next_window_at = |now, window_secs| window_mark(now, window_secs) + window_secs + window_margin(window_secs)
 
-	# the epoch second the daily allowance returns: the next midnight UTC
+	# the epoch second the daily allowance returns: the next midnight UTC, with
+	# the margin a quarter-hour mark gets
 	next_day_at : I64 -> I64
-	next_day_at = |now| (now // 86400 + 1) * 86400
+	next_day_at = |now| (now // 86400 + 1) * 86400 + window_margin(window_secs_default)
 
-	# which window `now` falls in; reads made in an earlier one no longer count
-	window_index : I64, I64 -> I64
-	window_index = |now, window_secs| now // window_secs
-
-	# A drain that crosses a quarter-hour mark is in a fresh window, so its own
-	# count restarts. The header, where Strava sends one, says the same on the
-	# next response; without it, this is what keeps the count from stopping a
-	# run that has its whole new window ahead of it.
-	roll_window : { idx : I64, window : I64 }, I64 -> { idx : I64, window : I64 }
-	roll_window = |st, now_idx| if (now_idx == st.idx) st else { idx: now_idx, window: 0 }
+	# The counts as they stand at `now`: each belongs to the period it is
+	# stamped with, so a stamp that is not the current period's means zero
+	# spent in this one. That is the reset, and it needs no scheduled job: a
+	# drain that outlives UTC midnight or crosses a mark notices. BACKWARDS is
+	# treated the same as forwards: a stamp that disagrees with the clock is not
+	# a count this run may spend against.
+	roll_reads : Reads, I64, I64 -> Reads
+	roll_reads = |r, now, window_secs| {
+		day = now // 86400
+		wmark = window_mark(now, window_secs)
+		qmark = window_mark(now, window_secs_default)
+		{
+			day,
+			today: if (r.day == day) r.today else 0,
+			wmark,
+			window: if (r.wmark == wmark) r.window else 0,
+			qmark,
+			quarter: if (r.qmark == qmark) r.quarter else 0,
+		}
+	}
 
 	# ── whether a run waits or ends ────────────────────────────────────
 	# `waits` is false for `--json`, which never holds the caller's shell, and a
@@ -181,17 +217,29 @@ Drain :: [].{
 	# The epoch second a caller can continue a run that ended with `stop`, or 0
 	# when nothing is owed: a run that owes nothing has no next window to name,
 	# and a complete run that still owes only undecodable bodies retries on the
-	# next sync at any time.
-	resume_epoch : SyncStop, Bool, I64, I64 -> I64
-	resume_epoch = |stop, owed, now, window_secs|
+	# next sync at any time. `opens` holds when the next read window and the
+	# next day begin.
+	resume_epoch : SyncStop, Bool, { window : I64, day : I64 } -> I64
+	resume_epoch = |stop, owed, opens|
 		if !owed {
 			0
 		} else {
 			match stop {
 				FromDrain(Complete) => 0
-				FromDrain(BudgetReached) | FromDrain(RateLimited) | ListRateLimited => next_window_at(now, window_secs)
-				FromDrain(DailyCapReached) | ListDailyCapReached => next_day_at(now)
+				FromDrain(BudgetReached) | FromDrain(RateLimited) | ListRateLimited => opens.window
+				FromDrain(DailyCapReached) | ListDailyCapReached => opens.day
 			}
+		}
+
+	# When a run whose window filled at `now` can read again: at Strava's next
+	# quarter-hour mark when the quarter-hour is what filled, else at the next
+	# mark of the window it paces by, which a test may have shortened.
+	next_read_at : Reads, Limits, I64, I64 -> I64
+	next_read_at = |r, lim, now, window_secs|
+		if r.quarter >= lim.reads_per_quarter {
+			next_window_at(now, window_secs_default)
+		} else {
+			next_window_at(now, window_secs)
 		}
 
 	# A first sync owes more than the window it starts in, so its summaries are
@@ -224,109 +272,102 @@ Drain :: [].{
 			ListDailyCapReached => "list_daily_cap_reached"
 		}
 
-	# A drain can outlive UTC midnight, and when it does the allowance has reset —
-	# notice, rather than carry the old day. BACKWARDS is treated the same as
-	# forwards: the count belongs to the day it is stamped with, and a stamp that
-	# disagrees is not a count this run may spend against.
-	roll_day : { day : I64, today : I64 }, I64 -> { day : I64, today : I64 }
-	roll_day = |st, now_day| if (now_day == st.day) st else { day: now_day, today: 0 }
-
 	test_lim : Limits
-	test_lim = { reads_per_window: 3, reads_per_day: 100 }
+	test_lim = { reads_per_window: 3, reads_per_quarter: 100, reads_per_day: 100 }
+
+	# counts in the window and day of 2026-11-25T10:14:00Z
+	at : { window : I64, quarter : I64, today : I64 } -> Reads
+	at = |c| { day: 20782, today: c.today, wmark: 1795600800, window: c.window, qmark: 1795600800, quarter: c.quarter }
 }
 
 # ── tests ───────────────────────────────────────────────────────────
-# the daily arms at their boundaries
-expect match Drain.decide({ status: 429, window: 0, today: 99, usage: Unreported }, Drain.test_lim) {
+# before a read: the day first, then either window
+expect Drain.may_read(Drain.at({ window: 0, quarter: 0, today: 99 }), Drain.test_lim) == Go
+expect Drain.may_read(Drain.at({ window: 0, quarter: 0, today: 100 }), Drain.test_lim) == DayFull
+expect Drain.may_read(Drain.at({ window: 3, quarter: 3, today: 100 }), Drain.test_lim) == DayFull
+expect Drain.may_read(Drain.at({ window: 3, quarter: 3, today: 3 }), Drain.test_lim) == WindowFull
+# the quarter-hour refuses a read whatever the shortened window says, so no seam
+# can carry a run past Strava's own window
+expect Drain.may_read(Drain.at({ window: 0, quarter: 100, today: 3 }), Drain.test_lim) == WindowFull
+expect Drain.may_read(Drain.at({ window: 2, quarter: 99, today: 3 }), Drain.test_lim) == Go
+
+# after a read: the daily arms at their boundaries
+expect match Drain.decide({ status: 429, reads: Drain.at({ window: 0, quarter: 0, today: 99 }), usage: Unreported }, Drain.test_lim) {
 	RateLimited => True
 	_ => False
 }
-
-expect match Drain.decide({ status: 429, window: 0, today: 100, usage: Unreported }, Drain.test_lim) {
+expect match Drain.decide({ status: 429, reads: Drain.at({ window: 0, quarter: 0, today: 100 }), usage: Unreported }, Drain.test_lim) {
 	DailyCapReached => True
 	_ => False
 }
-
-expect match Drain.decide({ status: 200, window: 0, today: 98, usage: Unreported }, Drain.test_lim) {
+expect match Drain.decide({ status: 200, reads: Drain.at({ window: 0, quarter: 0, today: 98 }), usage: Unreported }, Drain.test_lim) {
 	Store({ after: Continue, .. }) => True
 	_ => False
 }
-
-expect match Drain.decide({ status: 200, window: 0, today: 99, usage: Unreported }, Drain.test_lim) {
+expect match Drain.decide({ status: 200, reads: Drain.at({ window: 0, quarter: 0, today: 99 }), usage: Unreported }, Drain.test_lim) {
 	Store({ after: DayFull, .. }) => True
 	_ => False
 }
-
 # ...and the DAY wins when both are full: there is no window to wait for
-expect match Drain.decide({ status: 200, window: 2, today: 99, usage: Unreported }, Drain.test_lim) {
+expect match Drain.decide({ status: 200, reads: Drain.at({ window: 2, quarter: 2, today: 99 }), usage: Unreported }, Drain.test_lim) {
 	Store({ after: DayFull, .. }) => True
 	_ => False
 }
-
-expect match Drain.decide({ status: 429, window: 0, today: 0, usage: Unreported }, Drain.test_lim) {
+expect match Drain.decide({ status: 429, reads: Drain.at({ window: 2, quarter: 2, today: 2 }), usage: Unreported }, Drain.test_lim) {
 	RateLimited => True
 	_ => False
 }
-expect match Drain.decide({ status: 429, window: 2, today: 2, usage: Unreported }, Drain.test_lim) {
-	RateLimited => True
-	_ => False
-}
-
 # 401 asks for a token refresh; the CALLER bounds how many it will spend
-expect match Drain.decide({ status: 401, window: 0, today: 0, usage: Unreported }, Drain.test_lim) {
+expect match Drain.decide({ status: 401, reads: Drain.at({ window: 0, quarter: 0, today: 0 }), usage: Unreported }, Drain.test_lim) {
 	Refresh => True
 	_ => False
 }
-
-# a normal fetch stores and continues, advancing both counters
-expect match Drain.decide({ status: 200, window: 0, today: 0, usage: Unreported }, Drain.test_lim) {
-	Store({ window: 1, today: 1, after: Continue }) => True
+# a normal fetch stores and continues, advancing every count
+expect match Drain.decide({ status: 200, reads: Drain.at({ window: 0, quarter: 0, today: 0 }), usage: Unreported }, Drain.test_lim) {
+	Store({ reads, after: Continue }) => reads == Drain.at({ window: 1, quarter: 1, today: 1 })
 	_ => False
 }
-
 # 404 takes the same store path (the marker write happens in the drain)
-expect match Drain.decide({ status: 404, window: 0, today: 0, usage: Unreported }, Drain.test_lim) {
-	Store({ window: 1, today: 1, after: Continue }) => True
+expect match Drain.decide({ status: 404, reads: Drain.at({ window: 0, quarter: 0, today: 0 }), usage: Unreported }, Drain.test_lim) {
+	Store({ after: Continue, .. }) => True
 	_ => False
 }
-
-# filling the window stores, then ends the batch
-expect match Drain.decide({ status: 200, window: 2, today: 2, usage: Unreported }, Drain.test_lim) {
-	Store({ window: 3, today: 3, after: WindowFull }) => True
+# filling the window stores, then ends the batch, and stays full past the boundary
+expect match Drain.decide({ status: 200, reads: Drain.at({ window: 2, quarter: 2, today: 2 }), usage: Unreported }, Drain.test_lim) {
+	Store({ after: WindowFull, .. }) => True
 	_ => False
 }
-
-# and it stays WindowFull past the boundary rather than wrapping back to Continue
-expect match Drain.decide({ status: 200, window: 9, today: 9, usage: Unreported }, Drain.test_lim) {
-	Store({ window: 10, today: 10, after: WindowFull }) => True
+expect match Drain.decide({ status: 200, reads: Drain.at({ window: 9, quarter: 9, today: 9 }), usage: Unreported }, Drain.test_lim) {
+	Store({ after: WindowFull, .. }) => True
+	_ => False
+}
+# ...and filling the quarter-hour ends it too, with the short window still open
+expect match Drain.decide({ status: 200, reads: Drain.at({ window: 0, quarter: 99, today: 9 }), usage: Unreported }, Drain.test_lim) {
+	Store({ after: WindowFull, .. }) => True
 	_ => False
 }
 
 # ── the headers set the pace ──
 # a header reporting reads the engine never made (another app on the token)
 # fills the window on the engine's first read
-expect match Drain.decide({ status: 200, window: 0, today: 0, usage: Reported({ window: 3, day: 3 }) }, Drain.test_lim) {
-	Store({ window: 3, today: 3, after: WindowFull }) => True
+expect match Drain.decide({ status: 200, reads: Drain.at({ window: 0, quarter: 0, today: 0 }), usage: Reported({ window: 3, day: 3 }) }, Drain.test_lim) {
+	Store({ reads, after: WindowFull }) => reads == Drain.at({ window: 3, quarter: 3, today: 3 })
 	_ => False
 }
 # ...and the day the same way, with the day winning
-expect match Drain.decide({ status: 200, window: 0, today: 0, usage: Reported({ window: 1, day: 100 }) }, Drain.test_lim) {
-	Store({ window: 1, today: 100, after: DayFull }) => True
+expect match Drain.decide({ status: 200, reads: Drain.at({ window: 0, quarter: 0, today: 0 }), usage: Reported({ window: 1, day: 100 }) }, Drain.test_lim) {
+	Store({ after: DayFull, .. }) => True
 	_ => False
 }
 # a header reporting LESS than the engine has spent is floored by the engine's count
-expect match Drain.decide({ status: 200, window: 1, today: 50, usage: Reported({ window: 0, day: 2 }) }, Drain.test_lim) {
-	Store({ window: 2, today: 51, after: Continue }) => True
-	_ => False
-}
+expect Drain.charge(Drain.at({ window: 1, quarter: 1, today: 50 }), Reported({ window: 0, day: 2 })) == Drain.at({ window: 2, quarter: 2, today: 51 })
+expect Drain.charge(Drain.at({ window: 1, quarter: 1, today: 5 }), Reported({ window: 1, day: 40 })) == Drain.at({ window: 2, quarter: 2, today: 40 })
+expect Drain.charge(Drain.at({ window: 1, quarter: 1, today: 5 }), Unreported) == Drain.at({ window: 2, quarter: 2, today: 6 })
 # a 429 whose header says the day is spent is the daily cap even when the own count is low
-expect match Drain.decide({ status: 429, window: 0, today: 5, usage: Reported({ window: 0, day: 100 }) }, Drain.test_lim) {
+expect match Drain.decide({ status: 429, reads: Drain.at({ window: 0, quarter: 0, today: 5 }), usage: Reported({ window: 0, day: 100 }) }, Drain.test_lim) {
 	DailyCapReached => True
 	_ => False
 }
-expect Drain.charged(5, Unreported) == 6
-expect Drain.charged(5, Reported({ window: 1, day: 40 })) == 40
-expect Drain.charged(50, Reported({ window: 1, day: 40 })) == 51
 
 # the header, found without regard to case, among others
 expect Drain.usage_of(["Content-Type: application/json", "x-readratelimit-usage: 27,412"]) == Reported({ window: 27, day: 412 })
@@ -347,14 +388,21 @@ expect Drain.next_window_at(1795601700, 900) == 1795602600 + 10
 # the margin is a ninetieth of the window, so a shortened test window has none
 expect Drain.window_margin(900) == 10 and Drain.window_margin(2) == 0
 expect Drain.next_window_at(101, 2) == 102
-# the daily allowance returns at the next midnight UTC
-expect Drain.next_day_at(1795601640) == 1795651200
-expect Drain.next_day_at(1795651200) == 1795651200 + 86400
-expect Drain.window_index(1795601699, 900) + 1 == Drain.window_index(1795601700, 900)
+# the daily allowance returns at the next midnight UTC, with a mark's margin
+expect Drain.next_day_at(1795601640) == 1795651200 + 10
+expect Drain.next_day_at(1795651200) == 1795651200 + 86400 + 10
+expect Drain.window_mark(1795601699, 900) + 900 == Drain.window_mark(1795601700, 900)
 
-# a drain crossing a mark starts its own count over; within one window it carries
-expect Drain.roll_window({ idx: 7, window: 60 }, 7) == { idx: 7, window: 60 }
-expect Drain.roll_window({ idx: 7, window: 60 }, 8) == { idx: 8, window: 0 }
+# the counts at `now`: within the window and day they carry
+expect Drain.roll_reads(Drain.at({ window: 60, quarter: 61, today: 995 }), 1795601640, 900) == Drain.at({ window: 60, quarter: 61, today: 995 })
+# past the mark both windows start over, and the day keeps its count
+expect Drain.roll_reads(Drain.at({ window: 60, quarter: 61, today: 995 }), 1795601700, 900) == { day: 20782, today: 995, wmark: 1795601700, window: 0, qmark: 1795601700, quarter: 0 }
+# a shortened window starts over at its own marks while the quarter-hour keeps
+# counting: the seam shortens the wait, never the count Strava's window allows
+expect Drain.roll_reads({ ..Drain.at({ window: 4, quarter: 40, today: 40 }), wmark: 1795601638 }, 1795601640, 2) == { day: 20782, today: 40, wmark: 1795601640, window: 0, qmark: 1795600800, quarter: 40 }
+# past UTC midnight the day starts over, and so does a clock that went back a day
+expect (Drain.roll_reads(Drain.at({ window: 1, quarter: 1, today: 995 }), 1795651210, 900)).today == 0
+expect (Drain.roll_reads(Drain.at({ window: 1, quarter: 1, today: 995 }), 1795601640 - 86400, 900)).today == 0
 
 # ── whether a run waits ──
 expect Drain.after_round({ stop: FromDrain(BudgetReached), owed: True, progressed: True, after_wait: False, waits: True }) == Wait
@@ -373,12 +421,12 @@ expect Drain.after_round({ stop: FromDrain(Complete), owed: True, progressed: Tr
 expect Drain.after_round({ stop: FromDrain(BudgetReached), owed: False, progressed: True, after_wait: False, waits: True }) == Finish
 
 # the time a caller continues: the window's mark, midnight UTC, or none
-expect Drain.resume_epoch(FromDrain(BudgetReached), True, 1795601640, 900) == 1795601710
-expect Drain.resume_epoch(ListRateLimited, True, 1795601640, 900) == 1795601710
-expect Drain.resume_epoch(FromDrain(DailyCapReached), True, 1795601640, 900) == 1795651200
-expect Drain.resume_epoch(ListDailyCapReached, True, 1795601640, 900) == 1795651200
-expect Drain.resume_epoch(FromDrain(BudgetReached), False, 1795601640, 900) == 0
-expect Drain.resume_epoch(FromDrain(Complete), True, 1795601640, 900) == 0
+expect Drain.resume_epoch(FromDrain(BudgetReached), True, { window: 1795601710, day: 1795651210 }) == 1795601710
+expect Drain.resume_epoch(ListRateLimited, True, { window: 1795601710, day: 1795651210 }) == 1795601710
+expect Drain.resume_epoch(FromDrain(DailyCapReached), True, { window: 1795601710, day: 1795651210 }) == 1795651210
+expect Drain.resume_epoch(ListDailyCapReached, True, { window: 1795601710, day: 1795651210 }) == 1795651210
+expect Drain.resume_epoch(FromDrain(BudgetReached), False, { window: 1795601710, day: 1795651210 }) == 0
+expect Drain.resume_epoch(FromDrain(Complete), True, { window: 1795601710, day: 1795651210 }) == 0
 
 expect Drain.score_first(412, 94) and !(Drain.score_first(3, 94)) and !(Drain.score_first(94, 94))
 
@@ -393,7 +441,6 @@ expect Drain.sync_stopped_label(FromDrain(BudgetReached)) == Drain.stopped_label
 expect Drain.sync_stopped_label(FromDrain(RateLimited)) == Drain.stopped_label(RateLimited)
 expect Drain.sync_stopped_label(ListDailyCapReached) == "list_daily_cap_reached"
 
-# the midnight roll, both directions
-expect Drain.roll_day({ day: 20690, today: 995 }, 20690) == { day: 20690, today: 995 }
-expect Drain.roll_day({ day: 20690, today: 995 }, 20691) == { day: 20691, today: 0 }
-expect Drain.roll_day({ day: 20691, today: 995 }, 20690) == { day: 20690, today: 0 }
+# the next read: Strava's own mark when the quarter-hour filled, else the shortened window's
+expect Drain.next_read_at(Drain.at({ window: 1, quarter: 100, today: 1 }), Drain.test_lim, 1795601640, 2) == 1795601710
+expect Drain.next_read_at(Drain.at({ window: 3, quarter: 3, today: 3 }), Drain.test_lim, 1795601640, 2) == 1795601642

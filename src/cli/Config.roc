@@ -57,6 +57,10 @@ Config :: [].{
 		"strava_expires_at",
 		"strava_reads_today",
 		"strava_reads_day",
+		"strava_reads_window",
+		"strava_reads_window_mark",
+		"strava_reads_quarter",
+		"strava_reads_quarter_mark",
 	]
 
 	known_key : Str -> Bool
@@ -86,7 +90,7 @@ Config :: [].{
 	# Pinned against `known_key` below: every literal that predicate accepts has an expect
 	# asserting it appears here, so the two cannot drift.
 	known_key_summary : Str
-	known_key_summary = "Settable: timezone, units (metric|imperial), strength_log_weight (per_hand|total), utc_offset_minutes, hr_z1_max..hr_z4_max (optionally per sport, e.g. hr_z2_max_ride). Written by stride and rarely set by hand: last_sync_epoch, strava_client_id, strava_expires_at, strava_reads_today, strava_reads_day, strava_access_token, strava_refresh_token, strava_client_secret. FTP is derived, never set."
+	known_key_summary = "Settable: timezone, units (metric|imperial), strength_log_weight (per_hand|total), utc_offset_minutes, hr_z1_max..hr_z4_max (optionally per sport, e.g. hr_z2_max_ride). Written by stride and rarely set by hand: last_sync_epoch, strava_client_id, strava_expires_at, strava_reads_today, strava_reads_day, strava_reads_window(_mark), strava_reads_quarter(_mark), strava_access_token, strava_refresh_token, strava_client_secret. FTP is derived, never set."
 
 	# The one key whose value is an ENUM rather than a number or free text. Validated at
 	# the WRITE for the same reason numeric_key is: a value nothing recognises would fall
@@ -157,7 +161,7 @@ Config :: [].{
 	# false sentence in three consecutive rounds, every time because a hand-typed list of
 	# `known_key`'s members was one short.
 	is_bookkeeping : Str -> Bool
-	is_bookkeeping = |k| List.contains(["last_sync_epoch", "strava_reads_today", "strava_reads_day"], k)
+	is_bookkeeping = |k| List.contains(["last_sync_epoch", "strava_reads_today", "strava_reads_day", "strava_reads_window", "strava_reads_window_mark", "strava_reads_quarter", "strava_reads_quarter_mark"], k)
 
 	# bytes: h r _ z <digit> _ m a x, then either end-of-key or `_` and a non-empty suffix
 	zone_shape : List(U8) -> Bool
@@ -200,7 +204,7 @@ Config :: [].{
 	# refusal loud and keeps the read sites honest.
 	numeric_key : Str -> [Int, Decimal, Free]
 	numeric_key = |k|
-		if (k == "utc_offset_minutes" or k == "last_sync_epoch" or k == "strava_reads_today" or k == "strava_reads_day" or Str.ends_with(k, "_expires_at"))
+		if (k == "utc_offset_minutes" or k == "last_sync_epoch" or Str.starts_with(k, "strava_reads_") or Str.ends_with(k, "_expires_at"))
 			Int
 		else if (Str.starts_with(k, "hr_z"))
 			Decimal
@@ -452,12 +456,13 @@ Config :: [].{
 	plausible_hr = |bpm| bpm >= 35 and bpm <= 220
 
 	# A maximum heart rate estimated from the activity list's per-session
-	# maxima: the highest value reached in at least two sessions, which is the
-	# second-highest session maximum. A chest strap that spikes does so in one
-	# session, and that session's value is the one dropped. Maxima outside the
+	# maxima: the second-highest of them. A chest strap that spikes does so in
+	# one session, and that session's value is the one set aside; when two
+	# sessions share the top value, that value is the estimate and nothing is set
+	# aside. `set_aside` is the value dropped, 0 when none was. Maxima outside the
 	# plausible band are dropped first. Fewer than two plausible sessions give no
 	# estimate, and setup then asks for a number instead.
-	max_hr_estimate : List(F64) -> [Estimate(I64), NoEstimate]
+	max_hr_estimate : List(F64) -> [Estimate({ max : I64, set_aside : I64 }), NoEstimate]
 	max_hr_estimate = |maxima| {
 		top_two = List.fold(
 			maxima,
@@ -475,8 +480,21 @@ Config :: [].{
 				}
 			},
 		)
-		if (top_two.n >= 2) Estimate(top_two.second) else NoEstimate
+		if top_two.n >= 2 {
+			Estimate({ max: top_two.second, set_aside: if (top_two.first > top_two.second) top_two.first else 0 })
+		} else {
+			NoEstimate
+		}
 	}
+
+	# what setup says about where the estimate came from
+	estimate_basis : { max : I64, set_aside : I64 } -> Str
+	estimate_basis = |e|
+		if e.set_aside == 0 {
+			"the highest your sessions reached, in two of them"
+		} else {
+			"the second-highest session maximum; ${e.set_aside.to_str()} bpm, in one session only, is set aside as a likely strap spike"
+		}
 
 	# What the athlete typed at setup's zone proposal: Enter or y uses the
 	# proposed zones, n asks for a number as setup does without data, a bare
@@ -731,11 +749,15 @@ expect Config.setup_next({ db: Bool.True, client: Bool.True, token: Bool.True, t
 expect Config.setup_next({ db: Bool.True, client: Bool.False, token: Bool.False, timezone: Bool.True, listed: Bool.True, zones: Bool.True, synced: Bool.False }) == "strava_app"
 
 # the max HR estimate: a strap spike in one session is the value dropped
-expect Config.max_hr_estimate([150.0, 209.0, 187.0, 186.0]) == Estimate(187)
+expect Config.max_hr_estimate([150.0, 209.0, 187.0, 186.0]) == Estimate({ max: 187, set_aside: 209 })
 # a maximum reached in two sessions stands, the spike notwithstanding
-expect Config.max_hr_estimate([187.0, 209.0, 187.0]) == Estimate(187)
+expect Config.max_hr_estimate([187.0, 209.0, 187.0]) == Estimate({ max: 187, set_aside: 209 })
+# two sessions at the top: that value, nothing set aside
+expect Config.max_hr_estimate([187.0, 150.0, 187.0]) == Estimate({ max: 187, set_aside: 0 })
+expect Config.estimate_basis({ max: 187, set_aside: 0 }) == "the highest your sessions reached, in two of them"
+expect Config.estimate_basis({ max: 186, set_aside: 209 }) == "the second-highest session maximum; 209 bpm, in one session only, is set aside as a likely strap spike"
 # an implausible value is dropped before counting, and fractions round
-expect Config.max_hr_estimate([250.0, 175.4, 168.6]) == Estimate(169)
+expect Config.max_hr_estimate([250.0, 175.4, 168.6]) == Estimate({ max: 169, set_aside: 175 })
 # one session, or none, is not corroborated: no estimate
 expect Config.max_hr_estimate([187.0]) == NoEstimate
 expect Config.max_hr_estimate([]) == NoEstimate

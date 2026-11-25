@@ -105,7 +105,7 @@
     },
     "max_hr_proposed": {
       "type": "integer",
-      "description": "When the next step is zones: the maximum heart rate the activity list supports, the highest reached in at least two sessions so one session's strap spike is ignored. `stride setup max_hr=<this>` accepts it. 0 when the step is not zones or fewer than two sessions carry a heart rate, and then a number has to be asked for."
+      "description": "When the next step is zones: the maximum heart rate the activity list supports, the second-highest of the sessions' maxima, so a strap spike in one session is set aside; `instruction` names the value set aside. `stride setup max_hr=<this>` accepts it. 0 when the step is not zones or fewer than two sessions carry a heart rate, and then a number has to be asked for."
     },
     "zone_bounds_proposed": {
       "type": "array",

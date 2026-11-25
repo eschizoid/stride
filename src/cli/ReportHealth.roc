@@ -403,7 +403,7 @@ ReportHealth :: [].{
 						[]
 				unread_hint =
 					if (p.strength_unread_lines > 0)
-						["", "  → ${(p.strength_unread_lines).to_str()} pieces of strength text in the last ${(Report.strength_missing_window_days).to_str()} days could not be read, so their sets are missing from tonnage: ${Str.join_with(List.map(p.strength_unread_ids, |i| i.to_str()), ", ")} — fix a pasted line in the description, then `stride sync` and `stride analyze`; for a logged session, re-run `stride strength import` with a corrected log"]
+						["", "  → ${(p.strength_unread_lines).to_str()} pieces of strength text in the last ${(Report.strength_missing_window_days).to_str()} days could not be read, so their sets are missing from tonnage: ${Str.join_with(List.map(p.strength_unread_ids, |i| i.to_str()), ", ")} — fix a pasted line in the description, then `stride sync`; for a logged session, re-run `stride strength import` with a corrected log"]
 					else
 						[]
 				# a list of zero or one lines, like `hint` above, so `""` keeps meaning
@@ -476,8 +476,8 @@ ReportHealth :: [].{
 							} else {
 								"  would be recomputed by analyze: unknown — ${p.config_error}"
 							},
-							"  streams still pending: ${(p.pending_streams).to_str()} — run `stride sync` to keep draining them",
-							"  GPS routes still pending: ${(p.pending_routes).to_str()} — `stride sync` fetches them after the streams and descriptions",
+							if (p.pending_streams > 0) "  streams still pending: ${(p.pending_streams).to_str()} — `stride sync` fetches them" else "  streams still pending: 0",
+							if (p.pending_routes > 0) "  GPS routes still pending: ${(p.pending_routes).to_str()} — `stride sync` fetches them after the streams and descriptions" else "  GPS routes still pending: 0",
 						],
 						# fault counts, printed only when non-zero: a zero here is the healthy case
 						# and a row of zeros on every run trains the eye to skip it

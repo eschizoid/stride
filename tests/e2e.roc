@@ -201,7 +201,11 @@ mock_response! = |uri| {
 			# stays two rows because every count the other drivers pin depends
 			# on it.
 			body =
-				if env_or!("E2E_STRENGTH", "") == "1" {
+				# E2E_ODD_MAX_HR: the standard two rows with a maximum heart rate the
+				# decoder cannot read as a number, null on one and a string on the other
+				if env_or!("E2E_ODD_MAX_HR", "") == "1" {
+					"[{\"id\":501,\"name\":\"Mock Power Ride\",\"sport_type\":\"Ride\",\"start_date_local\":\"2026-07-28T10:00:00Z\",\"moving_time\":3600,\"distance\":30000.0,\"total_elevation_gain\":100.0,\"average_watts\":200.0,\"max_heartrate\":null}, {\"id\":502,\"name\":\"Mock HR Row\",\"sport_type\":\"Rowing\",\"start_date_local\":\"2026-07-29T10:00:00Z\",\"moving_time\":1800,\"distance\":5000.0,\"total_elevation_gain\":0.0,\"average_heartrate\":150.0,\"max_heartrate\":\"175\"}]"
+				} else if env_or!("E2E_STRENGTH", "") == "1" {
 					recent = Str.trim(sh!("date -u -v-2d +%F 2>/dev/null || date -u -d '2 days ago' +%F"))
 					"[{\"id\":501,\"name\":\"Mock Power Ride\",\"sport_type\":\"Ride\",\"start_date_local\":\"2026-07-28T10:00:00Z\",\"moving_time\":3600,\"distance\":30000.0,\"total_elevation_gain\":100.0,\"average_watts\":200.0,\"weighted_average_watts\":205.0,\"max_heartrate\":209.0}, {\"id\":502,\"name\":\"Mock HR Row\",\"sport_type\":\"Rowing\",\"start_date_local\":\"2026-07-29T10:00:00Z\",\"moving_time\":1800,\"distance\":5000.0,\"total_elevation_gain\":0.0,\"average_heartrate\":150.0,\"max_heartrate\":175.0}, {\"id\":503,\"name\":\"Mock Strength\",\"sport_type\":\"Workout\",\"start_date_local\":\"2026-07-30T10:00:00Z\",\"moving_time\":2400,\"distance\":0.0,\"total_elevation_gain\":0.0}, {\"id\":504,\"name\":\"Mock Recent Strength\",\"sport_type\":\"Workout\",\"start_date_local\":\"${recent}T10:00:00Z\",\"moving_time\":2400,\"distance\":0.0,\"total_elevation_gain\":0.0}, {\"id\":505,\"name\":\"Mock Class Strength\",\"sport_type\":\"Workout\",\"start_date_local\":\"2026-07-29T09:00:00Z\",\"moving_time\":2700,\"distance\":0.0,\"total_elevation_gain\":0.0}]"
 				} else {
@@ -571,6 +575,7 @@ run_sync! = || {
 	# here would RUN the sync step
 	sync_instr = su!("max_hr=175", ".data.instruction")
 	check!("the sync step never sends the agent to a separate sync or analyze", !(Str.contains(sync_instr, "stride sync")) and !(Str.contains(sync_instr, "stride analyze")))?
+	check!("...and tells it not to call again before resume_at", Str.contains(sync_instr, "Do not call it again before resume_at"))?
 	_ = sh!("HOME='${shome}' STRIDE_API_BASE='${base}' STRIDE_FORMAT=json '${bin}' setup >'${shome}/sync-step.json' 2>/dev/null")
 	sq! = |q| Str.trim(sh!("jq -r '${q}' '${shome}/sync-step.json'"))
 	sync_step = sq!("[(.data.ran | index(\"sync\") != null), .data.complete, .data.next_step, ([.data.steps[].done] | all), .data.owed, (.data.resume_at == \"\")] | @tsv")
@@ -584,9 +589,12 @@ run_sync! = || {
 	hdb = "${hhome}/.stride/db.sqlite"
 	_ = sync_stride!(bin, hhome, base, ["init"])
 	_ = sql!(hdb, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','mock-access'),('strava_refresh_token','mock-refresh'),('strava_expires_at','9999999999'),('timezone','America/Chicago');")
-	walked = sh!("printf '\\n' | HOME='${hhome}' STRIDE_API_BASE='${base}' STRIDE_FORMAT=human '${bin}' setup 2>/dev/null")
-	check!("human setup proposes zones from the activities, the spike ignored", Str.contains(walked, "maximum heart rate at 175 bpm") and Str.contains(walked, "134 / 141 / 149 / 156"))?
+	walked = sh!("printf '\\n' | HOME='${hhome}' STRIDE_API_BASE='${base}' STRIDE_FORMAT=human '${bin}' setup 2>'${hhome}/setup.err'")
+	check!("human setup proposes zones from the activities, naming the spike it set aside", Str.contains(walked, "maximum heart rate at 175 bpm") and Str.contains(walked, "209 bpm, in one session only, is set aside as a likely strap spike") and Str.contains(walked, "threshold heart rate of 158 bpm") and Str.contains(walked, "134 / 141 / 149 / 156"))?
 	check!("...stores them on Enter", Str.trim(sql!(hdb, "SELECT group_concat(value, ',') FROM (SELECT value FROM config WHERE key IN ('hr_z1_max','hr_z2_max','hr_z3_max','hr_z4_max') ORDER BY key);")) == "134,141,149,156")?
+	check!("...saying they are saved without repeating the bounds it just showed", Str.contains(walked, "Zones saved.") and List.len(Str.split_on(walked, "134 / 141 / 149 / 156")) == 2)?
+	listings = Str.trim(sh!("LC_ALL=C tr '\\r' '\\n' < '${hhome}/setup.err' | grep -c '^activity list .*checked'"))
+	check!("...listing the activities once in the whole walk (${listings})", listings == "1")?
 	check!("...and runs the first sync to the end, everything analyzed", Str.contains(walked, "everything analyzed") and Str.trim(sql!(hdb, "SELECT COUNT(*) FROM activity_metrics;")) == "2")?
 	check!("...never telling the athlete to run sync again or analyze, or to wait a vague while", !(Str.contains(walked, "sync` again")) and !(Str.contains(walked, "`stride analyze`")) and !(Str.contains(walked, "15 minutes")) and !(Str.contains(walked, "tomorrow")))?
 	check!("...and leaves setup complete", Str.trim(sh!("HOME='${hhome}' STRIDE_FORMAT=json '${bin}' setup 2>/dev/null | jq -r '.data.complete'")) == "true")?
@@ -616,6 +624,9 @@ run_sync! = || {
 	# sync analyzes as data lands: no analyze call has run in this home yet
 	check!("the first sync analyzed everything it fetched, with no analyze call", Str.contains(first_sync, "\"analyzed\":true") and Str.trim(sql!(db, "SELECT COUNT(*) FROM activity_metrics;")) == "2")?
 	check!("...and owes nothing, so it names no time to continue", Str.contains(first_sync, "\"resume_at\":\"\""))?
+	# with nothing pending, doctor gives the count and no instruction
+	dr_human = sh!("HOME='${home}' STRIDE_FORMAT=human '${bin}' doctor 2>/dev/null")
+	check!("doctor names no sync to run when no stream or route is pending", Str.contains(dr_human, "streams still pending: 0\n") and Str.contains(dr_human, "GPS routes still pending: 0") and !(Str.contains(dr_human, "keep draining")))?
 
 	# ONE further sync, not two: each extra `sync` adds another exposure
 	# to a flaky mock round-trip, so this driver keeps to the fewest syncs it needs.
@@ -736,6 +747,9 @@ run_sync! = || {
 	# Closing that would re-encode the production WHERE clause in the fixture, the
 	# hazard the queue query's own comment warns about, so it is left knowingly.
 	check!("the 70 seed rows landed", Str.trim(sql!(db, "SELECT count(*) FROM activities WHERE id BETWEEN 901 AND 970;")) == "70")?
+	# the reads earlier syncs in this home spent sit in the same quarter-hour, and
+	# this run needs the window to itself, as it has once the mark passes
+	next_window!(db)
 	_ = sync_run!("json")
 	# The streams queue holds 72 here, under the 95-read window, so the streams
 	# drain clears it in this one run. A per-run cap would stop it short, and so
@@ -769,6 +783,8 @@ run_sync! = || {
 	# would read as a passing zero on the one check whose job is leftover state.
 	# "" == "0" is False, which is the answer we want.
 	check!("...and the seeded fixtures left nothing behind, in any table", Str.trim(sql!(db, "SELECT (SELECT count(*) FROM activities WHERE id >= 901) + (SELECT count(*) FROM streams WHERE activity_id >= 901) + (SELECT count(*) FROM routes WHERE activity_id >= 901);")) == "0")?
+	# ...and the next syncs here start in the next window, as they would
+	next_window!(db)
 
 	_ = sync_run!("human")
 	bf_human = Str.trim(sh!("cat '${bo}'"))
@@ -991,20 +1007,22 @@ run_skips! = || {
 	check!("`sync --all` asks again past the cap", bfq!(".data.streams_skipped") == "1" and Str.contains(sh!("cat '${be}'"), "502: stream data would not decode — skipped after 4 failed fetches"))?
 	check!("...for the route as well", bfq!(".data.routes_skipped") == "1" and Str.contains(sh!("cat '${be}'"), "502: route data would not decode — skipped after 4 failed fetches"))?
 	_ = sh!("rm -rf '${home}'")
-
 	# ── the read budget cannot be spent on a failing id ahead of new work. At one
-	# read per run, 502 (the newest) is read first; it fails, and the next run's one
-	# read goes to 501 instead of re-reading 502.
+	# stream read a window (the list's page takes the other), 502 (the newest) is
+	# read first; it fails, and the next window's one read goes to 501 instead of
+	# re-reading 502.
 	sh2 = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
 	db2 = "${sh2}/.stride/db.sqlite"
 	o2 = "${sh2}/sync.out"
 	q2! = |filter| Str.trim(sh!("jq -r '${filter}' '${o2}' 2>&1"))
 	_ = sync_stride!(bin, sh2, base, ["init"])
 	_ = sql!(db2, creds)
-	_ = sh!("HOME='${sh2}' STRIDE_FORMAT=json STRIDE_READS_PER_WINDOW=1 STRIDE_API_BASE='${base}' '${bin}' sync >'${o2}' 2>/dev/null")
-	check!("at one read per run, the newest id is read first and fails", q2!(".data.streams_skipped") == "1" and q2!(".data.stopped") == "budget_reached")?
-	_ = sh!("HOME='${sh2}' STRIDE_FORMAT=json STRIDE_READS_PER_WINDOW=1 STRIDE_API_BASE='${base}' '${bin}' sync >'${o2}' 2>/dev/null")
-	check!("...and the next run's read goes to the id that has not failed", q2!(".data.streams_fetched") == "1" and q2!(".data.streams_skipped") == "0")?
+	_ = sh!("HOME='${sh2}' STRIDE_FORMAT=json STRIDE_READS_PER_WINDOW=2 STRIDE_API_BASE='${base}' '${bin}' sync >'${o2}' 2>/dev/null")
+	check!("at one stream read a window, the newest id is read first and fails", q2!(".data.streams_skipped") == "1" and q2!(".data.stopped") == "budget_reached")?
+	# the next run is in the next window, as it would be once the mark passed
+	next_window!(db2)
+	_ = sh!("HOME='${sh2}' STRIDE_FORMAT=json STRIDE_READS_PER_WINDOW=2 STRIDE_API_BASE='${base}' '${bin}' sync >'${o2}' 2>/dev/null")
+	check!("...and the next window's read goes to the id that has not failed", q2!(".data.streams_fetched") == "1" and q2!(".data.streams_skipped") == "0")?
 	# a UTF-8 body that is not stream JSON is refused the same way as a non-UTF-8
 	# one: not stored, counted. 509 exists only here, and this mock serves it that
 	# body for its streams and its route alike; synced_at stays NULL, so no prune
@@ -1208,18 +1226,22 @@ run_stops! = || {
 	# still drain; instead seed via sync and delete the rows it stored.
 	_ = sync_stride!(bin, home, base, ["sync"])
 	_ = sql!(db, "DELETE FROM streams;")
+	# the seeding sync's reads are in this quarter-hour; each arm below starts in a
+	# fresh window, the shape its seams are sized for
+	next_window!(db)
 
 	bo = "${home}/bf.out"
 	bfq! = |filter| Str.trim(sh!("jq -r '${filter}' '${bo}' 2>&1"))
 	# The two arms need DIFFERENT seams, and setting both breaks the rate-limited one:
-	# with a budget of 1 the drain stops after 502 and never reaches 501's 429, so the
+	# with the budget seam the drain stops after 502 and never reaches 501's 429, so the
 	# run reports budget_reached and the 429 arm is never entered.
-	#   budget: one read per run, so the second queued id is never requested.
+	#   budget: two reads a window, the list's page and one stream, so the second
+	#           queued id is never requested.
 	#   rate:   the real window, so the drain DOES reach 501 and meets its 429.
 	#           Nothing sleeps any more, so this costs milliseconds.
 	daily_cap = env_or!("E2E_EXPECT_DAILY_CAP", "") == "1"
 	# THREE seams now, mutually exclusive on purpose. The daily one needs the WINDOW left
-	# at its default: set both to 1 and the window fires first, the run reports
+	# at its default: set both and the window fires first, the run reports
 	# budget_reached, and this arm tests the stop it is not about — which is exactly the
 	# trap the budget/rate pair above already documents for itself.
 	envs =
@@ -1228,13 +1250,13 @@ run_stops! = || {
 		} else if rate_limited {
 			""
 		} else {
-			"STRIDE_READS_PER_WINDOW=1"
+			"STRIDE_READS_PER_WINDOW=2"
 		}
 	run_sync_bf! = |fmt| sh!("HOME='${home}' STRIDE_FORMAT=${fmt} STRIDE_API_BASE='${base}' ${envs} '${bin}' sync >'${bo}' 2>/dev/null")
 	# the next midnight UTC as this sandbox's clock reads it: no timezone is set
 	# here, so the local clock is UTC and the day is named because it is not today
 	midnight_local! = |_| "00:00 on ${Str.trim(sh!("date -u -v+1d +%F 2>/dev/null || date -u -d tomorrow +%F"))}"
-	midnight_iso! = |_| "${Str.trim(sh!("date -u -v+1d +%F 2>/dev/null || date -u -d tomorrow +%F"))}T00:00:00Z"
+	midnight_iso! = |_| "${Str.trim(sh!("date -u -v+1d +%F 2>/dev/null || date -u -d tomorrow +%F"))}T00:00:10Z"
 	bf_start = str_to_i64(Str.trim(sh!("date +%s")))
 	_ = run_sync_bf!("json")
 	bf_elapsed = str_to_i64(Str.trim(sh!("date +%s"))) - bf_start
@@ -1270,7 +1292,7 @@ run_stops! = || {
 		check!("...leaving last_sync_epoch where it was", Str.trim(sql!(db, "SELECT COALESCE((SELECT value FROM config WHERE key='last_sync_epoch'),'none');")) == before_epoch)?
 		# a human run refused on the list waits for the next window, shortened here,
 		# and asks again; refused again in the fresh window, it ends
-		check!("...and the human screen blames the LIST too, not the drain", Str.contains(sh!("HOME='${home}' STRIDE_API_BASE='${base}' STRIDE_WINDOW_SECONDS=2 '${bin}' sync 2>&1"), "rate-limited the activity list"))?
+		check!("...and the human screen blames the LIST too, not the drain", Str.contains(sh!("HOME='${home}' STRIDE_API_BASE='${base}' STRIDE_WINDOW_SECONDS=2 '${bin}' sync 2>&1"), "the read window was spent before the activity list ended"))?
 		# ...but with the day's allowance spent it is the DAILY cap, not the window. The
 		# drain's 429 arm asks which limit refused and the list's did not, so the
 		# fifteen-minute remedy must not leak in here, on the other endpoint that
@@ -1409,6 +1431,8 @@ run_stops! = || {
 		check!("...and the daily-cap payload conforms to the sync schema", Str.trim(sh!("jq '.data' '${bo}' 2>&1 | jq -r --slurpfile schema schemas/v3/sync.json -f tools/validate.jq 2>&1")) == "")?
 		check!("...naming the next midnight UTC as the time to continue", bfq!(".data.resume_at") == midnight_iso!({}))?
 		check!("...and the human line names the local time the allowance returns", Str.contains(human_cap, "it returns at ${midnight_local!({})}, midnight UTC"))?
+		# the run that started on a spent day asked Strava for nothing, and says so
+		check!("...saying the run made no request rather than that nothing was new", Str.contains(human_cap, "nothing synced: this run made no request"))?
 		# ...and no vague while anywhere, the narration included, which this capture holds too
 		check!("...and never a vague while: no ~15 minutes, no tomorrow", !(Str.contains(human_cap, "15 minutes")) and !(Str.contains(human_cap, "tomorrow")))?
 		# the counter is PERSISTED, which is what makes the cap mean anything across runs.
@@ -1518,19 +1542,15 @@ run_stops! = || {
 		check!("a human run waits out the refused window once", Str.contains(sh!("cat '${home}/rl.err'"), "waiting for Strava"))?
 		check!("...and ends when the fresh window refuses too, naming when the next one opens", Str.contains(rl_human, "Strava refused reads in a fresh window with ") and Str.contains(rl_human, " still owed; the next window opens at "))?
 		check!("...never sending the athlete away for a vague while", !(Str.contains(rl_human, "15 minutes")) and !(Str.contains(rl_human, "again")))?
-		# ...and the SAME 429 means something different once the day's allowance is
-		# spent — the path production takes, which the daily arm's own driver
-		# cannot reach (it sets stride's cap so far below Strava's that the mock never
-		# refuses).
-		# Seeded to ONE BELOW the cap, not at it, and that is the whole difficulty: at
-		# the cap the pre-flight refuses before any request, so the branch tests the
-		# pre-flight instead (written that way first; breaking the 429 arm left it
-		# green). One below, the LIST read takes the count to the cap and the stream's
-		# 429 arrives with the allowance exactly spent — the state under test.
+		# ...and once the day's allowance is spent the drain asks for nothing more:
+		# seeded ONE BELOW the cap, the list's read takes the count to it, and the
+		# drain's next read is refused before it is made, a daily stop rather than a
+		# window one. (A 429 that arrives with the day spent is the same stop, pinned
+		# by Drain's expects: stride's own count never lets the read reach Strava.)
 		cap_now = Str.trim(sh!("date -u +%s | awk '{ print int($1 / 86400) }'"))
 		_ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_reads_day','${cap_now}'),('strava_reads_today','9');")
 		_ = sh!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' STRIDE_READS_PER_DAY=10 '${bin}' sync >'${bo}' 2>/dev/null")
-		check!("...and the same 429 reads as the DAILY cap once the allowance is spent", bfq!(".data.stopped") == "daily_cap_reached")?
+		check!("...and with the allowance spent the drain stops on the DAILY cap before its next read", bfq!(".data.stopped") == "daily_cap_reached")?
 		_ = sql!(db, "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_reads_day','${cap_now}'),('strava_reads_today','9');")
 		check!("...so the human line names the local time the allowance returns, midnight UTC", Str.contains(sh!("HOME='${home}' STRIDE_API_BASE='${base}' STRIDE_READS_PER_DAY=10 '${bin}' sync 2>/dev/null"), "it returns at ${midnight_local!({})}, midnight UTC"))?
 	} else {
@@ -1544,6 +1564,9 @@ run_stops! = || {
 		# first run that stops on the read budget is not a dead end. Run it again and it
 		# finishes, with no flag, no second command, and nothing for the user to know.
 		# Without this, every other check here is satisfied by a sync that stops forever.
+		# ...once the window has turned over: inside the same window the counted read
+		# refuses the rerun before it asks for anything
+		next_window!(db)
 		_ = run_sync_bf!("json")
 		check!("running it again converges — nothing left pending", bfq!(".data.pending_streams") == "0")?
 		# it still reports `budget_reached` — it DID stop on the budget, and the queue
@@ -1581,7 +1604,7 @@ run_stops! = || {
 		} else if env_or!("E2E_EXPECT_DAILY_CAP", "") == "1" {
 			# its own floor, and TIGHT: a floor below the arm's own count lets a check be
 			# deleted unseen — the slack this floor's own doctrine forbids.
-			17
+			18
 		} else if env_or!("E2E_EXPECT_500", "") == "1" {
 			9
 		} else if env_or!("E2E_EXPECT_401", "") == "1" {
@@ -1599,7 +1622,8 @@ run_stops! = || {
 # Strava's read-limit headers. STRIDE_API_BASE is a mock whose read window is two
 # seconds long (E2E_WINDOW_SECONDS=2), matched by STRIDE_WINDOW_SECONDS=2 so the
 # waits take seconds; E2E_HEADER_BASE is one whose headers report ninety reads
-# another app already spent; E2E_PLAIN_BASE is the main mock, which sends none.
+# another app already spent; E2E_PLAIN_BASE is the main mock, which sends none;
+# E2E_STRENGTH_BASE lists three strength Workouts with descriptions.
 run_pace! : () => Try({}, _)
 run_pace! = || {
 	reset_checks!({})?
@@ -1608,6 +1632,7 @@ run_pace! = || {
 	base = env_or!("STRIDE_API_BASE", "http://127.0.0.1:8806")
 	hbase = env_or!("E2E_HEADER_BASE", "")
 	pbase = env_or!("E2E_PLAIN_BASE", "")
+	sbase = env_or!("E2E_STRENGTH_BASE", "")
 	_ = wait_ready!(base, 50)
 	check!("the two-second-window mock came up on ${base}", mock_up!(base))?
 	_ = wait_ready!(hbase, 50)
@@ -1642,6 +1667,12 @@ run_pace! = || {
 	check!("...listing and scoring every activity before its first stream (lines ${Str.join_with(order_lines, " and ")})", List.len(order_lines) == 2 and str_to_i64(List.first(order_lines).ok_or("0")) > 0 and str_to_i64(List.first(order_lines).ok_or("0")) < str_to_i64(List.last(order_lines).ok_or("0")))?
 	check!("...every step on one line, its label in the column", Str.contains(w_err, "activity list       2 checked, 2 new") and Str.contains(w_err, "streams             [") and Str.contains(w_err, "routes              ["))?
 	check!("...and no rate-limit explanation in the narration", !(Str.contains(w_err, "15-minute")) and !(Str.contains(w_err, "several runs")) and !(Str.contains(w_err, "read budget")))?
+	# the line the wait leaves behind is its own result, with nothing of the
+	# longer frame it was drawn over showing past it. Read as a terminal shows it:
+	# a `\r` returns to the line's start and the next text overwrites only its own
+	# width, so each line is replayed segment by segment over what was there.
+	leftover = Str.trim(sh!("LC_ALL=C awk '{ n = split($0, seg, \"\\r\"); shown = \"\"; for (i = 1; i <= n; i++) shown = seg[i] substr(shown, length(seg[i]) + 1); print shown }' '${w}/err' | grep 'next batch started at' | grep -c ' left'"))
+	check!("...each wait ending on its result alone, no tail of the countdown left beside it (${leftover})", leftover == "0")?
 	_ = sh!("rm -rf '${w}'")
 
 	# ── Ctrl-C while it waits, then a rerun that resumes where it stopped. Job
@@ -1652,7 +1683,7 @@ run_pace! = || {
 	k_err = sh!("cat '${k}/err'")
 	k_kept = Str.trim(sql!("${k}/.stride/db.sqlite", "SELECT COUNT(*) FROM streams;"))
 	check!("Ctrl-C stops a waiting sync with the interrupted status (${k_rc})", k_rc == "130")?
-	check!("...saying what it kept and how it resumes", Str.contains(k_err, "sync stopped — every fetch so far is stored, and the next `stride sync` resumes from there"))?
+	check!("...saying what it kept and how it resumes", Str.contains(k_err, "stopped — every fetch so far is stored, and the next `stride sync` resumes from there"))?
 	check!("...having stored the window it finished (${k_kept} streams)", str_to_i64(k_kept) > 0 and owed!(k) != "0")?
 	_ = sh!("HOME='${k}' STRIDE_API_BASE='${base}' ${seams} '${bin}' sync >/dev/null 2>&1")
 	check!("...and the rerun finishes what the stopped run left", owed!(k) == "0" and scored!(k) == "8/8")?
@@ -1666,7 +1697,10 @@ run_pace! = || {
 	_ = sh!("HOME='${hd}' STRIDE_FORMAT=json STRIDE_API_BASE='${hbase}' '${bin}' sync >'${hd}/out' 2>/dev/null")
 	hd_elapsed = str_to_i64(Str.trim(sh!("date +%s"))) - hd_start
 	hq! = |q| Str.trim(sh!("jq -r '${q}' '${hd}/out'"))
-	check!("the header's usage stops the run where its own count would not", hq!(".data.stopped") == "budget_reached" and hq!(".data | .streams_fetched + .streams_skipped + .routes_fetched + .routes_skipped") == "4")?
+	# the header mock lists a maximum heart rate the decoder cannot read, null on one
+	# activity and a string on the other: the page still lands, without it
+	check!("a page whose max_heartrate is null or a string still lands, the value absent", Str.trim(sql!("${hd}/.stride/db.sqlite", "SELECT COUNT(*) || '/' || COUNT(max_hr) FROM activities WHERE id IN (501, 502);")) == "2/0")?
+	check!("...and the header's usage stops the run where its own count would not", hq!(".data.stopped") == "budget_reached" and hq!(".data | .streams_fetched + .streams_skipped + .routes_fetched + .routes_skipped") == "4")?
 	# the list's header reported 501 reads in the day, and the run spent four more
 	check!("...and the day's stored count rises to what the list's header reported", Str.trim(sql!("${hd}/.stride/db.sqlite", "SELECT value FROM config WHERE key='strava_reads_today';")) == "505")?
 	check!("...a --json run that never waits (${I64.to_str(hd_elapsed)} s)", hd_elapsed < 5)?
@@ -1682,10 +1716,62 @@ run_pace! = || {
 	check!("with no rate-limit headers the own count paces the run", pq!(".data.stopped") == "budget_reached" and pq!(".data | .streams_fetched + .streams_skipped + .routes_fetched + .routes_skipped") == "3")?
 	_ = sh!("rm -rf '${pl}'")
 
+	# ── `sync --all` re-reads every strength description, and a queue that keeps
+	# the ids it re-reads must still let the queues after it run: each id is asked
+	# for once a run. Against the strength mock (three Workouts), a window of three
+	# and a day of forty, so a run that kept re-reading would end on the day with
+	# the route still owed.
+	sa = seeded!({})
+	_ = sql!("${sa}/.stride/db.sqlite", "DELETE FROM activities WHERE id BETWEEN 901 AND 906;")
+	_ = sh!("HOME='${sa}' STRIDE_API_BASE='${sbase}' STRIDE_WINDOW_SECONDS=2 STRIDE_READS_PER_WINDOW=3 '${bin}' sync >/dev/null 2>&1")
+	_ = sql!("${sa}/.stride/db.sqlite", "DELETE FROM routes WHERE activity_id = 501;")
+	_ = sh!("HOME='${sa}' STRIDE_API_BASE='${sbase}' STRIDE_WINDOW_SECONDS=2 STRIDE_READS_PER_WINDOW=3 STRIDE_READS_PER_DAY=40 '${bin}' sync --all >'${sa}/out' 2>'${sa}/err'")
+	sa_out = Str.trim(sh!("cat '${sa}/out'"))
+	sa_waits = str_to_i64(Str.trim(sh!("LC_ALL=C tr '\\r' '\\n' < '${sa}/err' | grep -c 'next batch started at'")))
+	check!("sync --all reaches the route after re-reading every description", Str.trim(sh!("HOME='${sa}' STRIDE_FORMAT=json '${bin}' doctor 2>/dev/null | jq -r '.data.pending_routes'")) == "0" and !(Str.contains(sa_out, "allowance is used up")))?
+	check!("...counting each description once (${sa_out})", Str.contains(sa_out, "3 strength descriptions"))?
+	check!("...in the windows its six reads need, not one per re-read (${I64.to_str(sa_waits)} waits)", sa_waits <= 2)?
+	_ = sh!("rm -rf '${sa}'")
+
+	# ── the counts outlive the run: three --json runs back to back in one window
+	# of four spend four reads between them, not four each
+	bb = seeded!({})
+	bb_run! = |_| sh!("HOME='${bb}' STRIDE_FORMAT=json STRIDE_API_BASE='${pbase}' STRIDE_READS_PER_WINDOW=4 '${bin}' sync >'${bb}/out' 2>/dev/null")
+	_ = bb_run!({})
+	_ = bb_run!({})
+	_ = bb_run!({})
+	bb_spent = Str.trim(sql!("${bb}/.stride/db.sqlite", "SELECT value FROM config WHERE key = 'strava_reads_today';"))
+	check!("back-to-back runs in one window spend that window once between them (${bb_spent} reads)", bb_spent == "4")?
+	check!("...the later ones asking for nothing and naming when the next window opens", Str.trim(sh!("jq -r '[.data.stopped, .data.synced, (.data.resume_at != \"\")] | @tsv' '${bb}/out'")) == "list_rate_limited\t0\ttrue")?
+	_ = sh!("rm -rf '${bb}'")
+
+	# ── a shortened window shortens the wait and never the count: with
+	# STRIDE_WINDOW_SECONDS=1 a run still stops at Strava's quarter-hour limit,
+	# and a run a second later, in a fresh short window, asks for nothing. Started
+	# clear of a quarter-hour mark, which would rightly open a fresh window.
+	_ = sh!("s=$(( $(date +%s) % 900 )); if [ $s -gt 870 ]; then sleep $(( 902 - s )); fi")
+	qc = seeded!({})
+	_ = sql!("${qc}/.stride/db.sqlite", "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) WITH RECURSIVE seq(x) AS (SELECT 907 UNION ALL SELECT x+1 FROM seq WHERE x<1006) SELECT x,'seed','Ride','2026-08-01T10:00:00Z',3600,1000.0,0.0,NULL FROM seq;")
+	qc_run! = |_| sh!("HOME='${qc}' STRIDE_FORMAT=json STRIDE_API_BASE='${pbase}' STRIDE_WINDOW_SECONDS=1 '${bin}' sync >'${qc}/out' 2>/dev/null")
+	_ = qc_run!({})
+	_ = sh!("sleep 1.2")
+	_ = qc_run!({})
+	qc_spent = Str.trim(sql!("${qc}/.stride/db.sqlite", "SELECT value FROM config WHERE key = 'strava_reads_today';"))
+	check!("a one-second window still stops at Strava's quarter-hour limit across runs (${qc_spent} reads)", qc_spent == "95")?
+	check!("...naming the quarter-hour's next mark, not the short window's", Str.trim(sh!("jq -r '.data.resume_at | test(\"T[0-9]{2}:(00|15|30|45):10Z$\")' '${qc}/out'")) == "true")?
+	_ = sh!("rm -rf '${qc}'")
+
+	# ── Ctrl-C in the first sync setup runs names `stride setup`, which resumes it
+	sc = seeded!({})
+	_ = sql!("${sc}/.stride/db.sqlite", "DELETE FROM config WHERE key LIKE 'hr_z%'; INSERT OR REPLACE INTO config (key, value) VALUES ('timezone', 'America/Chicago');")
+	_ = sh!("set -m; (printf '\\n' | HOME='${sc}' STRIDE_API_BASE='${base}' STRIDE_WINDOW_SECONDS=4 STRIDE_READS_PER_WINDOW=4 '${bin}' setup >'${sc}/out' 2>'${sc}/err') & p=$!; i=0; while [ $i -lt 100 ] && ! grep -q 'waiting for Strava' '${sc}/err' 2>/dev/null; do sleep 0.1; i=$((i+1)); done; kill -INT -- -$p 2>/dev/null; wait $p")
+	check!("Ctrl-C during setup's first sync names the command that resumes it", Str.contains(sh!("cat '${sc}/err'"), "the next `stride setup` resumes from there"))?
+	_ = sh!("rm -rf '${sc}'")
+
 	check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(22)?
+	checks_ran_exactly!(32)?
 	Stdout.line!("PACE E2E CHECKS PASS")
 }
 
@@ -2417,7 +2503,7 @@ b_config_ftp! = |ctx| {
 	# asserted at 0: the probe must prove it could speak before its silence
 	# counts.
 	unset_sweep = Str.trim(sh!("h=$(mktemp -d); mkdir -p $h/.stride; { awk '/plain_keys = \\[/,/\\]/' src/cli/Config.roc; awk '/secret_keys = \\[/,/\\]/' src/cli/Config.roc; } | grep -o '\"[^\"]*\"' | tr -d '\"' > $h/keys; n=0; u=0; z=0; while read -r k; do n=$((n+1)); case \"$k\" in units) v=metric;; strength_log_weight) v=total;; *) v=7;; esac; HOME=$h '${ctx.bin}' config set \"$k\" \"$v\" >/dev/null 2>&1; m=$(HOME=$h '${ctx.bin}' config unset \"$k\" 2>&1 | head -1); case \"$m\" in *'starts refusing'*) u=$((u+1));; esac; case \"$m\" in *'was not stored'*) z=$((z+1));; esac; done < $h/keys; echo \"probed=$n unrouted=$u unseeded=$z\""))
-	check!("every LISTED config key reaches a routed `config unset` branch, enumerated from Config.roc", unset_sweep == "probed=12 unrouted=0 unseeded=0")?
+	check!("every LISTED config key reaches a routed `config unset` branch, enumerated from Config.roc", unset_sweep == "probed=16 unrouted=0 unseeded=0")?
 	_ = stride!(ctx.bin, ctx.home, ["config", "set", "hr_z2_max_ride", "155"])
 	# ── bare `config` lists what is set. Its first job is answering "which config do I
 	# have?", which nothing did; its second is being the source `just schema-check` fills
@@ -9520,3 +9606,13 @@ check! = |name, cond|
 check_near! : Str, F64, F64, F64 => Try({}, _)
 check_near! = |name, got, want, tol|
 	check!(name, (got - want).abs() < tol)
+
+# Stands for the read window turning over: the counts stride keeps of the
+# current window and quarter-hour are gone, as they are once the mark passes.
+# A driver whose runs follow each other in seconds calls it where it means the
+# next run to have a fresh window.
+next_window! : Str => {}
+next_window! = |db| {
+	_ = sql!(db, "DELETE FROM config WHERE key IN ('strava_reads_window', 'strava_reads_window_mark', 'strava_reads_quarter', 'strava_reads_quarter_mark');")
+	{}
+}
