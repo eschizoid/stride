@@ -6425,6 +6425,14 @@ b_events! = |ctx| {
 	# on the plan's last day rather than running on to the horizon
 	ends = strjq!(ctx, ["project", ten], "[(.data.projected_from | strptime(\"%Y-%m-%d\") | mktime + 86400 | strftime(\"%Y-%m-%d\")) == .data.series[0].date, .data.series[-1].date] | map(tostring) | join(\",\")")
 	check!("the series runs from the day after the baseline to the plan's last day, not the horizon (got ${ends})", ends == "true,${five}")?
+	# the unpriced session projects as if it were absent: without it the plan
+	# ends a day sooner, every day both series hold is the same row, and the
+	# state on the horizon is the same
+	with_rows = strjq!(ctx, ["project", ten], "[[.data.series[] | select(.date != \"${five}\")], .data.ctl, .data.atl, .data.tsb] | tostring")
+	_ = sql!(ctx.db, "UPDATE planned_sessions SET status = 'skipped' WHERE id = ${r4};")
+	without_rows = strjq!(ctx, ["project", ten], "[.data.series, .data.ctl, .data.atl, .data.tsb] | tostring")
+	_ = sql!(ctx.db, "UPDATE planned_sessions SET status = 'open' WHERE id = ${r4};")
+	check!("the unpriced session projects as if it were absent", with_rows == without_rows and Str.contains(without_rows, d4))?
 	# every row is what `project` returns for its own date, so the series and
 	# the command share one walk
 	row_of = "\"\\(.date) \\(.load) \\(.load_known) \\(.ctl) \\(.atl) \\(.tsb)\""
@@ -6439,13 +6447,6 @@ b_events! = |ctx| {
 	mismatched = List.map(List.keep_if(answers, |a| a.got != a.row), |a| "${a.row} vs ${a.got}")
 	check!("each of the ${U64.to_str(List.len(rows))} series days equals what project returns for that date (mismatched: ${Str.join_with(mismatched, "; ")})", List.len(rows) >= 4 and List.is_empty(mismatched))?
 	check!("...and only the untargeted day says its load is not known", strjq!(ctx, ["project", ten], "[.data.series[] | select(.load_known | not) | \"\\(.date):\\(.load)\"] | join(\",\")") == "${five}:0")?
-	# the unpriced session projects as if it were absent: without it the plan
-	# ends a day sooner, and every day both series hold is the same row
-	with_rows = strjq!(ctx, ["project", ten], "[.data.series[] | select(.date != \"${five}\")] | tostring")
-	_ = sql!(ctx.db, "UPDATE planned_sessions SET status = 'skipped' WHERE id = ${r4};")
-	without_rows = strjq!(ctx, ["project", ten], ".data.series | tostring")
-	_ = sql!(ctx.db, "UPDATE planned_sessions SET status = 'open' WHERE id = ${r4};")
-	check!("the unpriced session projects as if it were absent", with_rows == without_rows and Str.contains(without_rows, d4))?
 	_ = sql!(ctx.db, "DELETE FROM events WHERE name = 'Kinds Probe'; DELETE FROM planned_sessions WHERE id IN (${r1}, ${r2}, ${r3}, ${r4}); DELETE FROM activity_metrics WHERE activity_id IN (9811, 9812); DELETE FROM activities WHERE id IN (9811, 9812);")
 	# a planned session names no sport: a power target is priced at the FTP of the
 	# power family the athlete trains most. A rower with no ride power still gets
