@@ -483,22 +483,33 @@ opens beside the window. The running window's title bar and taskbar
 button show the generic program icon: roc-ray has no call that sets a
 window's icon, and the exe carries no icon resource.
 
-All three packages show one icon and run one launcher. Every icon is
-`img/stride-icon-macos.png`, the image the macOS icon is built from,
-cropped to a square its platform's guidance expects and then scaled.
-macOS takes the whole 1024 px canvas, whose 824 px tile sits on Apple's
-icon grid. Linux takes it too: GNOME's app icon template draws its square
-keyline at 103 of 128 px, the same 80.5% the tile fills. Windows takes the
-centered 942 px square, in which the tile fills 87.5%, the 42 of 48 px of
-the square keyline on Windows' icon grid. `img/make-icons.sh` states each
-crop once, builds `stride.ico` and the linux `stride.png` with macOS's
-`sips`, and pins the SHA-256 of the source, itself and both outputs in
-`img/stride-icons.sha256`; the outputs are committed, so packaging needs
-no image tool. `sh img/make-icons.sh --check` renders both again and fails
-when a committed image's pixels differ from its rendering, and CI's macOS
-job runs it on every pull request, so an icon edited by hand fails. At
-16 px the tile's frame outweighs the S, which reads as a faint line; from
-24 px up the mark is clear. The three launchers carry the same steps, in
+All three packages show one icon and run one launcher. Every icon comes
+from `img/stride-icon.png`, the master: a 512 px opaque square, the
+gradient frame drawn on a dark ground. A linux or windows icon is the
+frame alone: the master scaled so the frame's taller side spans its
+platform's share of the canvas, centered, and masked at the target size
+to a rounded rectangle just inside the frame's outer edge, so no dark
+ground shows outside the frame and no masked edge is scaled again. GNOME's
+app icon template draws its square keyline at 103 of 128 px, so linux
+gives the frame 80.5%; Windows' 48 px grid draws its square keyline at
+42 of 48, so windows gives it 87.5%. `img/stride-icon-macos.png` is the
+macOS-shaped derivative of the same master, scaled to 924 px at (50, 50)
+on a 1024 canvas and masked to Apple's 824 px tile with the master's
+ground inside it; the tile is centered while the frame sits below the
+master's center, so it clips the frame's bottom-left edge. It stays as it
+is, since 1024 px cannot come from the 512 px master without scaling up.
+`img/make-icons.sh` states each transform once, builds `stride.ico` and
+the linux `stride.png` with macOS's `sips`, and pins the SHA-256 of the
+master, the macOS icon, itself and both outputs in `img/stride-icons.sha256`;
+the outputs are committed, so packaging needs no image tool. `sh
+img/make-icons.sh --check` renders both again and fails when a committed
+image's pixels differ from its rendering, when the macOS icon's opaque
+pixels are not the master by its transform, or when a linux or windows
+icon from 48 px up carries an edge pixel lighter than the edge it
+borders; CI's macOS job runs it on every pull request, so an icon edited
+by hand or moved by 4 px fails. At 16 px the frame outweighs the S,
+which reads as a faint line; from 24 px up the mark is clear. The three
+launchers carry the same steps, in
 order, each marked `step:` in the launcher: `path` (widen PATH, which the
 linux and macOS launchers do and windows needs not, since a program
 started from Explorer inherits the user's whole PATH), `locate`, `log`

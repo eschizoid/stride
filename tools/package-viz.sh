@@ -113,14 +113,15 @@ check_fonts_dir() {
 }
 
 # the windows and linux icons are the ones img/make-icons.sh built: every
-# hash in img/stride-icons.sha256 (the source's, the script's, holding each
-# platform's crop, and both outputs') matches its file. The script is
-# hashed with carriage returns dropped, since a windows checkout may write
-# its lines with CRLF; the images are binary and checked out as they are
+# hash in img/stride-icons.sha256 (the master's, the macOS icon's, the
+# script's, holding each platform's transform, and both outputs') matches
+# its file. The script is hashed with carriage returns dropped, since a
+# windows checkout may write its lines with CRLF; the images are binary
+# and checked out as they are
 check_icons() {
   local sum line want file got
   if command -v sha256sum >/dev/null 2>&1; then sum="sha256sum"; else sum="shasum -a 256"; fi
-  for file in stride-icon-macos.png make-icons.sh stride.ico stride-icon-256.png; do
+  for file in stride-icon.png stride-icon-macos.png make-icons.sh stride.ico stride-icon-256.png; do
     line="$(tr -d '\r' < img/stride-icons.sha256 | grep "  $file\$" || true)"
     [ -n "$line" ] || { echo "::error::img/stride-icons.sha256 pins no hash for $file; rerun img/make-icons.sh"; exit 1; }
     want="${line%%  *}"

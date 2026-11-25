@@ -97,9 +97,9 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
-      # sips is macOS's: the windows and linux icons must be what img/make-icons.sh
-      # renders from the macOS icon's source, through each platform's recorded crop
-      - name: The committed icons are their regeneration from the macOS source
+      # sips is macOS's: every icon must be the master's (img/stride-icon.png) by
+      # its transform in img/make-icons.sh, with no light fringe at its edge
+      - name: The committed icons are their master's by their transforms
         run: sh img/make-icons.sh --check
       - name: Install Roc (new compiler)
         uses: ./.github/actions/setup-roc
