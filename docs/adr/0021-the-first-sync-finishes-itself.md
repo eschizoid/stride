@@ -39,16 +39,16 @@ what the athlete wants and re-running is busywork.
    report work within the first window. Streams and routes follow and refine what is
    already there.
 
-2. **A human sync waits instead of stopping, behind a progress bar.** When the read
-   window is spent and work is still owed, `stride sync` waits until the next
-   quarter-hour mark (plus a short margin) and continues. On a terminal it paints one
-   line that redraws in place: a bar of plain ASCII (`[#######-------]`), since every
-   glyph stride prints is single-width and a Windows console renders block characters
-   badly, beside the numbers it stands for: activities and streams done of the total
-   owed, and while waiting, the local time the next batch starts. When stdout is not a
-   terminal it prints those numbers as plain lines instead, one per batch. Ctrl-C stops
-   it cleanly, and the next run resumes where it stopped, since every fetch is already
-   stored as it lands. A routine sync owes less than a window and never waits.
+2. **A human sync waits instead of stopping, narrated as every other command is.** When
+   the read window is spent and work is still owed, `stride sync` waits until the next
+   quarter-hour mark (plus a short margin) and continues. Its progress goes through the
+   narration ADR 0007 set up, on stderr: the fetches draw the same redrawn bar the
+   other long steps draw (`Output.narrate!`, `[██████████] 11/11`), and the wait, which
+   has no count, draws a spinner on that same line beside the local time the next
+   batch starts and the time left. Machine mode gets plain lines, as narration already
+   does. Ctrl-C stops it cleanly, and the next run resumes where it stopped, since
+   every fetch is already stored as it lands. A routine sync owes less than a window
+   and never waits.
 
 3. **The headers set the pace.** Where Strava sends `X-ReadRateLimit-Usage`, it is the
    usage the engine paces by; its own count remains the fallback when the header is
@@ -78,6 +78,35 @@ what the athlete wants and re-running is busywork.
    them or type a threshold or max heart rate instead. With no heart-rate data it asks
    as it does today. The timezone stays detected and confirmed as it is now.
 
+8. **One narration shape for the whole sync.** Every step is one line with its label
+   in a fixed-width column: a step with a count draws the bar, a step without one draws
+   a single-width ASCII spinner (`|/-\`) that advances with each unit of work and is
+   replaced by its result when the step ends. A single long call has no units to
+   advance by, so its line holds still rather than pretending to move. Narration
+   carries no explanations of rate limits or read budgets; those live in the docs. The
+   run ends with one summary line, counts written in the singular or plural they
+   need, and the form verdict, because analyze is now part of sync. A routine sync:
+
+   ```terminaloutput
+   $ stride sync
+   activity list       25 checked, 1 new
+   streams             [██████████] 1/1
+   descriptions        [██████████] 11/11
+   scoring             [██████████] 1/1
+   synced 1 new activity, streams for 1, 11 strength descriptions; everything analyzed
+   → today: form -1, down 4 from a week ago — balanced
+   ```
+
+   A first sync across a window, while it waits:
+
+   ```terminaloutput
+   $ stride sync
+   activity list       412 checked, 412 new
+   scoring             [██████████] 412/412
+   streams             [██░░░░░░░░] 95/412
+   waiting for Strava  / next batch at 10:45, 4:12 left
+   ```
+
 ## Consequences
 
 - The first-run experience is one command that ends with everything analyzed, or with
@@ -93,3 +122,6 @@ what the athlete wants and re-running is busywork.
   becomes a mirror column, re-pulled like the rest.
 - An agent driving `--json` still makes several calls across a long first history, but
   each one says exactly when the next can run.
+- Every doc and the coaching skill that tells a user or an agent to run
+  `stride sync` and then `stride analyze` changes to `stride sync` alone; `stride
+  analyze` stays as a command for a recompute without a sync.
