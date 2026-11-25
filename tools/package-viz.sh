@@ -287,26 +287,26 @@ BAT
 # written with CRLF like the launcher. The shortcuts start the launcher
 # through a console host with no window, carry stride.ico, and name this
 # folder by its absolute path. PowerShell writes them, reading every value
-# from the environment so no path is quoted twice.
+# from the environment so no path is quoted twice. A special folder can
+# resolve to an empty path or a missing directory (a redirected or absent
+# Desktop, for one), so each is checked before use: the Start-menu folder
+# is created when absent and its shortcut is required; a Desktop that
+# cannot take one is reported and skipped. A failure waits for a key only
+# when stdin is a console, so a run without one never blocks.
 windows_install() {
   cat <<'BAT'
 @echo off
-rem puts Stride in the Start menu and on the Desktop, then starts it. Each
-rem shortcut shows stride.ico and runs stride-app.bat from this folder, so
-rem run this again after moving the folder.
+rem puts Stride in the Start menu, and on the Desktop when there is one,
+rem then starts it. Each shortcut shows stride.ico and runs stride-app.bat
+rem from this folder, so run this again after moving the folder.
 setlocal
 set "here=%~dp0"
 set "STRIDE_LNK_TARGET=%SystemRoot%\System32\conhost.exe"
 set "STRIDE_LNK_ARGS=--headless "%ComSpec%" /d /c call "%here%stride-app.bat" headless"
 set "STRIDE_LNK_ICON=%here%stride.ico,0"
 set "STRIDE_LNK_HOME=%USERPROFILE%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; $w = New-Object -ComObject WScript.Shell; foreach ($f in 'Programs', 'Desktop') { $s = $w.CreateShortcut((Join-Path ([Environment]::GetFolderPath($f)) 'Stride.lnk')); $s.TargetPath = $env:STRIDE_LNK_TARGET; $s.Arguments = $env:STRIDE_LNK_ARGS; $s.WorkingDirectory = $env:STRIDE_LNK_HOME; $s.IconLocation = $env:STRIDE_LNK_ICON; $s.Description = 'Stride'; $s.Save() }"
-if errorlevel 1 (
-  echo Stride: could not write the shortcuts
-  pause
-  exit /b 1
-)
-echo Stride is in the Start menu and on the Desktop.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; $w = New-Object -ComObject WScript.Shell; foreach ($f in 'Programs', 'Desktop') { try { if ($f -eq 'Programs') { $d = [Environment]::GetFolderPath($f, 'Create') } else { $d = [Environment]::GetFolderPath($f) }; if (-not $d -or -not (Test-Path -LiteralPath $d)) { throw ('the ' + $f + ' folder does not exist') }; $s = $w.CreateShortcut((Join-Path $d 'Stride.lnk')); $s.TargetPath = $env:STRIDE_LNK_TARGET; $s.Arguments = $env:STRIDE_LNK_ARGS; $s.WorkingDirectory = $env:STRIDE_LNK_HOME; $s.IconLocation = $env:STRIDE_LNK_ICON; $s.Description = 'Stride'; $s.Save(); Write-Host ('Stride: shortcut written to ' + $d) } catch { if ($f -eq 'Programs') { Write-Host ('Stride: could not write the Start-menu shortcut: ' + $_.Exception.Message); if (-not [Console]::IsInputRedirected) { [void](Read-Host 'Press Enter to close') }; exit 1 }; Write-Host ('Stride: no Desktop shortcut, skipped: ' + $_.Exception.Message) } }"
+if errorlevel 1 exit /b 1
 call "%here%stride-app.bat"
 BAT
 }
@@ -316,6 +316,21 @@ crlf() { awk '{ printf "%s\r\n", $0 }'; }
 # a shortcut's target, arguments and icon, one per line
 lnk_fields() {
   LNK="$1" powershell -NoProfile -Command '$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:LNK); $s.TargetPath; $s.Arguments; $s.IconLocation' | tr -d '\r'
+}
+
+# the shortcut install.cmd wrote into the folder given (a windows path):
+# it starts the staged launcher through conhost and shows stride.ico
+check_lnk() {
+  local name="$1" lnk="$2\\Stride.lnk" stage fields target args icon
+  stage="$(cygpath -w "$PWD/stage/stride-app")"
+  [ -s "$(cygpath -u "$lnk")" ] || { echo "::error::install.cmd wrote no $name shortcut in $2"; exit 1; }
+  fields="$(lnk_fields "$lnk")"
+  target="$(sed -n 1p <<<"$fields")"; args="$(sed -n 2p <<<"$fields")"; icon="$(sed -n 3p <<<"$fields")"
+  [[ "${target,,}" == *'\system32\conhost.exe' ]] ||
+    { echo "::error::the $name shortcut targets $target, not conhost.exe"; exit 1; }
+  [[ "$args" == "--headless "*" /d /c call \"$stage\\stride-app.bat\" headless" ]] ||
+    { echo "::error::the $name shortcut passes $args"; exit 1; }
+  [ "$icon" = "$stage\\stride.ico,0" ] || { echo "::error::the $name shortcut's icon is $icon"; exit 1; }
 }
 
 case "$os $step" in
@@ -401,33 +416,35 @@ case "$os $step" in
     wait_seeded "$fake"
     taskkill //IM stride-viz.exe //F 2>/dev/null || true
 
-    # the install step writes both shortcuts and starts the app
+    # the install step, under a fake profile. Each special folder is
+    # resolved under the same environment install.cmd runs in, and printed
     fake="$(mktemp -d)"
-    stage="$(cygpath -w "$PWD/stage/stride-app")"
-    USERPROFILE="$(cygpath -w "$fake")" cmd //C "$(cygpath -w "$PWD/stage/stride-app/install.cmd")" ||
-      { echo "::error::install.cmd failed"; exit 1; }
+    fakewin="$(cygpath -w "$fake")"
+    folder_of() { USERPROFILE="$fakewin" powershell -NoProfile -Command "[Environment]::GetFolderPath('$1')" | tr -d '\r'; }
+    desktop="$(folder_of Desktop)"
+    echo "package-viz: before install, Programs is '$(folder_of Programs)' and Desktop is '$desktop'"
+    log="$(USERPROFILE="$fakewin" cmd //C "$(cygpath -w "$PWD/stage/stride-app/install.cmd")" </dev/null 2>&1)" ||
+      { printf '%s\n' "$log"; echo "::error::install.cmd failed"; exit 1; }
+    printf '%s\n' "$log"
     wait_seeded "$fake"
     taskkill //IM stride-viz.exe //F 2>/dev/null || true
-    for folder in Programs Desktop; do
-      dir="$(powershell -NoProfile -Command "[Environment]::GetFolderPath('$folder')" | tr -d '\r')"
-      lnk="$dir\\Stride.lnk"
-      [ -s "$(cygpath -u "$lnk")" ] || { echo "::error::install.cmd wrote no $folder shortcut"; exit 1; }
-      fields="$(lnk_fields "$lnk")"
-      target="$(sed -n 1p <<<"$fields")"; args="$(sed -n 2p <<<"$fields")"; icon="$(sed -n 3p <<<"$fields")"
-      [[ "${target,,}" == *'\system32\conhost.exe' ]] ||
-        { echo "::error::the $folder shortcut targets $target, not conhost.exe"; exit 1; }
-      [[ "$args" == "--headless "*" /d /c call \"$stage\\stride-app.bat\" headless" ]] ||
-        { echo "::error::the $folder shortcut passes $args"; exit 1; }
-      [ "$icon" = "$stage\\stride.ico,0" ] || { echo "::error::the $folder shortcut's icon is $icon"; exit 1; }
-    done
+    programs="$(folder_of Programs)"
+    [ -n "$programs" ] || { echo "::error::install.cmd left no Start-menu folder"; exit 1; }
+    check_lnk Start-menu "$programs"
+    if [ -n "$desktop" ] && [ -d "$(cygpath -u "$desktop")" ]; then
+      check_lnk Desktop "$desktop"
+    else
+      grep -q "no Desktop shortcut, skipped" <<<"$log" ||
+        { echo "::error::install.cmd did not report the missing Desktop folder"; exit 1; }
+      echo "package-viz: no Desktop folder under the fake profile; install.cmd skipped it and succeeded"
+    fi
     # the Start-menu shortcut starts the launcher: a fresh home gets seeded
     fake="$(mktemp -d)"
-    programs="$(powershell -NoProfile -Command "[Environment]::GetFolderPath('Programs')" | tr -d '\r')"
-    USERPROFILE="$(cygpath -w "$fake")" cmd //C start "" "$programs\\Stride.lnk" || true
+    USERPROFILE="$(cygpath -w "$fake")" cmd //C start "" "$programs\\Stride.lnk" </dev/null || true
     wait_seeded "$fake"
     taskkill //IM stride-viz.exe //F 2>/dev/null || true
-    for folder in Programs Desktop; do
-      rm -f "$(cygpath -u "$(powershell -NoProfile -Command "[Environment]::GetFolderPath('$folder')" | tr -d '\r')")/Stride.lnk"
+    for dir in "$programs" "$desktop"; do
+      [ -n "$dir" ] && rm -f "$(cygpath -u "$dir")/Stride.lnk"
     done
     ;;
   *)

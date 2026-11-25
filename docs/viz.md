@@ -470,8 +470,11 @@ The windows zip holds `stride-viz.exe`, the fonts, the images, a
 `stride-app.bat` launcher that seeds `%USERPROFILE%\.stride\fonts` and
 `%USERPROFILE%\.stride\img`, the icon (`stride.ico`: 16, 32, 48 and 256 px)
 and `install.cmd`. Double-click `install.cmd`: it writes a `Stride` shortcut
-to the Start menu and to the Desktop, each showing `stride.ico`, and starts
-the app. `stride-viz.exe` is a console program, so a console window opened
+to the Start menu, creating that folder when it is absent, and to the Desktop
+when that folder exists, each showing `stride.ico`, and starts the app. A
+Desktop that cannot take a shortcut is named and skipped; only a failed
+Start-menu shortcut stops the install, and its message waits for a key only
+when the install runs in a console. `stride-viz.exe` is a console program, so a console window opened
 for it stays open behind the app. The launcher therefore starts itself again
 under `conhost.exe --headless`, a console host with no window, and the
 shortcuts start it that way directly; double-clicking `stride-app.bat` shows
@@ -488,9 +491,11 @@ menu reads, with `StartupWMClass` equal to the title `src/viz/main.roc`
 sets. The launcher must seed an empty home and repair a truncated copy. On
 linux, `install.sh`, run from a folder whose path needs every quoting rule
 of the entry's `Exec` line, must write the entry with that path quoted, place
-the icon and start the launcher. On windows, `install.cmd` must write both
-shortcuts with the windowless target, the launcher's path and the icon, and
-the Start-menu shortcut must start the launcher. CI runs it on every pull
+the icon and start the launcher. On windows, `install.cmd` must write the
+Start-menu shortcut with the windowless target, the launcher's path and the
+icon, write the Desktop one the same way when that folder exists or report
+it skipped when it does not, and the Start-menu shortcut must start the
+launcher; the prove step prints where each folder resolves. CI runs it on every pull
 request as well as at release. `img/make-icons.sh` regenerates `stride.ico`
 and `stride-icon-256.png` from `img/stride-icon-macos.png`; both are
 committed, so packaging needs no image tool.
