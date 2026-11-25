@@ -29,7 +29,7 @@ The installer picks the build for your OS and CPU (macOS arm64 and x86_64, Linux
 2. It tells you exactly what to enter when you create your own [Strava API app](https://www.strava.com/settings/api) (callback domain `localhost`), then asks for its client ID and secret.
 3. It opens Strava's authorize page and receives the code on a local port when you click Authorize. If that fails, paste the address the browser landed on.
 4. It detects your timezone and asks you to confirm it, so "today" is your local day.
-5. It lists your activities and proposes heart-rate zones from them: your maximum heart rate is the highest reached in at least two sessions, so one session's strap spike is ignored. You accept them, or type a threshold or max HR of your own; with no heart-rate data it asks for one.
+5. It lists your activities and proposes heart-rate zones from them: your maximum heart rate is the second-highest of your sessions' maxima, so a strap spike in one session is set aside, and setup names the value it set aside. You accept them, or type a threshold or max HR of your own; with no heart-rate data it asks for one.
 6. It runs the first sync to its end, everything analyzed, then shows `stride doctor`.
 
 Holding Strava API credentials needs an active Strava subscription ([Strava's announcement](https://communityhub.strava.com/insider-journal-9/an-update-to-our-developer-program-13428)). Without one, `stride import <export.zip>` loads the account export Strava emails you (Settings → My Account → Download or Delete Your Account). The export is summary-level only, so nothing that needs a stream (normalized power, power and pace curves, interval detection) exists for those activities.
