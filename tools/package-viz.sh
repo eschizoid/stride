@@ -9,6 +9,8 @@
 #   package-viz.sh windows package <stride-viz.exe>    -> stride-app-windows-x86_64.zip
 #   package-viz.sh linux prove                         -> launcher and install step, fresh homes
 #   package-viz.sh windows prove
+#   package-viz.sh macos verify <Stride.app>           -> the bundle's fonts, images and launcher
+#   package-viz.sh macos prove <Stride.app>            -> its launcher seeds a fresh home
 #
 # Run from the repository root. A package holds the binary, the brand fonts,
 # the splash's mark and the streak flame, a launcher, an install step and an
@@ -24,15 +26,14 @@
 # `package` stages under stage/stride-app (git-ignored: `prove` runs from it in
 # a later step), archives it with stride-app/ at the archive's root, and fails
 # when an input is missing, when the icon or desktop entry is malformed, when
-# the windows launcher starts anything but its own shortcut or shortcut.ps1
-# does not describe the start, or when the archive lacks any file listed
-# above. `prove` runs the staged launcher against an empty home, checks that every face and image arrives, truncates
-# one of each and checks that the next launch repairs them; then it runs the
-# install step against fresh homes from a folder whose path needs quoting and
-# checks the menu entries, the icon and that the launcher seeded the home. On
-# windows it also requires every start, from the launcher, from install.cmd
-# and from the Start-menu shortcut, to leave the window running under conhost
-# with the athlete's directory as its first argument.
+# the windows launcher's start line or shortcut.ps1's shortcut fields drift,
+# or when the archive lacks any file listed above. `prove` runs the staged
+# launcher against an empty home, checks that every face and image arrives,
+# truncates one of each and checks that the next launch repairs them; then it
+# runs the install step against fresh homes from a folder whose path needs
+# quoting and checks the menu entries, the icon and that the launcher seeded
+# the home. It does not require the window to start on windows: the GitHub
+# windows runner has no OpenGL context, so that is verified on a real machine.
 set -euo pipefail
 
 faces="Quicksand-Medium.ttf JetBrainsMono-Regular.ttf"
@@ -52,7 +53,7 @@ stage_common() {
   for f in $images; do need "img/$f" "an image the window loads"; done
   rm -rf stage/stride-app
   mkdir -p stage/stride-app/fonts stage/stride-app/img
-  cp assets/fonts/*.ttf assets/fonts/OFL-*.txt stage/stride-app/fonts/
+  cp assets/fonts/* stage/stride-app/fonts/
   for f in $images; do cp "img/$f" stage/stride-app/img/; done
 }
 
@@ -68,16 +69,18 @@ assert_listing() {
   done
 }
 
-# the archive paths every package carries besides its own files
+# the archive paths every package carries besides its own files: every file
+# in assets/fonts, and the images
 carried() {
-  for f in $faces; do echo "fonts/$f"; done
+  for f in assets/fonts/*; do echo "fonts/${f##*/}"; done
   for f in $images; do echo "img/$f"; done
 }
 
-# every face and image in the home given, byte for byte as shipped
+# every face in assets/fonts and every image in the home given, byte for
+# byte as shipped
 check_seeded() {
-  for f in $faces; do
-    cmp -s "assets/fonts/$f" "$1/.stride/fonts/$f" || { echo "::error::launcher did not seed fonts/$f"; exit 1; }
+  for f in assets/fonts/*.ttf; do
+    cmp -s "$f" "$1/.stride/fonts/${f##*/}" || { echo "::error::launcher did not seed fonts/${f##*/}"; exit 1; }
   done
   for f in $images; do
     cmp -s "img/$f" "$1/.stride/img/$f" || { echo "::error::launcher did not seed img/$f"; exit 1; }
@@ -92,6 +95,122 @@ wait_seeded() {
     sleep 1
   done
   check_seeded "$1"
+}
+
+# the fonts folder of a package (a posix path) holds exactly the files in
+# assets/fonts, byte for byte: none missing, none cut short or stale, none
+# extra
+check_fonts_dir() {
+  local f n
+  for f in assets/fonts/*; do
+    [ -e "$1/${f##*/}" ] || { echo "::error::$1 lacks fonts/${f##*/}"; exit 1; }
+    cmp -s "$f" "$1/${f##*/}" || { echo "::error::$1 holds a fonts/${f##*/} that differs from assets/fonts"; exit 1; }
+  done
+  for f in "$1"/*; do
+    n="${f##*/}"
+    [ -e "assets/fonts/$n" ] || { echo "::error::$1 holds fonts/$n, which assets/fonts does not"; exit 1; }
+  done
+}
+
+# the windows and linux icons are the ones img/make-icons.sh built from the
+# macOS icon's source image: every hash in img/stride-icons.sha256 (the
+# source's and both outputs') matches its file
+check_icons() {
+  local sum line want file got
+  if command -v sha256sum >/dev/null 2>&1; then sum="sha256sum"; else sum="shasum -a 256"; fi
+  for file in stride-icon-macos.png stride.ico stride-icon-256.png; do
+    line="$(tr -d '\r' < img/stride-icons.sha256 | grep "  $file\$" || true)"
+    [ -n "$line" ] || { echo "::error::img/stride-icons.sha256 pins no hash for $file; rerun img/make-icons.sh"; exit 1; }
+    want="${line%%  *}"
+    got="$($sum "img/$file" | cut -d' ' -f1)"
+    [ "$got" = "$want" ] || { echo "::error::img/$file is not the file img/make-icons.sh pinned; rerun img/make-icons.sh"; exit 1; }
+  done
+}
+
+# the macOS bundle's launcher, as tools/make-viz-app.sh writes it
+mac_launcher() {
+  awk '$0 == "cat > \"$C/MacOS/launcher\" <<\x27SH\x27" { on = 1; next } on && $0 == "SH" { exit } on' tools/make-viz-app.sh
+}
+
+# the step names a launcher marks, in order, given its text and the
+# marker's comment word (# or rem)
+steps_of() {
+  sed -n "s/^$2 step: \\([a-z-]*\\)\$/\\1/p" <<<"$1" | tr '\n' ' '
+}
+
+# the lines of one step, from its marker to the next
+step_block() {
+  awk -v m="$2 step: $3" -v p="$2 step: " '$0 == m { on = 1; next } index($0, p) == 1 { on = 0 } on' <<<"$1"
+}
+
+# every launcher carries the macOS launcher's steps. The linux launcher's
+# steps match the macOS one's line for line, except where each finds its
+# PATH and its files; the windows launcher has each step in cmd's terms,
+# except `path`, since a program started from Explorer inherits the user's
+# whole PATH. A step added to the macOS launcher fails here until the list
+# below and the other two launchers carry it.
+mac_steps="path locate log seed-fonts seed-img home start "
+check_parity() {
+  local mac linux win s k
+  mac="$(mac_launcher)"
+  linux="$(linux_launcher)"
+  win="$(windows_launcher | tr -d '\r')"
+  [ -n "$mac" ] || { echo "::error::tools/make-viz-app.sh writes no launcher this check can find"; exit 1; }
+  [ "$(steps_of "$mac" '#')" = "$mac_steps" ] ||
+    { echo "::error::the macOS launcher's steps are '$(steps_of "$mac" '#')', not '$mac_steps'"; exit 1; }
+  [ "$(steps_of "$linux" '#')" = "$mac_steps" ] ||
+    { echo "::error::the linux launcher's steps are '$(steps_of "$linux" '#')', not the macOS launcher's '$mac_steps'"; exit 1; }
+  [ "$(steps_of "$win" rem)" = "${mac_steps#path }" ] ||
+    { echo "::error::the windows launcher's steps are '$(steps_of "$win" rem)', not the macOS launcher's less path"; exit 1; }
+  for s in log seed-fonts seed-img home start; do
+    [ "$(step_block "$mac" '#' "$s")" = "$(step_block "$linux" '#' "$s")" ] ||
+      { echo "::error::the linux launcher's $s step differs from the macOS launcher's"; exit 1; }
+  done
+  for k in \
+    'path|PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"' \
+    'path|export PATH' \
+    'locate|here="$(cd "$(dirname "$0")" && pwd)"' \
+    'locate|assets="$here/../Resources"' \
+    'log|log="$HOME/.stride/seed.log"' \
+    'seed-fonts|    for f in "$assets"/fonts/*.ttf; do' \
+    'seed-fonts|      if [ ! -e "$dst" ] || [ "$(wc -c < "$f")" != "$(wc -c < "$dst")" ]; then' \
+    'seed-fonts|        cp "$f" "$dst" 2>>"$log" || echo "$(date): could not write $dst" >> "$log"' \
+    'seed-img|    for f in "$assets"/img/*.png; do' \
+    'seed-img|      if [ ! -e "$dst" ] || [ "$(wc -c < "$f")" != "$(wc -c < "$dst")" ]; then' \
+    'home|cd "$HOME"' \
+    'start|exec "$here/stride-viz" "$HOME/.stride" "$HOME"'; do
+    grep -qxF -- "${k#*|}" <<<"$(step_block "$mac" '#' "${k%%|*}")" ||
+      { echo "::error::the macOS launcher's ${k%%|*} step lacks: ${k#*|}"; exit 1; }
+  done
+  for k in \
+    'path|PATH="$HOME/.local/bin:/usr/local/bin:$PATH"' \
+    'locate|here="$(cd "$(dirname "$0")" && pwd)"' \
+    'locate|assets="$here"'; do
+    grep -qxF -- "${k#*|}" <<<"$(step_block "$linux" '#' "${k%%|*}")" ||
+      { echo "::error::the linux launcher's ${k%%|*} step lacks: ${k#*|}"; exit 1; }
+  done
+  for k in \
+    'locate|set "here=%~dp0"' \
+    'log|set "log=%USERPROFILE%\.stride\seed.log"' \
+    'seed-fonts|for %%f in ("%here%fonts\*.ttf") do call :seed "%%~ff" fonts' \
+    'seed-fonts|if not exist "%USERPROFILE%\.stride\fonts" mkdir "%USERPROFILE%\.stride\fonts" >nul 2>&1 || echo %date% %time%: could not create %USERPROFILE%\.stride\fonts - the window will use its fallback font>>"%log%" 2>nul' \
+    'seed-img|for %%f in ("%here%img\*.png") do call :seed "%%~ff" img' \
+    'seed-img|if not exist "%USERPROFILE%\.stride\img" mkdir "%USERPROFILE%\.stride\img" >nul 2>&1 || echo %date% %time%: could not create %USERPROFILE%\.stride\img - the splash and the streak chip will show text alone>>"%log%" 2>nul' \
+    'home|cd /d "%USERPROFILE%"' \
+    'start|start "" "%here%stride-viz.exe" "%USERPROFILE%\.stride" "%USERPROFILE%"'; do
+    grep -qxF -- "${k#*|}" <<<"$(step_block "$win" rem "${k%%|*}")" ||
+      { echo "::error::the windows launcher's ${k%%|*} step lacks: ${k#*|}"; exit 1; }
+  done
+  # the repair rule both seeding steps call: copy when the copy is missing
+  # or differs in size, and log a copy that fails
+  for k in \
+    'if not exist "%dst%" goto :put' \
+    'for %%A in ("%src%") do set "ssize=%%~zA"' \
+    'for %%B in ("%dst%") do set "dsize=%%~zB"' \
+    'if "%ssize%"=="%dsize%" goto :eof' \
+    'copy /y "%src%" "%dst%" >nul 2>&1 || echo %date% %time%: could not write "%dst%">>"%log%"'; do
+    grep -qxF -- "$k" <<<"$win" || { echo "::error::the windows launcher's repair rule lacks: $k"; exit 1; }
+  done
 }
 
 # ends a launch started in the background, and reaps it quietly
@@ -192,20 +311,23 @@ check_desktop() {
 linux_launcher() {
   cat <<'SH'
 #!/bin/sh
+# step: path
 # a desktop launch inherits a minimal PATH, and the window runs `stride`
-# for the CP fit and `sh` for the zone offset. It also passes the athlete's
-# directory, the window's read-write grant (a home resolved at launch cannot
-# be written into the source the grant is declared in), and the home as the
-# launch directory a capture's status row names its file under.
+# for the CP fit and `sh` for the zone offset
 PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 export PATH
-# the window reads ~/.stride/fonts; seed it from the copies shipped
-# beside this script, replacing any that differ in size
+# step: locate
 here="$(cd "$(dirname "$0")" && pwd)"
+assets="$here"
+# step: log
 log="$HOME/.stride/seed.log"
-if [ -d "$here/fonts" ]; then
+# step: seed-fonts
+# the window reads ~/.stride/fonts; seed it from the copies shipped with
+# the app, copying any that are missing or differ in size, so a copy cut
+# short is repaired on the next launch
+if [ -d "$assets/fonts" ]; then
   if mkdir -p "$HOME/.stride/fonts" 2>/dev/null; then
-    for f in "$here"/fonts/*.ttf; do
+    for f in "$assets"/fonts/*.ttf; do
       [ -e "$f" ] || continue
       dst="$HOME/.stride/fonts/$(basename "$f")"
       if [ ! -e "$dst" ] || [ "$(wc -c < "$f")" != "$(wc -c < "$dst")" ]; then
@@ -216,11 +338,12 @@ if [ -d "$here/fonts" ]; then
     echo "$(date): could not create $HOME/.stride/fonts - the window will use its fallback font" >> "$log" 2>/dev/null || true
   fi
 fi
+# step: seed-img
 # the splash's mark and the streak flame render from ~/.stride/img,
 # seeded the same way
-if [ -d "$here/img" ]; then
+if [ -d "$assets/img" ]; then
   if mkdir -p "$HOME/.stride/img" 2>/dev/null; then
-    for f in "$here"/img/*.png; do
+    for f in "$assets"/img/*.png; do
       [ -e "$f" ] || continue
       dst="$HOME/.stride/img/$(basename "$f")"
       if [ ! -e "$dst" ] || [ "$(wc -c < "$f")" != "$(wc -c < "$dst")" ]; then
@@ -231,7 +354,13 @@ if [ -d "$here/img" ]; then
     echo "$(date): could not create $HOME/.stride/img - the splash and the streak chip will show text alone" >> "$log" 2>/dev/null || true
   fi
 fi
+# step: home
 cd "$HOME"
+# step: start
+# the athlete's directory first: it is the window's read-write grant, which
+# a home resolved at launch cannot be written into the source it is
+# declared in; then the home, the launch directory a capture's status row
+# names its file under
 exec "$here/stride-viz" "$HOME/.stride" "$HOME"
 SH
 }
@@ -286,26 +415,34 @@ SH
 }
 
 # cmd misparses labels and goto with LF line endings, so the caller writes
-# this with CRLF
+# this with CRLF. The steps carry the macOS launcher's names; Windows has
+# no `path` step, since a program started from Explorer inherits the
+# user's whole PATH
 windows_launcher() {
   cat <<'BAT'
 @echo off
-rem the window reads %USERPROFILE%\.stride\fonts and, for the splash's
-rem mark and the streak flame, %USERPROFILE%\.stride\img; seed each from
-rem the copies shipped beside this script, replacing any that differ in
-rem size. Then write a shortcut to the window into %USERPROFILE%\.stride,
-rem the folder it already writes, and open that shortcut: every start of
-rem the window is a shortcut's start, the one shortcut.ps1 describes.
+rem step: locate
 set "here=%~dp0"
+rem step: log
 set "log=%USERPROFILE%\.stride\seed.log"
-if not exist "%USERPROFILE%\.stride\fonts" mkdir "%USERPROFILE%\.stride\fonts" >nul 2>&1
+rem step: seed-fonts
+rem the window reads %USERPROFILE%\.stride\fonts; seed it from the copies
+rem shipped beside this script, copying any that are missing or differ in
+rem size, so a copy cut short is repaired on the next launch
+if not exist "%USERPROFILE%\.stride\fonts" mkdir "%USERPROFILE%\.stride\fonts" >nul 2>&1 || echo %date% %time%: could not create %USERPROFILE%\.stride\fonts - the window will use its fallback font>>"%log%" 2>nul
 for %%f in ("%here%fonts\*.ttf") do call :seed "%%~ff" fonts
-if not exist "%USERPROFILE%\.stride\img" mkdir "%USERPROFILE%\.stride\img" >nul 2>&1
+rem step: seed-img
+rem the splash's mark and the streak flame render from
+rem %USERPROFILE%\.stride\img, seeded the same way
+if not exist "%USERPROFILE%\.stride\img" mkdir "%USERPROFILE%\.stride\img" >nul 2>&1 || echo %date% %time%: could not create %USERPROFILE%\.stride\img - the splash and the streak chip will show text alone>>"%log%" 2>nul
 for %%f in ("%here%img\*.png") do call :seed "%%~ff" img
+rem step: home
 cd /d "%USERPROFILE%"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%here%shortcut.ps1"
-if errorlevel 1 exit /b 1
-start "" "%USERPROFILE%\.stride\Stride.lnk"
+rem step: start
+rem the athlete's directory first, the window's read-write grant, then
+rem the home, the launch directory a capture's status row names its
+rem file under
+start "" "%here%stride-viz.exe" "%USERPROFILE%\.stride" "%USERPROFILE%"
 exit /b 0
 :seed
 rem every %var% read below sits on its OWN line - cmd expands at
@@ -325,60 +462,45 @@ goto :eof
 BAT
 }
 
-# the one description of a Stride shortcut, which the launcher and the
-# install step both run. It reads its own folder from $PSScriptRoot and the
-# home from the environment, so cmd quotes no path for it, whatever
-# characters the folder's name holds
+# written with CRLF like the launcher. It reads its own folder from
+# $PSScriptRoot and the home from the environment, so cmd quotes no path
+# for it, whatever characters the folder's name holds
 windows_shortcut() {
   cat <<'PS'
-# Writes the Stride shortcut: into %USERPROFILE%\.stride by default, or with
-# -Menu into the Start menu (created when absent, and required) and onto
-# the Desktop (skipped when that folder is missing). A shortcut starts
-# stride-viz.exe from this folder in the home directory, with the athlete's
-# directory and then the home as its arguments, and shows stride.ico.
-# stride-viz.exe is a console program, and a console opened for it stays
-# open behind its window: from Windows 10 version 1809 (build 17763)
-# conhost.exe --headless hosts it in a console with no window, which the
-# programs it runs share; an older conhost reads that flag as the program
-# to run, so there the shortcut starts the window in a console of its own.
-# A failure waits for a key only when stdin is a console.
-param([switch]$Menu)
+# Writes Stride's shortcut into the Start menu (created when absent, and
+# required) and onto the Desktop (skipped when that folder is missing). A
+# shortcut runs stride-app.bat from this folder through cmd, minimized, in
+# the home directory, and shows stride.ico. cmd /c keeps a line whose
+# first character is not a quote as it is, so the quoted path after call
+# survives any & or parenthesis in it. A failure waits for a key only when
+# stdin is a console.
 $ErrorActionPreference = 'Stop'
 $q = [char]34
 $app = $PSScriptRoot
 $h = $env:USERPROFILE
-$exe = Join-Path $app 'stride-viz.exe'
-$pass = $q + (Join-Path $h '.stride') + $q + ' ' + $q + $h + $q
-if ([Environment]::OSVersion.Version.Build -ge 17763) {
-  $target = Join-Path $env:SystemRoot 'System32\conhost.exe'
-  $arguments = '--headless ' + $q + $exe + $q + ' ' + $pass
-} else {
-  $target = $exe
-  $arguments = $pass
-}
-if ($Menu) { $places = @('Programs', 'Desktop') } else { $places = @('Stride') }
+$target = Join-Path $env:SystemRoot 'System32\cmd.exe'
+$arguments = '/d /c call ' + $q + (Join-Path $app 'stride-app.bat') + $q
 $w = New-Object -ComObject WScript.Shell
-foreach ($f in $places) {
+foreach ($f in 'Programs', 'Desktop') {
   $d = ''
   try {
-    if ($f -eq 'Stride') { $d = Join-Path $h '.stride' }
-    elseif ($f -eq 'Programs') { $d = [Environment]::GetFolderPath($f, 'Create') }
-    else { $d = [Environment]::GetFolderPath($f) }
+    if ($f -eq 'Programs') { $d = [Environment]::GetFolderPath($f, 'Create') } else { $d = [Environment]::GetFolderPath($f) }
     if (-not $d -or -not (Test-Path -LiteralPath $d)) { throw ('the ' + $f + ' folder does not exist') }
     $s = $w.CreateShortcut((Join-Path $d 'Stride.lnk'))
     $s.TargetPath = $target
     $s.Arguments = $arguments
     $s.WorkingDirectory = $h
     $s.IconLocation = (Join-Path $app 'stride.ico') + ',0'
+    $s.WindowStyle = 7
     $s.Description = 'Stride'
     $s.Save()
-    if ($Menu) { Write-Host ('Stride: shortcut written to ' + $d) }
+    Write-Host ('Stride: shortcut written to ' + $d)
   } catch {
     if ($f -eq 'Desktop') {
       Write-Host ('Stride: no Desktop shortcut, skipped: ' + $_.Exception.Message)
       continue
     }
-    Write-Host ('Stride: could not write the shortcut in ' + $d + ': ' + $_.Exception.Message)
+    Write-Host ('Stride: could not write the Start-menu shortcut in ' + $d + ': ' + $_.Exception.Message)
     if (-not [Console]::IsInputRedirected) { [void](Read-Host 'Press Enter to close') }
     exit 1
   }
@@ -394,7 +516,7 @@ rem puts Stride in the Start menu, and on the Desktop when there is one,
 rem then seeds the athlete's directory and starts the app through
 rem stride-app.bat. The shortcuts name this folder, so run this again
 rem after moving it.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0shortcut.ps1" -Menu
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0shortcut.ps1"
 if errorlevel 1 exit /b 1
 call "%~dp0stride-app.bat"
 BAT
@@ -402,122 +524,56 @@ BAT
 
 crlf() { awk '{ printf "%s\r\n", $0 }'; }
 
-# a shortcut's target, arguments, icon and working directory, one per line
+# a shortcut's target, arguments, icon, working directory and window
+# style, one per line
 lnk_fields() {
-  LNK="$1" powershell -NoProfile -Command '$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:LNK); $s.TargetPath; $s.Arguments; $s.IconLocation; $s.WorkingDirectory' | tr -d '\r'
+  LNK="$1" powershell -NoProfile -Command '$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:LNK); $s.TargetPath; $s.Arguments; $s.IconLocation; $s.WorkingDirectory; $s.WindowStyle' | tr -d '\r'
 }
 
-# the shortcut install.cmd wrote into a folder: it starts the app folder's
-# stride-viz.exe under conhost --headless with the home's athlete directory
-# and the home, from the home, and shows stride.ico. Every argument is a
-# windows path
+# the shortcut install.cmd wrote into a folder: it runs the app folder's
+# stride-app.bat through cmd, minimized (window style 7), from the home,
+# and shows stride.ico. Every argument is a windows path
 check_lnk() {
-  local name="$1" lnk="$2\\Stride.lnk" app="$3" home="$4" fields target args icon wd want
+  local name="$1" lnk="$2\\Stride.lnk" app="$3" home="$4" fields target args icon wd style want
   [ -s "$(cygpath -u "$lnk")" ] || { echo "::error::install.cmd wrote no $name shortcut in $2"; exit 1; }
   fields="$(lnk_fields "$lnk")"
   target="$(sed -n 1p <<<"$fields")"; args="$(sed -n 2p <<<"$fields")"
-  icon="$(sed -n 3p <<<"$fields")"; wd="$(sed -n 4p <<<"$fields")"
-  [[ "${target,,}" == *'\system32\conhost.exe' ]] ||
-    { echo "::error::the $name shortcut targets $target, not conhost.exe"; exit 1; }
-  want="--headless \"$app\\stride-viz.exe\" \"$home\\.stride\" \"$home\""
+  icon="$(sed -n 3p <<<"$fields")"; wd="$(sed -n 4p <<<"$fields")"; style="$(sed -n 5p <<<"$fields")"
+  [[ "${target,,}" == *'\system32\cmd.exe' ]] ||
+    { echo "::error::the $name shortcut targets $target, not cmd.exe"; exit 1; }
+  want="/d /c call \"$app\\stride-app.bat\""
   [ "$args" = "$want" ] || { echo "::error::the $name shortcut passes $args, not $want"; exit 1; }
   [ "$icon" = "$app\\stride.ico,0" ] || { echo "::error::the $name shortcut's icon is $icon"; exit 1; }
   [ "$wd" = "$home" ] || { echo "::error::the $name shortcut starts in $wd, not $home"; exit 1; }
+  [ "$style" = 7 ] || { echo "::error::the $name shortcut's window style is $style, not 7 (minimized)"; exit 1; }
 }
 
-# the staged launcher and shortcut script (posix paths): the launcher
-# writes the athlete-directory shortcut through shortcut.ps1 and opens it,
-# and starts nothing else; the shortcut starts the exe from the script's
-# folder, under conhost --headless from build 17763, in the home, with the
-# athlete's directory and then the home as its arguments, each quoted
+# the staged launcher and shortcut script (posix paths): the launcher starts
+# one program, the window (check_parity holds its start line to the macOS
+# launcher's); the shortcut runs that launcher through cmd, minimized, from
+# the home
 check_launcher() {
   local bat ps k starts
   bat="$(tr -d '\r' < "$1")"
   ps="$(tr -d '\r' < "$2")"
-  for k in \
-    'set "here=%~dp0"' \
-    'cd /d "%USERPROFILE%"' \
-    'powershell -NoProfile -ExecutionPolicy Bypass -File "%here%shortcut.ps1"' \
-    'start "" "%USERPROFILE%\.stride\Stride.lnk"'; do
-    grep -qxF -- "$k" <<<"$bat" || { echo "::error::the launcher lacks the line: $k"; exit 1; }
-  done
   starts="$(grep -v '^rem ' <<<"$bat" | grep -ciF 'start ' || true)"
-  [ "$starts" = 1 ] || { echo "::error::the launcher has $starts start lines; it must open only its shortcut"; exit 1; }
+  [ "$starts" = 1 ] || { echo "::error::the launcher has $starts start lines; it must have only the window's"; exit 1; }
   for k in \
     '$app = $PSScriptRoot' \
     '$h = $env:USERPROFILE' \
-    "\$exe = Join-Path \$app 'stride-viz.exe'" \
-    "\$pass = \$q + (Join-Path \$h '.stride') + \$q + ' ' + \$q + \$h + \$q" \
-    'if ([Environment]::OSVersion.Version.Build -ge 17763) {' \
-    "  \$target = Join-Path \$env:SystemRoot 'System32\\conhost.exe'" \
-    "  \$arguments = '--headless ' + \$q + \$exe + \$q + ' ' + \$pass" \
-    "    if (\$f -eq 'Stride') { \$d = Join-Path \$h '.stride' }" \
+    "\$target = Join-Path \$env:SystemRoot 'System32\\cmd.exe'" \
+    "\$arguments = '/d /c call ' + \$q + (Join-Path \$app 'stride-app.bat') + \$q" \
     '    $s.WorkingDirectory = $h' \
-    "    \$s.IconLocation = (Join-Path \$app 'stride.ico') + ',0'"; do
+    "    \$s.IconLocation = (Join-Path \$app 'stride.ico') + ',0'" \
+    '    $s.WindowStyle = 7'; do
     grep -qxF -- "$k" <<<"$ps" || { echo "::error::shortcut.ps1 lacks the line: $k"; exit 1; }
   done
-}
-
-# the command line and parent program of a running stride-viz.exe whose
-# command line contains the text given, one per line; nothing when none
-# runs. The query is a script file, so no quote in it crosses a command
-# line, and PowerShell's own errors reach stderr
-viz_process() {
-  local ps
-  ps="$(mktemp -d)/viz_process.ps1"
-  cat > "$ps" <<'PS'
-$all = Get-CimInstance Win32_Process
-$p = $all | Where-Object { $_.Name -eq 'stride-viz.exe' -and $_.CommandLine -and $_.CommandLine.Contains($env:NEEDLE) } | Select-Object -First 1
-if ($p) {
-  $p.CommandLine
-  $parent = $all | Where-Object { $_.ProcessId -eq $p.ParentProcessId } | Select-Object -First 1
-  if ($parent) { $parent.Name } else { '(no parent)' }
-}
-PS
-  NEEDLE="$1" powershell -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$ps")" | tr -d '\r'
-}
-
-# what is running, for a log that has to explain a missing window
-show_processes() {
-  echo "package-viz: [$1] stride-viz.exe and conhost.exe processes:"
-  tasklist //v //fi "imagename eq stride-viz.exe" 2>&1 | tr -d '\r' | sed 's/^/    /'
-  tasklist //fi "imagename eq conhost.exe" 2>&1 | tr -d '\r' | sed 's/^/    /'
-}
-
-# waits up to 20 s for stride-viz.exe to run with the athlete directory
-# given (a windows path) as its first argument, under conhost.exe, the
-# windowless host on every build the runner has. A miss is recorded in
-# $failed and the run goes on, so one run reports every start path
-failed=""
-wait_headless() {
-  local what="$1" dir="$2" found="" parent line i
-  for i in $(seq 20); do
-    found="$(viz_process "$dir")"
-    [ -n "$found" ] && break
-    case "$i" in 1|20) show_processes "$what, second $i" ;; esac
-    sleep 1
-  done
-  if [ -z "$found" ]; then
-    echo "::error::$what: stride-viz.exe did not start with $dir"
-    failed="$failed; $what"
-    return 0
-  fi
-  line="$(sed -n 1p <<<"$found")"; parent="$(sed -n 2p <<<"$found")"
-  echo "package-viz: $what: $line runs under $parent"
-  if [ "${parent,,}" != conhost.exe ]; then
-    echo "::error::$what: stride-viz.exe runs under $parent, not conhost.exe"
-    failed="$failed; $what under $parent"
-  elif [[ "$line" != *"stride-viz.exe"*" $dir "* && "$line" != *"stride-viz.exe"*" \"$dir\" "* ]]; then
-    echo "::error::$what: the athlete directory is not the window's first argument"
-    failed="$failed; $what argument order"
-  fi
-  taskkill //IM stride-viz.exe //F >/dev/null 2>&1 || true
 }
 
 # runs install.cmd (a windows path) as a fake profile (a posix path) with
 # stdin closed, after printing where that profile's Programs and Desktop
 # folders resolve; sets $log to what it printed, and fails when it fails
-# or does not seed the profile and start the window through the launcher
+# or does not seed the profile through the launcher
 install_as() {
   local fake="$1" install="$2" fakewin
   fakewin="$(cygpath -w "$fake")"
@@ -526,7 +582,7 @@ install_as() {
     { printf '%s\n' "$log"; echo "::error::install.cmd failed"; exit 1; }
   printf '%s\n' "$log"
   wait_seeded "$fake"
-  wait_headless "install.cmd into $fakewin" "$fakewin\\.stride"
+  taskkill //IM stride-viz.exe //F >/dev/null 2>&1 || true
 }
 
 # a special folder as a profile (a windows path) resolves it
@@ -539,6 +595,9 @@ case "$os $step" in
     bin="${3:?the linux binary to package}"
     need "$bin" "the linux binary"
     need img/stride-icon-256.png "the linux menu icon"
+    need img/stride-icons.sha256 "the icons' pin"
+    check_icons
+    check_parity
     stage_common
     cp "$bin" stage/stride-app/stride-viz
     cp img/stride-icon-256.png stage/stride-app/stride.png
@@ -550,13 +609,19 @@ case "$os $step" in
     tar -C stage -czf stride-app-linux-x86_64.tar.gz stride-app
     # shellcheck disable=SC2046
     assert_listing "$(tar -tzf stride-app-linux-x86_64.tar.gz)" stride-viz stride-app install.sh stride.desktop stride.png $(carried)
+    out="$(mktemp -d)"
+    tar -xzf stride-app-linux-x86_64.tar.gz -C "$out"
+    check_fonts_dir "$out/stride-app/fonts"
     ;;
   "windows package")
     bin="${3:?the windows binary to package}"
     need "$bin" "the windows binary"
     need img/stride.ico "the windows shortcut icon"
     need img/stride-icon-256.png "the icon's 256 px image"
+    need img/stride-icons.sha256 "the icons' pin"
+    check_icons
     check_ico img/stride.ico
+    check_parity
     stage_common
     cp "$bin" stage/stride-app/stride-viz.exe
     cp img/stride.ico stage/stride-app/stride.ico
@@ -568,6 +633,33 @@ case "$os $step" in
     7z a -bso0 stride-app-windows-x86_64.zip ./stage/stride-app
     # shellcheck disable=SC2046
     assert_listing "$(7z l stride-app-windows-x86_64.zip)" stride-viz.exe stride-app.bat shortcut.ps1 install.cmd stride.ico $(carried)
+    out="$(mktemp -d)"
+    7z x -bso0 stride-app-windows-x86_64.zip -o"$out"
+    check_fonts_dir "$out/stride-app/fonts"
+    ;;
+  "macos verify")
+    # the bundle tools/make-viz-app.sh built (a posix path to Stride.app)
+    app="${3:?the Stride.app to verify}"
+    check_parity
+    check_fonts_dir "$app/Contents/Resources/fonts"
+    for f in $images; do
+      cmp -s "img/$f" "$app/Contents/Resources/img/$f" || { echo "::error::the bundle does not carry img/$f"; exit 1; }
+    done
+    ;;
+  "macos prove")
+    app="${3:?the Stride.app to prove}"
+    fake="$(mktemp -d)"
+    HOME="$fake" "$app/Contents/MacOS/launcher" >/dev/null 2>&1 &
+    pid=$!
+    wait_seeded "$fake"
+    stop "$pid"
+    printf 'x' > "$fake/.stride/fonts/Quicksand-Medium.ttf"
+    printf 'x' > "$fake/.stride/img/flame.png"
+    HOME="$fake" "$app/Contents/MacOS/launcher" >/dev/null 2>&1 &
+    pid=$!
+    wait_seeded "$fake"
+    stop "$pid"
+    rm -rf "$fake"
     ;;
   "linux prove")
     fake="$(mktemp -d)"
@@ -608,24 +700,12 @@ case "$os $step" in
     rm -rf "$fake"
     ;;
   "windows prove")
+    # the GitHub windows runner has no OpenGL context, so whether the window starts there is not deterministic; that is verified on a real machine
     fake="$(mktemp -d)"
     fakewin="$(cygpath -w "$fake")"
     bat="$(cygpath -w "$PWD/stage/stride-app/stride-app.bat")"
     USERPROFILE="$fakewin" cmd //C "$bat" </dev/null || true
     wait_seeded "$fake"
-    check_lnk athlete-directory "$fakewin\\.stride" "$(cygpath -w "$PWD/stage/stride-app")" "$fakewin"
-    wait_headless "the launcher" "$fakewin\\.stride"
-    # not a requirement: the launcher's shortcut opened again with the
-    # runner's own USERPROFILE, which tells a failure of the start path
-    # from one of the environment the launcher ran in
-    cmd //C start "" "$fakewin\\.stride\\Stride.lnk" </dev/null || true
-    seen=""
-    for _ in $(seq 20); do
-      seen="$(viz_process "$fakewin\\.stride")"
-      [ -n "$seen" ] && break
-      sleep 1
-    done
-    echo "package-viz: diagnostic: with the runner's USERPROFILE the launcher's shortcut started '$(tr '\n' ' ' <<<"$seen")'"
     taskkill //IM stride-viz.exe //F >/dev/null 2>&1 || true
     printf 'x' > "$fake/.stride/fonts/Quicksand-Medium.ttf"
     printf 'x' > "$fake/.stride/img/flame.png"
@@ -660,14 +740,9 @@ case "$os $step" in
     grep -q "no Desktop shortcut, skipped" <<<"$log" ||
       { echo "::error::install.cmd did not report the missing Desktop folder"; exit 1; }
     [ ! -e "$nodesk/Desktop/Stride.lnk" ] || { echo "::error::install.cmd wrote a Desktop it reported missing"; exit 1; }
-
-    # the Start-menu shortcut starts the window by itself
-    cmd //C start "" "$programs\\Stride.lnk" </dev/null || true
-    wait_headless "the Start-menu shortcut" "$home\\.stride"
-    [ -z "$failed" ] || { echo "::error::the window did not start as required:$failed"; exit 1; }
     ;;
   *)
-    echo "usage: package-viz.sh linux|windows package <binary> | linux|windows prove" >&2
+    echo "usage: package-viz.sh linux|windows package <binary> | linux|windows prove | macos verify|prove <Stride.app>" >&2
     exit 2
     ;;
 esac

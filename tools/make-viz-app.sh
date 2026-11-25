@@ -35,20 +35,26 @@ mkdir -p "$C/MacOS" "$C/Resources"
 cp "$WORK/stride-viz" "$C/MacOS/stride-viz"
 
 cat > "$C/MacOS/launcher" <<'SH'
-#!/bin/bash
-export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
-# the window reads ~/.stride/fonts; a downloaded bundle carries its own
-# copies and seeds them here, or the window falls back to its default font
+#!/bin/sh
+# step: path
+# a GUI app inherits launchd's minimal PATH, and the window runs `stride`
+# for the CP fit and `sh` for the zone offset
+PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+export PATH
+# step: locate
 here="$(cd "$(dirname "$0")" && pwd)"
-res="$here/../Resources"
+assets="$here/../Resources"
+# step: log
 log="$HOME/.stride/seed.log"
-if [ -d "$res/fonts" ]; then
+# step: seed-fonts
+# the window reads ~/.stride/fonts; seed it from the copies shipped with
+# the app, copying any that are missing or differ in size, so a copy cut
+# short is repaired on the next launch
+if [ -d "$assets/fonts" ]; then
   if mkdir -p "$HOME/.stride/fonts" 2>/dev/null; then
-    for f in "$res"/fonts/*.ttf; do
+    for f in "$assets"/fonts/*.ttf; do
       [ -e "$f" ] || continue
       dst="$HOME/.stride/fonts/$(basename "$f")"
-      # size, not existence: a short file from an interrupted copy would
-      # otherwise be skipped forever
       if [ ! -e "$dst" ] || [ "$(wc -c < "$f")" != "$(wc -c < "$dst")" ]; then
         cp "$f" "$dst" 2>>"$log" || echo "$(date): could not write $dst" >> "$log"
       fi
@@ -57,18 +63,29 @@ if [ -d "$res/fonts" ]; then
     echo "$(date): could not create $HOME/.stride/fonts - the window will use its fallback font" >> "$log" 2>/dev/null || true
   fi
 fi
-# the splash's mark and the streak flame render from ~/.stride/img, seeded
-# the same way
-for img in stride-icon.png flame.png; do
-  if [ -f "$res/img/$img" ] && mkdir -p "$HOME/.stride/img" 2>/dev/null; then
-    src="$res/img/$img"
-    dst="$HOME/.stride/img/$img"
-    if [ ! -e "$dst" ] || [ "$(wc -c < "$src")" != "$(wc -c < "$dst")" ]; then
-      cp "$src" "$dst" 2>>"$log" || echo "$(date): could not write $dst" >> "$log"
-    fi
+# step: seed-img
+# the splash's mark and the streak flame render from ~/.stride/img,
+# seeded the same way
+if [ -d "$assets/img" ]; then
+  if mkdir -p "$HOME/.stride/img" 2>/dev/null; then
+    for f in "$assets"/img/*.png; do
+      [ -e "$f" ] || continue
+      dst="$HOME/.stride/img/$(basename "$f")"
+      if [ ! -e "$dst" ] || [ "$(wc -c < "$f")" != "$(wc -c < "$dst")" ]; then
+        cp "$f" "$dst" 2>>"$log" || echo "$(date): could not write $dst" >> "$log"
+      fi
+    done
+  else
+    echo "$(date): could not create $HOME/.stride/img - the splash and the streak chip will show text alone" >> "$log" 2>/dev/null || true
   fi
-done
+fi
+# step: home
 cd "$HOME"
+# step: start
+# the athlete's directory first: it is the window's read-write grant, which
+# a home resolved at launch cannot be written into the source it is
+# declared in; then the home, the launch directory a capture's status row
+# names its file under
 exec "$here/stride-viz" "$HOME/.stride" "$HOME"
 SH
 chmod +x "$C/MacOS/launcher" "$C/MacOS/stride-viz"

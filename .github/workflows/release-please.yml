@@ -135,17 +135,9 @@ jobs:
           # --verify, not -dv: -dv only displays, and exits 0 on a signature
           # that has been modified - the case Apple Silicon kills at launch
           codesign --verify --strict "$bin" || { echo "::error::${{ matrix.target }} signature is missing or invalid"; exit 1; }
-          # every face the window loads, non-empty, and none dropped
-          for f in Quicksand-Medium.ttf JetBrainsMono-Regular.ttf; do
-            test -s "$app/Contents/Resources/fonts/$f"
-          done
-          have=$(ls "$app/Contents/Resources/fonts/"*.ttf | wc -l | tr -d ' ')
-          want_n=$(ls assets/fonts/*.ttf | wc -l | tr -d ' ')
-          [ "$have" = "$want_n" ] || { echo "::error::bundled $have fonts, assets/fonts has $want_n"; exit 1; }
-          # the splash's mark and the streak flame, byte for byte
-          for f in stride-icon.png flame.png; do
-            cmp -s "img/$f" "$app/Contents/Resources/img/$f" || { echo "::error::the bundle does not carry img/$f"; exit 1; }
-          done
+          # exactly assets/fonts byte for byte, the splash's mark and the streak
+          # flame, and a launcher with the steps the linux and windows ones share
+          bash tools/package-viz.sh macos verify "$app"
           # the script falls back to 0.0.0-dev if the version marker moves;
           # the CLI gates its --version against the tag, so the app gates too
           got_v=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app/Contents/Info.plist")
@@ -156,31 +148,7 @@ jobs:
           [ "$got_g" = "true" ] || { echo "::error::bundle does not allow automatic graphics switching"; exit 1; }
 
       - name: Prove the launcher seeds a fresh machine
-        run: |
-          set -euo pipefail
-          # the launcher cds to $HOME, so seeding ~/.stride/fonts and
-          # ~/.stride/img is the bundle's only route to the window
-          fake="$(mktemp -d)"
-          HOME="$fake" "stage/Stride.app/Contents/MacOS/launcher" >/dev/null 2>&1 &
-          pid=$!
-          sleep 3
-          kill $pid 2>/dev/null || true
-          for f in Quicksand-Medium.ttf JetBrainsMono-Regular.ttf; do
-            test -s "$fake/.stride/fonts/$f" || { echo "::error::launcher did not seed $f"; exit 1; }
-          done
-          for f in stride-icon.png flame.png; do
-            cmp -s "img/$f" "$fake/.stride/img/$f" || { echo "::error::launcher did not seed img/$f"; exit 1; }
-          done
-          # a short/corrupt copy must be repaired, not skipped forever
-          printf 'x' > "$fake/.stride/fonts/Quicksand-Medium.ttf"
-          printf 'x' > "$fake/.stride/img/flame.png"
-          HOME="$fake" "stage/Stride.app/Contents/MacOS/launcher" >/dev/null 2>&1 &
-          pid=$!
-          sleep 3
-          kill $pid 2>/dev/null || true
-          [ "$(wc -c < "$fake/.stride/fonts/Quicksand-Medium.ttf")" -gt 1000 ] || { echo "::error::a corrupt font was not repaired"; exit 1; }
-          cmp -s img/flame.png "$fake/.stride/img/flame.png" || { echo "::error::a corrupt image was not repaired"; exit 1; }
-          rm -rf "$fake"
+        run: bash tools/package-viz.sh macos prove stage/Stride.app
 
       - name: Zip it
         run: |

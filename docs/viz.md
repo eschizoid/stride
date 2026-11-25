@@ -468,61 +468,67 @@ linux-arm64 app.
 
 The windows zip holds `stride-viz.exe`, the fonts, the images, a
 `stride-app.bat` launcher that seeds `%USERPROFILE%\.stride\fonts` and
-`%USERPROFILE%\.stride\img`, `shortcut.ps1`, which writes Stride's
-shortcut, the icon (`stride.ico`: 16, 32, 48 and 256 px) and
-`install.cmd`. Every start of the window is a shortcut's start: the
-launcher writes the shortcut into `%USERPROFILE%\.stride`, a folder it
-already writes, and opens it, so starting the app touches neither the
-Start menu nor the Desktop. Double-click `install.cmd` to put Stride there:
-it writes the shortcut to the Start menu, creating that folder when it is
-absent, and to the Desktop when that folder exists, then runs the launcher,
-which seeds the athlete's directory and starts the app. A Desktop that
-cannot take a shortcut is named and skipped; only a failed Start-menu
-shortcut stops the install, and its message waits for a key only when the
-install runs in a console. A shortcut names the app's folder and does not
-seed, so run `install.cmd` again after moving the folder or unpacking a
-newer release into it.
+`%USERPROFILE%\.stride\img` and starts the window, `shortcut.ps1`, the
+icon (`stride.ico`: 16, 32, 48 and 256 px) and `install.cmd`.
+Double-click `install.cmd`: through `shortcut.ps1` it writes a `Stride`
+shortcut to the Start menu, creating that folder when it is absent, and to
+the Desktop when that folder exists, then runs the launcher. Each shortcut
+runs `stride-app.bat` through cmd with its window minimized, from the home
+directory, and shows `stride.ico`. A Desktop that cannot take a shortcut
+is named and skipped; only a failed Start-menu shortcut stops the install,
+and its message waits for a key only when the install runs in a console.
+The shortcuts name the app's folder, so run `install.cmd` again after
+moving it. `stride-viz.exe` is a console program, so its own console
+opens beside the window. The running window's title bar and taskbar
+button show the generic program icon: roc-ray has no call that sets a
+window's icon, and the exe carries no icon resource.
 
-`stride-viz.exe` is a console program, so a console opened for it stays
-open behind the window. On Windows 10 version 1809 (build 17763) and later
-the shortcut starts it under `conhost.exe --headless`, a console host with
-no window, which the programs the window runs (`stride` for the CP fit and
-the projection) share. On an older build conhost lacks that flag, so the
-window gets a visible console of its own. Marking the exe as a windowed
-program instead would leave it no console to share: roc-ray starts each
-program without the flag that suppresses a new console, so every `stride`
-run would open one. The running window's title bar and taskbar button show
-the generic program icon: roc-ray has no call that sets a window's icon,
-and the exe carries no icon resource.
+All three packages show one icon and run one launcher. `img/make-icons.sh`
+builds `stride.ico` and the linux `stride.png` from
+`img/stride-icon-macos.png`, the image the macOS icon is built from, so
+every platform shows its artwork, inset tile and rounded corners included,
+and pins the SHA-256 of the source and both outputs in
+`img/stride-icons.sha256`; both outputs are committed, so packaging needs
+no image tool. The three launchers carry the same steps, in order, each
+marked `step:` in the launcher: `path` (widen PATH, which the linux and
+macOS launchers do and windows needs not, since a program started from
+Explorer inherits the user's whole PATH), `locate`, `log`
+(`~/.stride/seed.log`), `seed-fonts`, `seed-img`, `home` (change to the
+athlete's home) and `start` (the athlete's directory first, the home
+second). The linux and macOS launchers match line for line in every step
+but `path` and `locate`; the windows launcher does each step in cmd. Every
+package ships exactly the files in `assets/fonts`.
 
 `tools/package-viz.sh` builds the linux and windows packages and proves each
-one. The archive must list the binary, the launcher, both faces, both
-images, the install step and the icon, the windows archive `shortcut.ps1`
-and the linux archive the desktop entry. The icon must be a well-formed icon file whose 256 px image is the
-linux icon byte for byte, and the desktop entry must carry the keys the
-menu reads, with `StartupWMClass` equal to the title `src/viz/main.roc`
-sets. The launcher must seed an empty home and repair a truncated copy. On
-linux, `install.sh` runs from a folder whose path needs every escape the
-entry's `Exec` line has (a space, a double quote, a backtick, a dollar
-sign, a percent sign and a backslash); the entry must hold the expected
-line, that line must read back, through the key file's string layer and
-then the quoting layer, as exactly the launcher's path, and the icon must be
-placed and the launcher started. On windows, when the package is built,
-the launcher must open its shortcut and start nothing else, and
-`shortcut.ps1` must describe the start below. `install.cmd` runs from a
-folder whose path cmd splits when unquoted (`R&D (x) y`), once into a fake
-profile that has a Desktop folder and once into one that does not. The
-first must get both shortcuts, the second the Start-menu one and a
-skipped-Desktop note; every shortcut, the launcher's included, must target
-conhost with the exe's path, the athlete's directory and the home, start in
-the home and show the icon, and each install must seed the profile through
-the launcher. On the runner, every start (the launcher, each install and
-the Start-menu shortcut) must leave the window running under conhost with
-the athlete's directory as its first argument.
-The prove step prints where each profile's folders resolve. CI runs it on every pull
-request as well as at release. `img/make-icons.sh` regenerates `stride.ico`
-and `stride-icon-256.png` from `img/stride-icon-macos.png`; both are
-committed, so packaging needs no image tool.
+one; at release it also verifies and proves the macOS bundle. Each package
+must hold exactly the files in `assets/fonts`, byte for byte (none missing,
+cut short, stale or extra), and every hash in `img/stride-icons.sha256`
+must match its file. The launchers must carry the macOS launcher's steps as
+above, so a step added to the macOS launcher fails the build until the
+others carry it. The archive must list the binary, the launcher, every
+font file, both images, the install step and the icon, the windows archive
+`shortcut.ps1` and the linux archive the desktop entry. The icon must be a
+well-formed icon file whose 256 px image is the linux icon byte for byte,
+and the desktop entry must carry the keys the menu reads, with
+`StartupWMClass` equal to the title `src/viz/main.roc` sets. The launcher
+must seed every face and image into an empty home and repair a truncated
+copy. On linux, `install.sh` runs from a folder whose path needs every
+escape the entry's `Exec` line has (a space, a double quote, a backtick, a
+dollar sign, a percent sign and a backslash); the entry must hold the
+expected line, that line must read back, through the key file's string
+layer and then the quoting layer, as exactly the launcher's path, and the
+icon must be placed and the launcher started. On windows, the launcher
+must start only the window, and `install.cmd` runs from a folder whose
+path cmd splits when unquoted (`R&D (x) y`), once into a fake profile that
+has a Desktop folder and once into one that does not. The first must get
+both shortcuts, the second the Start-menu one and a skipped-Desktop note;
+every shortcut must run the launcher through cmd, minimized, from the
+home, and show the icon, and each install must seed the profile through
+the launcher. The GitHub windows runner has no OpenGL context, so whether
+the window starts there is not deterministic, and nothing requires it;
+that the window starts is verified on a real machine. The prove step
+prints where each profile's folders resolve. CI runs it on every pull
+request as well as at release.
 
 On every launch the launcher copies a font or image when the athlete's
 directory lacks it or holds a copy of a different size, so an interrupted

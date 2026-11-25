@@ -1,14 +1,18 @@
 #!/usr/bin/env sh
 # Writes the two app icons the linux and windows packages carry, from the
-# macOS icon's artwork:
+# image the macOS app's icon is built from, so all three show the same
+# artwork:
 #
 #   img/stride-icon-256.png  the linux menu icon
 #   img/stride.ico           the windows shortcut icon: 16, 32, 48 and 256 px
+#   img/stride-icons.sha256  the SHA-256 of the source and of both outputs
 #
-# Both outputs are committed, so packaging needs no image tool; rerun this
-# after the artwork changes. It needs macOS's sips. stride-icon-macos.png
-# insets its tile on a transparent 1024 canvas; the centered 848 square
-# holds the tile with a thin margin, so a 16 px icon is not mostly padding.
+# The outputs are committed, so packaging needs no image tool, and
+# tools/package-viz.sh checks every hash in the pin against the files, so
+# an icon not regenerated after the artwork changes fails the build. Rerun
+# this after changing img/stride-icon-macos.png; it needs macOS's sips.
+# The source is the whole 1024 canvas, inset tile and rounded corners
+# included, exactly as the macOS icon shows it.
 #
 # An ICO file may hold PNG images directly (Windows Vista and later read
 # them): a 6-byte header (reserved 0, type 1, image count), one 16-byte
@@ -21,10 +25,9 @@ command -v sips >/dev/null || { echo "make-icons: needs sips (macOS)" >&2; exit 
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-sips -c 848 848 stride-icon-macos.png --out "$work/tile.png" >/dev/null
 sizes="16 32 48 256"
 for s in $sizes; do
-  sips -z "$s" "$s" "$work/tile.png" --out "$work/$s.png" >/dev/null
+  sips -z "$s" "$s" stride-icon-macos.png --out "$work/$s.png" >/dev/null
 done
 cp "$work/256.png" stride-icon-256.png
 
@@ -55,4 +58,5 @@ for s in $sizes; do count=$((count + 1)); done
   for s in $sizes; do cat "$work/$s.png"; done
 } > "$work/stride.ico"
 mv "$work/stride.ico" stride.ico
-echo "make-icons: wrote img/stride.ico ($sizes) and img/stride-icon-256.png"
+shasum -a 256 stride-icon-macos.png stride.ico stride-icon-256.png > stride-icons.sha256
+echo "make-icons: wrote img/stride.ico ($sizes), img/stride-icon-256.png and img/stride-icons.sha256"
