@@ -23,6 +23,7 @@ import Theme
 import Tiles
 import Trace
 import Ui
+import Weeks
 import Zones
 
 Gate :: [].{
@@ -1200,6 +1201,8 @@ Gate :: [].{
 	week_share : U64 -> I64
 	week_share = |i| (List.get([140, 90, 100, 110, 60, 0, 105, 115, 120, 95, 100, 40], i)) ?? 100
 
+	# a lifting week (zone time and no polarized time) sits beside the
+	# empty rest week, so one fixture draws a bar with no segments and no cap
 	zone_weeks_of : U64 -> List(Db.ZoneWeek)
 	zone_weeks_of = |k|
 		List.map_with_index(
@@ -1207,18 +1210,26 @@ Gate :: [].{
 			|wk, i| {
 				s = week_share(i) * (60 + 15 * U64.to_i64_wrap(k % 5))
 				z = { z1: s * 25, z2: s * 40, z3: s * 18, z4: s * 12, z5: s * 5 }
-				easy = z.z1 + z.z2 - (if (i % 3 == 1) s * 30 else 0)
-				{ wk, days: if (i == 11) 4 else 7, z1: z.z1, z2: z.z2, z3: z.z3, z4: z.z4, z5: z.z5, easy, moderate: z.z3 + (if (i % 3 == 1) s * 30 else 0), hard: z.z4 + z.z5 }
+				lifting = i == 4
+				easy = if (lifting) 0 else z.z1 + z.z2 - (if (i % 3 == 1) s * 30 else 0)
+				moderate = if (lifting) 0 else z.z3 + (if (i % 3 == 1) s * 30 else 0)
+				{ wk, days: if (i == 11) 4 else 7, z1: z.z1, z2: z.z2, z3: z.z3, z4: z.z4, z5: z.z5, easy, moderate, hard: if (lifting) 0 else z.z4 + z.z5 }
 			},
 		)
 
+	# each week starts from the CTL its ramp left the week before, and for
+	# every other athlete the rest week starts high enough that its hold
+	# tops the heaviest week, so its tick sets the scale
 	ramp_weeks_of : U64 -> List(Db.RampWeek)
 	ramp_weeks_of = |k|
 		List.map_with_index(
 			week_starts,
 			|wk, i| {
 				tss = week_share(i) * (4 + U64.to_i64_wrap(k % 4))
-				{ wk, days: if (i == 11) 4 else 7, tss, ctl10: 480 + U64.to_i64_wrap(i) * 7, ramp10: (List.get([75, -12, 18, 31, 0, -19, 42, 64, 25, 8, 12, -5], i)) ?? 0 }
+				ctl10 = 480 + U64.to_i64_wrap(i) * 7
+				ramp10 = (List.get([75, -12, 18, 31, 0, -19, 42, 64, 25, 8, 12, -5], i)) ?? 0
+				ctl_start = if (i == 5 and k % 2 == 1) 150.0 else I64.to_f64(ctl10 - ramp10) / 10.0
+				{ wk, days: if (i == 11) 4 else 7, tss, ctl10, ramp10, ctl_start }
 			},
 		)
 
@@ -1370,9 +1381,40 @@ expect Gate.failures(|m| Gate.judge(Map.owned(m, Gate.measure), Map.marks(m, Gat
 
 # the weeks tab's gates: zones and load for every athlete at every size,
 # with no week picked, on a picked week with per-sport zones, and with no
-# history
-expect Gate.failures(|m| Gate.judge(Zones.owned(m, Gate.measure), Zones.marks(m)), Gate.weeks_models(6)) == []
+# history, in the brand faces and in the built-in face
+expect Gate.failures(|m| Gate.judge(Zones.owned(m, Gate.measure), Zones.marks(m, Gate.measure)), Gate.weeks_models(6)) == []
+expect Gate.failures(|m| Gate.judge(Zones.owned(m, Gate.builtin_measure), Zones.marks(m, Gate.builtin_measure)), Gate.weeks_models(6)) == []
 expect Gate.failures(|m| Gate.judge(Ramp.owned(m, Gate.measure), Ramp.marks(m)), Gate.weeks_models(7)) == []
+expect Gate.failures(|m| Gate.judge(Ramp.owned(m, Gate.builtin_measure), Ramp.marks(m)), Gate.weeks_models(7)) == []
+
+# the lifting week draws its bar and neither a cap nor an 80/20 mark, while
+# a polarized week draws both, wherever the chart draws
+expect List.all(
+	List.keep_if(Gate.weeks_models(6), |e| !(List.is_empty(e.model.zone_weeks))),
+	|e| {
+		ks = List.map(Zones.marks(e.model, Gate.measure), |m| m.key)
+		List.contains(ks, "the 2026-09-21 bar")
+			and !(List.contains(ks, "the 2026-09-21 cap"))
+			and !(List.contains(ks, "the 2026-09-21 80/20 mark"))
+			and List.contains(ks, "the 2026-09-14 cap")
+			and List.contains(ks, "the 2026-09-14 80/20 mark")
+	},
+)
+
+# every week the load fixtures chart wears its hold tick, the rest week's
+# included, and on the athletes whose rest week's hold tops the heaviest
+# week that tick sits at the plot's top
+expect List.all(
+	List.keep_if(Gate.weeks_models(7), |e| !(List.is_empty(e.model.ramp_weeks))),
+	|e| {
+		ks = List.map(Ramp.marks(e.model), |m| m.key)
+		List.all(Gate.week_starts, |wk| List.contains(ks, "the ${wk} hold tick"))
+	},
+)
+expect List.any(
+	Gate.weeks_models(7),
+	|e| List.any(Ramp.bars(e.model), |b| b.w.wk == "2026-09-28" and (b.tick - Weeks.bars_top).abs() < 0.5),
+)
 
 # the lifts tab's gate: every athlete who lifts, in kilograms, and in pounds
 # with the lifts list and the session card both asked to scroll, each

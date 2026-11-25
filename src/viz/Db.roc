@@ -1020,10 +1020,21 @@ Db :: [].{
 	# twelve Monday weeks off the weekly_ramp view - the ONE definition of
 	# weekly ramp - in tenths (F64 has no narrowing; SQL rounds to integers).
 	# `days` counts the week's days the series covers, the way ZoneWeek does.
-	RampWeek : { wk : Str, days : I64, tss : I64, ctl10 : I64, ramp10 : I64 }
+	# `ctl_start` is the CTL the week started from, unrounded: the hold level
+	# the load mode draws (core.Load.hold) is read off it.
+	RampWeek : { wk : Str, days : I64, tss : I64, ctl10 : I64, ramp10 : I64, ctl_start : F64 }
+
+	# The CTL a week started from. The view's ramp is its end-of-week CTL less
+	# the previous week's, so the start is the end less the ramp; but a week
+	# that begins on or before the first day of history has no previous week,
+	# and the view reports its ramp as zero there. The engine walks daily_load
+	# from zero, so such a week started at zero.
+	week_start_ctl : Bool, F64, F64 -> F64
+	week_start_ctl = |before_history, ctl_end, ramp| if (before_history) 0.0 else ctl_end - ramp
+
 	load_ramp_weeks! : Sqlite.Db => List(RampWeek)
 	load_ramp_weeks! = |db|
-		match db.query!("SELECT CAST(wk AS TEXT) AS wk, CAST(MIN(7, MAX(0, julianday((SELECT today FROM series_clock)) - julianday(wk) + 1)) AS INTEGER) AS dys, CAST(ROUND(tss) AS INTEGER) AS tss, CAST(ROUND(ctl_end * 10) AS INTEGER) AS ctl10, CAST(ROUND(ramp * 10) AS INTEGER) AS ramp10 FROM weekly_ramp ORDER BY wk ASC", []) {
+		match db.query!("SELECT CAST(wk AS TEXT) AS wk, CAST(MIN(7, MAX(0, julianday((SELECT today FROM series_clock)) - julianday(wk) + 1)) AS INTEGER) AS dys, CAST(ROUND(tss) AS INTEGER) AS tss, CAST(ROUND(ctl_end * 10) AS INTEGER) AS ctl10, CAST(ROUND(ramp * 10) AS INTEGER) AS ramp10, CAST(ctl_end AS REAL) AS ce, CAST(ramp AS REAL) AS rp, CAST(wk <= COALESCE((SELECT MIN(day) FROM daily_load), '') AS INTEGER) AS pre FROM weekly_ramp ORDER BY wk ASC", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(
@@ -1034,7 +1045,10 @@ Db :: [].{
 						c10 = r.i64("ctl10") ? |_| "bad"
 						r10 = r.i64("ramp10") ? |_| "bad"
 						dy = r.i64("dys") ? |_| "bad"
-						Ok({ wk, days: dy, tss: ts, ctl10: c10, ramp10: r10 })
+						ce = r.f64("ce") ? |_| "bad"
+						rp = r.f64("rp") ? |_| "bad"
+						pre = r.i64("pre") ? |_| "bad"
+						Ok({ wk, days: dy, tss: ts, ctl10: c10, ramp10: r10, ctl_start: week_start_ctl(pre != 0, ce, rp) })
 					},
 				)
 		}
