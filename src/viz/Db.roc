@@ -1938,16 +1938,44 @@ Db :: [].{
 	# `stride project <date>` read for the board: the engine's own walk over
 	# the recorded plan, so the window shows exactly the numbers the command
 	# returns. `considered` is the open sessions in the window, `projected`
-	# the ones whose target the engine priced into a load.
-	Projection : { ok : Bool, ctl : F32, tsb : F32, considered : I64, projected : I64 }
+	# the ones whose target the engine priced into a load, and `days` the
+	# payload's series, the walk day by day to the plan's last day.
+	Projection : { ok : Bool, ctl : F32, tsb : F32, considered : I64, projected : I64, days : List(ProjDay) }
 
+	# one projected day: its date, state and priced load, and whether every
+	# session on it was priced
+	ProjDay : { day : Str, ctl : F32, atl : F32, tsb : F32, tss : F32, known : Bool }
+
+	no_projection : Projection
+	no_projection = { ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0, days: [] }
+
+	# The series array is cut out before the top-level keys are read: its
+	# rows carry `ctl`, `atl` and `tsb` too, and a key scan reads the first
+	# match. Its rows hold no nested array, so the first `]` closes it. A row
+	# missing a field fails the whole series, and the board then draws none.
 	parse_projection : Str -> Projection
 	parse_projection = |out| {
-		num = |key| F32.from_str(json_number(out, key))
-		int = |key| I64.from_str(json_number(out, key))
-		match (num("ctl"), num("tsb"), int("sessions_considered"), int("sessions_projected")) {
-			(Ok(c), Ok(t), Ok(sc), Ok(sp)) => if (Str.contains(out, "\"baseline_known\":true")) { ok: Bool.True, ctl: c, tsb: t, considered: sc, projected: sp } else { ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0 }
-			_ => { ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0 }
+		cut = match Str.split_on(out, "\"series\":[") {
+			[head, rest] =>
+				match Str.split_first(rest, "]") {
+					Ok({ before, after }) => { top: "${head}${after}", rows: before }
+					Err(_) => { top: out, rows: "" }
+				}
+
+			_ => { top: out, rows: "" }
+		}
+		num = |key| F32.from_str(json_number(cut.top, key))
+		int = |key| I64.from_str(json_number(cut.top, key))
+		days = List.map_try(
+			List.keep_if(Str.split_on(cut.rows, "},{"), |r| r != ""),
+			|r| {
+				f = |key| F32.from_str(json_number(r, key))
+				Ok({ day: json_string(r, "date"), ctl: f("ctl")?, atl: f("atl")?, tsb: f("tsb")?, tss: f("load")?, known: Str.contains(r, "\"load_known\":true") })
+			},
+		)
+		match (num("ctl"), num("tsb"), int("sessions_considered"), int("sessions_projected"), days) {
+			(Ok(c), Ok(t), Ok(sc), Ok(sp), Ok(ds)) => if (Str.contains(cut.top, "\"baseline_known\":true")) { ok: Bool.True, ctl: c, tsb: t, considered: sc, projected: sp, days: ds } else no_projection
+			_ => no_projection
 		}
 	}
 
@@ -2385,6 +2413,30 @@ expect {
 }
 expect !(Db.parse_projection("{\"schema_version\":3,\"data\":{\"atl\":0,\"baseline_known\":false,\"ctl\":0,\"sessions_considered\":0,\"sessions_projected\":0,\"tsb\":0}}").ok)
 expect !(Db.parse_projection("").ok)
+
+# the series is read row by row, each row's own fields and flag, and the
+# top-level numbers stay the payload's own although every row carries the
+# same keys and the series sorts before `tsb`
+expect {
+	p = Db.parse_projection("{\"schema_version\":3,\"data\":{\"atl\":53.2,\"baseline_known\":true,\"ctl\":54.2,\"days_away\":3,\"ftp_known\":true,\"hypothetical\":[],\"plan_source\":\"recorded\",\"projected_from\":\"2026-11-25\",\"series\":[{\"atl\":55.35,\"ctl\":53.21,\"date\":\"2026-11-26\",\"load\":6.67,\"load_known\":true,\"tsb\":-2.14},{\"atl\":49.1,\"ctl\":52.0,\"date\":\"2026-11-27\",\"load\":0,\"load_known\":false,\"tsb\":2.9},{\"atl\":53.2,\"ctl\":54.2,\"date\":\"2026-11-28\",\"load\":81.5,\"load_known\":true,\"tsb\":1.0}],\"sessions_considered\":3,\"sessions_projected\":2,\"target_date\":\"2026-11-28\",\"tsb\":1.0,\"unprojected\":[{\"date\":\"2026-11-27\",\"reason\":\"no_target\",\"target_literal\":\"\"}]}}")
+	near = |a, b| (a - b).abs() < 0.001
+	p.ok
+		and near(p.ctl, 54.2)
+		and near(p.tsb, 1.0)
+		and p.considered == 3
+		and p.projected == 2
+		and List.map(p.days, |d| d.day) == ["2026-11-26", "2026-11-27", "2026-11-28"]
+		and List.map(p.days, |d| d.known) == [Bool.True, Bool.False, Bool.True]
+		and List.all(List.map2(p.days, [{ c: 53.21, a: 55.35, t: -2.14, l: 6.67 }, { c: 52.0, a: 49.1, t: 2.9, l: 0.0 }, { c: 54.2, a: 53.2, t: 1.0, l: 81.5 }], |d, w| near(d.ctl, w.c) and near(d.atl, w.a) and near(d.tsb, w.t) and near(d.tss, w.l)), |ok| ok)
+}
+
+# an empty series parses to no days; a row that lost a field drops the
+# whole projection rather than drawing a day of zeros
+expect {
+	p = Db.parse_projection("{\"data\":{\"atl\":40.5,\"baseline_known\":true,\"ctl\":47.92,\"series\":[],\"sessions_considered\":0,\"sessions_projected\":0,\"tsb\":7.42}}")
+	p.ok and List.is_empty(p.days) and (p.tsb - 7.42).abs() < 0.001
+}
+expect !(Db.parse_projection("{\"data\":{\"atl\":40.5,\"baseline_known\":true,\"ctl\":47.92,\"series\":[{\"atl\":1.0,\"date\":\"2026-11-26\",\"load\":0,\"load_known\":true,\"tsb\":1.0}],\"sessions_considered\":1,\"sessions_projected\":1,\"tsb\":7.42}}").ok)
 
 # thousands group in threes from the right, a sign stays in front, and a
 # unit sits one space after the number

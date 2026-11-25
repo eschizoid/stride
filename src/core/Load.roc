@@ -53,6 +53,31 @@ Load :: [].{
 	walk : F64, List(F64) -> F64
 	walk = |ctl_start, loads| List.fold(loads, ctl_start, |c, t| (step({ ctl_prev: c, atl_prev: 0.0, tss: t })).ctl)
 
+	# The step run forward from a known day: one row per day after `from_day`
+	# through `to_day`, in order, each carrying the summed load of the
+	# entries dated on it and the state the step leaves. A day no entry
+	# names steps with zero load, and an entry outside the span adds
+	# nothing. A span that does not run forward is empty.
+	Day : { d : I64, load : F64, ctl : F64, atl : F64, tsb : F64 }
+
+	days_from : { ctl : F64, atl : F64 }, I64, I64, List({ d : I64, tss : F64 }) -> List(Day)
+	days_from = |start, from_day, to_day, loads|
+		if (to_day <= from_day)
+			[]
+		else {
+			span = (to_day - from_day).to_u64_wrap()
+			Iter.fold(
+				(0.U64..<span).iter(),
+				{ ctl: start.ctl, atl: start.atl, out: List.with_capacity(span) },
+				|acc, i| {
+					d = from_day + 1 + i.to_i64_wrap()
+					load = List.fold(loads, 0.0, |t, o| if (o.d == d) t + o.tss else t)
+					s = step({ ctl_prev: acc.ctl, atl_prev: acc.atl, tss: load })
+					{ ctl: s.ctl, atl: s.atl, out: List.append(acc.out, { d, load, ctl: s.ctl, atl: s.atl, tsb: s.tsb }) }
+				},
+			).out
+		}
+
 	# twelve Monday weeks of a real athlete's daily load, oldest first, the
 	# newest three days into its week, and the CTL the series held on the
 	# Sunday before the first
@@ -79,6 +104,24 @@ Load :: [].{
 				}
 			},
 		).weeks
+
+	# the forward walk: a row per day of the span and none outside it, each
+	# one step from the row before it, loads summed by day, an entry outside
+	# the span ignored
+	expect {
+		rows = days_from({ ctl: 40.0, atl: 50.0 }, 10, 13, [{ d: 12, tss: 30.0 }, { d: 12, tss: 20.0 }, { d: 10, tss: 500.0 }, { d: 14, tss: 500.0 }])
+		s1 = step({ ctl_prev: 40.0, atl_prev: 50.0, tss: 0.0 })
+		s2 = step({ ctl_prev: s1.ctl, atl_prev: s1.atl, tss: 50.0 })
+		s3 = step({ ctl_prev: s2.ctl, atl_prev: s2.atl, tss: 0.0 })
+		near = |r, d, l, s| r.d == d and (r.load - l).abs() < 0.000001 and (r.ctl - s.ctl).abs() < 0.000001 and (r.atl - s.atl).abs() < 0.000001 and (r.tsb - s.tsb).abs() < 0.000001
+		match rows {
+			[a, b, c] => near(a, 11, 0.0, s1) and near(b, 12, 50.0, s2) and near(c, 13, 0.0, s3)
+			_ => Bool.False
+		}
+	}
+
+	# a span that does not run forward has no rows
+	expect List.is_empty(days_from({ ctl: 40.0, atl: 50.0 }, 10, 10, [{ d: 10, tss: 50.0 }])) and List.is_empty(days_from({ ctl: 40.0, atl: 50.0 }, 10, 9, []))
 
 	# a day at CTL holds CTL, and a span at the hold's daily rate ends where
 	# it started, whatever its length

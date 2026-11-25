@@ -979,26 +979,67 @@ Metrics :: [].{
 				},
 		)
 
-	## the projection walk (ADR 0010): fold load_step day by day from a
-	## measured baseline to a horizon, over (day, tss) contributions. PURE — both the
-	## recorded-plan projection (`events`) and the hypothetical one (`project`) call
-	## this, so the two can never disagree about the arithmetic.
+	## the projection walk (ADR 0010): the state Load.days_from reaches on the
+	## horizon, walking from a measured baseline over (day, tss) contributions,
+	## and the baseline itself when the horizon does not lie past it.
 	project_walk : { ctl : F64, atl : F64 }, I64, I64, List({ d : I64, tss : F64 }) -> { ctl : F64, atl : F64, tsb : F64 }
-	project_walk = |base, base_days, horizon_days, loads|
-		if (horizon_days <= base_days)
-			{ ctl: base.ctl, atl: base.atl, tsb: base.ctl - base.atl }
-		else {
-			span = (horizon_days - base_days).to_u64_wrap()
-			Iter.fold(
-				(0.U64..<span).iter(),
-				{ ctl: base.ctl, atl: base.atl, tsb: base.ctl - base.atl },
-				|acc, i| {
-					d = base_days + 1 + (i).to_i64_wrap()
-					tss = List.fold(loads, 0.0, |t, o| if (o.d == d) t + o.tss else t)
-					load_step({ ctl_prev: acc.ctl, atl_prev: acc.atl, tss })
-				},
-			)
+	project_walk = |base, base_days, horizon_days, loads| walk_end(base, Load.days_from(base, base_days, horizon_days, loads))
+
+	walk_end : { ctl : F64, atl : F64 }, List(Load.Day) -> { ctl : F64, atl : F64, tsb : F64 }
+	walk_end = |base, days|
+		match List.last(days) {
+			Ok(x) => { ctl: x.ctl, atl: x.atl, tsb: x.tsb }
+			Err(_) => { ctl: base.ctl, atl: base.atl, tsb: base.ctl - base.atl }
 		}
+
+	## price each session in a window: the (day, load) pairs the walk folds,
+	## and the sessions it could not price with the reason (ADR 0009: unpriced
+	## is stated, never a silent zero)
+	price_sessions : List({ date : Str, d : I64, target : Target }), ProjectionInputs -> { loads : List({ d : I64, tss : F64 }), unprojected : List({ date : Str, target_literal : Str, reason : Str }) }
+	price_sessions = |sessions, inp|
+		List.fold(
+			sessions,
+			{ loads: [], unprojected: [] },
+			|acc, s|
+				match projected_load(s.target, inp) {
+					Load(x) => { ..acc, loads: List.append(acc.loads, { d: s.d, tss: x }) }
+					Unprojected(r) => { ..acc, unprojected: List.append(acc.unprojected, { date: s.date, target_literal: target_literal(s.target), reason: r }) }
+				},
+		)
+
+	## one day of a projection: the load the plan prices onto it and the state
+	## the walk leaves. `load_known` is false when a session on the day could
+	## not be priced, so its load counts only the sessions that were.
+	ProjectedDay : { date : Str, load : F64, load_known : Bool, ctl : F64, atl : F64, tsb : F64 }
+
+	## A plan projected onto a horizon (ADR 0010, ADR 0019): the sessions after
+	## the baseline day through the horizon are priced, and one walk from the
+	## baseline gives both the state on the horizon and the day-by-day series.
+	## The series stops on the plan's last day when that comes before the
+	## horizon, since past it the walk is the decay of days nobody planned; a
+	## plan with no session after the baseline has no series. An unpriced
+	## session adds no load to its day.
+	project_plan : { ctl : F64, atl : F64 }, I64, I64, List({ date : Str, d : I64, target : Target }), ProjectionInputs -> { ctl : F64, atl : F64, tsb : F64, considered : U64, projected : U64, unprojected : List({ date : Str, target_literal : Str, reason : Str }), series : List(ProjectedDay) }
+	project_plan = |base, base_days, horizon, sessions, inp| {
+		in_window = List.keep_if(sessions, |s| s.d > base_days and s.d <= horizon)
+		priced = price_sessions(in_window, inp)
+		walked = Load.days_from(base, base_days, horizon, priced.loads)
+		at = walk_end(base, walked)
+		plan_end = List.fold(sessions, base_days, |m, s| if (s.d > m) s.d else m)
+		unpriced_days = List.keep_oks(priced.unprojected, |u| date_str_to_days(u.date))
+		series = List.keep_oks(
+			walked,
+			|x|
+				if x.d <= plan_end {
+					load_known : Bool
+					load_known = !(List.contains(unpriced_days, x.d))
+					Ok({ date: days_to_date_str(x.d), load: x.load, load_known, ctl: x.ctl, atl: x.atl, tsb: x.tsb })
+				} else {
+					Err(PastPlan)
+				},
+		)
+		{ ctl: at.ctl, atl: at.atl, tsb: at.tsb, considered: List.len(in_window), projected: List.len(priced.loads), unprojected: priced.unprojected, series }
+	}
 
 	load_step : { ctl_prev : F64, atl_prev : F64, tss : F64 } -> { ctl : F64, atl : F64, tsb : F64 }
 	load_step = Load.step
@@ -6095,6 +6136,79 @@ expect {
 	r = Metrics.project_walk({ ctl: 40.0, atl: 40.0 }, 0, 5, [{ d: 9, tss: 500.0 }, { d: 0, tss: 500.0 }])
 	d = Metrics.project_walk({ ctl: 40.0, atl: 40.0 }, 0, 5, [])
 	(r.ctl - d.ctl).abs() < 0.0001
+}
+
+# the projected series, over a plan dated from a baseline day: a power
+# session, a session with no target, a heart-rate band with no zones to
+# price it, a session rating and another power session four days later
+proj_base : I64
+proj_base = (Metrics.date_str_to_days("2026-11-25")).ok_or(0)
+
+proj_inputs : Metrics.ProjectionInputs
+proj_inputs = { ftp: 230.0, zones: NoZones, pace_thresholds: [] }
+
+proj_session : I64, Str -> { date : Str, d : I64, target : Metrics.Target }
+proj_session = |k, lit| { date: Metrics.days_to_date_str(proj_base + k), d: proj_base + k, target: (Metrics.parse_any_target(lit)).ok_or(Metrics.no_target) }
+
+proj_plan : List({ date : Str, d : I64, target : Metrics.Target })
+proj_plan = [proj_session(1, "3x12:00@230W"), proj_session(2, ""), proj_session(3, "1x1:00:00@HR125-147"), proj_session(3, "1x45:00@RPE6"), proj_session(7, "4x8:00@250W")]
+
+proj_close : { ctl : F64, atl : F64, tsb : F64 }, { ctl : F64, atl : F64, tsb : F64 } -> Bool
+proj_close = |a, b| (a.ctl - b.ctl).abs() < 0.000001 and (a.atl - b.atl).abs() < 0.000001 and (a.tsb - b.tsb).abs() < 0.000001
+
+# every day of the series is what the projection to that day returns, the
+# state and the load alike, and the last day is the plan's last day
+expect {
+	base = { ctl: 42.0, atl: 51.0 }
+	full = Metrics.project_plan(base, proj_base, proj_base + 30, proj_plan, proj_inputs)
+	List.len(full.series) == 7
+		and List.all(
+			full.series,
+			|day| {
+				d = (Metrics.date_str_to_days(day.date)).ok_or(0)
+				at = Metrics.project_plan(base, proj_base, d, proj_plan, proj_inputs)
+				last = (List.last(at.series)) ?? { date: "", load: -1.0, load_known: Bool.False, ctl: 0.0, atl: 0.0, tsb: 0.0 }
+				proj_close({ ctl: day.ctl, atl: day.atl, tsb: day.tsb }, { ctl: at.ctl, atl: at.atl, tsb: at.tsb }) and last.date == day.date and (last.load - day.load).abs() < 0.000001
+			},
+		)
+		and (List.first(full.series) ?? { date: "", load: 0.0, load_known: Bool.False, ctl: 0.0, atl: 0.0, tsb: 0.0 }).date == "2026-11-26"
+		and (List.last(full.series) ?? { date: "", load: 0.0, load_known: Bool.False, ctl: 0.0, atl: 0.0, tsb: 0.0 }).date == "2026-12-02"
+}
+
+# the sessions it cannot price project as if they were absent: the same
+# series day for day and the same state on the horizon, their day's load
+# only what was priced and flagged, and each one named with its reason
+expect {
+	base = { ctl: 42.0, atl: 51.0 }
+	priced = Metrics.project_plan(base, proj_base, proj_base + 10, proj_plan, proj_inputs)
+	without = Metrics.project_plan(base, proj_base, proj_base + 10, [proj_session(1, "3x12:00@230W"), proj_session(3, "1x45:00@RPE6"), proj_session(7, "4x8:00@250W")], proj_inputs)
+	known = List.map(priced.series, |x| x.load_known)
+	List.len(priced.series) == List.len(without.series)
+		and List.all(List.map2(priced.series, without.series, |a, b| a.date == b.date and (a.load - b.load).abs() < 0.000001 and proj_close({ ctl: a.ctl, atl: a.atl, tsb: a.tsb }, { ctl: b.ctl, atl: b.atl, tsb: b.tsb })), |ok| ok)
+		and proj_close({ ctl: priced.ctl, atl: priced.atl, tsb: priced.tsb }, { ctl: without.ctl, atl: without.atl, tsb: without.tsb })
+		and known == [Bool.True, Bool.False, Bool.False, Bool.True, Bool.True, Bool.True, Bool.True]
+		and List.map(priced.unprojected, |u| u.reason) == ["no_target", "no_hr_zones"]
+		and priced.considered == 5
+		and priced.projected == 3
+}
+
+# no series past the plan's last day: a horizon beyond it stops the series
+# there while the state still walks on to the horizon, a horizon inside the
+# plan stops it on the horizon, and a plan with nothing after the baseline
+# day has no series and states the baseline
+expect {
+	base = { ctl: 42.0, atl: 51.0 }
+	beyond = Metrics.project_plan(base, proj_base, proj_base + 20, proj_plan, proj_inputs)
+	inside = Metrics.project_plan(base, proj_base, proj_base + 4, proj_plan, proj_inputs)
+	past = Metrics.project_plan(base, proj_base, proj_base + 20, [proj_session(0, "3x12:00@230W"), proj_session(-3, "1x45:00@RPE6")], proj_inputs)
+	end = (List.last(beyond.series)) ?? { date: "", load: 0.0, load_known: Bool.False, ctl: 0.0, atl: 0.0, tsb: 0.0 }
+	List.len(beyond.series) == 7
+		and end.date == "2026-12-02"
+		and beyond.ctl < end.ctl
+		and List.len(inside.series) == 4
+		and (List.last(inside.series) ?? end).date == "2026-11-29"
+		and List.is_empty(past.series)
+		and proj_close({ ctl: past.ctl, atl: past.atl, tsb: past.tsb }, Metrics.project_walk(base, proj_base, proj_base + 20, []))
 }
 
 expect {

@@ -16,7 +16,8 @@
     "sessions_considered",
     "sessions_projected",
     "unprojected",
-    "hypothetical"
+    "hypothetical",
+    "series"
   ],
   "properties": {
     "target_date": {
@@ -129,6 +130,42 @@
           "watts": {
             "type": "number",
             "description": "Target watts; 0 for every kind but power."
+          }
+        }
+      }
+    },
+    "series": {
+      "type": "array",
+      "description": "The projection day by day: one row per day from the day after projected_from through the plan's last day, or through target_date when the plan reaches past it, from the same walk that gives ctl, atl and tsb, so the row on target_date carries those values. Empty when the plan has no session after projected_from. load is what the plan prices onto the day; load_known is false when a session on the day is in unprojected, and its load then counts only the sessions that were priced.",
+      "items": {
+        "type": "object",
+        "additionalKeys": false,
+        "required": [
+          "date",
+          "load",
+          "load_known",
+          "ctl",
+          "atl",
+          "tsb"
+        ],
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "load": {
+            "type": "number"
+          },
+          "load_known": {
+            "type": "boolean"
+          },
+          "ctl": {
+            "type": "number"
+          },
+          "atl": {
+            "type": "number"
+          },
+          "tsb": {
+            "type": "number"
           }
         }
       }

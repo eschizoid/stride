@@ -1,4 +1,5 @@
 import rr.Text
+import core.Load
 import core.Series
 import core.Sports
 import Board
@@ -121,6 +122,10 @@ Gate :: [].{
 	# a strength-like sport no family holds: the mixed athlete's one-off
 	rare : Str
 	rare = (List.first(List.keep_if(Sports.strength_like, |s| Sports.members(s) == [s]))) ?? "Crossfit"
+
+	# the first fixture athlete, the one a single-board expect reads
+	first_athlete : Athlete
+	first_athlete = (List.first(athletes)) ?? { name: "none", units: Metric, sports: [] }
 
 	athletes : List(Athlete)
 	athletes = {
@@ -460,6 +465,8 @@ Gate :: [].{
 			kpis: [],
 			ev_tile_name: [],
 			ev_tile_proj: [],
+			proj: [],
+			proj_key: t,
 			ev_tile_sub: t,
 			zero_note: p,
 			ridden_found: Bool.False,
@@ -653,16 +660,51 @@ Gate :: [].{
 		}
 	}
 
+	# the projection a board continues into: twenty planned days after the
+	# series' last, walked by the engine's step from its last point over a
+	# weekly plan with a rest day nothing prices, a day whose session only
+	# partly prices and a heavy day, so the dashed lines rise and fall and
+	# the hollow bars run to the rug's top
+	proj_days : List(Str)
+	proj_days = List.concat(List.map(seq(18), |d| "2026-11-${two(d + 12)}"), List.map(seq(2), |d| "2026-12-${two(d)}"))
+
+	board_proj : U64, List(Db.Point) -> List(Db.ProjDay)
+	board_proj = |k, data| {
+		scale = 0.6 + 0.15 * U64.to_f32(k % 7)
+		plan = [70.0, 0.0, 40.0, 95.0, 0.0, 210.0, 55.0]
+		last = (List.last(data)) ?? { ctl: 0.0, atl: 0.0, tsb: 0.0, tss: 0.0 }
+		walk = List.fold(
+			List.map_with_index(proj_days, |d, i| { d, i }),
+			{ ctl: last.ctl, atl: last.atl, out: [] },
+			|acc, e| {
+				t = ((List.get(plan, e.i % 7)) ?? 0.0) * scale
+				s = Load.step({ ctl_prev: F32.to_f64(acc.ctl), atl_prev: F32.to_f64(acc.atl), tss: F32.to_f64(t) })
+				ctl = F64.to_f32_wrap(s.ctl)
+				atl = F64.to_f32_wrap(s.atl)
+				{ ctl, atl, out: List.append(acc.out, { day: e.d, ctl, atl, tsb: ctl - atl, tss: t, known: e.i % 7 != 1 and e.i % 7 != 2 }) }
+			},
+		)
+		walk.out
+	}
+
 	# One board per athlete, range and event state. `ev` picks the event
 	# tile's story: 0 an event ahead with a two-line name and a projection,
 	# 1 an event today marked on the plot, a recent ridden event and an
-	# event record the database could not read.
+	# event record the database could not read, 2 an event the projection
+	# reaches, marked on its last day.
+	# The event name is fitted in `face`, as the window fits it in the face
+	# it draws with.
 	board_model : Ui.Model, Athlete, U64, U64, U64 -> Ui.Model
-	board_model = |base, a, k, range, ev| {
+	board_model = |base, a, k, range, ev| board_model_in(prose_font, base, a, k, range, ev)
+
+	board_model_in : Text.Font, Ui.Model, Athlete, U64, U64, U64 -> Ui.Model
+	board_model_in = |face, base, a, k, range, ev| {
 		data = board_series(k)
+		proj = if (ev == 1) [] else board_proj(k, data)
 		event = "${(List.first(athlete_heads(a))) ?? "Ride"} championship, the long course with every hill"
-		name = Board.ev_name(prose_font, event)
+		name = Board.ev_name(face, event)
 		p = Text.Prepared.stub
+		projection = { ok: Bool.True, ctl: 54.2, tsb: -9.8, considered: 20, projected: 14, days: proj }
 		{
 			..base,
 			view: 0,
@@ -673,13 +715,15 @@ Gate :: [].{
 			ends: List.map([0.U8, 1, 2], |sel| { p, sel }),
 			kpis: List.map([0.U8, 1, 2], |sel| { v: p, cap: p, sel }),
 			ev_tile_name: List.map(name.lines, |l| txt(l, name.size)),
-			ev_tile_sub: txt(if (ev == 0) "in 226d, 2027-06-26" else "today, 2026-11-12", 11.0),
-			ev_tile_proj: if (ev == 0) List.map(Board.proj_lines("2026-11-22", "2027-06-26", { ok: Bool.True, ctl: 54.2, tsb: -9.8, considered: 10, projected: 8 }), |l| txt(l, 10.0)) else [],
+			ev_tile_sub: txt(if (ev == 0) "in 226d, 2027-06-26" else if (ev == 2) "in 20d, 2026-12-02" else "today, 2026-11-12", 11.0),
+			ev_tile_proj: if (ev == 0) List.map(Board.proj_lines("2026-12-02", "2027-06-26", projection), |l| txt(l, 10.0)) else if (ev == 2) List.map(Board.proj_lines("2026-12-02", "2026-12-02", projection), |l| txt(l, 10.0)) else [],
+			proj,
+			proj_key: txt(Board.proj_key_text(projection.considered, projection.projected), 11.0),
 			ridden_found: ev == 1,
-			ridden_note: txt(Board.ev_line(prose_font, event, " done, 3d ago", 10.0), 10.0),
+			ridden_note: txt(Board.ev_line(face, event, " done, 3d ago", 10.0), 10.0),
 			ev_label: txt(event, 13.0),
-			ev_found: ev == 1,
-			ev_idx: List.len(series_days) - 1,
+			ev_found: ev != 0,
+			ev_idx: if (ev == 2) List.len(series_days) + List.len(proj) - 1 else List.len(series_days) - 1,
 			ev_warn: txt("event record unreadable", 13.0),
 			ev_warn_found: ev == 1,
 			stale_found: Bool.True,
@@ -687,7 +731,11 @@ Gate :: [].{
 	}
 
 	board_models : List({ name : Str, model : Ui.Model })
-	board_models = {
+	board_models = board_models_in(prose_font)
+
+	# every board fixture, its event names fitted in `face`
+	board_models_in : Text.Font -> List({ name : Str, model : Ui.Model })
+	board_models_in = |face| {
 		per_athlete = List.join(
 			List.map_with_index(
 				athletes,
@@ -696,7 +744,7 @@ Gate :: [].{
 						sizes,
 						|sz| {
 							base = athlete_model(a, sz)
-							List.join(List.map([30.U64, 60, 90], |r| List.map([0.U64, 1], |ev| { name: "${a.name} form ${U64.to_str(r)}d event=${U64.to_str(ev)} at ${size_name(sz)}", model: board_model(base, a, k, r, ev) })))
+							List.join(List.map([30.U64, 60, 90], |r| List.map([0.U64, 1, 2], |ev| { name: "${a.name} form ${U64.to_str(r)}d event=${U64.to_str(ev)} at ${size_name(sz)}", model: board_model_in(face, base, a, k, r, ev) })))
 						},
 					),
 				),
@@ -1361,9 +1409,81 @@ expect Gate.failures(|m| Gate.judge(Curve.owned(m, Gate.measure), Curve.marks(m,
 expect Gate.failures(|m| Gate.judge(Career.owned(m, Gate.measure), Career.marks(m, Gate.measure)), Gate.career_models) == []
 
 # the form board's gate: every athlete's board at every range, with an
-# event ahead and with the event-day story, at every size, and the two
-# boards with no plot; no text over a chip, a tile or a load bar
+# event ahead and a projection, with the event-day story, and with an event
+# the projection reaches, at every size, and the two boards with no plot,
+# in the brand faces and in the built-in face; no text over a chip, a
+# tile, a load bar or a planned load bar
 expect Gate.failures(|m| Gate.judge(Board.owned(m, Gate.measure), Board.marks(m)), Gate.board_models) == []
+expect Gate.failures(|m| Gate.judge(Board.owned(m, Gate.builtin_measure), Board.marks(m)), Gate.board_models_in(Gate.builtin_font)) == []
+
+# the projection fixtures draw what the gate claims: every board with an
+# event ahead or one the projection reaches carries twenty projected days,
+# hollow bars among its load bars, and the projection's key on the plot
+expect List.all(
+	List.keep_if(Gate.board_models, |f| Str.contains(f.name, "event=0") or Str.contains(f.name, "event=2")),
+	|f| {
+		keys = List.map(Board.marks(f.model), |m| m.key)
+		texts = List.map(Board.owned(f.model, Gate.measure), |o| o.key)
+		List.len(f.model.proj) == 20
+			and List.any(keys, |k| Str.starts_with(k, "the planned load bar on 2026-12-"))
+			and List.any(texts, |t| Str.starts_with(t, "'dashed: projected"))
+	},
+)
+
+# a board with a projection plots the range's measured days and then the
+# projected ones, its lines ending on the plan's last day at the plot's
+# right edge and the line-end values reading that day; a hollow bar marks
+# each projected day the plan priced a load onto, no bar lies past the
+# plan's last day, and a day priced nothing draws none
+expect {
+	m = Gate.board_model(Gate.athlete_model(Gate.first_athlete, Gate.default_size), Gate.first_athlete, 0, 30, 0)
+	g = Board.geom(m)
+	bs = Board.bars(g)
+	planned = List.keep_if(bs, |b| b.planned)
+	last = (List.last(m.proj)) ?? { day: "", ctl: 0.0, atl: 0.0, tsb: 0.0, tss: 0.0, known: Bool.False }
+	g.meas == 30
+		and g.n == 50
+		and List.last(g.days) == Ok("2026-12-02")
+		and (Board.x_at(g, g.n - 1) - (g.left + g.pw)).abs() < 0.01
+		and Board.end_text(g.data, 0) == "CTL ${Db.fmt_f(last.ctl)}"
+		and List.map(planned, |b| b.day) == List.keep_oks(m.proj, |d| if (d.tss > 0.0) Ok(d.day) else Err(Rest))
+		and List.len(planned) == 14
+		and List.all(bs, |b| b.box.x + b.box.w <= g.left + g.pw + 0.01)
+		and List.all(List.keep_if(bs, |b| !(b.planned)), |b| !(List.contains(Gate.proj_days, b.day)))
+}
+
+# the board's arrow cursor counts back from the latest measured day, and
+# the pointer reads every day the board draws, the projected end included,
+# whose card says it is projected and reads the plan's load
+expect {
+	a = Gate.first_athlete
+	m = Gate.board_model(Gate.athlete_model(a, Gate.default_size), a, 0, 30, 0)
+	g = Board.geom(m)
+	at_right = { ..m, mouse_in: Bool.True, mouse_x: g.left + g.pw, mouse_y: g.top + 10.0 }
+	card = Board.tip_card(at_right, g, g.n - 1, (List.last(g.data)) ?? { ctl: 0.0, atl: 0.0, tsb: 0.0, tss: 0.0 }, Gate.measure)
+	texts = List.map(Scene.owned(Labels.place(card.lines, { boxes: [], segs: [] })), |o| o.key)
+	Board.hovered({ ..m, cursor: 0 }, g) == Ok(29)
+		and Board.hovered({ ..m, cursor: 3 }, g) == Ok(26)
+		and Board.hovered(at_right, g) == Ok(49)
+		and List.contains(texts, "'2026-12-02 projected'")
+		and List.contains(texts, "'Planned load'")
+}
+
+# the event the projection reaches is marked on the projection's last day
+expect {
+	a = Gate.first_athlete
+	m = Gate.board_model(Gate.athlete_model(a, Gate.default_size), a, 0, 60, 2)
+	g = Board.geom(m)
+	m.ev_found and (Board.x_at(g, m.ev_idx - g.off) - (g.left + g.pw)).abs() < 0.01
+}
+
+# a series too short to plot draws no projection after it
+expect {
+	a = Gate.first_athlete
+	m = Gate.board_model(Gate.athlete_model(a, Gate.default_size), a, 0, 30, 0)
+	g = Board.geom({ ..m, data: List.take_first(m.data, 1), days: List.take_first(m.days, 1) })
+	g.n == 1 and g.meas == 1
+}
 
 # the session trace's gate: every session of every athlete at home and
 # zoomed with a ghost, and the three blank plots, at every size
