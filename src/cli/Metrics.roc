@@ -1,3 +1,4 @@
+import core.Load
 import core.Series
 import core.Sports
 import core.Units
@@ -844,22 +845,14 @@ Metrics :: [].{
 	}
 
 	# ── daily load recurrence (CTL/ATL EWMA) ────────────────────────────
-	# One day's step of the fitness/fatigue/form model:
-	#   CTL (fitness) = 42-day EWMA of daily TSS; ATL (fatigue) = 7-day EWMA.
-	#   TSB (form)    = TODAY's fitness minus TODAY's fatigue, so tsb == ctl - atl and
-	#                   the verdict printed right after `analyze` already carries the
-	#                   session you just uploaded (TrainingPeaks reports yesterday's).
-	#
-	# The discrete factor for time constant tau is a = 1 - e^(-1/tau), NOT 1/tau —
-	# 1/tau delivers effective constants of 41.7 and 6.5 days and runs transients 1-7%
-	# fast; steady state is identical, which is how it hides. Literals because this
-	# compiler has no `.exp()` on F64; an expect pins each against `exp_neg`, so the
-	# literal cannot drift from the formula.
-	#   ctl_alpha = 1 - e^(-1/42) = 0.0235283133
+	# The recurrence and its two factors live in core.Load, which the window
+	# also reads; these are the engine's spellings of them. The expects that
+	# pin the factors against `exp_neg` and the 42-day convergence stay here,
+	# beside the exponential they compute.
 	ctl_alpha : F64
-	ctl_alpha = 0.0235283133
+	ctl_alpha = Load.ctl_alpha
 	atl_alpha : F64
-	atl_alpha = 0.1331221
+	atl_alpha = Load.atl_alpha
 
 	## deterministic TSS of a structured target's WORK (ADR 0014 targets as the input):
 	## (watts/ftp)² × hours × 100 — the same arithmetic analyze runs on real
@@ -1008,13 +1001,7 @@ Metrics :: [].{
 		}
 
 	load_step : { ctl_prev : F64, atl_prev : F64, tss : F64 } -> { ctl : F64, atl : F64, tsb : F64 }
-	load_step = |{ ctl_prev, atl_prev, tss }| {
-		ctl = ctl_prev + (tss - ctl_prev) * ctl_alpha
-		atl = atl_prev + (tss - atl_prev) * atl_alpha
-		# same-day form: today's fitness minus today's fatigue, so the number
-		# reconciles (tsb = ctl - atl) and reflects state AFTER today's training
-		{ ctl, atl, tsb: ctl - atl }
-	}
+	load_step = Load.step
 
 	# ── derived FTP ─────────────────────────────────────────────────────
 	# Invariant: FTP is derived from power history, never configured.
@@ -5926,11 +5913,12 @@ expect {
 	same and inside and outside and zero_not_uniform
 }
 
-# The literals beside `ctl_alpha` are 1 - e^(-1/tau) truncated at ~1e-10. The
-# tolerance is atl_alpha's own truncation error (2.498e-10) plus 20%. The 42-day
-# convergence expect (search `63.21`) already catches a reversion to the 1/tau
-# form; this catches a fat-fingered digit, which that expect does not see until
-# about the third decimal of atl_alpha.
+# The literals behind `ctl_alpha` and `atl_alpha` (in core.Load) are
+# 1 - e^(-1/tau) truncated at ~1e-10. The tolerance is atl_alpha's own
+# truncation error (2.498e-10) plus 20%. The 42-day convergence expect (search
+# `63.21`) already catches a reversion to the 1/tau form; this catches a
+# fat-fingered digit, which that expect does not see until about the third
+# decimal of atl_alpha.
 expect {
 	ctl_true = 1.0 - Metrics.exp_neg(1.0 / 42.0)
 	atl_true = 1.0 - Metrics.exp_neg(1.0 / 7.0)

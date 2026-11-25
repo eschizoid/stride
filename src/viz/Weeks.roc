@@ -1,6 +1,7 @@
 import rr.Color
 import rr.Draw
 import core.Fmt
+import core.Load
 import Db
 import Labels
 import Scene
@@ -114,8 +115,9 @@ Weeks :: [].{
 	pick : Str, Str -> Str
 	pick = |current, clicked| if (clicked == "" or clicked == current) "" else clicked
 
-	# the shared header line for a week: hours in zones, load, easy share and
-	# the fitness it gained, each part only when its mode has the week
+	# the shared header line for a week: the hours of its polarized split and
+	# their easy share, its load beside the load that would have held CTL,
+	# and the fitness it gained, each part only when its mode has the week
 	week_line : Str, List(Db.ZoneWeek), List(Db.RampWeek) -> Str
 	week_line = |wk, zws, rws| {
 		z = List.first(List.keep_if(zws, |w| w.wk == wk))
@@ -123,15 +125,14 @@ Weeks :: [].{
 		parts = List.join([
 			match z {
 				Ok(zw) => {
-					tot = zw.z1 + zw.z2 + zw.z3 + zw.z4 + zw.z5
 					itot = zw.easy + zw.moderate + zw.hard
-					share = if (itot <= 0) "no classified time" else if (zw.days < 7) "easy ${I64.to_str(zw.easy * 100 // itot)}% so far, ${I64.to_str(zw.days)} of 7 days" else "easy ${I64.to_str(zw.easy * 100 // itot)}%"
-					[hours(tot), share]
+					share = if (itot <= 0) "no polarized time" else if (zw.days < 7) "${hours(itot)}, easy ${I64.to_str(zw.easy * 100 // itot)}% so far, ${I64.to_str(zw.days)} of 7 days" else "${hours(itot)}, easy ${I64.to_str(zw.easy * 100 // itot)}%"
+					[share]
 				}
 				Err(_) => []
 			},
 			match r {
-				Ok(rw) => [Db.num_unit(rw.tss, "load"), "ctl ${Fmt.tenths_signed(rw.ramp10)}/wk"]
+				Ok(rw) => [Db.num_unit(rw.tss, "load"), "hold ${Db.grouped(F64.round_to_i64_try(Load.hold(rw.ctl_start, rw.days)) ?? 0)}", "ctl ${Fmt.tenths_signed(rw.ramp10)}/wk"]
 				Err(_) => []
 			},
 		])
@@ -139,9 +140,13 @@ Weeks :: [].{
 	}
 
 	hours : I64 -> Str
-	hours = |secs| {
+	hours = |secs| "${tenths_of_hour(secs)} h"
+
+	# seconds as hours to a tenth, unitless
+	tenths_of_hour : I64 -> Str
+	tenths_of_hour = |secs| {
 		h10 = secs * 10 // 3600
-		"${Db.grouped(h10 // 10)}.${I64.to_str(h10 % 10)} h"
+		"${Db.grouped(h10 // 10)}.${I64.to_str(h10 % 10)}"
 	}
 
 	chip_box : U64 -> Labels.Rect
@@ -207,11 +212,18 @@ expect Weeks.pick("", "2026-11-02") == "2026-11-02" and Weeks.pick("2026-11-02",
 # only that mode's parts
 expect {
 	zw = [{ wk: "2026-11-02", days: 7, z1: 3600, z2: 18000, z3: 3600, z4: 0, z5: 0, easy: 21600, moderate: 3600, hard: 0 }]
-	rw = [{ wk: "2026-11-02", days: 7, tss: 393, ctl10: 496, ramp10: 10 }]
-	Weeks.week_line("2026-11-02", zw, rw) == "wk of 2026-11-02   7.0 h   easy 85%   393 load   ctl +1.0/wk"
-		and Weeks.week_line("2026-11-02", [], rw) == "wk of 2026-11-02   393 load   ctl +1.0/wk"
+	rw = [{ wk: "2026-11-02", days: 7, tss: 393, ctl10: 496, ramp10: 10, ctl_start: 48.6 }]
+	Weeks.week_line("2026-11-02", zw, rw) == "wk of 2026-11-02   7.0 h, easy 85%   393 load   hold 340   ctl +1.0/wk"
+		and Weeks.week_line("2026-11-02", [], rw) == "wk of 2026-11-02   393 load   hold 340   ctl +1.0/wk"
 }
+# a week still running is held to its elapsed days, in the line as on the bar
 expect {
 	zw = [{ wk: "2026-11-09", days: 3, z1: 0, z2: 7200, z3: 0, z4: 0, z5: 0, easy: 7200, moderate: 0, hard: 0 }]
-	Weeks.week_line("2026-11-09", zw, []) == "wk of 2026-11-09   2.0 h   easy 100% so far, 3 of 7 days"
+	rw = [{ wk: "2026-11-09", days: 3, tss: 120, ctl10: 495, ramp10: -5, ctl_start: 50.0 }]
+	Weeks.week_line("2026-11-09", zw, rw) == "wk of 2026-11-09   2.0 h, easy 100% so far, 3 of 7 days   120 load   hold 150   ctl -0.5/wk"
+}
+# a week of lifting alone has no polarized time to share
+expect {
+	zw = [{ wk: "2026-11-16", days: 7, z1: 1800, z2: 1800, z3: 0, z4: 0, z5: 0, easy: 0, moderate: 0, hard: 0 }]
+	Weeks.week_line("2026-11-16", zw, []) == "wk of 2026-11-16   no polarized time"
 }

@@ -1020,10 +1020,13 @@ Db :: [].{
 	# twelve Monday weeks off the weekly_ramp view - the ONE definition of
 	# weekly ramp - in tenths (F64 has no narrowing; SQL rounds to integers).
 	# `days` counts the week's days the series covers, the way ZoneWeek does.
-	RampWeek : { wk : Str, days : I64, tss : I64, ctl10 : I64, ramp10 : I64 }
+	# The view's ramp is its end-of-week CTL less the CTL the week started
+	# from, so `ctl_start` is that start, unrounded: the hold level the load
+	# mode draws (core.Load.hold) is read off it.
+	RampWeek : { wk : Str, days : I64, tss : I64, ctl10 : I64, ramp10 : I64, ctl_start : F64 }
 	load_ramp_weeks! : Sqlite.Db => List(RampWeek)
 	load_ramp_weeks! = |db|
-		match db.query!("SELECT CAST(wk AS TEXT) AS wk, CAST(MIN(7, MAX(0, julianday((SELECT today FROM series_clock)) - julianday(wk) + 1)) AS INTEGER) AS dys, CAST(ROUND(tss) AS INTEGER) AS tss, CAST(ROUND(ctl_end * 10) AS INTEGER) AS ctl10, CAST(ROUND(ramp * 10) AS INTEGER) AS ramp10 FROM weekly_ramp ORDER BY wk ASC", []) {
+		match db.query!("SELECT CAST(wk AS TEXT) AS wk, CAST(MIN(7, MAX(0, julianday((SELECT today FROM series_clock)) - julianday(wk) + 1)) AS INTEGER) AS dys, CAST(ROUND(tss) AS INTEGER) AS tss, CAST(ROUND(ctl_end * 10) AS INTEGER) AS ctl10, CAST(ROUND(ramp * 10) AS INTEGER) AS ramp10, CAST(ctl_end - ramp AS REAL) AS cs FROM weekly_ramp ORDER BY wk ASC", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(
@@ -1034,7 +1037,8 @@ Db :: [].{
 						c10 = r.i64("ctl10") ? |_| "bad"
 						r10 = r.i64("ramp10") ? |_| "bad"
 						dy = r.i64("dys") ? |_| "bad"
-						Ok({ wk, days: dy, tss: ts, ctl10: c10, ramp10: r10 })
+						cs = r.f64("cs") ? |_| "bad"
+						Ok({ wk, days: dy, tss: ts, ctl10: c10, ramp10: r10, ctl_start: cs })
 					},
 				)
 		}

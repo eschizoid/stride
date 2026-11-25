@@ -1,0 +1,112 @@
+# stride-core: the fitness/fatigue recurrence, shared by both binaries.
+#
+# The engine steps it once per day to build daily_load; the window reads the
+# weekly hold level off it. One definition, because a second copy of a time
+# constant is how two surfaces disagree about what a week of training did.
+Load :: [].{
+	# One day's step of the fitness/fatigue/form model:
+	#   CTL (fitness) = 42-day EWMA of daily load; ATL (fatigue) = 7-day EWMA.
+	#   TSB (form)    = TODAY's fitness minus TODAY's fatigue, so tsb == ctl - atl
+	#                   and a verdict printed right after `analyze` already
+	#                   carries the session just uploaded.
+	#
+	# The discrete factor for time constant tau is a = 1 - e^(-1/tau), not 1/tau:
+	# 1/tau delivers effective constants of 41.7 and 6.5 days and runs transients
+	# fast while the steady state is identical. The values are literals because
+	# F64 has no `.exp()` on this compiler; the engine's Metrics expects pin each
+	# against its computed exponential.
+	#   ctl_alpha = 1 - e^(-1/42)
+	#   atl_alpha = 1 - e^(-1/7)
+	ctl_alpha : F64
+	ctl_alpha = 0.0235283133
+	atl_alpha : F64
+	atl_alpha = 0.1331221
+
+	step : { ctl_prev : F64, atl_prev : F64, tss : F64 } -> { ctl : F64, atl : F64, tsb : F64 }
+	step = |{ ctl_prev, atl_prev, tss }| {
+		ctl = ctl_prev + (tss - ctl_prev) * ctl_alpha
+		atl = atl_prev + (tss - atl_prev) * atl_alpha
+		# same-day form: today's fitness minus today's fatigue, so the number
+		# reconciles (tsb = ctl - atl) and reflects state AFTER today's training
+		{ ctl, atl, tsb: ctl - atl }
+	}
+
+	# The load over `days` days that leaves CTL where it started. A day whose
+	# load equals CTL is the step's fixed point (ctl + (ctl - ctl) * a = ctl),
+	# so the constant daily load that holds CTL is CTL itself, and the hold
+	# over a span is CTL at its start times the days it counts. A week still
+	# running counts only its elapsed days, so it is held to a partial level.
+	#
+	# The step weighs a late day above an early one and the hold weighs every
+	# day alike, so a week whose load lands early can sit a hair above its
+	# hold and still lose CTL. The expects below bound that miss.
+	hold : F64, I64 -> F64
+	hold = |ctl_start, days| if (days <= 0) 0.0 else ctl_start * days.to_f64()
+
+	# walks a span of daily loads from a starting CTL with the step above
+	walk : F64, List(F64) -> F64
+	walk = |ctl_start, loads| List.fold(loads, ctl_start, |c, t| (step({ ctl_prev: c, atl_prev: 0.0, tss: t })).ctl)
+
+	# twelve Monday weeks of a real athlete's daily load, oldest first, the
+	# newest three days into its week, and the CTL the series held on the
+	# Sunday before the first
+	real_ctl_start : F64
+	real_ctl_start = 42.2724
+
+	real_days : List(F64)
+	real_days = [0.0, 46.8, 86.8, 37.7, 64.9, 97.6, 0.0, 72.2, 39.0, 85.0, 37.8, 70.8, 75.4, 0.0, 73.4, 38.6, 80.1, 56.6, 41.3, 123.5, 63.2, 47.6, 75.2, 30.0, 94.5, 43.4, 66.1, 48.9, 0.0, 62.0, 60.5, 59.1, 55.5, 70.1, 0.0, 164.2, 38.9, 35.1, 73.3, 20.9, 0.0, 0.0, 82.6, 37.6, 78.2, 58.0, 38.6, 61.3, 76.7, 0.0, 95.9, 33.9, 67.9, 32.3, 0.0, 37.1, 82.1, 61.8, 46.6, 0.0, 64.8, 46.5, 91.6, 0.0, 192.2, 54.2, 59.2, 49.4, 88.8, 87.5, 0.0, 39.0, 81.5, 66.5, 38.3, 52.9, 0.0, 65.2, 209.8, 0.0]
+
+	# the series cut into Monday weeks, each with the CTL it started and
+	# ended on, its total load and the days it covers
+	real_weeks : List({ ctl_start : F64, ctl_end : F64, total : F64, days : I64 })
+	real_weeks =
+		List.fold(
+			List.map_with_index(real_days, |t, i| { t, i }),
+			{ weeks: [], ctl: real_ctl_start },
+			|acc, d| {
+				c = walk(acc.ctl, [d.t])
+				if d.i % 7 == 0 {
+					{ weeks: List.append(acc.weeks, { ctl_start: acc.ctl, ctl_end: c, total: d.t, days: 1 }), ctl: c }
+				} else {
+					last = (List.last(acc.weeks)) ?? { ctl_start: acc.ctl, ctl_end: c, total: 0.0, days: 0 }
+					{ weeks: List.append(List.drop_last(acc.weeks, 1), { ..last, ctl_end: c, total: last.total + d.t, days: last.days + 1 }), ctl: c }
+				}
+			},
+		).weeks
+
+	# a day at CTL holds CTL, and a span at the hold's daily rate ends where
+	# it started, whatever its length
+	expect {
+		held = |c, n| (walk(c, List.repeat(hold(c, n) / n.to_f64(), n.to_u64_wrap())) - c).abs() < 0.000001
+		(step({ ctl_prev: 51.6, atl_prev: 0.0, tss: 51.6 }).ctl - 51.6).abs() < 0.000001
+			and held(51.6, 7)
+			and held(51.6, 3)
+			and held(12.0, 1)
+	}
+
+	# the running week is held to its elapsed days: three days of a week at
+	# CTL 50 hold 150, not the full week's 350
+	expect (hold(50.0, 3) - 150.0).abs() < 0.000001 and (hold(50.0, 7) - 350.0).abs() < 0.000001 and hold(50.0, 0) == 0.0
+
+	# the fixture is the athlete's series: the step walks it onto the CTL each
+	# week ended on, and the newest week is three days old
+	expect {
+		ends = List.map(real_weeks, |w| w.ctl_end)
+		stored = [43.14, 44.77, 48.40, 49.87, 48.95, 48.42, 50.48, 48.55, 49.73, 53.78, 51.61, 54.33]
+		List.len(ends) == 12
+			and List.all(List.map2(ends, stored, |a, b| (a - b).abs() < 0.01), |ok| ok)
+			and (List.last(real_weeks) ?? { ctl_start: 0.0, ctl_end: 0.0, total: 0.0, days: 0 }).days == 3
+	}
+
+	# over every week of that series, the running one included, a week whose
+	# load tops its hold gained CTL and one under it lost CTL
+	expect List.all(real_weeks, |w| (w.ctl_end > w.ctl_start) == (w.total > hold(w.ctl_start, w.days)))
+
+	# the miss the hold allows: a week's whole load on its Monday, a hundredth
+	# over its hold, loses CTL, and by under 1.1% of where it started
+	expect {
+		c = 50.0
+		lost = walk(c, [hold(c, 7) * 1.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+		lost < c and c - lost < c * 0.011
+	}
+}
