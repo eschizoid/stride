@@ -415,7 +415,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1516)?
+	checks_ran_exactly!(1518)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2607,6 +2607,23 @@ b_first_run! = |ctx| {
 	mid_rc = exit_status!("${run(one, "setup")} </dev/null >/dev/null 2>&1")
 	check!("one ride: setup at the zones step with no terminal exits non-zero (${mid_rc}) and says how to run it", mid_rc != "0" and Str.contains(mid, "heart rate") and Str.contains(mid, "Run it in a terminal window") and !(Str.contains(mid, "`stride auth`")))?
 	_ = sh!("rm -rf '${empty}' '${one}'")
+	# at the authorize step the walk would open the browser and wait on a
+	# loopback listener for the redirect: with no terminal it stops before
+	# either. The API base is Strava's own, since a loopback one opens no
+	# browser at all, but nothing reaches it: no step before the code makes
+	# a request, and `open` and `xdg-open` are stubs that record a call.
+	auth = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+	_ = stride!(ctx.bin, auth, ["init"])
+	_ = sql!("${auth}/.stride/db.sqlite", "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','e2e-id'),('strava_client_secret','e2e-secret');")
+	_ = sh!("mkdir -p '${auth}/stub'; for p in open xdg-open; do printf '#!/bin/sh\\ntouch \"${auth}/opened\"\\n' > '${auth}/stub/'$p; chmod +x '${auth}/stub/'$p; done")
+	at_auth = "env -u STRAVA_CLIENT_ID -u STRAVA_CLIENT_SECRET -u STRIDE_API_BASE -u SSH_CONNECTION -u SSH_TTY PATH=\"${auth}/stub:$PATH\" HOME='${auth}' STRIDE_FORMAT=human perl -e 'alarm 30; exec @ARGV' '${ctx.bin}' setup"
+	auth_rc = exit_status!("${at_auth} </dev/null >'${auth}/out' 2>&1")
+	auth_out = sh!("cat '${auth}/out'; [ -e '${auth}/opened' ] && echo BROWSER-OPENED")
+	check!("setup at the authorize step with no terminal exits 1 (${auth_rc}) before opening a browser", auth_rc == "1" and Str.contains(auth_out, "Run it in a terminal window") and !(Str.contains(auth_out, "BROWSER-OPENED")))?
+	# ...and the human screen a key=value call prints there names no payload field
+	keyed_human = sh!("${run(auth, "setup threshold_hr=150")} 2>/dev/null")
+	check!("a human setup call answers in plain words, naming no payload field", Str.contains(keyed_human, "next: authorize") and Str.contains(keyed_human, "Run `stride setup` in a terminal") and !(Str.contains(keyed_human, "authorize_url")))?
+	_ = sh!("rm -rf '${auth}'")
 	Ok({})
 }
 

@@ -317,6 +317,36 @@ Config :: [].{
 	setup_next : SetupState -> Str
 	setup_next = |s| (List.first(List.drop_if(setup_steps, |step| setup_done(s, step)))).ok_or("done")
 
+	# The next step in plain words, for the human screen: the machine
+	# `instruction` names payload fields a person never sees. `detected` is
+	# the system's zone or "", `max_hr` the proposed maximum or 0, `bounds`
+	# the zone bounds it gives.
+	setup_human : Str, Str, I64, List(I64) -> Str
+	setup_human = |next, detected, max_hr, bounds|
+		if next == "strava_app" {
+			"Create a Strava API app at https://www.strava.com/settings/api: any Application Name, Category \"Training\", Website http://localhost, Authorization Callback Domain localhost. Then run `stride setup` in a terminal and paste its Client ID and Client Secret when it asks."
+		} else if next == "authorize" {
+			"Run `stride setup` in a terminal: it opens Strava's authorize page and takes the code when you click Authorize. Without a browser on this machine, open the address below, click Authorize, and pass the address the browser lands on, quoted: `stride setup 'code=<address>'`."
+		} else if next == "timezone" {
+			if detected == "" {
+				"Set your timezone by its Area/City name: `stride setup timezone=<Area/City>`."
+			} else {
+				"Run `stride setup` in a terminal to confirm your timezone (this system says ${detected}), or set it with `stride setup timezone=<Area/City>`."
+			}
+		} else if next == "activities" {
+			"Run `stride setup` in a terminal: it lists your activities from Strava and proposes heart-rate zones from them."
+		} else if next == "zones" {
+			if max_hr > 0 {
+				"Your activities put your maximum heart rate at ${max_hr.to_str()} bpm, which gives zone upper bounds of ${Str.join_with(List.map(bounds, |b| b.to_str()), " / ")} bpm. Accept them with `stride setup max_hr=${max_hr.to_str()}`, or give your threshold heart rate with `stride setup threshold_hr=<bpm>`."
+			} else {
+				"Give one heart rate and the four zone bounds follow from it: `stride setup threshold_hr=<bpm>` (your average over an all-out 30 to 60 minute effort) or `stride setup max_hr=<bpm>`."
+			}
+		} else if next == "sync" {
+			"Run `stride setup` in a terminal: it runs the first sync to its end, waiting for Strava's read windows."
+		} else {
+			"Setup is complete. `stride doctor` shows the database's health."
+		}
+
 	# The authorization code from what the athlete pastes: the bare code, or the
 	# whole URL the browser landed on (`http://localhost/?state=&code=abc&scope=...`),
 	# whose `code` query parameter is taken. Empty input, or a URL with no code
@@ -820,3 +850,13 @@ expect {
 	List.get(b, 0).ok_or(0) < List.get(b, 1).ok_or(0) and List.get(b, 1).ok_or(0) < List.get(b, 2).ok_or(0) and List.get(b, 2).ok_or(0) < List.get(b, 3).ok_or(0)
 }
 expect Config.plausible_hr(35) and Config.plausible_hr(220) and !(Config.plausible_hr(34)) and !(Config.plausible_hr(221))
+
+# the human screen's step text names no payload field, at every step and
+# with or without a proposal
+expect {
+	fields = ["authorize_url", "timezone_detected", "zone_bounds_proposed", "max_hr_proposed", "resume_at", "next_step"]
+	texts = List.join(List.map(List.append(Config.setup_steps, "done"), |s| [Config.setup_human(s, "America/Chicago", 175, [134, 141, 149, 156]), Config.setup_human(s, "", 0, [])]))
+	List.all(texts, |t| !(List.any(fields, |f| Str.contains(t, f))))
+		and Str.contains(Config.setup_human("authorize", "", 0, []), "Run `stride setup` in a terminal")
+		and Str.contains(Config.setup_human("zones", "", 175, [134, 141, 149, 156]), "134 / 141 / 149 / 156 bpm")
+}
