@@ -80,11 +80,18 @@ ReportHealth :: [].{
 						],
 					),
 				)
-			Stdout.line!("ALL TIME")?
-			Stdout.line!(to_table(all_time))?
-			Stdout.line!("")?
-			Stdout.line!("${(year).to_str()} YEAR TO DATE")?
-			Stdout.line!(to_table(ytd))
+			# an empty total is a sentence, never a header row over nothing: no
+			# activity at all is the unfinished first run, and a year with none
+			# yet waits for its first session
+			if List.is_empty(all_time) {
+				Stdout.line!(Report.no_activities_text)
+			} else {
+				Stdout.line!("ALL TIME")?
+				Stdout.line!(to_table(all_time))?
+				Stdout.line!("")?
+				Stdout.line!("${(year).to_str()} YEAR TO DATE")?
+				Stdout.line!(if (List.is_empty(ytd)) "nothing yet in ${(year).to_str()} — your first activity of the year starts this total" else to_table(ytd))
+			}
 		}
 	}
 	stats_rows! : Str, Str => Try(List({ sport : Str, sessions : I64, hours : F64, km : F64 }), _)

@@ -315,7 +315,7 @@ Db :: [].{
 	# bump when the schema changes; ensure_schema! re-runs migrations when the db's
 	# PRAGMA user_version is behind this. (The additive ALTERs below are the columns
 	# that post-date the original CREATE statements in Schema.roc.)
-	schema_version = 51
+	schema_version = 52
 
 	run_migrations! : Str => Try({}, _)
 	run_migrations! = |path| {
@@ -566,6 +566,9 @@ Db :: [].{
 		# before the view names it.
 		Sql.execute!({ path: Path.utf8(path), query: Schema.plan_current_drop, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.plan_current, bindings: [] })?
+		# v52: the activities no plan claims, read by every surface that lists a week
+		Sql.execute!({ path: Path.utf8(path), query: Schema.unclaimed_activities_drop, bindings: [] })?
+		Sql.execute!({ path: Path.utf8(path), query: Schema.unclaimed_activities, bindings: [] })?
 		# v37: the series clock BEFORE week_bounds, which reads it
 		Sql.execute!({ path: Path.utf8(path), query: Schema.series_clock_drop, bindings: [] })?
 		Sql.execute!({ path: Path.utf8(path), query: Schema.series_clock, bindings: [] })?

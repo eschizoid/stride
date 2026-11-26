@@ -69,22 +69,12 @@ Plan :: [].{
 		}
 	}
 	# An activity `a` no planned session claims, as completion or as a live
-	# substitute: a substitute on a skipped session stops claiming once a later
-	# row or a non-skipped row holds that date. The supersession predicate is
-	# mirrored in live_claimant! and (positively) in plan_view!'s sessions
-	# query; all three must agree, or `week` and `review` offer an activity the
-	# claim commands then refuse. Claims are not week-relative, so the predicate
-	# carries no date window: with one, a substitute linked from another week
-	# would read as unclaimed and still be refused.
+	# substitute: the unclaimed_activities view, which the window's week tab
+	# reads too. Its supersession predicate is mirrored in live_claimant! and
+	# (positively) in plan_view!'s sessions query; all three must agree, or
+	# `week` and `review` offer an activity the claim commands then refuse.
 	unclaimed_sql : Str
-	unclaimed_sql =
-		\\NOT EXISTS (SELECT 1 FROM planned_sessions ps
-		\\       WHERE ps.completed_activity_id = a.id
-		\\          OR (ps.substitute_activity_id = a.id
-		\\              AND (COALESCE(ps.status,'open') <> 'skipped'
-		\\                   OR NOT EXISTS (SELECT 1 FROM planned_sessions p3
-		\\                                  WHERE p3.target_date = ps.target_date
-		\\                                    AND (COALESCE(p3.status,'open') <> 'skipped' OR p3.id > ps.id)))))
+	unclaimed_sql = "a.id IN (SELECT id FROM unclaimed_activities)"
 
 	plan_view! : [ThisWeek, AllTime] => Try({}, _)
 	plan_view! = |scope| {
@@ -235,17 +225,24 @@ Plan :: [].{
 		# `stride complete <id> <activity>` or `stride skip <id> <reason> <activity>`
 		# links it, and the row is gone on the next read. So the table and
 		# `status_shown` read `unlinked`, while `status` keeps the v3 value `unplanned`
-		# that JSON consumers match on. ThisWeek only: `week all` is the SESSION log,
-		# and every unclaimed activity in the history would bury it.
-		# The exclusion is unclaimed_sql, shared with `review`.
+		# that JSON consumers match on. A week is Monday to Sunday and holds both
+		# what was planned on its days and what was done on them, wherever a week
+		# is shown: `week` lists this week's, and `week all`'s human sections list
+		# this week's and last week's beside their sessions. `week all`'s payload
+		# stays the SESSION log, since every unclaimed activity in the history
+		# would bury it. The exclusion is unclaimed_sql, shared with `review`.
+		actuals_from =
+			match scope {
+				AllTime => mon - 7
+				ThisWeek => mon
+			}
 		unplanned = Sql.query_many!({
 			path: Path.utf8(path),
 			query: \\SELECT a.id AS aid, COALESCE(substr(CAST(a.start_local AS TEXT), 1, 10), '') AS adate, COALESCE(CAST(a.sport_type AS TEXT),'') AS sport,
 				\\       COALESCE(CAST(a.name AS TEXT),'') AS aname, COALESCE(a.moving_time,0) AS mt,
 				\\       CAST(COALESCE(m.tss,0) AS REAL) AS tss
 				\\FROM activities a LEFT JOIN activity_metrics m ON m.activity_id = a.id
-				\\WHERE :all = 0
-				\\  AND a.start_local >= '${Metrics.days_to_date_str(mon)}'
+				\\WHERE a.start_local >= '${Metrics.days_to_date_str(actuals_from)}'
 				\\  AND a.start_local < '${Metrics.days_to_date_str(mon + 7)}'
 				\\  AND ${unclaimed_sql}
 				\\-- the flag is DEFENSIVE here: this order is discarded downstream by a
@@ -253,7 +250,7 @@ Plan :: [].{
 				\\-- database can make this clause observable. Kept in case that sort changes.
 				\\ORDER BY ${Metrics.rank_ts_sql("a.start_local", Asc)}
 			,
-			bindings: [{ name: ":all", value: Integer(scope_all) }],
+			bindings: [],
 			rows: |cols| |stmt| {
 				aid = Sql.i64("aid")(cols)(stmt)?
 				adate = Sql.str("adate")(cols)(stmt)?
@@ -314,20 +311,20 @@ Plan :: [].{
 		# numbers); this toolchain's List.sort_with is ANTI-STABLE (ties come out
 		# REVERSED, so the comparator must be a total order — day, then sessions
 		# before unplanned, then id); and sort_with is O(n^2) on already-sorted
-		# input, which `enriched` always is — so when nothing was merged (week all,
-		# or a week with no unplanned activities) we skip the sort entirely.
+		# input, which a session list always is — so when there is nothing to
+		# merge the sort is skipped entirely.
 		# Keys are computed ONCE per row, never inside the comparator.
-		with_actuals =
-			if List.is_empty(unplanned_rows) {
-				enriched
+		day_key = |ds|
+			match Metrics.date_str_to_days(ds) {
+				Ok(n) => n
+				Err(_) => 0
+			}
+		merged = |sessions, actuals|
+			if List.is_empty(actuals) {
+				sessions
 			} else {
-				day_key = |ds|
-					match Metrics.date_str_to_days(ds) {
-						Ok(n) => n
-						Err(_) => 0
-					}
 				keyed = List.map(
-					List.concat(enriched, unplanned_rows),
+					List.concat(sessions, actuals),
 					|r| {
 						row: r,
 						day: day_key(r.target_date),
@@ -346,6 +343,13 @@ Plan :: [].{
 					},
 				)
 				List.map(sorted, |k| k.row)
+			}
+		# the actuals of the week starting on a given Monday
+		actuals_in = |from| List.keep_if(unplanned_rows, |u| day_key(u.target_date) >= from and day_key(u.target_date) <= from + 6)
+		with_actuals =
+			match scope {
+				ThisWeek => merged(enriched, actuals_in(mon))
+				AllTime => enriched
 			}
 
 		# `week all` splits the log into sections: a single slab answers "whatever
@@ -379,17 +383,31 @@ Plan :: [].{
 		]
 		# an empty section says so rather than vanishing — an absent heading reads as
 		# "there is no such thing", which is a different claim from "nothing there yet"
-		section = |title, srows|
+		# — and names what would fill it
+		section = |title, srows, none_text|
 			if List.is_empty(srows) {
-				"── ${title} ──\n(none)"
+				"── ${title} ──\n${none_text}"
 			} else {
 				"── ${title} ──\n${Render.render_table(plan_headers, List.map(srows, plan_cells))}"
 			}
+		# with no activity on record the first run is what is missing, whatever
+		# the plan holds; otherwise an empty week names the two things that fill it
+		first_run = !(Report.has_activities!(path)?)
+		fills_week = "`stride week add` plans a session, and an activity recorded this week lists here"
+		week_none = "nothing planned or recorded this week (${Metrics.days_to_date_str(mon)} to ${Metrics.days_to_date_str(mon + 6)}) — ${fills_week}"
 		Output.out!(
 			with_actuals,
 			|rows_enriched|
 				match scope {
-					ThisWeek => Render.render_table(plan_headers, List.map(rows_enriched, plan_cells))
+					ThisWeek =>
+						if !(List.is_empty(rows_enriched)) {
+							Render.render_table(plan_headers, List.map(rows_enriched, plan_cells))
+						} else if first_run {
+							Report.no_activities_text
+						} else {
+							week_none
+						}
+
 					AllTime => {
 						# Parse each target_date ONCE and carry the result alongside its row:
 						# every section below tests the same boundaries, so filtering on the
@@ -415,10 +433,12 @@ Plan :: [].{
 						# advance is normal, and an open-only filter would leave that row in no section
 						# and outside the hidden count.
 						upcoming = pick(|k| k.dated and k.n > mon + 6)
-						current = pick(|k| k.dated and k.n >= mon and k.n <= mon + 6)
+						# a past or current week holds what was done on its days beside what
+						# was planned, as `week` shows it; the days ahead hold only plans
+						current = merged(pick(|k| k.dated and k.n >= mon and k.n <= mon + 6), actuals_in(mon))
 						# history reads newest-first: its top row sits directly under `this
 						# week`, so the most recent past is nearest the present
-						history = Render.reverse_list(pick(|k| k.dated and k.n < mon and k.n >= mon - 7))
+						history = Render.reverse_list(merged(pick(|k| k.dated and k.n < mon and k.n >= mon - 7), actuals_in(mon - 7)))
 						# Unrendered sessions are COUNTED, never silently dropped: `week all`
 						# still means all, and the JSON payload carries every row. Printing the
 						# number keeps the human view short without the view lying about what
@@ -442,7 +462,16 @@ Plan :: [].{
 							} else {
 								"\n\n(${hidden} ${noun} not shown — STRIDE_FORMAT=json stride week all has every row)"
 							}
-						"${Str.join_with([section("upcoming", upcoming), section("this week", current), section("last week", history)], "\n\n")}${older_note}"
+						if first_run and List.is_empty(rows_enriched) {
+							Report.no_activities_text
+						} else {
+							sections = [
+								section("upcoming", upcoming, "nothing planned past this week — `stride week add` plans a session"),
+								section("this week", current, "nothing planned or recorded — ${fills_week}"),
+								section("last week", history, "nothing planned or recorded"),
+							]
+							"${Str.join_with(sections, "\n\n")}${older_note}"
+						}
 					}
 				},
 		)
@@ -1933,10 +1962,14 @@ Plan :: [].{
 							Stdout.line!("")?
 							Stdout.line!("OPEN PLAN")?
 							Stdout.line!(
-								Render.render_table(
-									["id", "date", "type", "detail"],
-									List.map(open_p, |p| [(p.id).to_str(), p.target_date, p.session_type, p.detail]),
-								),
+								if List.is_empty(open_p) {
+									"no open session — `stride week add` plans one"
+								} else {
+									Render.render_table(
+										["id", "date", "type", "detail"],
+										List.map(open_p, |p| [(p.id).to_str(), p.target_date, p.session_type, p.detail]),
+									)
+								},
 							)?
 							Stdout.line!("")?
 							Stdout.line!("RECENT 14 DAYS")?

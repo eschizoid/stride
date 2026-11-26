@@ -417,6 +417,24 @@ Report :: [].{
 		Ok({})
 	}
 
+	# The sentence a report prints in place of an empty table when the
+	# database holds no activity at all: the first run is unfinished, and
+	# `stride setup` is the one command that finishes it.
+	no_activities_text : Str
+	no_activities_text = "no activities yet — run `stride setup`: it connects your Strava account and syncs your history"
+
+	# What an empty report says: `otherwise`, which names the session that
+	# fills it, while the database holds an activity, and the first-run
+	# sentence while it holds none.
+	empty_line! : Str, Str => Try(Str, _)
+	empty_line! = |path, otherwise| Ok(if (has_activities!(path)?) otherwise else no_activities_text)
+
+	has_activities! : Str => Try(Bool, _)
+	has_activities! = |path| {
+		n = Sql.query!({ path: Path.utf8(path), query: "SELECT COUNT(*) AS n FROM activities", bindings: [], row: Sql.i64("n") })?
+		Ok(n > 0)
+	}
+
 	pct_num : I64, I64 -> I64
 	pct_num = |part, total|
 		if (total == 0)
@@ -1049,7 +1067,11 @@ Report :: [].{
 			Render.reverse_list(days_known),
 			|r, d| { day: r.day, tss: r.tss, ctl: r.ctl, atl: r.atl, tsb: r.tsb, families: Dict.get(by_day, d).ok_or([]) },
 		)
-		Output.out!(payload, |p| Render.load_screen(List.map(p, |r| { day: r.day, tss: r.tss, ctl: r.ctl, atl: r.atl, tsb: r.tsb })))
+		# an empty series is a sentence rather than a header row: `analyze`
+		# builds daily_load from the activities on record, and with none on
+		# record the first run is what is missing
+		empty = if (List.is_empty(payload)) empty_line!(path, "no load history yet — run `stride analyze` to score your activities")? else "-"
+		Output.out!(payload, |p| if (List.is_empty(p)) empty else Render.load_screen(List.map(p, |r| { day: r.day, tss: r.tss, ctl: r.ctl, atl: r.atl, tsb: r.tsb })))
 	}
 
 	# The athlete's CP/W' fit for ONE SPORT FAMILY as of a DATE, over the same
