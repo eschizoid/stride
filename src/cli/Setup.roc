@@ -359,7 +359,7 @@ Setup :: [].{
 		token = Strava.get_valid_token!(path)?
 		match Strava.list_phase!(path, token, False, waits)? {
 			Listed(_) => Ok(Listed)
-			DaySpent => Ok(Stopped(Strava.resume_for!(path, FromDrain(DailyCapReached), True, Db.now_secs!({}))?))
+			DaySpent(_) => Ok(Stopped(Strava.resume_for!(path, FromDrain(DailyCapReached), True, Db.now_secs!({}))?))
 			Refused(r) => Ok(Stopped(Strava.resume_for!(path, r.stop, True, Db.now_secs!({}))?))
 		}
 	}

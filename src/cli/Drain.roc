@@ -689,6 +689,18 @@ expect {
 # a window filled at real periods reopens at its quarter-hour mark plus the
 # margin, as next_read_at times it from inside the window
 expect Drain.reopens_at(Drain.at({ window: 3, quarter: 3, today: 3 }), Drain.test_lim, Drain.real) == 1795601710
+# a run that starts on a day already spent, its counts loaded from rows written
+# earlier that day, waits for that day's midnight UTC plus the margin
+expect Drain.reopens_at(Drain.at({ window: 0, quarter: 0, today: 100 }), Drain.test_lim, Drain.real) == 1795651210
+# A 429 whose header reports the day spent: the counts with that read and the
+# header's usage in them reopen at midnight UTC, where the counts from before
+# the read show only a window to wait for
+expect {
+	lim = { ..Drain.test_lim, reads_per_window: 95, reads_per_day: 5, reads_per_utc_day: 5 }
+	before = Drain.at({ window: 2, quarter: 2, today: 2 })
+	spent = Drain.charge(before, Reported({ window: 3, day: 5 }))
+	Drain.may_read(spent, lim) == DayFull and Drain.reopens_at(spent, lim, Drain.real) == 1795651210 and Drain.may_read(before, lim) == Go and Drain.reopens_at(before, lim, Drain.real) == 1795601710
+}
 
 # ── the limits Strava reports ──
 expect Drain.limit_of(["Content-Type: application/json", "X-ReadRateLimit-Limit: 300,3000"]) == Reported({ window: 300, day: 3000 })

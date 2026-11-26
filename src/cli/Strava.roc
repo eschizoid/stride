@@ -383,22 +383,23 @@ Strava :: [].{
 		listed =
 			if how.relist {
 				list_phase!(path, token, how.all, waits)?
-			} else if day_spent!(path)? {
-				DaySpent
 			} else {
-				Listed({ counts: { relisted: 0, new_n: 0, updated_n: 0 }, pruned: 0 })
+				match day_spent!(path)? {
+					Spent(spent) => DaySpent(spent)
+					Open => Listed({ counts: { relisted: 0, new_n: 0, updated_n: 0 }, pruned: 0 })
+				}
 			}
 		match listed {
 			# A run that STARTS with the day's allowance spent has made no request. A
 			# human run waits for the day while the activities it holds owe fetches
-			# (owed_known!). Otherwise the run ends at once, resumable regardless of
-			# the queue, since it has not looked at the list, and names the time the
-			# allowance returns.
-			DaySpent => {
+			# (owed_known!), timed from the counts that showed it spent. Otherwise the
+			# run ends at once, resumable regardless of the queue, since it has not
+			# looked at the list, and names the time the allowance returns.
+			DaySpent(spent) => {
 				ended = Db.now_secs!({})
 				match Drain.after_round({ stop: FromDrain(DailyCapReached), owed: owed_known!(path)?, progressed: False, after_wait, waits }) {
 					Wait => {
-						wait_for_window!(path, load_reads!(path)?)?
+						wait_for_window!(path, spent)?
 						sync_from!(path, token, how, settle!, waits, True)
 					}
 					Finish => {
@@ -434,7 +435,7 @@ Strava :: [].{
 
 	# The activity list, the first step of every sync and setup's `activities` step:
 	# every page, then the prune of what Strava no longer lists and the watermark.
-	ListPhase : [DaySpent, Refused({ counts : ListCounts, stop : Drain.SyncStop, requested : Bool, again : Bool }), Listed({ counts : ListCounts, pruned : U64 })]
+	ListPhase : [DaySpent(Drain.Reads), Refused({ counts : ListCounts, stop : Drain.SyncStop, requested : Bool, again : Bool }), Listed({ counts : ListCounts, pruned : U64 })]
 
 	list_phase! : Str, Str, Bool, Bool => Try(ListPhase, _)
 	list_phase! = |path, token, all, waits| {
@@ -482,23 +483,24 @@ Strava :: [].{
 			}
 		# BEFORE the first request: a run that STARTS with the day's allowance spent has
 		# nothing it can do and costs nothing to find out
-		if day_spent!(path)? {
-			Ok(DaySpent)
-		} else {
-			listed = list_all!(path, token, after_param, started, waits, { relisted: 0, new_n: 0, updated_n: 0, rate_limited: False, page: 1, requested: False }, False)?
-			counts = { relisted: listed.relisted, new_n: listed.new_n, updated_n: listed.updated_n }
-			match listed.stop {
-				# A refused list stops the run HERE, before pruning and before the drain
-				# (#235). PRUNE removes what the listing did not re-list, so running it on a
-				# partial list would delete activities that exist and were simply not
-				# reached; the watermark must not advance past activities the run never
-				# saw; and the drain would spend a refused budget. The pages already
-				# upserted are kept and reported.
-				Refused(stop) => Ok(Refused({ counts, stop, requested: listed.requested, again: listed.again }))
-				Listed => {
-					pruned = prune_deleted!(path, started, window_start)?
-					Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
-					Ok(Listed({ counts, pruned }))
+		match day_spent!(path)? {
+			Spent(spent) => Ok(DaySpent(spent))
+			Open => {
+				listed = list_all!(path, token, after_param, started, waits, { relisted: 0, new_n: 0, updated_n: 0, refused: Open, page: 1, requested: False }, False)?
+				counts = { relisted: listed.relisted, new_n: listed.new_n, updated_n: listed.updated_n }
+				match listed.stop {
+					# A refused list stops the run HERE, before pruning and before the drain
+					# (#235). PRUNE removes what the listing did not re-list, so running it on a
+					# partial list would delete activities that exist and were simply not
+					# reached; the watermark must not advance past activities the run never
+					# saw; and the drain would spend a refused budget. The pages already
+					# upserted are kept and reported.
+					Refused(stop) => Ok(Refused({ counts, stop, requested: listed.requested, again: listed.again }))
+					Listed => {
+						pruned = prune_deleted!(path, started, window_start)?
+						Db.config_set!(path, "last_sync_epoch", I64.to_str(started))?
+						Ok(Listed({ counts, pruned }))
+					}
 				}
 			}
 		}
@@ -657,19 +659,23 @@ Strava :: [].{
 		result = Render.list_result({ checked: got.relisted, new: got.new_n, updated: got.updated_n })
 		progressed = got.relisted > acc.relisted
 		out = |stop| { relisted: got.relisted, new_n: got.new_n, updated_n: got.updated_n, requested: got.requested, again: after_wait and !progressed, stop }
-		if !(got.rate_limited) {
-			Output.step_done!("activity list", result)?
-			Ok(out(Listed))
-		} else {
-			# WHICH limit stopped the list: the day's allowance spent means its
-			# remedy is midnight UTC, and its own tag says both facts at once
-			stop = if (day_spent!(path)?) ListDailyCapReached else ListRateLimited
-			Output.step_done!("activity list", "${result} so far, then the read window was spent")?
-			match Drain.after_round({ stop, owed: owed_known!(path)?, progressed, after_wait, waits }) {
-				Finish => Ok(out(Refused(stop)))
-				Wait => {
-					wait_for_window!(path, load_reads!(path)?)?
-					list_all!(path, token, after_param, stamp, waits, { ..got, rate_limited: False }, True)
+		match got.refused {
+			Open => {
+				Output.step_done!("activity list", result)?
+				Ok(out(Listed))
+			}
+			RefusedOn(spent) => {
+				# WHICH limit stopped the list, read from the counts the refusal was
+				# decided on: the day's allowance spent means its remedy is midnight
+				# UTC, and its own tag says both facts at once
+				stop = if (Drain.may_read(spent, read_limits!(path)?) == DayFull) ListDailyCapReached else ListRateLimited
+				Output.step_done!("activity list", "${result} so far, then the read window was spent")?
+				match Drain.after_round({ stop, owed: owed_known!(path)?, progressed, after_wait, waits }) {
+					Finish => Ok(out(Refused(stop)))
+					Wait => {
+						wait_for_window!(path, spent)?
+						list_all!(path, token, after_param, stamp, waits, { ..got, refused: Open }, True)
+					}
 				}
 			}
 		}
@@ -1375,9 +1381,13 @@ Strava :: [].{
 
 	# is the allowance already spent, WITHOUT spending anything to find out? The day
 	# is knowable from the database with zero requests, so a run that starts on a
-	# spent day makes none.
-	day_spent! : Str => Try(Bool, _)
-	day_spent! = |path| Ok(Drain.may_read(load_reads!(path)?, read_limits!(path)?) == DayFull)
+	# spent day makes none. Spent, it carries the counts that showed it, which
+	# time the wait for the day's return (Drain.reopens_at).
+	day_spent! : Str => Try([Spent(Drain.Reads), Open], _)
+	day_spent! = |path| {
+		reads = load_reads!(path)?
+		Ok(if (Drain.may_read(reads, read_limits!(path)?) == DayFull) Spent(reads) else Open)
+	}
 
 	# A read count or limit row, as stored. ABSENT and UNREADABLE are different
 	# facts. Absent is 0 because it is TRUE: a database that never synced has
@@ -1557,14 +1567,16 @@ Strava :: [].{
 							# stored are durable, and sync! decides whether the run waits for the
 							# next window or ends there. The 429'd read is a REAL read, so it is
 							# counted, and the daily allowance is recognised from the 429 as well
-							# as from the count — see Drain.decide.
+							# as from the count — see Drain.decide. The drain ends on the counts
+							# with that read and the header's usage in them, which are what
+							# showed the period spent and so what the wait is timed from.
 							DailyCapReached => {
 								_ = save_reads!(path, spent)?
-								ended!(DailyCapReached, st)
+								ended!(DailyCapReached, { ..st, reads: spent })
 							}
 							RateLimited => {
 								_ = save_reads!(path, spent)?
-								ended!(RateLimited, st)
+								ended!(RateLimited, { ..st, reads: spent })
 							}
 							Store({ reads, after }) => {
 								save_reads!(path, reads)?
@@ -1616,12 +1628,14 @@ Strava :: [].{
 	# The listing's accumulator. The re-listed total AND the new/updated split (#112):
 	# the first is training frequency, the second is what happened this run. `page`
 	# is the next page to ask for, and after a refusal the page that was refused;
-	# `requested` is whether any page was asked for.
-	PageAcc : { relisted : U64, new_n : U64, updated_n : U64, rate_limited : Bool, page : U64, requested : Bool }
+	# `requested` is whether any page was asked for. `refused` is whether the list
+	# was refused, carrying the counts the refusal was decided on, which time the
+	# wait for the next period (Drain.reopens_at).
+	PageAcc : { relisted : U64, new_n : U64, updated_n : U64, refused : [Open, RefusedOn(Drain.Reads)], page : U64, requested : Bool }
 
 	# A 429 on the LIST ends the listing the way a 429 on a stream ends a drain
 	# (#235), and so does a read window or day already spent before a page is asked
-	# for: pages already upserted are kept and reported, `rate_limited` rides the
+	# for: pages already upserted are kept and reported, `refused` rides the
 	# accumulator, and the caller reports a successful partial run. Propagating
 	# instead would make one upstream condition behave two ways in one invocation —
 	# exit 1 on the list, a success envelope on a stream.
@@ -1648,7 +1662,7 @@ Strava :: [].{
 				# refreshes proactively at run start with a 60-second margin, and the listing
 				# takes seconds. A 500 is not something to report as a successful partial run.
 				if Response.status(resp) == 429 {
-					Ok({ ..read, rate_limited: True })
+					Ok({ ..read, refused: RefusedOn(Drain.charge(reads, usage)) })
 				} else {
 					body = ok_body(resp)?
 					text = Str.from_utf8(body).map_err(|_| ActivityDecodeFailed(page))?
@@ -1664,7 +1678,7 @@ Strava :: [].{
 						fetch_pages!(path, token, after_param, stamp, next)
 				}
 			}
-			_ => Ok({ ..acc, rate_limited: True })
+			_ => Ok({ ..acc, refused: RefusedOn(reads) })
 		}
 	}
 
