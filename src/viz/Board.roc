@@ -539,8 +539,9 @@ Board :: [].{
 			}
 		tip_h = 107.0 + U64.to_f32(List.len(note_lines)) * 14.0 + 9.0
 		tip_x = if (hx + 14.0 + tip_w > g.left + g.pw) (hx - 14.0 - tip_w) else hx + 14.0
-		# under the projection key's two rows when the board draws one, so a
-		# card over the projected days never covers the caption that reads them
+		# under the projection key's two rows whenever the board draws one, for
+		# a measured day as for a projected one: a card beside a measured day
+		# near the projection spans the column the key starts in
 		tip_y = if (g.n > g.meas) g.top + key_rows_h + 8.0 else g.top + 8.0
 		box = { x: tip_x, y: tip_y, w: tip_w, h: tip_h }
 		fix = |it, x, y, align| Scene.fixed(measure, it, { x, y, align }, box)

@@ -868,9 +868,9 @@ sport no family holds. The fixtures per view:
   its name as long as the cap lets one be, with a measured power and without,
   ready, waiting on its trace and with none, at the map's middle and at each
   corner, and in heat and play;
-- the form board's day card the arrow cursor opens over each projected day of
-  every board that draws a projection, in the brand faces and in the built-in
-  face;
+- the form board's day card the arrow cursor opens over every day, measured
+  and projected, of every board that draws a projection, each measured day
+  carrying a session note, in the brand faces and in the built-in face;
 - the boot splash at every dot count, slow and not, and the XP rail's sheet.
 
 For each scene the gate asserts that no two text boxes overlap, the
@@ -880,7 +880,7 @@ shapes it draws in its `marks`: the nav pills and the XP rail on every view,
 the bars, chips, ticks, tiles and cards of the views that draw them, the power
 view's test card, dots and legend dots, and the career view's spine
 dots, load bars, legend swatches and composition strip. The boot splash, the XP rail's sheet, the form board's day card and the map's card run
-the first two checks alone; the day card must also lie inside the plot and say its day is projected, and the map's card must lie inside the map. `roc test` reports only that the expect failed;
+the first two checks alone; the day card must also lie inside the plot and clear of the projection key, and name its day, a measured day's with its note and a projected day's as projected, and the map's card must lie inside the map. `roc test` reports only that the expect failed;
 `Gate.failures` names each failure by fixture, size and the texts and
 shapes involved, so `dbg` it inside the expect to read them.
 
