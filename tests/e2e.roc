@@ -415,7 +415,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1539)?
+	checks_ran_exactly!(1541)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -9303,11 +9303,25 @@ b_empty_reports! = |ctx| {
 	all = human!(["week", "all"])
 	this_week = (List.first(Str.split_on((List.get(Str.split_on(all, "── this week ──"), 1)) ?? "", "── last week ──"))) ?? ""
 	gone_by = (List.get(Str.split_on(all, "── last week ──"), 1)) ?? ""
+	# the window's week strip, its query read from the window's source with
+	# the fixture zone's offset filled in, counts this week's ride as unscored
+	# before analyze has run, so the strip names analyze instead of a 0
+	strip_mod = Str.trim(sh!("off=$(TZ=${fixture_tz} date +%z); s=$(printf %s \"$off\" | cut -c1); h=$(printf %s \"$off\" | cut -c2-3); m=$(printf %s \"$off\" | cut -c4-5); n=$((10#$h * 60 + 10#$m)); if [ \"$s\" = - ]; then n=$((-n)); fi; echo \"$n minutes\""))
+	strip_q = Str.trim(sh!("grep -oE 'WITH anchor AS \\(SELECT date\\(date\\(.now., ...today_mod..\\), .-6 days., .weekday 1.\\) AS mon\\) SELECT CAST\\(ROUND\\(SUM[^\"]*AS un FROM anchor[^\"]*' src/viz/Db.roc | sed 's/..today_mod./${strip_mod}/'"))
+	check!("the window's week strip reads an unanalyzed ride as unscored, not as 0 load", !(Str.is_empty(strip_q)) and Str.trim(sql!(db, "SELECT un FROM (${strip_q});")) == "1")?
 	check!("`week` lists this week's unlinked ride", Str.contains(week, "9901") and Str.contains(week, "unlinked") and !(Str.contains(week, "9902")))?
 	check!("`week all`'s this week is the same week, the ride included", Str.contains(this_week, "9901") and Str.contains(this_week, "unlinked") and !(Str.contains(this_week, "9902")))?
 	check!("...its last week holds last week's ride", Str.contains(gone_by, "9902") and !(Str.contains(gone_by, "9901")))?
 	check!("...and the days ahead, holding no plan, say what fills them", Str.contains(all, "── upcoming ──\nnothing planned past this week — `stride week add` plans a session"))?
 	check!("`week all`'s payload stays the session log", Str.trim(sh!("HOME='${probe}' STRIDE_FORMAT=json '${ctx.bin}' week all | jq -c '.data'")) == "[]")?
+	# last week reads like this week: days in calendar order, and a day's
+	# session before the activity no plan claims on it
+	lw_sun = Str.trim(sql!(db, "SELECT date('${ctx.today}', '-6 days', 'weekday 1', '-1 days');"))
+	_ = sql!(db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9903,'Sunday probe ride','Ride','${lw_sun}T09:00:00Z',3600,30000,0,140); INSERT INTO planned_sessions (id,created_at,target_date,session_type,detail,rationale,status,skipped_reason,target_literal) VALUES (9911,'2099-01-01','${lw_sun}','endurance','probe ride','r','open','',NULL);")
+	lw = (List.get(Str.split_on(human!(["week", "all"]), "── last week ──"), 1)) ?? ""
+	before_sunday_ride = (List.first(Str.split_on(lw, "9903"))) ?? ""
+	check!("`week all`'s last week runs Monday first, a day's session before its unlinked ride", Str.contains(lw, "9903") and Str.contains(before_sunday_ride, "9911") and Str.contains(before_sunday_ride, "9902"))?
+	_ = sql!(db, "DELETE FROM planned_sessions WHERE id = 9911; DELETE FROM activities WHERE id = 9903;")
 	_ = sql!(db, "DELETE FROM activities WHERE id = 9901;")
 	check!("an empty week with history on record names what fills it", Str.starts_with(human!(["week"]), "nothing planned or recorded this week (") and Str.ends_with(human!(["week"]), ") — `stride week add` plans a session, and an activity recorded this week lists here"))?
 	_ = stride!(ctx.bin, probe, ["config", "set", "hr_z1_max", "123"])

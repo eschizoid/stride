@@ -436,9 +436,9 @@ Plan :: [].{
 						# a past or current week holds what was done on its days beside what
 						# was planned, as `week` shows it; the days ahead hold only plans
 						current = merged(pick(|k| k.dated and k.n >= mon and k.n <= mon + 6), actuals_in(mon))
-						# history reads newest-first: its top row sits directly under `this
-						# week`, so the most recent past is nearest the present
-						history = Render.reverse_list(merged(pick(|k| k.dated and k.n < mon and k.n >= mon - 7), actuals_in(mon - 7)))
+						# last week reads in calendar order, Monday first and each day's
+						# session before its unlinked activities, as this week and `week` do
+						history = merged(pick(|k| k.dated and k.n < mon and k.n >= mon - 7), actuals_in(mon - 7))
 						# Unrendered sessions are COUNTED, never silently dropped: `week all`
 						# still means all, and the JSON payload carries every row. Printing the
 						# number keeps the human view short without the view lying about what
