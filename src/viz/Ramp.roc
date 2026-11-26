@@ -39,10 +39,15 @@ Ramp :: [].{
 	bar_alpha : Bool -> U8
 	bar_alpha = |focused| if (focused) (250.U8) else 220
 
-	# the CTL a week gained, in tenths: its end, or now for the running week,
-	# less its start, which is zero for a week that began before history
+	# the CTL a week gained, in tenths, rounded once from the unrounded
+	# difference: the view's ramp, the number the card and the CLI print;
+	# for a week that began from zero CTL, before history, its whole end
 	delta10 : Db.RampWeek -> I64
-	delta10 = |w| w.ctl10 - (F64.round_to_i64_try(w.ctl_start * 10.0) ?? 0)
+	delta10 = |w| if (w.ctl_start <= 0.0) w.ctl10 else w.ramp10
+
+	# the change as the chip and the card both write it, signed
+	change_text : Db.RampWeek -> Str
+	change_text = |w| Fmt.tenths_signed(delta10(w))
 
 	# a week before the athlete's history: no load and no CTL yet
 	before_history : Db.RampWeek -> Bool
@@ -163,7 +168,7 @@ Ramp :: [].{
 
 	# what a bar and its chip both read: the change, signed, and its color
 	look : Bar -> { text : Str, color : Color.Rgba }
-	look = |b| { text: Fmt.tenths_signed(delta10(b.w)), color: verdict(delta10(b.w)) }
+	look = |b| { text: change_text(b.w), color: verdict(delta10(b.w)) }
 
 	# a bar's chip, 54 wide over its slot's centre, at the bar's end: over
 	# a gain or no change, under a loss
@@ -238,7 +243,7 @@ Ramp :: [].{
 					[
 						fix(Scene.data(Fmt.tenths(last.ctl10), 28.0, Theme.ctl_c), card.x + 16.0, 68.0, Left, card),
 						fix(Scene.data("ctl now", 11.0, ink_faint), card.x + 16.0, 102.0, Left, card),
-						fix(Scene.data(Fmt.tenths_signed(delta10(last)), 28.0, verdict(delta10(last))), win_w - pad - 16.0, 68.0, Right, card),
+						fix(Scene.data(change_text(last), 28.0, verdict(delta10(last))), win_w - pad - 16.0, 68.0, Right, card),
 						fix(Scene.data(if (Weeks.partial(last.days)) "ctl per week so far" else "ctl per week", 11.0, ink_faint), win_w - pad - 16.0, 102.0, Right, card),
 						Scene.kept(measure, Scene.data(line_label, 10.0, Color.white), [{ x: axis, y: ly - 18.0, align: Right }, { x: axis, y: ly + 8.0, align: Right }], 1, panel),
 						fix(Scene.data("0", 10.0, Color.white), axis, ly - 5.0, Right, panel),
@@ -339,12 +344,22 @@ expect Ramp.verdict(61) == Theme.alarm_c and Ramp.verdict(60) == Theme.ctl_c and
 expect Ramp.verdict(0) == Theme.ink_muted and Ramp.verdict(-19) == Theme.ink_muted
 expect List.map(Ramp.classes, |c| c.name) == ["loses fitness", "builds fitness", "past +6 ctl a week"] and List.map(Ramp.classes, |c| c.color) == [Theme.ink_muted, Theme.ctl_c, Theme.alarm_c]
 
-# a week's change is its end less its start: on every real week it is the
-# view's ramp to within the rounding of the two, and a first week that
-# began before history counts from zero
+# a week's change is rounded once, from the unrounded difference: the
+# first real week rose 0.866 from 42.27 to an end stored as 43.1, and its
+# chip and the card both read +0.9; a rise of 6.01, from 49.04 to an end
+# stored as 55.1, reads +6.0 in blue, not past the limit; every real week
+# reads the view's ramp; and a first week that began before history counts
+# its whole CTL
 expect {
+	win = { w: 980.0, h: 600.0 }
+	sep = (List.first(Ramp.real_weeks)) ?? Ramp.blank
+	six = { wk: "2026-11-16", days: 7, tss: 600, ctl10: 551, ramp10: 60, ctl_start: 49.04 }
 	first = { wk: "2026-09-21", days: 7, tss: 513, ctl10: 113, ramp10: 0, ctl_start: Db.week_start_ctl(Bool.True, 11.3, 0.0) }
-	List.all(Ramp.real_weeks, |w| (Ramp.delta10(w) - w.ramp10).abs() <= 1) and Ramp.delta10(first) == 113
+	reads = |w, text, color| Ramp.change_text(w) == text and List.all(Ramp.bars_of([w], win), |b| Ramp.look(b) == { text, color })
+	reads(sep, "+0.9", Theme.ctl_c)
+		and reads(six, "+6.0", Theme.ctl_c)
+		and List.all(Ramp.real_weeks, |w| Ramp.delta10(w) == w.ramp10)
+		and Ramp.delta10(first) == 113
 }
 
 # equal changes stand equal: a finished week and a running week three days

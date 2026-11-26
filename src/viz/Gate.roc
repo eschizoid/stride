@@ -1299,9 +1299,11 @@ Gate :: [].{
 			},
 		)
 
-	# each week starts from the CTL its ramp left the week before, and for
-	# every other athlete the rest week starts high, so it loses far more
-	# than any other week moves and stretches the load scale down
+	# each week starts from the CTL its ramp left the week before, except
+	# that the running week starts unrounded, 0.06 under, so its end and
+	# start rounded apart read a tenth more than its ramp; and for every
+	# other athlete the rest week reads a start far above its end, which
+	# only the focus line's hold reads: a bar draws the ramp
 	ramp_weeks_of : U64 -> List(Db.RampWeek)
 	ramp_weeks_of = |k|
 		List.map_with_index(
@@ -1310,7 +1312,7 @@ Gate :: [].{
 				tss = week_share(i) * (4 + U64.to_i64_wrap(k % 4))
 				ctl10 = 480 + U64.to_i64_wrap(i) * 7
 				ramp10 = (List.get([75, -12, 18, 31, 0, -19, 42, 64, 25, 8, 12, -5], i)) ?? 0
-				ctl_start = if (i == 5 and k % 2 == 1) 150.0 else I64.to_f64(ctl10 - ramp10) / 10.0
+				ctl_start = if (i == 5 and k % 2 == 1) 150.0 else if (i == 11) I64.to_f64(ctl10 - ramp10) / 10.0 - 0.06 else I64.to_f64(ctl10 - ramp10) / 10.0
 				{ wk, days: if (i == 11) 4 else 7, tss, ctl10, ramp10, ctl_start }
 			},
 		)
@@ -1672,6 +1674,19 @@ expect List.all(
 			and List.all(Ramp.drawn_bars(e.model), |b| !(Labels.intersects(Ramp.chip_box(b), line)))
 			and named(Gate.measure)
 			and named(Gate.builtin_measure)
+	},
+)
+
+# wherever the load chart draws, the card's change and the newest week's
+# chip read one number, in one color
+expect List.all(
+	List.keep_if(Gate.weeks_models(7), |e| !(List.is_empty(e.model.ramp_weeks)) and Ramp.charted(e.model)),
+	|e| {
+		placed = Ramp.scene(e.model, Gate.measure)
+		last = Ramp.newest(e.model)
+		card = List.keep_if(placed, |p| p.item.size == 28.0 and p.box.x > (Weeks.card_box(e.model.win.w)).x + 100.0)
+		chips = List.keep_if(placed, |p| p.item.size == 11.0 and List.any(List.take_last(Ramp.drawn_bars(e.model), 1), |b| b.w.wk == last.wk and (p.box.x + p.box.w / 2.0 - b.cx).abs() < 0.5))
+		List.len(card) == 1 and List.all(card, |c| List.all(chips, |k| k.item.text == c.item.text and k.item.color == c.item.color) and c.item.text == Ramp.change_text(last))
 	},
 )
 
