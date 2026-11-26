@@ -68,13 +68,15 @@ what the athlete wants and re-running is busywork.
    too, and it is taken only from a response that also reports its usage. The engine
    counts every read it makes, in the database across runs, raises its counts to the
    reported usage, which also sees other apps' reads on the token, and checks them
-   before each read, so no run passes either limit. A count row it cannot read is read
-   in the direction that cannot pass a limit: an unreadable period stamp as the
-   current period's, its count kept, and an unreadable count as the period spent;
-   either is rewritten with the current stamp, so it refuses reads no longer than the
-   period. The test seams that lower a limit or shorten a period lower and shorten
-   only what a run paces by and waits for; Strava's own quarter-hour and day keep their
-   caps.
+   before each read, so no run passes either limit. A count row it cannot read, or one
+   holding a count no run could reach (negative, or more than twice the period's
+   limit), is read in the direction that cannot pass a limit: an unreadable period
+   stamp as the current period's, its count kept, and an unreadable or impossible
+   count as the period spent; either is rewritten with the current stamp, so it
+   refuses reads no longer than the period. A kept limit is held to the ceiling as a
+   reported one is, before any arithmetic uses it. The test seams that lower a limit
+   or shorten a period lower and shorten only what a run paces by and waits for;
+   Strava's own quarter-hour and day keep their caps.
 
 4. **A human sync waits out the day too; machine callers get an exact time.** When the
    day's reads are spent while the activities it holds still owe fetches, a human sync

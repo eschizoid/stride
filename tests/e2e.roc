@@ -1877,10 +1877,43 @@ run_pace! = || {
 	check!("Ctrl-C during setup's first sync names the command that resumes it", Str.contains(sh!("cat '${sc}/err'"), "the next `stride setup` resumes from there"))?
 	_ = sh!("rm -rf '${sc}'")
 
+	# ── a kept limit set by hand past any I64 sum is held to the ceiling before
+	# any arithmetic: it paces as 1,000 a quarter-hour less the margin, so a
+	# quarter-hour count of 949 leaves the run exactly one read, and the run ends
+	# without a crash. Started clear of a quarter-hour mark, which would rightly
+	# open a fresh window.
+	_ = sh!("s=$(( $(date +%s) % 900 )); if [ $s -gt 870 ]; then sleep $(( 902 - s )); fi")
+	hl = seeded!({})
+	hl_set! = |kv| sh!("HOME='${hl}' '${bin}' config set ${kv} >/dev/null 2>&1; echo $?")
+	hl_q! = |key| Str.trim(sql!("${hl}/.stride/db.sqlite", "SELECT COALESCE((SELECT value FROM config WHERE key = '${key}'), 'none');"))
+	hl_mark = Str.trim(sh!("date -u +%s | awk '{ print int($1 / 900) * 900 }'"))
+	hl_sets = [hl_set!("strava_limit_app 1"), hl_set!("strava_limit_window 5000000000000000000"), hl_set!("strava_limit_day 5000000000000000000"), hl_set!("strava_reads_quarter_mark ${hl_mark}"), hl_set!("strava_reads_quarter 949")]
+	hl_rc = Str.trim(sh!("HOME='${hl}' STRIDE_FORMAT=json STRIDE_API_BASE='${pbase}' '${bin}' sync >'${hl}/out' 2>'${hl}/err'; echo $?"))
+	check!("a huge kept limit paces at the ceiling with no crash: one read from 949 to its cap of 950 (exit ${hl_rc}, ${hl_q!("strava_reads_quarter")} this quarter-hour, ${hl_q!("strava_reads_today")} today)", List.all(hl_sets, |rc| Str.trim(rc) == "0") and hl_rc == "0" and hl_q!("strava_reads_quarter") == "950" and hl_q!("strava_reads_today") == "1" and !(Str.contains(sh!("cat '${hl}/err'"), "overflow")))?
+	# ...and a negative quarter-hour count beside it reads as the quarter-hour
+	# spent: the run asks for nothing, and the row is rewritten as the held
+	# limit, not the one set by hand
+	hl_neg = hl_set!("strava_reads_quarter -50")
+	_ = sh!("HOME='${hl}' STRIDE_FORMAT=json STRIDE_API_BASE='${pbase}' '${bin}' sync >'${hl}/out' 2>/dev/null")
+	check!("a negative quarter-hour count refuses the run before any request and is repaired to the held limit (${hl_q!("strava_reads_quarter")} this quarter-hour, ${hl_q!("strava_reads_today")} today)", Str.trim(hl_neg) == "0" and Str.trim(sh!("jq -r '.data.stopped' '${hl}/out'")) == "list_rate_limited" and hl_q!("strava_reads_today") == "1" and hl_q!("strava_reads_quarter") == "1000" and hl_q!("strava_reads_quarter_mark") == hl_mark)?
+	_ = sh!("rm -rf '${hl}'")
+
+	# ── a negative count for the UTC day reads as the day spent, under the
+	# documented limits: the run asks for nothing, names the repair, and the row
+	# is rewritten as the day's 1,000
+	nd = seeded!({})
+	nd_day = Str.trim(sh!("date -u +%s | awk '{ print int($1 / 86400) }'"))
+	nd_sets = [sh!("HOME='${nd}' '${bin}' config set strava_reads_day ${nd_day} >/dev/null 2>&1; echo $?"), sh!("HOME='${nd}' '${bin}' config set strava_reads_today -5 >/dev/null 2>&1; echo $?")]
+	_ = sh!("HOME='${nd}' STRIDE_FORMAT=json STRIDE_API_BASE='${pbase}' '${bin}' sync >'${nd}/out' 2>'${nd}/err'")
+	nd_today = Str.trim(sql!("${nd}/.stride/db.sqlite", "SELECT value FROM config WHERE key = 'strava_reads_today';"))
+	check!("a negative count for the day refuses the run before any request and is repaired as the day spent (${nd_today})", List.all(nd_sets, |rc| Str.trim(rc) == "0") and nd_today == "1000" and Str.trim(sh!("jq -r '.data | [.stopped, .synced] | @tsv' '${nd}/out'")) == "daily_cap_reached\t0")?
+	check!("...naming the repair it was read with", Str.contains(sh!("cat '${nd}/err'"), "cannot read today's Strava read count, so it now reads 1000 reads spent until midnight UTC"))?
+	_ = sh!("rm -rf '${nd}'")
+
 	check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(45)?
+	checks_ran_exactly!(49)?
 	Stdout.line!("PACE E2E CHECKS PASS")
 }
 
