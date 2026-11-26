@@ -71,7 +71,7 @@ Nothing is left out silently. A set that cannot become a row is listed in its wo
 
 ### `stride analyze`
 
-Computes metrics for new (or invalidated) activities — TSS, time-in-zone, normalized power — to its fixed point, then rebuilds the daily fitness/fatigue/form series through today. Prints what it did plus a one-line form verdict. `stride sync` runs it after every batch, so it is the command for a recompute without a sync, after a zone or rating change.
+Computes metrics for new (or invalidated) activities — load (TSS or session-RPE), time-in-zone, normalized power — to its fixed point, then rebuilds the daily fitness/fatigue/form series through today. Prints what it did plus a one-line form verdict. `stride sync` runs it after every batch, so it is the command for a recompute without a sync, after a zone or rating change.
 
 
 ## Reading your training

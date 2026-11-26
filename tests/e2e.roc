@@ -415,7 +415,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1498)?
+	checks_ran_exactly!(1501)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -3795,6 +3795,9 @@ b_seed_analyze! = |ctx| {
 	help_text_out = stride_human!(ctx.bin, ctx.home, ["--help"])
 	check!("help text teaches no environment detection", !(Str.contains(help_text_out, "CLAUDECODE")) and !(Str.contains(help_text_out, "JSON for tools")))?
 	check!("help text documents the flag", Str.contains(help_text_out, "--json"))?
+	# analyze scores each session in TSS or session-RPE load, so the help names
+	# what it computes load, not TSS
+	check!("help text says analyze computes load, not TSS", Str.contains(help_text_out, "compute training metrics (load, zones, CTL/ATL/TSB)"))?
 	check!("skill teaches no environment detection", !(Str.contains(skill_text, "CLAUDECODE")) and !(Str.contains(skill_text, "detected automatically")))?
 
 	# ── the JSON contract as a tested artifact ────────────────────
@@ -8361,6 +8364,9 @@ b_rpe! = |ctx| {
 	check!("rate confirms", Str.contains(stride!(ctx.bin, ctx.home, ["rate", "301", "7"]), "\"rated\":301"))?
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 	check!("45min @ RPE 7 => session_rpe 52.5", Str.trim(sql!(ctx.db, "SELECT load_model || '|' || ROUND(tss, 1) FROM activity_metrics WHERE activity_id=301;")) == "session_rpe|52.5")?
+	# a rated session's score is session-RPE load, not TSS, and its line says so
+	act301 = stride_human!(ctx.bin, ctx.home, ["activity", "301"])
+	check!("a rated session's load line says load, never TSS", Str.contains(act301, "load   53 load") and !(Str.contains(act301, "TSS")))?
 	_ = stride!(ctx.bin, ctx.home, ["rate", "301", "5"])
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 	check!("re-rate to 5 rescores to 37.5", Str.trim(sql!(ctx.db, "SELECT ROUND(tss, 1) FROM activity_metrics WHERE activity_id=301;")) == "37.5")?
@@ -9081,6 +9087,11 @@ b_human! = |ctx| {
 	check!("human load verdict line", Str.contains(stride_human!(ctx.bin, ctx.home, ["load", "7"]), "today: form"))?
 	check!("human stats section", Str.contains(stride_human!(ctx.bin, ctx.home, ["stats"]), "ALL TIME"))?
 	check!("human activity zones row", Str.contains(stride_human!(ctx.bin, ctx.home, ["activity", "101"]), "Z1"))?
+	# one session's load line names its unit by the rung that scored it: a
+	# power ride scores in TSS
+	act101 = stride_human!(ctx.bin, ctx.home, ["activity", "101"])
+	tss101 = strjq!(ctx, ["activity", "101"], ".data.tss | round")
+	check!("a power ride's load line says TSS", strjq!(ctx, ["activity", "101"], ".data.load_model") == "power_stream" and Str.contains(act101, "load   ${tss101} TSS"))?
 	check!("human summary banner", Str.contains(stride_human!(ctx.bin, ctx.home, ["summary"]), "stride report"))?
 	# `plan` is the priciest read in the suite, so every HUMAN-mode assertion here shares
 	# one capture rather than shelling out again — two copies of the same output can drift

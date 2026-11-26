@@ -422,7 +422,7 @@ ReportSessions :: [].{
 					Stdout.line!(a.name)?
 					Stdout.line!("${a.date} · ${a.sport} · ${Render.mins(a.moving_time)}${dist_str}")?
 					Stdout.line!("")?
-					load_str = if (a.tss >= 1.0) "${Render.fmt0(a.tss)} TSS" else "no usable data"
+					load_str = Render.session_load_text(a.tss, a.load_model)
 					# the intensity parenthetical only when it was MEASURED: a refused or
 					# underivable ratio reads back as intensity 0 with the flag false, and
 					# "(if 0.00)" beside a real NP and a plausible ftp is an impossible
