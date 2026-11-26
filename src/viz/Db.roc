@@ -1088,10 +1088,12 @@ Db :: [].{
 	# runs gets pace, one who only rides gets power, and the arc means the same
 	# thing either way because the stored value is a SPEED in both.
 	SpineFam : { fam : Str, kind : Str, months : I64 }
-	# one family's whole arc, ready to draw. Every family with threshold data
-	# is loaded at launch, widest career first, so switching between them is a
-	# memory read rather than a task round-trip - the same reason the trace
-	# picker caches its sessions.
+	# one family's whole arc, ready to draw. Every page F cycles is loaded at
+	# launch (Career.cycle_fams names them: the threshold families widest
+	# first, then the families with sessions and no threshold, whose kind
+	# matches no threshold row and so reads 0 every month), so switching
+	# between them is a memory read rather than a task round-trip - the same
+	# reason the trace picker caches its sessions.
 	CareerSpine : { fam : Str, kind : Str, rows : List(CareerMonth) }
 	CareerSport : { sport : Str, sessions : I64, hours10 : I64, dist_m : F64 }
 	# Strength has its own tab, which reads lifts rather than monthly tonnage,

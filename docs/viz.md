@@ -226,6 +226,32 @@ complete month and the month in progress, each with its `covered/total`
 coverage. The strength family is Sports' own, so Workout and WeightTraining
 read as one, and the career view leaves the tonnage spine to this tab.
 
+## The career view
+
+The `career` pill (view 8, captured as `career.png`) tells the whole story,
+one month at a time since the first session. Four cards count the sport on
+screen: moving time, distance, sessions and the months it was trained. The
+ground is monthly load over every sport, with the sport's own share filled
+in its colour, and the strip along the bottom splits every session by sport,
+widest first.
+
+Above the ground, a sport with a threshold draws it month by month: watts
+for a power sport, pace for a pace sport, with the low, the high and the
+latest month marked, and a test's month marked in gold. `F` steps through
+every sport the athlete has sessions in. The sports with a threshold come
+first, the most months of it first, and a sport that holds both a power and
+a pace threshold gets one page for each, with a chip per kind beside the
+title. Then come the sports with sessions and no threshold, the most
+sessions first. Their page keeps the cards, the ground and the strip, and
+in place of the line it says there is no trend yet, why, and what would
+draw one: two sessions of 20 minutes or more within two months (without
+stopping for a pace sport, with a power meter for a power sport), or a
+marked test, `stride test <activity_id> 5k` for a run, `css` for a swim,
+`ftp20` for a power sport. A strength-like sport has no threshold, so its
+page says so, and strength's page points at the lifts tab.
+
+![The career view](img/career.png)
+
 ## The map view
 
 The `map` pill opens the map tab, which draws every stored GPS route over a
@@ -794,7 +820,9 @@ sport no family holds. The fixtures per view:
 
 - power: every curve each athlete has, at 30, 60 and 90 days, with the short
   rungs folded and shown;
-- career: every spine;
+- career: every page of every athlete, again with no threshold at all, and
+  an athlete with short runs and no running threshold beside a power trend,
+  in the brand faces and in the built-in face;
 - form board: every range, with an event ahead (a two-line name and a
   projection drawn on the plot), with the event-day story (the event marked
   on the plot, a ridden event and an unreadable event record) and with an

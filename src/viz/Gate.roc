@@ -396,28 +396,58 @@ Gate :: [].{
 		{
 			..base,
 			view: 8,
-			career_spines: spines,
+			career_spines: career_pages(spines, base.career_sports),
 			career_tests: List.map(keys.power, |h| { fam: h, month: "2026-03", kind: "cp3-12", signal: "power" }),
 			career_fam_months: List.join(List.map(hs, |h| List.map_with_index(months, |m, i| { fam: h, month: m, load: 300 + U64.to_i64_wrap((i * 13) % 200), sessions: if (i == 9 or i == 10) 0 else 6 }))),
 		}
 	}
 
+	# the pages the window's loader makes of a set of trends: each trend as
+	# given, then a page for every family with sessions and no trend
+	# (Career.cycle_fams), on the fixture months with no threshold in any
+	career_pages : List(Db.CareerSpine), List(Db.CareerSport) -> List(Db.CareerSpine)
+	career_pages = |spines, sports|
+		List.map(
+			Career.cycle_fams(List.map(spines, |s| { fam: s.fam, kind: s.kind, months: 0 }), sports),
+			|f| match List.find_first(spines, |s| s.fam == f.fam and s.kind == f.kind) {
+				Ok(s) => s
+				Err(_) => { fam: f.fam, kind: f.kind, rows: List.map(spine_rows(f.fam, "power", 0), |r| { ..r, ftp10: 0 }) }
+			},
+		)
+
+	# the athlete the window met with runs and no running threshold: short
+	# run/walk sessions beside a family with a power trend
+	short_runner : Athlete
+	short_runner = { name: "short runs beside rides", units: Metric, sports: [{ sport: "Ride", sessions: 300 }, { sport: "Rowing", sessions: 120 }, { sport: "Run", sessions: 20 }] }
+
 	career_models : List({ name : Str, model : Ui.Model })
-	career_models =
+	career_models = {
+		pages = |name, m| List.map_with_index(m.career_spines, |s, i| { name: "${name} ${s.fam} ${s.kind}", model: { ..m, spine_idx: i } })
 		List.join(
 			List.map(
-				athletes,
-				|a| List.join(
-					List.map(
-						sizes,
-						|sz| {
-							m = career_model(athlete_model(a, sz), a)
-							List.map_with_index(m.career_spines, |s, i| { name: "${a.name} career ${s.fam} ${s.kind} at ${size_name(sz)}", model: { ..m, spine_idx: i } })
-						},
+				sizes,
+				|sz| List.join([
+					List.join(
+						List.map(
+							athletes,
+							|a| {
+								m = career_model(athlete_model(a, sz), a)
+								List.concat(
+									pages("${a.name} career at ${size_name(sz)}", m),
+									# no threshold anywhere: every family is a page without a trend
+									pages("${a.name} career with no threshold at ${size_name(sz)}", { ..m, career_spines: career_pages([], m.career_sports), career_tests: [] }),
+								)
+							},
+						),
 					),
-				),
+					{
+						m = career_model(athlete_model(short_runner, sz), short_runner)
+						pages("${short_runner.name} career at ${size_name(sz)}", { ..m, career_spines: career_pages(List.keep_if(m.career_spines, |s| s.fam != "Run"), m.career_sports) })
+					},
+				]),
 			),
 		)
+	}
 
 	# ── the model every fixture starts from ─────────────────────────────────
 	athlete_model : Athlete, { w : F32, h : F32 } -> Ui.Model
@@ -1440,9 +1470,39 @@ expect !(List.contains(List.join(List.map(Sports.families, |f| f.sports)), Gate.
 # or a legend swatch
 expect Gate.failures(|m| Gate.judge(Curve.owned(m, Gate.measure), Curve.marks(m, Gate.measure)), Gate.curve_models) == []
 
-# the career view's gate: every spine of every athlete at every size; no
-# text over a chip, a card, a dot, a load bar, a legend swatch or the strip
+# the career view's gate: every page of every athlete at every size, the
+# pages without a trend among them; no text over a chip, a card, a dot, a
+# load bar, a legend swatch or the strip
 expect Gate.failures(|m| Gate.judge(Career.owned(m, Gate.measure), Career.marks(m, Gate.measure)), Gate.career_models) == []
+
+# the same gate in the built-in face, which the window falls back to when
+# the brand fonts cannot be read: the window then places the kind chips by
+# that face too, so the models carry it as their font
+expect Gate.failures(|m| Gate.judge(Career.owned(m, Gate.builtin_measure), Career.marks(m, Gate.builtin_measure)), List.map(Gate.career_models, |e| { ..e, model: { ..e.model, font: Gate.builtin_font } })) == []
+
+# the career fixtures carry pages without a trend: the short runner's
+# running page at every size, and a database with no threshold at all,
+# where every page is one
+expect {
+	none = List.keep_if(Gate.career_models, |e| (Career.spine_at(e.model.career_spines, e.model.spine_idx)).kind == Career.no_trend)
+	runs = List.keep_if(none, |e| Str.starts_with(e.name, Gate.short_runner.name) and Str.ends_with(e.name, " Run none"))
+	List.len(runs) == List.len(Gate.sizes) and List.any(none, |e| Str.contains(e.name, "with no threshold"))
+}
+
+# the short runner's running page says why it draws no line and what would
+# draw one, in both faces; the rides page beside it draws its trend and
+# none of those words
+expect {
+	at = |fam| List.keep_if(Gate.career_models, |e| Str.starts_with(e.name, Gate.short_runner.name) and (Career.spine_at(e.model.career_spines, e.model.spine_idx)).fam == fam)
+	says = |e, measure, t| List.any(Career.owned(e.model, measure), |o| o.key == "'${t}'")
+	words = ["No running trend yet", "stride test <activity_id> 5k"]
+	List.all(
+		[Gate.measure, Gate.builtin_measure],
+		|measure| List.all(at("Run"), |e| List.all(words, |t| says(e, measure, t)))
+			and List.all(at("Ride"), |e| !(List.any(words, |t| says(e, measure, t)))),
+	)
+		and !(List.is_empty(at("Ride")))
+}
 
 # the form board's gate: every athlete's board at every range, with an
 # event ahead and a projection, with the event-day story, and with an event
