@@ -1064,9 +1064,9 @@ Db :: [].{
 	# The career, assembled from the three v32 views: per-sport totals, the
 	# calendar-month load spine, and the month-close ride FTP. Months come from
 	# monthly_load's rows only - a month with no training produces no bar, and
-	# an ftp of 0 means "not measured that month": the line breaks rather than
-	# inventing a value. partial marks the month still in progress.
-	CareerMonth : { month : Str, load : I64, ftp10 : I64, partial : Bool }
+	# a spine_v of 0 means "not measured that month": the line breaks rather
+	# than inventing a value. partial marks the month still in progress.
+	CareerMonth : { month : Str, load : I64, spine_v : I64, partial : Bool }
 	# the spine family: whichever family has the most months of threshold data,
 	# with the kind that says how to read and label it. An athlete who only
 	# runs gets pace, one who only rides gets power, and the arc means the same
@@ -1103,11 +1103,11 @@ Db :: [].{
 	# (every family's month-close value) are each read once, and the per-family
 	# rows are assembled in memory. SQLite page-caches the threshold view across
 	# repeated reads, so this is fewer round-trips, not less work - the window
-	# opens in the same time either way. ftp10 is the spine value in tenths -
-	# watts for a power family, m/s for a pace one, kg for tonnage; 0 means the
-	# family had no scored session that month, and the renderer breaks the line
-	# rather than inventing a value. Families keep the input order (widest
-	# career first, as load_spine_fams! sorts them); rows run month-ascending.
+	# opens in the same time either way. spine_v is the spine value at its
+	# kind's resolution (spine_value); 0 means the family had no scored
+	# session that month, and the renderer breaks the line rather than
+	# inventing a value. Families keep the input order (widest career first,
+	# as load_spine_fams! sorts them); rows run month-ascending.
 	load_career_spines! : Sqlite.Db, List(SpineFam), Str => List(CareerSpine)
 	load_career_spines! = |db, fams, today_mod| {
 		base = load_monthly_base_at!(db, today_mod)
@@ -1118,8 +1118,8 @@ Db :: [].{
 				rows = List.map(
 					base,
 					|b| {
-						ftp10 = List.fold(thr, 0, |acc, x| if (x.fam == f.fam and x.kind == f.kind and x.month == b.month) x.ftp10 else acc)
-						{ month: b.month, load: b.load, ftp10, partial: b.partial }
+						spine_v = List.fold(thr, 0, |acc, x| if (x.fam == f.fam and x.kind == f.kind and x.month == b.month) x.spine_v else acc)
+						{ month: b.month, load: b.load, spine_v, partial: b.partial }
 					},
 				)
 				{ fam: f.fam, kind: f.kind, rows }
@@ -1168,14 +1168,26 @@ Db :: [].{
 				)
 		}
 
-	# every family's month-close threshold in tenths, every kind, in ONE read
-	# of the expensive monthly_threshold view. A family can carry two kinds (a
-	# run with a power meter has both a power and a pace threshold), so a row
-	# names its kind. A month/family/kind with no threshold has no row here,
-	# and the assembler above scores it 0.
-	load_all_thresholds! : Sqlite.Db => List({ fam : Str, kind : Str, month : Str, ftp10 : I64 })
+	# How many units of a spine value one integer step is, per kind: watts and
+	# kilograms are held in tenths, and pace, a speed in metres per second, in
+	# thousandths. A swimming threshold sits near 1 m/s, where a tenth of a
+	# metre per second is about ten seconds per 100 m: at tenths a swimmer's
+	# season would draw as two or three steps and label as values never held.
+	spine_scale : Str -> I64
+	spine_scale = |kind| if (kind == "pace") 1000 else 10
+
+	# a month-close value as the window holds it, at its kind's resolution
+	spine_value : Str, F64 -> I64
+	spine_value = |kind, v| (v * I64.to_f64(spine_scale(kind))).round_to_i64_try().ok_or(0)
+
+	# every family's month-close threshold at its kind's resolution, every
+	# kind, in ONE read of the expensive monthly_threshold view. A family can
+	# carry two kinds (a run with a power meter has both a power and a pace
+	# threshold), so a row names its kind. A month/family/kind with no
+	# threshold has no row here, and the assembler above scores it 0.
+	load_all_thresholds! : Sqlite.Db => List({ fam : Str, kind : Str, month : Str, spine_v : I64 })
 	load_all_thresholds! = |db|
-		match db.query!("SELECT CAST(fam AS TEXT) AS f, CAST(kind AS TEXT) AS k, CAST(month AS TEXT) AS m, CAST(ROUND(value * 10) AS INTEGER) AS f10 FROM monthly_threshold", []) {
+		match db.query!("SELECT CAST(fam AS TEXT) AS f, CAST(kind AS TEXT) AS k, CAST(month AS TEXT) AS m, CAST(value AS REAL) AS v FROM monthly_threshold", []) {
 			Err(_) => []
 			Ok(rows) =>
 				List.keep_oks(
@@ -1184,8 +1196,8 @@ Db :: [].{
 						f = r.str("f") ? |_| "bad"
 						k = r.str("k") ? |_| "bad"
 						m = r.str("m") ? |_| "bad"
-						f10 = r.i64("f10") ? |_| "bad"
-						Ok({ fam: f, kind: k, month: m, ftp10: f10 })
+						v = r.f64("v") ? |_| "bad"
+						Ok({ fam: f, kind: k, month: m, spine_v: spine_value(k, v) })
 					},
 				)
 		}
