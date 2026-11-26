@@ -22,13 +22,9 @@ Ramp :: [].{
 	# blue for one that gained, red for one that gained more than
 	# ramp_limit. The week's load sits under its date.
 	#
-	# The finished weeks set the scale, up to max_top. The running week does
-	# not: its hold counts only its elapsed days, so one long ride early in
-	# the week reads as a share far over the line, and scaling to it would
-	# squeeze every finished bar. A bar past the scale's top, the running
-	# week's or a finished week's past max_top, is clipped there and drawn
-	# broken; its chip still carries its CTL change. A week that started
-	# from zero CTL has no hold to share and keeps a stub.
+	# The scale fits the tallest bar, the running week's included, so no
+	# bar is ever cut short. A week that started from zero CTL has no hold
+	# to share and keeps a stub.
 
 	pad : F32
 	pad = 36.0
@@ -65,22 +61,19 @@ Ramp :: [].{
 	pct : Db.RampWeek -> I64
 	pct = |w| F64.round_to_i64_try(ratio(w) * 100.0) ?? 0
 
-	# the lowest and highest the scale's top may stand, in percent: the
-	# line never sits at the top, and no week, however small its hold,
-	# squeezes the rest
+	# the lowest the scale's top may stand, in percent, so the line never
+	# sits at the top
 	min_top : I64
 	min_top = 120
 
-	max_top : I64
-	max_top = 300
-
-	# the scale's top in percent: the highest share among the finished weeks
-	# with a hold, rounded up to a ten, within min_top and max_top
+	# the scale's top in percent: the largest share across every week shown,
+	# the running week's included, rounded up to a ten from the unrounded
+	# share, so the tallest bar always fits under it; at least min_top
 	top_of : List(Db.RampWeek) -> I64
 	top_of = |weeks| {
-		m = List.fold(weeks, min_top, |a, w| if (Weeks.partial(w.days) or !(held(w)) or pct(w) <= a) a else pct(w))
-		t = (m + 9) // 10 * 10
-		if (t > max_top) max_top else t
+		m = List.fold(weeks, I64.to_f64(min_top), |a, w| F64.max(a, ratio(w) * 100.0))
+		k = F64.round_to_i64_try(m / 10.0) ?? (min_top // 10)
+		if (I64.to_f64(k) * 10.0 < m) (k + 1) * 10 else k * 10
 	}
 
 	title_text : Str
@@ -131,15 +124,18 @@ Ramp :: [].{
 	line_gap : F32
 	line_gap = 4.0
 
-	# the line's name, one label just above it in the gutter
+	# the line's name and its value, stacked in the gutter: the name just
+	# over the value, the value centred on the line
 	line_label : Str
 	line_label = "holds fitness"
 
-	Bar : { w : Db.RampWeek, i : U64, cx : F32, box : Labels.Rect, clipped : Bool }
+	line_value : Str
+	line_value = "100 %"
 
-	# each week's bar on screen: its slot's centre, its body on the shared
-	# scale (a 3px stub for a week with no share), and whether its share
-	# passes the scale's top, where the body stops
+	Bar : { w : Db.RampWeek, i : U64, cx : F32, box : Labels.Rect }
+
+	# each week's bar on screen: its slot's centre and its body on the
+	# shared scale, a 3px stub for a week with no share
 	bars_of : List(Db.RampWeek), { w : F32, h : F32 } -> List(Bar)
 	bars_of = |weeks, win| {
 		n = List.len(weeks)
@@ -150,10 +146,9 @@ Ramp :: [].{
 			weeks,
 			|w, i| {
 				cx = Weeks.slot_cx(win.w, n, i)
-				frac = F64.to_f32_wrap(ratio(w) * 100.0) / I64.to_f32(top)
-				bh = F32.min(frac, 1.0) * plot_h(win.h)
+				bh = F64.to_f32_wrap(ratio(w) * 100.0) / I64.to_f32(top) * plot_h(win.h)
 				box = if (bh > 3.0) { x: cx - bw / 2.0, y: bot - bh, w: bw, h: bh } else { x: cx - bw / 2.0, y: bot - 3.0, w: bw, h: 3.0 }
-				{ w, i, cx, box, clipped: frac > 1.0 }
+				{ w, i, cx, box }
 			},
 		)
 	}
@@ -228,11 +223,15 @@ Ramp :: [].{
 						fix(Scene.data("ctl now", 11.0, ink_faint), card.x + 16.0, 102.0, Left, card),
 						fix(Scene.data(Fmt.tenths_signed(last.ramp10), 28.0, verdict(last.ramp10)), win_w - pad - 16.0, 68.0, Right, card),
 						fix(Scene.data(if (Weeks.partial(last.days)) "ctl per week so far" else "ctl per week", 11.0, ink_faint), win_w - pad - 16.0, 102.0, Right, card),
-						# the scale, in the gutter: its top, the line named
-						# just above where it crosses, and the base
+						# the scale, in the gutter: its top; the line's value
+						# where it crosses, as the zones mode reads its 80 %,
+						# with the line's name over it; and the base, which
+						# gives way to the value when a tall scale sets the
+						# line near the floor
 						fix(Scene.data("${I64.to_str(top)} %", 10.0, ink_faint), axis, plot_top - 5.0, Right, panel),
-						fix(Scene.data(line_label, 10.0, Color.white), axis, ly - 13.0, Right, panel),
-						fix(Scene.data("0", 10.0, ink_faint), axis, bot - 10.0, Right, panel),
+						fix(Scene.data(line_label, 10.0, Color.white), axis, ly - 18.0, Right, panel),
+						fix(Scene.data(line_value, 10.0, Color.white), axis, ly - 5.0, Right, panel),
+						Scene.free(measure, Scene.data("0", 10.0, ink_faint), [{ x: axis, y: bot - 10.0, align: Right }], 1, panel),
 					],
 					Weeks.focus_texts(model, measure),
 					List.map(key_row(measure), |k| fix(Scene.data(k.name, 10.0, ink_faint), k.text_x, 118.0, Left, panel)),
@@ -287,10 +286,6 @@ Ramp :: [].{
 						frame.rounded_rectangle!({ x: b.box.x, y: b.box.y, width: b.box.w, height: b.box.h, radius: 7.0, segments: 5, style: Draw.filled(Color.with_alpha(vc, bar_alpha(hovered, b.w.days))) })
 						# depth: the bar darkens toward its base, below the rounded cap
 						frame.rectangle_gradient_v!({ x: b.box.x, y: b.box.y + 8.0, width: b.box.w, height: b.box.h - 8.0, color_top: Color.with_alpha(Theme.bg, 0), color_bottom: Color.with_alpha(Theme.bg, 120) })
-						# a clipped bar is broken under its top: it goes on past the scale
-						if b.clipped {
-							frame.rectangle!({ x: b.box.x - 1.0, y: b.box.y + 10.0, width: b.box.w + 2.0, height: 4.0, style: Draw.filled(Theme.bg) })
-						}
 					} else {
 						frame.rounded_rectangle!({ x: b.box.x, y: b.box.y, width: b.box.w, height: b.box.h, radius: 1.5, segments: 3, style: Draw.filled(Color.with_alpha(ink_faint, 90)) })
 					}
@@ -347,7 +342,8 @@ expect {
 
 # on the screen, every real week whose chip reads a gain stands over the
 # line and every one whose chip reads a loss stands under it, the running
-# week included, and the line sits at 100% of every bar's hold
+# week included; every bar stands at its share of its hold on the one
+# scale, and the line sits at 100%
 expect {
 	win = { w: 980.0, h: 600.0 }
 	top = Ramp.top_of(Ramp.real_weeks)
@@ -356,62 +352,77 @@ expect {
 	at_hold = |b| (Weeks.bars_bot(win.h) - Ramp.plot_h(win.h) * F64.to_f32_wrap(Ramp.ratio(b.w)) * 100.0 / I64.to_f32(top) - b.box.y).abs() < 0.01
 	List.len(bs) == 12
 		and List.all(bs, |b| b.w.ramp10 == 0 or (b.w.ramp10 > 0) == (b.box.y < ly))
-		and List.all(bs, |b| b.clipped or at_hold(b))
+		and List.all(bs, at_hold)
 		and ((Ramp.line_box(win, top)).y + 1.0 - ly).abs() < 0.01
 }
 
-# the finished weeks set the scale: the real weeks' highest finished share
-# is 153%, so the scale tops at 160% while the running week reads 178%,
-# whose bar is clipped at the top and broken; a running week two days in
-# at 198% leaves the scale and every finished bar where they were
+# the scale fits the tallest bar, the running week's included: the real
+# running week reads 178%, over every finished week's 153% at most, so the
+# scale tops at 180% and every bar stands whole under it; a running week
+# two days in at 198% lifts the top to 200%, and its bar is the tallest
 expect {
 	win = { w: 980.0, h: 600.0 }
 	bs = Ramp.bars_of(Ramp.real_weeks, win)
-	run = (List.last(bs)) ?? { w: Ramp.blank, i: 0, cx: 0.0, box: { x: 0.0, y: 0.0, w: 0.0, h: 0.0 }, clipped: Bool.False }
 	early = List.append(List.drop_last(Ramp.real_weeks, 1), { wk: "2026-11-23", days: 2, tss: 204, ctl10: 540, ramp10: 24, ctl_start: 51.6078 })
 	es = Ramp.bars_of(early, win)
-	same = List.map2(List.drop_last(bs, 1), List.drop_last(es, 1), |a, b| (a.box.y - b.box.y).abs() < 0.001)
-	Ramp.top_of(Ramp.real_weeks) == 160
-		and run.clipped
-		and (run.box.y - Ramp.plot_top).abs() < 0.01
-		and List.all(List.drop_last(bs, 1), |b| !(b.clipped))
-		and Ramp.top_of(early) == 160
-		and List.all(same, |s| s)
-		and List.all(List.drop_last(es, 1), |b| !(b.clipped))
+	whole = |b| b.box.y >= Ramp.plot_top - 0.01
+	tallest = |xs| match List.last(xs) {
+		Ok(run) => List.all(xs, |b| run.box.y <= b.box.y)
+		Err(_) => Bool.False
+	}
+	Ramp.top_of(Ramp.real_weeks) == 180
+		and List.all(bs, whole)
+		and tallest(bs)
+		and Ramp.top_of(early) == 200
+		and List.all(es, whole)
+		and tallest(es)
 }
 
-# the scale's top stands between 120% and 300%: weeks all under their
-# holds still leave the line under the top, and a finished week far over
-# its tiny hold, a new athlete's second week, is clipped rather than
-# squeezing the rest
+# the top rounds up from the unrounded share: a finished week at 150.29%
+# of its hold tops the scale at 160%, one at 120.29% at 130%, each bar
+# whole and at its share; weeks all under their holds keep the top at 120%
 expect {
-	low = [{ wk: "2026-11-16", days: 7, tss: 100, ctl10: 450, ramp10: -50, ctl_start: 50.0 }]
+	win = { w: 980.0, h: 600.0 }
+	at = |tss| { wk: "2026-11-16", days: 7, tss, ctl10: 520, ramp10: 20, ctl_start: 50.0 }
+	shown = |w, top| List.all(Ramp.bars_of([w], win), |b| b.box.y >= Ramp.plot_top - 0.01 and (Weeks.bars_bot(win.h) - b.box.y - Ramp.plot_h(win.h) * F64.to_f32_wrap(Ramp.ratio(w)) * 100.0 / I64.to_f32(top)).abs() < 0.01)
+	(Ramp.ratio(at(526)) * 100.0 - 150.2857).abs() < 0.001
+		and Ramp.top_of([at(526)]) == 160
+		and shown(at(526), 160)
+		and Ramp.top_of([at(421)]) == 130
+		and shown(at(421), 130)
+		and Ramp.top_of([at(100)]) == 120
+}
+
+# a new athlete's second week, far over its tiny hold, sets a tall scale
+# and stands whole at its top; the weeks beside it stand low under it
+expect {
 	second = { wk: "2026-11-09", days: 7, tss: 160, ctl10: 40, ramp10: 19, ctl_start: 2.07 }
-	big = Ramp.bars_of([second, { wk: "2026-11-16", days: 7, tss: 120, ctl10: 60, ramp10: 20, ctl_start: 4.0 }], { w: 980.0, h: 600.0 })
-	Ramp.top_of(low) == 120 and Ramp.top_of([second]) == 300 and List.all(big, |b| b.clipped)
+	third = { wk: "2026-11-16", days: 7, tss: 120, ctl10: 60, ramp10: 20, ctl_start: 4.0 }
+	bs = Ramp.bars_of([second, third], { w: 980.0, h: 600.0 })
+	Ramp.top_of([second, third]) == 1110 and List.all(bs, |b| b.box.y >= Ramp.plot_top - 0.01)
 }
 
 # a chip never touches the line: beside a finished week at 160% of its
-# hold, which sets the scale, a finished week carrying anything up to that
-# and a running week carrying up to eight times its hold each keep their
-# chip clear of the line by the gap, above the bar, and inside the band
+# hold, a finished week carrying anything up to that and a running week
+# carrying up to eight times its hold, which lifts the scale, each keep
+# their chip clear of the line by the gap, above the bar, and inside the
+# band
 expect {
 	win = { w: 980.0, h: 600.0 }
-	ly = Ramp.line_y(win.h, 160)
 	tall = { ..Ramp.blank, wk: "2026-09-28", ctl_start: 50.0, tss: 560 }
 	clear = |k, days| {
 		w = { wk: "2026-11-16", days, tss: U64.to_i64_wrap(k) * 5, ctl10: 500, ramp10: 1, ctl_start: 50.0 }
+		ly = Ramp.line_y(win.h, Ramp.top_of([tall, w]))
 		bs = Ramp.bars_of([tall, w], win)
-		match List.last(bs) {
-			Ok(b) => {
+		List.all(
+			bs,
+			|b| {
 				c = Ramp.chip_box(b, ly)
-				Ramp.top_of([tall, w]) == 160
-					and (c.y + c.h <= ly - Ramp.line_gap + 0.001 or c.y >= ly + Ramp.line_gap - 0.001)
+				(c.y + c.h <= ly - Ramp.line_gap + 0.001 or c.y >= ly + Ramp.line_gap - 0.001)
 					and c.y + c.h <= b.box.y + 0.001
 					and c.y >= Weeks.bars_top - 16.0
-			}
-			Err(_) => Bool.False
-		}
+			},
+		)
 	}
 	List.all(List.map_with_index(List.repeat(0, 113), |_, k| clear(k, 7)), |ok| ok) and List.all(List.map_with_index(List.repeat(0, 321), |_, k| clear(k, 4)), |ok| ok)
 }
@@ -423,5 +434,5 @@ expect {
 expect {
 	first = { wk: "2026-11-02", days: 7, tss: 160, ctl10: 21, ramp10: 0, ctl_start: Db.week_start_ctl(Bool.True, 2.07, 0.0) }
 	bs = Ramp.bars_of([first], { w: 980.0, h: 600.0 })
-	!(Ramp.held(first)) and Ramp.top_of([first]) == 120 and List.all(bs, |b| (b.box.h - 3.0).abs() < 0.001 and !(b.clipped)) and (Db.week_start_ctl(Bool.False, 51.61, -2.17) - 53.78).abs() < 0.001
+	!(Ramp.held(first)) and Ramp.top_of([first]) == 120 and List.all(bs, |b| (b.box.h - 3.0).abs() < 0.001) and (Db.week_start_ctl(Bool.False, 51.61, -2.17) - 53.78).abs() < 0.001
 }

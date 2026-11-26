@@ -1318,8 +1318,8 @@ Gate :: [].{
 
 	# the load mode's edges at a window height: a first week that started
 	# from zero CTL and has no hold, a running week two days in at three
-	# times its hold, past the scale's top, and a week whose bar stands
-	# 15 px under the line, whose chip rises over it
+	# times its hold, which sets the scale's top, and a week whose bar
+	# stands 15 px under the line, whose chip rises over it
 	edge_ramp : List(Db.RampWeek), F32 -> List(Db.RampWeek)
 	edge_ramp = |weeks, win_h| {
 		ends = List.map_with_index(weeks, |w, i| if (i == 0) { ..w, ctl_start: 0.0 } else if (i == 11) { ..w, days: 2, tss: F64.round_to_i64_try(w.ctl_start * 6.0) ?? 0 } else w)
@@ -1629,9 +1629,10 @@ expect List.all(
 )
 
 # wherever the load chart draws, one line crosses it and no chip touches
-# it, and in both faces its one label, "holds fitness", sits whole in the
-# gutter with its foot just above the line, clear of every bar; at the
-# edges the running week is clipped without moving the scale, the week
+# it, and in both faces the line reads its value, "100 %", centred where
+# it crosses, under its one name, "holds fitness", both whole in the
+# gutter and clear of every bar; at the edges the running week, at three
+# times its hold, sets the scale's top and stands tallest, whole, the week
 # with no hold keeps its stub, and the week just under its hold lifts its
 # chip over the line
 expect List.all(
@@ -1639,21 +1640,20 @@ expect List.all(
 	|e| {
 		top = Ramp.top_of(e.model.ramp_weeks)
 		line = Ramp.line_box(e.model.win, top)
+		ly = line.y + 1.0
 		ks = List.map(Ramp.marks(e.model, Gate.measure), |m| m.key)
+		in_gutter = |p| p.box.x >= (Labels.panel(e.model.win)).x and p.box.x + p.box.w <= Weeks.plot_left - 2.0 and List.all(Ramp.bars(e.model), |b| !(Labels.intersects(p.box, b.box)))
 		named = |measure| {
-			labels = List.keep_if(Ramp.scene(e.model, measure), |p| p.item.text == Ramp.line_label)
-			List.len(labels) == 1
-				and List.all(
-					labels,
-					|p| p.box.x >= (Labels.panel(e.model.win)).x
-						and p.box.x + p.box.w <= Weeks.plot_left - 2.0
-						and p.box.y + p.box.h <= line.y - 1.0
-						and p.box.y + p.box.h >= line.y - 6.0
-						and List.all(Ramp.bars(e.model), |b| !(Labels.intersects(p.box, b.box))),
-				)
+			placed = Ramp.scene(e.model, measure)
+			names = List.keep_if(placed, |p| p.item.text == Ramp.line_label)
+			values = List.keep_if(placed, |p| p.item.text == Ramp.line_value)
+			List.len(names) == 1
+				and List.len(values) == 1
+				and List.all(values, |v| in_gutter(v) and (v.box.y + v.box.h / 2.0 - ly).abs() < 1.0)
+				and List.all(names, |n| in_gutter(n) and List.all(values, |v| n.box.y + n.box.h <= v.box.y and n.box.y + n.box.h >= v.box.y - 6.0))
 		}
 		List.count_if(ks, |k| k == "the holds-fitness line") == 1
-			and List.all(Ramp.bars(e.model), |b| !(Labels.intersects(Ramp.chip_box(b, line.y + 1.0), line)))
+			and List.all(Ramp.bars(e.model), |b| !(Labels.intersects(Ramp.chip_box(b, ly), line)))
 			and named(Gate.measure)
 			and named(Gate.builtin_measure)
 	},
@@ -1666,11 +1666,12 @@ expect {
 			|e| {
 				bs = Ramp.bars(e.model)
 				ly = Ramp.line_y(e.model.win.h, Ramp.top_of(e.model.ramp_weeks))
-				first = (List.first(bs)) ?? { w: Ramp.blank, i: 0, cx: 0.0, box: { x: 0.0, y: 0.0, w: 0.0, h: 0.0 }, clipped: Bool.False }
+				first = (List.first(bs)) ?? { w: Ramp.blank, i: 0, cx: 0.0, box: { x: 0.0, y: 0.0, w: 0.0, h: 0.0 } }
 				under = (List.get(bs, 6)) ?? first
 				run = (List.last(bs)) ?? first
-				Ramp.top_of(e.model.ramp_weeks) == Ramp.top_of(List.drop_last(e.model.ramp_weeks, 1))
-					and run.clipped
+				Ramp.top_of(e.model.ramp_weeks) == Ramp.top_of(List.take_last(e.model.ramp_weeks, 1))
+					and Ramp.top_of(List.drop_last(e.model.ramp_weeks, 1)) < Ramp.top_of(e.model.ramp_weeks)
+					and run.box.y >= Ramp.plot_top - 0.01 and List.all(bs, |b| run.box.y <= b.box.y)
 					and (first.box.h - 3.0).abs() < 0.001
 					and under.box.y > ly + Ramp.line_gap + 2.0 and under.box.y < ly + 30.0
 					and (Ramp.chip_box(under, ly)).y + 20.0 <= ly - Ramp.line_gap + 0.001

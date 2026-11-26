@@ -187,15 +187,15 @@ the week's load as a share of its hold level, the load that would have left
 CTL where the week started: CTL at the week's start times the days the week
 counts (`core.Load.hold`), since a day whose load equals CTL is the fixed
 point of the recurrence the engine builds `daily_load` with, and that
-recurrence lives in the same module. So one white line at 100%, labelled
-"holds fitness" just above it in the gutter, serves every week: a bar over
-it gained fitness and one under it lost fitness, except within a narrow
-band around the line: the recurrence weighs a late day above an early one
-and the hold weighs every day alike, so a week whose load lands on its
-first day can top its hold and still lose up to 1.07% of its starting CTL,
-and one whose load lands on its last day can fall short of it and still
-gain up to 1.12%. `core.Load` derives both bounds from the recurrence and
-pins them.
+recurrence lives in the same module. So one white line at 100% serves every
+week, read in the gutter where it crosses as "100 %" under its name, "holds
+fitness": a bar over it gained fitness and one under it lost fitness,
+except within a narrow band around the line: the recurrence weighs a late
+day above an early one and the hold weighs every day alike, so a week whose
+load lands on its first day can top its hold and still lose up to 1.07% of
+its starting CTL, and one whose load lands on its last day can fall short
+of it and still gain up to 1.12%. `core.Load` derives both bounds from the
+recurrence and pins them.
 
 Each bar wears a chip with the CTL the week gained, and bar and chip share
 the verdict's color: muted for a week that held or lost fitness, blue for
@@ -206,19 +206,18 @@ above it. The figure under each bar is the week's load. The card carries
 where fitness stands and how fast it is moving, "ctl per week so far" for
 the running week.
 
-The finished weeks set the scale: its top is the highest finished share
-rounded up to a ten, at least 120% and at most 300%. The running week does
-not set it: its hold counts only the days it has had, so one long ride on a
-Monday reads as a share far over the line, and scaling to it would squeeze
-every finished bar to a sliver. A bar past the top, the running week's or
-a finished week's past 300% (a new athlete's second week, over a tiny
-hold), is clipped there and drawn broken just under its top; its chip
-still carries the week's real CTL change. The weeks come from the
-`weekly_ramp` view - the one definition of weekly ramp; a week's start is
-its end-of-week CTL less its ramp, except a week that begins on or before
-the first day of history, which started from zero CTL (the engine walks
-`daily_load` from zero), has no hold to share and keeps a stub. A directive
-with view 7 opens it.
+The scale fits the tallest bar, the running week's included: its top is
+the largest share of any week shown, rounded up to a ten, and at least
+120%, so no bar is ever cut short. The running week's hold counts only the
+days it has had, so one long ride early in the week can make it the
+tallest bar and lift the top. A new athlete's early weeks sit over tiny
+holds and can set a tall scale, the line low on the plot and the later
+weeks short beside them; the chips still read each week's CTL change. The
+weeks come from the `weekly_ramp` view - the one definition of weekly
+ramp; a week's start is its end-of-week CTL less its ramp, except a week
+that begins on or before the first day of history, which started from
+zero CTL (the engine walks `daily_load` from zero), has no hold to share
+and keeps a stub. A directive with view 7 opens it.
 
 ![The ramp view](img/ramp.png)
 
@@ -831,8 +830,8 @@ sport no family holds. The fixtures per view:
   other athlete, and the newest still running, with no week picked, on a
   picked week, with no history, and at the load
   mode's edges (a first week with no hold, a week just under its hold, and
-  a running week two days in past the scale's top), in the brand faces and
-  in the built-in face;
+  a running week two days in that sets the scale's top), in the brand
+  faces and in the built-in face;
 - lifts: more lifts than the widest window holds and the latest session's
   sets, in kilograms and scrolled in pounds, for every athlete who lifts,
   and the empty tab for every athlete who does not;
