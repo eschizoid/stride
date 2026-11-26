@@ -272,7 +272,12 @@ Ui :: [].{
 		glow : [Unbuilt, Unavailable({ gw : F32, gh : F32 }), Ready({ rt : Draw.RenderTexture, shader : Shader({ res_x : F32, res_y : F32 }), gw : F32, gh : F32 })],
 		glow_on : Bool,
 		mouse_in : Bool,
+		# the day cursor the form board and the data table share: `cursor`
+		# counts days back from the latest measured day (-1 off), and
+		# `cursor_ahead` the board's projected days past it the cursor has
+		# walked on into (0 on a measured day)
 		cursor : I64,
+		cursor_ahead : U64,
 		# the map view: every route
 		map : Db.MapData,
 		# Unloaded until a load task is spawned, Loading while it runs, and

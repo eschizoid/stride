@@ -634,6 +634,7 @@ Gate :: [].{
 			map_cache_err: "",
 			mouse_in: Bool.False,
 			cursor: -1,
+			cursor_ahead: 0,
 		}
 	}
 
@@ -1632,6 +1633,99 @@ expect {
 		and Board.hovered(at_right, g) == Ok(49)
 		and List.contains(texts, "'2026-12-02 projected'")
 		and List.contains(texts, "'Planned load'")
+}
+
+# the arrow cursor walks on past the latest measured day into each
+# projected day the board draws, and past the last of them turns off; a
+# directive's day finds a measured day by days back and a projected one by
+# days ahead, and a board too short to plot holds no projected day; focus
+# reads a projected cursor's day, held to the last drawn; a parked cursor
+# holds the crosshair while the pointer rests inside the plot
+expect {
+	a = Gate.first_athlete
+	m = Gate.board_model(Gate.athlete_model(a, Gate.default_size), a, 0, 30, 0)
+	g = Board.geom(m)
+	walk = List.fold(List.repeat({}, 20), [{ back: 0, ahead: 0 }], |acc, _u| List.append(acc, Board.step((List.last(acc)) ?? { back: -1, ahead: 0 }, Newer, 20)))
+	at = |c| Board.hovered({ ..m, cursor: c.back, cursor_ahead: c.ahead }, g)
+	short = { ..m, data: List.take_first(m.data, 1), days: List.take_first(m.days, 1) }
+	List.len(Board.shown_proj(m)) == 20
+		and List.map(walk, at) == List.map_with_index(List.repeat({}, 21), |_u, i| Ok(29 + i))
+		and Board.step({ back: 0, ahead: 20 }, Newer, 20) == { back: -1, ahead: 0 }
+		and Board.step({ back: 0, ahead: 1 }, Older, 20) == { back: 0, ahead: 0 }
+		and at({ back: 0, ahead: 25 }) == Ok(49)
+		and Board.hovered({ ..m, cursor: 0, cursor_ahead: 5, mouse_in: Bool.True, mouse_x: g.left, mouse_y: g.top + 10.0 }, g) == Ok(34)
+		and Board.hovered({ ..m, mouse_in: Bool.True, mouse_x: g.left, mouse_y: g.top + 10.0 }, g) == Ok(0)
+		and Board.cursor_at(m, "2026-11-12") == Ok({ back: 0, ahead: 0 })
+		and Board.cursor_at(m, "2026-11-09") == Ok({ back: 3, ahead: 0 })
+		and Board.cursor_at(m, "2026-11-13") == Ok({ back: 0, ahead: 1 })
+		and Board.cursor_at(m, "2026-12-02") == Ok({ back: 0, ahead: 20 })
+		and Board.cursor_at(m, "2026-12-03") == Err(NotShown)
+		and Board.cursor_at(short, "2026-11-13") == Err(NotShown)
+		and Board.ahead_day(m, 1) == "2026-11-13"
+		and Board.ahead_day(m, 99) == "2026-12-02"
+		and Board.ahead_day(m, 0) == ""
+		and Board.ahead_day(short, 1) == ""
+}
+
+# the arrow keys' steps: older from off lands on the latest measured day,
+# newer from a measured day walks toward it and from it on into the
+# projected days, and a board with none turns off there
+expect {
+	today = { back: 0, ahead: 0 }
+	Board.step({ back: -1, ahead: 0 }, Older, 3) == today
+		and Board.step(today, Older, 3) == { back: 1, ahead: 0 }
+		and Board.step({ back: 2, ahead: 0 }, Newer, 3) == { back: 1, ahead: 0 }
+		and Board.step(today, Newer, 3) == { back: 0, ahead: 1 }
+		and Board.step({ back: 0, ahead: 2 }, Newer, 3) == { back: 0, ahead: 3 }
+		and Board.step({ back: 0, ahead: 3 }, Newer, 3) == { back: -1, ahead: 0 }
+		and Board.step({ back: 0, ahead: 2 }, Older, 3) == { back: 0, ahead: 1 }
+		and Board.step(today, Newer, 0) == { back: -1, ahead: 0 }
+		and Board.step({ back: -1, ahead: 0 }, Newer, 3) == { back: -1, ahead: 0 }
+}
+
+# the day card the arrow cursor opens over each projected day: its lines
+# clear one another and stay inside the card, the card inside the plot,
+# its header says the day is projected and no line says what was done,
+# for every board with a projection at every size, in the brand faces and
+# in the built-in face
+expect {
+	cards = |boards, measure|
+		List.join(
+			List.map(
+				List.keep_if(boards, |f| !(List.is_empty(Board.shown_proj(f.model)))),
+				|f| {
+					g = Board.geom(f.model)
+					plot = Board.plot_box(g)
+					List.join(
+						List.map(
+							List.map_with_index(List.repeat({}, List.len(Board.shown_proj(f.model))), |_u, i| i + 1),
+							|k| {
+								mk = { ..f.model, cursor: 0, cursor_ahead: k }
+								match Board.hovered(mk, g) {
+									Err(_) => ["${f.name} day +${U64.to_str(k)}: no day under the cursor"]
+									Ok(i) => {
+										hp = (List.get(g.data, i)) ?? { ctl: 0.0, atl: 0.0, tsb: 0.0, tss: 0.0 }
+										card = Board.tip_card(mk, g, i, hp, measure)
+										owned = Scene.owned(Labels.place(card.lines, { boxes: [], segs: [] }))
+										b = card.box
+										inside = b.x >= plot.x and b.y >= plot.y and b.x + b.w <= plot.x + plot.w and b.y + b.h <= plot.y + plot.h
+										head = List.any(owned, |o| Str.ends_with(o.key, " projected'"))
+										done = List.any(owned, |o| o.key == "'rest day'")
+										List.join([
+											List.map(Labels.check(owned), |e| "${f.name} day +${U64.to_str(k)}: ${e}"),
+											if (inside) [] else ["${f.name} day +${U64.to_str(k)}: the card leaves the plot"],
+											if (head) [] else ["${f.name} day +${U64.to_str(k)}: the card does not say projected"],
+											if (done) ["${f.name} day +${U64.to_str(k)}: the card says what was done on a day still to come"] else [],
+										])
+									}
+								}
+							},
+						),
+					)
+				},
+			),
+		)
+	List.concat(cards(Gate.board_models, Gate.measure), cards(Gate.board_models_in(Gate.builtin_font), Gate.builtin_measure)) == []
 }
 
 # the event the projection reaches is marked on the projection's last day

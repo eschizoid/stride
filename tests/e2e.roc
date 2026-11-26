@@ -415,7 +415,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1486)?
+	checks_ran_exactly!(1488)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -8738,6 +8738,15 @@ b_viz_caps! = |ctx| {
 	cap_accepts = Str.trim(sh!("grep 'name: \"capture\"' src/viz/main.roc | grep -oE \"'(png|webm_start|webm_stop)'\" | LC_ALL=C sort -u | tr -d \"'\" | tr '\\n' ' '"))
 	cap_kinds = Str.trim(sh!("grep -oE 'capture_kinds = \\[[^]]*\\]' src/core/Bus.roc | grep -oE '\"[a-z_]+\"' | tr -d '\"' | LC_ALL=C sort -u | tr '\\n' ' '"))
 	check!("the capture field's accepts names every kind the bus vocabulary holds (${cap_accepts}| ${cap_kinds})", !Str.is_empty(cap_kinds) and cap_accepts == cap_kinds)?
+	# a cursor_day may name a projected day the board draws: the published
+	# accepts says so, the directive's day resolves through Board.cursor_at,
+	# and that resolver searches the projected days the board shows
+	cur_proj = Str.trim(sh!("a=$(grep 'name: \"cursor_day\"' src/viz/main.roc | grep -c 'projected day'); r=$(grep -c 'Board.cursor_at(model, directive.cursor_day)' src/viz/main.roc); s=$(grep -c 'List.map_with_index(shown_proj(model), |p, i|' src/viz/Board.roc); echo \"$a/$r/$s\""))
+	check!("cursor_day accepts a projected day and the window resolves one (${cur_proj})", cur_proj == "1/1/1")?
+	# the published capture field says its result names a file only once
+	# that file exists, and that a start, whose file the stop writes, names none
+	cap_result = Str.trim(sh!("grep 'name: \"capture\"' src/viz/main.roc | grep -c 'once it exists.*a start closes with no result'"))
+	check!("the capture field says its result is a file that exists and a start names none (${cap_result})", cap_result == "1")?
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (0),(0),(0),(0),(0),(0),(0),(0),(0),(0),(0);")
 	check!("history is capped at ten and keeps the newest", strjq!(ctx, ["viz"], "(.data.history | length | tostring) + \"/\" + (.data.history[0].id | tostring)") == "10/15")?
 	# a hostile row - text where an integer belongs, which a raw INSERT can

@@ -571,6 +571,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		detail: [],
 		mouse_in: Bool.False,
 		cursor: -1,
+		cursor_ahead: 0,
 	})
 }
 
@@ -1658,18 +1659,82 @@ expect curve_refusal({ power: [], pace: [] }, "Bike") == ""
 join_refusal : Str, Str -> Str
 join_refusal = |a, b| if (a == "") b else if (b == "") a else "${a}; ${b}"
 
-# why the host declined a screenshot, in the status row's words
-shot_error_text : Capture.ScreenshotError -> Str
+# why a directive's screenshot names no file: the host declined it, or the
+# host answered and no file of the shot's is there (dir_shot_task!)
+ShotError : [Host(Capture.ScreenshotError), NoFile]
+
+# why a screenshot named no file, in the status row's words
+shot_error_text : ShotError -> Str
 shot_error_text = |e|
 	match e {
-		PathInvalid => "capture png failed: the path is invalid"
-		PathEscapesOutputDir => "capture png failed: the path leaves ./captures"
-		AlreadyPending => "capture png failed: a screenshot is already pending"
-		WriteFailed => "capture png failed: the file could not be written"
-		Busy => "capture png failed: the host is busy"
-		Unavailable => "capture png failed: capture is unavailable here"
-		PermissionDenied => "capture png failed: the host refused the capture"
+		Host(PathInvalid) => "capture png failed: the path is invalid"
+		Host(PathEscapesOutputDir) => "capture png failed: the path leaves ./captures"
+		Host(AlreadyPending) => "capture png failed: a screenshot is already pending"
+		Host(WriteFailed) => "capture png failed: the file could not be written"
+		Host(Busy) => "capture png failed: the host is busy"
+		Host(Unavailable) => "capture png failed: capture is unavailable here"
+		Host(PermissionDenied) => "capture png failed: the host refused the capture"
+		NoFile => "capture png failed: the host answered but wrote no file"
 	}
+
+# what a stat finds at a capture's path: nothing (or something that is not
+# a file), or a file's size and when it last changed, in nanoseconds
+FileSeen : [Absent, Seen({ size : U64, at : I128 })]
+
+# a shot wrote its file when one is there after it, not empty, and not the
+# file that stood there before it: a write moves the modification time
+shot_wrote : FileSeen, FileSeen -> Bool
+shot_wrote = |before, after|
+	match after {
+		Absent => Bool.False
+		Seen(a) =>
+			a.size > 0
+				and match before {
+					Absent => Bool.True
+					Seen(b) => b.at != a.at
+				}
+	}
+
+expect {
+	file = |size, at| Seen({ size, at })
+	shot_wrote(Absent, file(120, 5))
+		and shot_wrote(file(120, 5), file(130, 9))
+		and !shot_wrote(Absent, Absent)
+		and !shot_wrote(file(120, 5), Absent)
+		and !shot_wrote(file(120, 5), file(120, 5))
+		and !shot_wrote(Absent, file(0, 5))
+		and shot_error_text(NoFile) == "capture png failed: the host answered but wrote no file"
+		and shot_error_text(Host(Busy)) == "capture png failed: the host is busy"
+}
+
+# the file at `rel` under the window's working directory, the directory
+# the platform resolves its capture directory against
+file_seen! : App.Io, Str => FileSeen
+file_seen! = |io, rel|
+	match io.files().working_directory_read!() {
+		Err(_) => Absent
+		Ok(d) =>
+			match d.metadata!(rel) {
+				Ok(md) => if (md.kind == File) Seen({ size: md.size_bytes, at: md.modified.nanos_since_epoch() }) else Absent
+				Err(_) => Absent
+			}
+	}
+
+# A directive's screenshot, and whether it is the file the row will name:
+# the host parks the task until its write is done, then a stat must find a
+# file there that the stat before the shot did not, since a host with no
+# framebuffer answers Ok without writing and a file an earlier capture left
+# would otherwise pass for this one's
+dir_shot_task! : App.Io, I64, Str => Msg
+dir_shot_task! = |io, id, name| {
+	rel = capture_path("", name)
+	before = file_seen!(io, rel)
+	res = match io.capture().screenshot!(name) {
+		Ok(_) => if (shot_wrote(before, file_seen!(io, rel))) Ok({}) else Err(NoFile)
+		Err(e) => Err(Host(e))
+	}
+	DirShot({ id, res })
+}
 
 # whether a capture's mark is still waiting on the host
 capture_is_pending : Ui.PendingCapture -> Bool
@@ -1678,6 +1743,20 @@ capture_is_pending = |p|
 		NoCapture => Bool.False
 		_ => Bool.True
 	}
+
+# whether this frame polls the bus: once a second, against a database the
+# window has, while no capture waits on the host (a newer row would
+# supersede the one whose file is still being written), and never while
+# the boot load is in flight: a directive is judged against the model it
+# steers, and the boot skeleton holds no series, no picker and no view
+# drawn yet, so a row written at launch waits for the loaded window
+polls_bus : { second : Bool, has_dir : Bool, capture_pending : Bool, booting : Bool } -> Bool
+polls_bus = |p| p.second and p.has_dir and !p.capture_pending and !p.booting
+
+expect {
+	at = { second: Bool.True, has_dir: Bool.True, capture_pending: Bool.False, booting: Bool.False }
+	polls_bus(at) and !polls_bus({ ..at, booting: Bool.True }) and !polls_bus({ ..at, second: Bool.False }) and !polls_bus({ ..at, has_dir: Bool.False }) and !polls_bus({ ..at, capture_pending: Bool.True })
+}
 
 # where the platform writes captures, relative to the window's working
 # directory: the platform refuses an absolute output dir, so the absolute path
@@ -1713,12 +1792,15 @@ settle_timeout_ticks = 180 * ticks_per_second
 # effect the frame runs. A PNG is armed until the view has settled (a view
 # switch's crossfade and draw-in have finished, no trace fetch is in flight,
 # and on the map view the map has landed) so the file shows the view and not
-# the transition; a start closes once the recorder reads Active, and a
-# refusal the host latched for the next input closes it with the reason; a
-# stop closes on Finished or Failed. The armed wait ends at
+# the transition. A mark's result names a file only once it exists: a PNG's
+# when its shot wrote one (dir_shot_task!), a recording's when the stop
+# finished with bytes written. A start closes once the recorder reads
+# Active, with no result since its file is not written until the stop, and
+# a refusal the host latched for the next input closes it with the reason;
+# a stop closes on Finished or Failed. The armed wait ends at
 # settle_timeout_ticks and every wait on the host at capture_timeout_ticks,
 # each with no result
-CaptureEvent : { shot : [NoShot, ShotDone(I64, Try({}, Capture.ScreenshotError))], rec : Capture.Status, settled : Bool, tick : U64 }
+CaptureEvent : { shot : [NoShot, ShotDone(I64, Try({}, ShotError))], rec : Capture.Status, settled : Bool, tick : U64 }
 
 CaptureAction : [Nothing, TakeShot({ id : I64, name : Str }), Mark({ id : I64, refused : Str, result : Str })]
 
@@ -1743,7 +1825,7 @@ capture_step = |p, ev| {
 			}
 		AwaitingStart(c) =>
 			match ev.rec {
-				Active(_) => { next: NoCapture, act: Mark({ id: c.id, refused: c.refused, result: c.path }) }
+				Active(_) => { next: NoCapture, act: Mark({ id: c.id, refused: c.refused, result: "" }) }
 				# the frame after the start reads the host's answer to it: an accepted
 				# start reads Active, a rejected one the Failed the host latched, and
 				# either overwrites what an earlier recording left
@@ -1752,7 +1834,7 @@ capture_step = |p, ev| {
 			}
 		AwaitingStop(c) =>
 			match ev.rec {
-				Finished(_) => { next: NoCapture, act: Mark({ id: c.id, refused: c.refused, result: c.path }) }
+				Finished(f) => if (f.bytes > 0) { next: NoCapture, act: Mark({ id: c.id, refused: c.refused, result: c.path }) } else { next: NoCapture, act: Mark({ id: c.id, refused: join_refusal(c.refused, "capture webm_stop failed: the recording wrote no file"), result: "" }) }
 				Failed(f) => { next: NoCapture, act: Mark({ id: c.id, refused: join_refusal(c.refused, Str.concat("capture webm_stop failed: ", rec_failure_text(f.reason))), result: "" }) }
 				_ => if (timed_out(c)) (give_up(c, "webm_stop")) else { next: p, act: Nothing }
 			}
@@ -1906,23 +1988,25 @@ expect {
 
 expect join_refusal("", "b") == "b" and join_refusal("a", "") == "a" and join_refusal("a", "b") == "a; b"
 # the deferred mark, pinned: a PNG arms until the view has settled, then
-# takes the shot; the answer for its id marks with the path, a failure
-# joins the host's reason to what the directive's other fields refused; an
-# answer for another id (the S key's) is not the directive's; every wait
-# gives up at the timeout with no result
+# takes the shot; the answer for its id marks with the path, a failure or a
+# shot that wrote no file joins the reason to what the directive's other
+# fields refused, with no result; an answer for another id (the S key's)
+# is not the directive's; every wait gives up at the timeout with no result
 expect {
 	c = { id: 3, refused: "", path: "/h/captures/power.png", name: "power.png", since: 100 }
 	ev = { shot: NoShot, rec: Idle, settled: Bool.False, tick: 101 }
 	armed = capture_step(ArmedShot(c), ev)
 	taken = capture_step(ArmedShot(c), { ..ev, settled: Bool.True })
 	ok = capture_step(AwaitingShot(c), { ..ev, shot: ShotDone(3, Ok({})) })
-	bad = capture_step(AwaitingShot({ ..c, refused: "range 45 not 30/60/90" }), { ..ev, shot: ShotDone(3, Err(Busy)) })
+	bad = capture_step(AwaitingShot({ ..c, refused: "range 45 not 30/60/90" }), { ..ev, shot: ShotDone(3, Err(Host(Busy))) })
 	other = capture_step(AwaitingShot(c), { ..ev, shot: ShotDone(4, Ok({})) })
+	empty = capture_step(AwaitingShot(c), { ..ev, shot: ShotDone(3, Err(NoFile)) })
 	late = capture_step(AwaitingShot(c), { ..ev, tick: 700 })
 	armed == { next: ArmedShot(c), act: Nothing }
 		and taken == { next: AwaitingShot({ ..c, since: 101 }), act: TakeShot({ id: 3, name: "power.png" }) }
 		and ok == { next: NoCapture, act: Mark({ id: 3, refused: "", result: "/h/captures/power.png" }) }
 		and bad == { next: NoCapture, act: Mark({ id: 3, refused: "range 45 not 30/60/90; capture png failed: the host is busy", result: "" }) }
+		and empty == { next: NoCapture, act: Mark({ id: 3, refused: "capture png failed: the host answered but wrote no file", result: "" }) }
 		and other == { next: AwaitingShot(c), act: Nothing }
 		and late == { next: NoCapture, act: Mark({ id: 3, refused: "capture png failed: no answer from the host within 10 seconds", result: "" }) }
 }
@@ -1936,10 +2020,11 @@ expect {
 		and capture_step(ArmedShot(c), { ..ev, tick: 100 + settle_timeout_ticks }) == { next: NoCapture, act: Mark({ id: 7, refused: "capture png failed: the view was still loading after 180 seconds", result: "" }) }
 		and settle_timeout_ticks == 180 * ticks_per_second
 }
-# a start marks on Active with the file, a Failed read at the tick the wait
-# began (the frame after the start, which is when the step first runs)
-# marks the host's reason; a stop marks on Finished or Failed and waits on
-# Active
+# a start marks on Active with no result, its file not yet written, and a
+# Failed read at the tick the wait began (the frame after the start, which
+# is when the step first runs) marks the host's reason; a stop marks its
+# file on a Finished that wrote bytes, the reason on one that wrote none
+# or on Failed, and waits on Active
 expect {
 	c = { id: 5, refused: "", path: "/h/captures/power.webm", name: "power.webm", since: 100 }
 	ev = { shot: NoShot, rec: Idle, settled: Bool.True, tick: 101 }
@@ -1947,12 +2032,14 @@ expect {
 	started = capture_step(AwaitingStart(c), { ..ev, rec: Active(fr) })
 	refused = capture_step(AwaitingStart(c), { ..ev, tick: 100, rec: Failed({ frames: 0, reason: AlreadyRecording }) })
 	stopped = capture_step(AwaitingStop(c), { ..ev, rec: Finished({ frames: 9, bytes: 1 }) })
+	unwritten = capture_step(AwaitingStop(c), { ..ev, rec: Finished({ frames: 9, bytes: 0 }) })
 	died = capture_step(AwaitingStop(c), { ..ev, rec: Failed({ frames: 9, reason: EncodeFailed }) })
 	waiting = capture_step(AwaitingStop(c), { ..ev, rec: Active(fr) })
 	gone = capture_step(AwaitingStart(c), { ..ev, tick: 700 })
-	started == { next: NoCapture, act: Mark({ id: 5, refused: "", result: "/h/captures/power.webm" }) }
+	started == { next: NoCapture, act: Mark({ id: 5, refused: "", result: "" }) }
 		and refused == { next: NoCapture, act: Mark({ id: 5, refused: "capture webm_start failed: a recording is already running", result: "" }) }
 		and stopped == { next: NoCapture, act: Mark({ id: 5, refused: "", result: "/h/captures/power.webm" }) }
+		and unwritten == { next: NoCapture, act: Mark({ id: 5, refused: "capture webm_stop failed: the recording wrote no file", result: "" }) }
 		and died == { next: NoCapture, act: Mark({ id: 5, refused: "capture webm_stop failed: the encoder failed", result: "" }) }
 		and waiting == { next: AwaitingStop(c), act: Nothing }
 		and gone == { next: NoCapture, act: Mark({ id: 5, refused: "capture webm_start failed: no answer from the host within 10 seconds", result: "" }) }
@@ -2082,7 +2169,7 @@ Msg : [
 	GhostSwitchFailed(U64),
 	Shot(Try({}, Capture.ScreenshotError)),
 	# a directive's screenshot answer, tagged with its row so the S key's cannot close it
-	DirShot({ id : I64, res : Try({}, Capture.ScreenshotError) }),
+	DirShot({ id : I64, res : Try({}, ShotError) }),
 	RecCmd(Try({}, [PermissionDenied])),
 	MarkDone(I64),
 	Reloaded(Ui.Model),
@@ -2176,12 +2263,12 @@ caps_fields : List({ name : Str, kind : Str, accepts : Str })
 caps_fields = [
 	{ name: "view", kind: "integer", accepts: "0..12 (3, 4 and 5 are the day tab's log, week and year modes; 10, 11 and 12 the map tab's routes, heat and play)" },
 	{ name: "range", kind: "integer", accepts: "30|60|90 (days; omitted leaves the range unchanged)" },
-	{ name: "cursor_day", kind: "date", accepts: "YYYY-MM-DD present in the form-board series" },
+	{ name: "cursor_day", kind: "date", accepts: "YYYY-MM-DD the form board draws: a day of its measured series, or a projected day past it" },
 	{ name: "trace_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions; picks that day's newest session, trace_id names one exactly" },
 	{ name: "ghost_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions, or 'none' to dismiss; picks that day's newest session of the shown session's kind" },
 	{ name: "trace_id", kind: "integer", accepts: "an activity id among the trace picker's sessions; when both are given it takes precedence over trace_day" },
 	{ name: "ghost_id", kind: "integer", accepts: "an activity id among the trace picker's sessions, of the same kind as the session shown; takes precedence over ghost_day, and 'none' in ghost_day still dismisses" },
-	{ name: "capture", kind: "text", accepts: "'png' writes the view the directive lands on, once it has settled, to captures/<view>.png under the window's working directory; 'webm_start' and 'webm_stop' begin and end a WebM recording of it; the row stays pending until the host answers, then result names the file by its absolute path" },
+	{ name: "capture", kind: "text", accepts: "'png' writes the view the directive lands on, once it has settled, to captures/<view>.png under the window's working directory; 'webm_start' and 'webm_stop' begin and end a WebM recording of it; the row stays pending until the host answers, then result names the file by its absolute path once it exists: a written PNG, or the recording a stop finished; a start closes with no result" },
 	{ name: "family", kind: "text", accepts: "a sport family's head ('Ride', 'Rowing', 'Run', ...) switches the power view to that family's power curve, record book and CP fit; 'pace:' and a sport type ('pace:Run', 'pace:Swim', 'pace:Rowing') switches it to that sport's pace curve and critical-speed fit; refused by name when the athlete has no such data; omitted leaves it unchanged" },
 	{ name: "short", kind: "integer", accepts: "1 shows the power or pace curve's short rungs (under 5 minutes), 0 folds them when none was pushed all-out; any other value is refused by name; omitted leaves it unchanged" },
 ]
@@ -2273,7 +2360,7 @@ update! = |model0, program_input, io| {
 							}
 					}
 				Reloaded(fresh) => {
-					merged = { ..fresh, map: acc.map, map_tiles: acc.map_tiles, map_source: acc.map_source, map_cache_err: acc.map_cache_err, map_planned: acc.map_planned, map_plan_due: acc.map_plan_due, map_heat: acc.map_heat, map_play: acc.map_play, map_speed: acc.map_speed, map_marks: acc.map_marks, map_gen: acc.map_gen, map_load: (map_on_reload(acc.map_load)).load, map_stale: (map_on_reload(acc.map_load)).stale, map_cam: acc.map_cam, map_moved: acc.map_moved, map_card: acc.map_card, map_rt: acc.map_rt, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_active: acc.last_active, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending, flame: acc.flame }
+					merged = { ..fresh, map: acc.map, map_tiles: acc.map_tiles, map_source: acc.map_source, map_cache_err: acc.map_cache_err, map_planned: acc.map_planned, map_plan_due: acc.map_plan_due, map_heat: acc.map_heat, map_play: acc.map_play, map_speed: acc.map_speed, map_marks: acc.map_marks, map_gen: acc.map_gen, map_load: (map_on_reload(acc.map_load)).load, map_stale: (map_on_reload(acc.map_load)).stale, map_cam: acc.map_cam, map_moved: acc.map_moved, map_card: acc.map_card, map_rt: acc.map_rt, range: acc.range, view: acc.view, spine_idx: acc.spine_idx, cursor: acc.cursor, cursor_ahead: acc.cursor_ahead, mouse_x: acc.mouse_x, mouse_y: acc.mouse_y, mouse_in: acc.mouse_in, tick: acc.tick, last_active: acc.last_active, last_focus: acc.last_focus, win: acc.win, ui_percent: acc.ui_percent, ui_scale: acc.ui_scale, detail_day: acc.detail_day, detail: acc.detail, view_anim: acc.view_anim, pending_capture: acc.pending_capture, rec_path: acc.rec_path, rec_status: acc.rec_status, last_directive: acc.last_directive, quit_mark_pending: acc.quit_mark_pending, flame: acc.flame }
 					# R reads the curve it was pressed on, and it is the slow path.
 					# A chip clicked while it ran has since moved curve_days or
 					# curve_family and landed its own curve; when the two disagree
@@ -2359,7 +2446,7 @@ update! = |model0, program_input, io| {
 	_ = match cap_step.act {
 		Nothing => {}
 		TakeShot(t1) => {
-			_ = Task.spawn!(program_input, || DirShot({ id: t1.id, res: io.capture().screenshot!(t1.name) }))
+			_ = Task.spawn!(program_input, || dir_shot_task!(io, t1.id, t1.name))
 			{}
 		}
 		Mark(m1) => {
@@ -2502,16 +2589,24 @@ update! = |model0, program_input, io| {
 				else if (d.key_pressed(Key2)) 60.U64
 				else if (d.key_pressed(Key3)) 90.U64
 				else model.range
-		# cursor counts days back from the series' latest day — the last ANALYZED
-		# day, not necessarily today (0 = that column, -1 = off); LEFT walks
-		# older, RIGHT walks newer, and the board clamps to the window
-		# the form board and the data table share the cursor (chart crosshair,
-		# table scroll); the other views leave it parked
-		cursor =
-			if (view != 0 and view != 3) model.cursor
-			else if (d.key_pressed(KeyLeft)) (if (model.cursor < 0) 0 else model.cursor + 1)
-			else if (d.key_pressed(KeyRight)) (if (model.cursor <= 0) (-1) else model.cursor - 1)
-			else model.cursor
+		# the day cursor the form board and the data table share (chart
+		# crosshair, table scroll); the other views leave it parked. It counts
+		# days back from the series' latest day, the last ANALYZED day and not
+		# necessarily today (0 = that column, -1 = off); LEFT walks older,
+		# RIGHT newer, and the board clamps to its window. On the board RIGHT
+		# walks on from the latest measured day into the projected days it
+		# draws (Board.step); the table holds measured days only, so there
+		# RIGHT from the latest turns the cursor off
+		walked =
+			if (view != 0 and view != 3) { back: model.cursor, ahead: model.cursor_ahead }
+			else {
+				here = { back: model.cursor, ahead: if (view == 0) model.cursor_ahead else 0 }
+				projected = if (view == 0) List.len(Board.shown_proj(model)) else 0
+				if (d.key_pressed(KeyLeft)) Board.step(here, Older, projected)
+				else if (d.key_pressed(KeyRight)) Board.step(here, Newer, projected)
+				else { back: model.cursor, ahead: model.cursor_ahead }
+			}
+		cursor = walked.back
 		# a wheel notch or an up/down arrow scrolls the lifts list or the plan's
 		# week ladder one row, clamped to the list's ends (Scroll). On the lifts
 		# view a wheel over a session card that has lines to scroll moves the
@@ -2616,27 +2711,25 @@ update! = |model0, program_input, io| {
 			}
 			else if (d.key_pressed(KeyRightBracket)) (if (model.ghost_sel >= 0) (next_ghost(model.trace_ids, model.ghost_sel, model.trace_sel, Bool.False)) else -1)
 			else model.ghost_sel
-		# the cursor a directive's day asks for: its days-back index (>= 0),
-		# or -2 when there is no directive or the day is not in the series,
-		# both of which leave the cursor alone
+		# the cursor a directive's day asks for (Board.cursor_at): a measured
+		# day of the series or a projected day the board draws. cursor_dir is
+		# its days-back index, or -2 when there is no directive day or the
+		# board does not hold it, both of which leave the cursor alone
+		dir_cursor = if (directive.has_d and directive.cursor_day != "") (Board.cursor_at(model, directive.cursor_day)) else Err(NotShown)
 		cursor_dir =
-			if directive.has_d and directive.cursor_day != "" {
-				total2 = List.len(model.days)
-				List.fold(
-					List.map_with_index(model.days, |dy, di| { dy, di }),
-					-2,
-					|acc, x| if (x.dy == directive.cursor_day) (
-						match U64.to_i64_try(total2 - 1 - x.di) {
-							Ok(cb2) => cb2
-							Err(_) => acc
-						}
-					) else acc,
-				)
-			} else -2
+			match dir_cursor {
+				Ok(c) => c.back
+				Err(_) => -2
+			}
 		# the pre-click cursor: arrows and directives applied, row
 		# clicks not yet - the scroll state a click resolves against; the
 		# hover resolves against the post-click state it is about to draw
 		cursor_pre = if (cursor_dir >= 0) cursor_dir else cursor
+		ahead_pre =
+			match dir_cursor {
+				Ok(c) => c.ahead
+				Err(_) => walked.ahead
+			}
 		row_hit =
 			if view == 3 and Mouse.button_pressed(d.mouse, Left) and m.x >= 36.0 and m.x < Table.table_edge(win.w, model.detail_day) and m.y >= Table.rows_top {
 				total = List.len(model.data)
@@ -2677,9 +2770,10 @@ update! = |model0, program_input, io| {
 			Task.spawn!(program_input, || detail_task!(accd, unitsd, dayd))
 		}
 		view2 = view
-		# a clicked table row parks the crosshair on its day; otherwise the
-		# cursor stands where the arrows and a directive put it
+		# a clicked table row parks the crosshair on its day, a measured one;
+		# otherwise the cursor stands where the arrows and a directive put it
 		cursor2 = if (row_hit.hit) row_hit.cb else cursor_pre
+		ahead2 = if (row_hit.hit) 0 else ahead_pre
 		# moving the mouse over the form board's plot un-parks the crosshair:
 		# the hover takes over while inside, and nothing lingers on the way
 		# out. Only a cursor NOT re-parked this same frame (arrow, directive,
@@ -2689,9 +2783,10 @@ update! = |model0, program_input, io| {
 		# pointer yields different logical coordinates and a still mouse
 		# would read as drift, the hazard the trace drag guards below too.
 		cursor3 =
-			if view2 == 0 and layout.scale == model.ui_scale and cursor2 == model.cursor and cursor2 >= 0 and (m.x != model.mouse_x or m.y != model.mouse_y) and m.y > Theme.pad_t + Board.band_h and m.y < win.h - Theme.pad_b and m.x >= Theme.pad_l and m.x <= win.w - Theme.pad_r {
+			if view2 == 0 and layout.scale == model.ui_scale and cursor2 == model.cursor and ahead2 == model.cursor_ahead and cursor2 >= 0 and (m.x != model.mouse_x or m.y != model.mouse_y) and m.y > Theme.pad_t + Board.band_h and m.y < win.h - Theme.pad_b and m.x >= Theme.pad_l and m.x <= win.w - Theme.pad_r {
 				-1
 			} else cursor2
+		ahead3 = if (cursor3 < 0) 0 else ahead2
 		# TAB on the power view with a rung hovered opens the session that set
 		# that rung's window best (TAB already moves the power view to the trace),
 		# and the map's card opens the session whose route was clicked.
@@ -2930,9 +3025,11 @@ update! = |model0, program_input, io| {
 				},
 			)
 		}
-		# focus mirrors the screen: view, range, the crosshair day, the session
+		# focus mirrors the screen: view, range, the crosshair day (a
+		# projected one when the cursor has walked on into them), the session
 		cur_day =
 			if (cursor3 < 0) ""
+			else if (ahead3 > 0) Board.ahead_day(model, ahead3)
 			else {
 				total3 = List.len(model.days)
 				match I64.to_u64_try(cursor3) {
@@ -3023,11 +3120,8 @@ update! = |model0, program_input, io| {
 			else if (cap_ok and directive.capture == "webm_start") (AwaitingStart(wait9(Str.concat(cap_name, ".webm"), rec_path2)))
 			else if (cap_ok and directive.capture == "webm_stop") (AwaitingStop(wait9("", model.rec_path)))
 			else pending1
-		# the bus poll, once a second. Without a directory there is no
-		# database and so no bus, and a poll would only fail. No poll runs
-		# while a capture waits on the host, this cycle's included: a newer
-		# row would supersede the one whose file is still being written
-		_ = if crossed(model.tick, tick, ticks_per_second) and model.stride_dir != "" and !capture_is_pending(pending2) {
+		# the bus poll, once a second (polls_bus says when)
+		_ = if polls_bus({ second: crossed(model.tick, tick, ticks_per_second), has_dir: model.stride_dir != "", capture_pending: capture_is_pending(pending2), booting: model.booting }) {
 			accp = { io, dir: model.stride_dir }
 			lastp = model.last_directive.id
 			Task.spawn!(program_input, || poll_task!(accp, lastp))
@@ -3190,7 +3284,7 @@ update! = |model0, program_input, io| {
 		used = !List.is_empty(d.events) or List.any(d.keys, |k| k != 0) or pointer.x != 0.0 or pointer.y != 0.0 or wheel.x != 0.0 or wheel.y != 0.0 or Mouse.button_down(d.mouse, Left) or Mouse.button_down(d.mouse, Right) or win.w != model.win.w or win.h != model.win.h or directive.has_d
 		last_active = if (used) tick else model.last_active
 		Window.set_target_fps!(frame_rate({ busy, tick, last_active }))
-		Ok({ ..model, map: map2, map_speed: map_speed2, map_marks: map_marks2, map_tiles: tile_plan.slots, map_source: map_source2, map_planned: (if (planning) { cam: map_shown, tick } else model.map_planned), map_plan_due: model.map_plan_due and !planning, map_heat: map_heat2, map_play: map_play2, map_painted_view: (if (map_paint2) view2 else model.map_painted_view), map_load: (if (map_spawn) Loading else model.map_load), map_gen: map_gen2, map_cam: map_cam2, map_moved: map_moved2, map_drag: map_drag2, map_card: map_card2, map_rt: map_rt2, map_paint: map_paint2, map_painted: (if (map_paint2) map_shown else model.map_painted), lifts_off: lifts_off2, last_off: last_off2, week_off: week_off2, week_cursor: week_cursor2, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, show_short: want_short, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else if (view2 == 1) Curve.plot_top else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, map: map2, map_speed: map_speed2, map_marks: map_marks2, map_tiles: tile_plan.slots, map_source: map_source2, map_planned: (if (planning) { cam: map_shown, tick } else model.map_planned), map_plan_due: model.map_plan_due and !planning, map_heat: map_heat2, map_play: map_play2, map_painted_view: (if (map_paint2) view2 else model.map_painted_view), map_load: (if (map_spawn) Loading else model.map_load), map_gen: map_gen2, map_cam: map_cam2, map_moved: map_moved2, map_drag: map_drag2, map_card: map_card2, map_rt: map_rt2, map_paint: map_paint2, map_painted: (if (map_paint2) map_shown else model.map_painted), lifts_off: lifts_off2, last_off: last_off2, week_off: week_off2, week_cursor: week_cursor2, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, cursor_ahead: ahead3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, show_short: want_short, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else if (view2 == 1) Curve.plot_top else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 
