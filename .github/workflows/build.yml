@@ -89,9 +89,10 @@ jobs:
 
   # Builds the real binary and runs the e2e suites against it with a sandboxed
   # HOME and no network. It runs on macOS, where the suite is known green; no
-  # known bug pins it there, so moving it needs a trial run. No job here builds
-  # the engine on Windows: its Windows coverage is check-and-test's type-check
-  # and expects, and the release's windows build is its first native build.
+  # known bug pins it there, so moving it needs a trial run. On Windows the
+  # engine's tests are check-and-test's type-check and expects; viz-link-windows
+  # builds it natively to package it with the window, and runs only its
+  # --version there.
   e2e:
     needs: check-and-test
     runs-on: macos-latest
@@ -178,8 +179,9 @@ jobs:
   # type-check does not prove that. Linking on every PR keeps the release job
   # from being the first place a missing raylib link dependency shows up, and
   # packaging the linked binary with the release's own script keeps it from
-  # being the first place the tarball or its launcher is exercised. Nothing is
-  # uploaded.
+  # being the first place the tarball or its launcher is exercised. The
+  # command is built beside it, packaged with it, and both are installed by
+  # install.sh over the latest release. Nothing is uploaded.
   viz-link-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -207,17 +209,30 @@ jobs:
           test -s stride-viz-linux
           file stride-viz-linux
 
+      - name: Build the command the package carries
+        run: roc build src/cli/main.roc --output=stride-cli-linux-x86_64 --opt=dev
+
       - name: Package it as the release does
-        run: bash tools/package-viz.sh linux package stride-viz-linux
+        run: bash tools/package-viz.sh linux package stride-viz-linux stride-cli-linux-x86_64
 
       - name: Prove the launcher seeds a fresh home
         run: bash tools/package-viz.sh linux prove
+
+      - name: Install this checkout's command and app over the latest release with install.sh
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp stride-cli-linux-x86_64 stride-app-linux-x86_64.tar.gz dist/
+          bash tools/install-check.sh local dist
 
   # The window cannot be looked at on a runner, so CI links it, which proves the
   # roc-ray x64win host still works, then packages it with the release's own
   # script and runs the launcher against a fake home. The grep checks that the
   # launcher passes a %USERPROFILE% path as the window's first argument, its
-  # read-write grant, which seeding alone does not show. Nothing is uploaded.
+  # read-write grant, which seeding alone does not show. The command is built
+  # beside it, packaged with it, and both are installed by install.ps1 over the
+  # latest release, under Windows PowerShell and PowerShell 7. Nothing is
+  # uploaded.
   viz-link-windows:
     runs-on: windows-2025
     timeout-minutes: 20
@@ -238,13 +253,66 @@ jobs:
           sh tools/roc-viz.sh build src/viz/main.roc --output=stride-viz.exe --opt=dev
           test -s stride-viz.exe
 
+      - name: Build the command the package carries
+        shell: bash
+        run: roc build src/cli/main.roc --output=stride-cli-windows-x86_64.exe --opt=dev
+
       - name: Package it as the release does
         shell: bash
-        run: bash tools/package-viz.sh windows package stride-viz.exe
+        run: bash tools/package-viz.sh windows package stride-viz.exe stride-cli-windows-x86_64.exe
 
       - name: Prove the launcher seeds a fresh home
         shell: bash
         run: bash tools/package-viz.sh windows prove
+
+      - name: Gather this checkout's command and app as a release folder
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp stride-cli-windows-x86_64.exe stride-app-windows-x86_64.zip dist/
+
+      - name: Install them over the latest release with install.ps1 (Windows PowerShell)
+        shell: powershell
+        run: ./tools/install-check.ps1 local dist powershell
+
+      - name: Install them over the latest release with install.ps1 (PowerShell 7)
+        shell: pwsh
+        run: ./tools/install-check.ps1 local dist pwsh
+
+  # The macOS app as the release builds it, on every pull request: the
+  # bundle with the command built beside it, verified and proved by the
+  # release's own checks, then zipped as the release zips it and installed by
+  # install.sh over the latest release. Nothing is uploaded.
+  viz-app-macos:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Roc
+        uses: ./.github/actions/setup-roc
+
+      - name: Build the command and the bundle that carries it
+        run: |
+          set -euo pipefail
+          roc build src/cli/main.roc --output=stride-cli-macos-arm64 --opt=dev
+          VIZ_APP_DIR="$PWD/stage" STRIDE_CLI="$PWD/stride-cli-macos-arm64" bash tools/make-viz-app.sh
+
+      - name: Verify and prove the bundle as the release does
+        run: |
+          set -euo pipefail
+          codesign --verify --strict stage/Stride.app/Contents/MacOS/stride || { echo "::error::the bundled command's signature is missing or invalid"; exit 1; }
+          bash tools/package-viz.sh macos verify stage/Stride.app stride-cli-macos-arm64
+          bash tools/package-viz.sh macos prove stage/Stride.app
+
+      - name: Install this checkout's command and app over the latest release with install.sh
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp stride-cli-macos-arm64 dist/
+          (cd stage && ditto -c -k --sequesterRsrc --keepParent Stride.app ../dist/stride-app-macos-arm64.zip)
+          bash tools/install-check.sh local dist
 
   # ADR 0016's gate is plain shell over source text and needs no toolchain, so
   # one small job runs it, on linux only.
@@ -257,46 +325,49 @@ jobs:
       - name: Layer check (ADR 0016 — imports point down)
         run: bash tools/layer-check.sh
 
-  # The one-line installer, run against the latest published release on both
-  # platforms it serves: it must pick the right asset, pass the checksum, and
-  # leave a binary that starts. It reads the release, not this branch's build, so
-  # it also catches a release whose asset names or SHA256SUMS.txt drifted from
-  # what install.sh expects.
+  # The one-line installers, run against the published releases on every
+  # platform they serve: tools/install-check.sh (install.sh, macOS and linux)
+  # and tools/install-check.ps1 (install.ps1, Windows PowerShell and
+  # PowerShell 7) cut each installer off at every line and check nothing
+  # installs, install the latest release and check the command starts, then
+  # install an older release with the app and the latest over it and check
+  # the update in place: the newer command and app, the athlete's directory
+  # kept, and no quarantine attribute or Mark of the Web on what they
+  # installed. On Windows the static check first parses install.ps1 cut after
+  # every byte and runs its functions on local files, under both shells. They
+  # read the releases, not this branch's build, so they also catch a release
+  # whose asset names or SHA256SUMS.txt drifted from what the installers
+  # expect; the viz jobs install this branch's packages.
   install-script:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
-      # STRIDE_INSTALL_APP unset with no terminal attached: the installer must
-      # skip the app question and still exit 0
-      - name: Install the latest release with install.sh
-        env:
-          STRIDE_INSTALL_DIR: ${{ runner.temp }}/stride-bin
-        run: sh install.sh < /dev/null
+      - name: install.sh installs, updates in place, and installs nothing when cut off
+        if: runner.os != 'Windows'
+        run: bash tools/install-check.sh release v0.22.0
 
-      - name: A truncated download runs nothing
-        run: |
-          head -n 40 install.sh | STRIDE_INSTALL_DIR="${{ runner.temp }}/cut" sh || true
-          [ ! -e "${{ runner.temp }}/cut/stride" ] || { echo "a cut-off install.sh installed a binary"; exit 1; }
+      - name: install.ps1 runs nothing when cut off, and its functions refuse a bad download (Windows PowerShell)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./tools/install-check.ps1 static
 
-      - name: The desktop app installs on macOS
-        if: runner.os == 'macOS'
-        env:
-          HOME: ${{ runner.temp }}/apphome
-          STRIDE_INSTALL_DIR: ${{ runner.temp }}/apphome/bin
-          STRIDE_INSTALL_APP: "1"
-        run: |
-          mkdir -p "$HOME"
-          sh install.sh < /dev/null
-          test -x "$HOME/Applications/Stride.app/Contents/MacOS/stride-viz"
+      - name: install.ps1 runs nothing when cut off, and its functions refuse a bad download (PowerShell 7)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/install-check.ps1 static
 
-      - name: The installed binary starts and answers its version
-        run: |
-          out=$("${{ runner.temp }}/stride-bin/stride" --version)
-          echo "$out"
-          case "$out" in stride\ *) ;; *) echo "unexpected version line: $out"; exit 1 ;; esac
+      - name: install.ps1 installs, updates in place, and installs nothing when cut off (Windows PowerShell)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./tools/install-check.ps1 release v0.22.0 powershell
+
+      - name: install.ps1 installs, updates in place, and installs nothing when cut off (PowerShell 7)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/install-check.ps1 release v0.22.0 pwsh
