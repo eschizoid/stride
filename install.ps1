@@ -176,22 +176,53 @@
       $base = "https://github.com/$repo/releases/download/v$version"
     }
 
+    # the command replaces a file at stride.exe; a folder by that name, or
+    # a file where the app's folder goes, belongs to something else and
+    # stops the install before it changes anything
+    $exe = Join-Path $dir 'stride.exe'
+    if (Test-Path -LiteralPath $exe -PathType Container) { throw "stride install: $exe is a folder; move it, or set STRIDE_INSTALL_DIR to another folder" }
+
+    # asked only on a console, before anything downloads; a host that
+    # cannot prompt, such as one started -NonInteractive, refuses Read-Host,
+    # and that is a no. Ctrl-C at the question stops the install
+    $want = $env:STRIDE_INSTALL_APP
+    if (-not $want) {
+      $want = '0'
+      if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+        $answer = ''
+        try { $answer = Read-Host "Also install the desktop app into $appdir? [y/N]" } catch [Management.Automation.PSInvalidOperationException] {}
+        if ($answer -match '^(y|yes)$') { $want = '1' }
+      }
+    }
+    if ($want -eq '1' -and (Test-Path -LiteralPath $appdir -PathType Leaf)) { throw "stride install: $appdir is a file; move it to install the app" }
+
+    # the downloads are removed however the install ends, Ctrl-C included,
+    # since PowerShell runs a finally block when a pipeline is stopped
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('stride-install-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $tmp | Out-Null
     try {
       try { Get-StrideAsset $base 'SHA256SUMS.txt' (Join-Path $tmp 'SHA256SUMS.txt') } catch { throw "stride install: could not download $base/SHA256SUMS.txt ($($_.Exception.Message))" }
       $sums = Read-StrideSums (Join-Path $tmp 'SHA256SUMS.txt')
 
-      # releases before the command was published with its extension name it
-      # without one
+      # every download is fetched, checked and unpacked before anything is
+      # replaced, so a failure leaves the command and the app from one
+      # release. Releases before the command was published with its
+      # extension name it without one
       $asset = 'stride-cli-windows-x86_64.exe'
       if (-not $sums.ContainsKey($asset)) { $asset = 'stride-cli-windows-x86_64' }
       Write-Host "downloading $asset ($version)"
       $cli = Get-StrideVerified $base $sums $asset $tmp
+      if ($want -eq '1') {
+        $zip = Get-StrideVerified $base $sums 'stride-app-windows-x86_64.zip' $tmp
+        $unpacked = Join-Path $tmp 'app'
+        Expand-Archive -LiteralPath $zip -DestinationPath $unpacked
+        $new = Join-Path $unpacked 'stride-app'
+        if (-not (Test-Path -LiteralPath (Join-Path $new 'stride-app.bat'))) { throw 'stride install: the app archive holds no stride-app\stride-app.bat' }
+      }
+
       New-Item -ItemType Directory -Force -Path $dir | Out-Null
       Clear-StrideOld $dir
-      Install-StrideFile $cli (Join-Path $dir 'stride.exe')
-      $exe = Join-Path $dir 'stride.exe'
+      Install-StrideFile $cli $exe
       $said = 'version unknown'
       try { $said = (& $exe --version) -join ' ' } catch {}
       Write-Host "installed $exe ($said)"
@@ -206,23 +237,7 @@
         Write-Host "note: a new terminal runs $first before $exe, because its folder comes earlier on the PATH; remove that copy to run this one"
       }
 
-      # asked only on a console; a host that cannot prompt, such as one
-      # started -NonInteractive, refuses Read-Host, and that is a no
-      $want = $env:STRIDE_INSTALL_APP
-      if (-not $want) {
-        $want = '0'
-        if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
-          $answer = ''
-          try { $answer = Read-Host "Also install the desktop app into $appdir? [y/N]" } catch {}
-          if ($answer -match '^(y|yes)$') { $want = '1' }
-        }
-      }
       if ($want -eq '1') {
-        $zip = Get-StrideVerified $base $sums 'stride-app-windows-x86_64.zip' $tmp
-        $unpacked = Join-Path $tmp 'app'
-        Expand-Archive -LiteralPath $zip -DestinationPath $unpacked
-        $new = Join-Path $unpacked 'stride-app'
-        if (-not (Test-Path -LiteralPath (Join-Path $new 'stride-app.bat'))) { throw 'stride install: the app archive holds no stride-app\stride-app.bat' }
         Clear-StrideOld $appdir -Recurse
         Install-StrideTree $new $appdir
         Write-Host "installed $appdir"

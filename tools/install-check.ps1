@@ -26,12 +26,14 @@
 # the latest release with STRIDE_INSTALL_APP unset and no console, and checks
 # that stride.exe lands in %LOCALAPPDATA%\Programs\stride\bin, that the
 # user's PATH names that folder once, that a new shell reading its PATH from
-# the registry runs it, and that no app arrives; then installs the older tag
-# with the app into STRIDE_INSTALL_DIR, holds the command and the window
-# open, installs the latest over them, and checks that both are replaced
-# while running, that the athlete's directory is kept, that the files moved
-# aside are cleared by the next install, and that no installed file carries
-# the Mark of the Web.
+# the registry runs it, and that no app arrives; checks that a folder named
+# stride.exe stops the install untouched; then installs the older tag with
+# the app into STRIDE_INSTALL_DIR, checks that an app failing its checksum
+# leaves the older command and app in place, holds the command and the
+# window open, installs the latest over them, and checks that both are
+# replaced while running, that the athlete's directory is kept, that the
+# files moved aside are cleared by the next install, and that no installed
+# file carries the Mark of the Web.
 #
 # `local` takes a folder holding this checkout's stride-cli-windows-x86_64.exe
 # and stride-app-windows-x86_64.zip, writes its SHA256SUMS.txt, installs the
@@ -56,7 +58,11 @@ $ProgressPreference = 'SilentlyContinue'
 if (-not (Test-Path -LiteralPath 'install.ps1')) { Write-Host 'install-check: run from the repository root'; exit 2 }
 $here = (Get-Location).Path
 $installer = Join-Path $here 'install.ps1'
-$scratch = Join-Path ([IO.Path]::GetTempPath()) ('install-check-' + [Guid]::NewGuid().ToString('N'))
+# under the runner's own temporary folder when there is one: the system temp
+# folder is often named by its 8.3 short form, which the paths a shell
+# reports in their long form would not match
+$tmpRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
+$scratch = Join-Path $tmpRoot ('install-check-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $scratch | Out-Null
 
 function Fail([string]$Message) { throw "install-check: $Message" }
@@ -367,6 +373,20 @@ function Test-Release([string]$Older) {
   Write-Host "install-check: the latest release installs $v into $bin, which a new shell runs by name"
   Set-UserPathRaw $before
 
+  # a folder where stride.exe goes stops the install before it changes
+  # anything
+  $prof = New-Profile 'folder'
+  $bin = Join-Path $prof.Env.LOCALAPPDATA 'Programs\stride\bin'
+  New-Item -ItemType Directory -Force -Path (Join-Path $bin 'stride.exe') | Out-Null
+  [IO.File]::WriteAllText((Join-Path $bin 'stride.exe\kept'), 'x')
+  $r = Invoke-Installer $installer $prof @{ STRIDE_INSTALL_APP = '1' }
+  if ($r.Code -eq 0) { Fail 'install.ps1 installed over the folder stride.exe' }
+  if ($r.Out -notlike '*is a folder*') { Fail "install.ps1 did not say why it refused the folder stride.exe: $($r.Out)" }
+  if (-not (Test-Path -LiteralPath (Join-Path $bin 'stride.exe\kept'))) { Fail 'install.ps1 changed the folder stride.exe it refused' }
+  if (Test-Path -LiteralPath (Join-Path $prof.Env.LOCALAPPDATA 'Programs\stride\stride-app')) { Fail 'install.ps1 installed the app while refusing the folder stride.exe' }
+  if ("$((Get-UserPathRaw).Value)" -ne "$($before.Value)") { Fail "install.ps1 changed the user's PATH while refusing the folder stride.exe" }
+  Write-Host 'install-check: a folder at stride.exe stops the install, untouched'
+
   # the older release with the app into STRIDE_INSTALL_DIR, then the latest
   # over it while the command and the window are running
   $prof = New-Profile 'update'
@@ -379,6 +399,28 @@ function Test-Release([string]$Older) {
   if ($v -ne "stride $($Older.TrimStart('v'))") { Fail "$Older installed a command saying '$v'" }
   if (-not (Test-Path -LiteralPath (Join-Path $app 'stride-viz.exe'))) { Fail "$Older's app was not installed in $app" }
   [IO.File]::WriteAllText((Join-Path $app 'from-the-older-install'), 'x')
+
+  # an app that fails its checksum stops the update before the command is
+  # replaced, so the command and the app stay one release's
+  $mirror = Join-Path $scratch 'mirror'
+  New-Item -ItemType Directory -Path $mirror | Out-Null
+  $cliName = 'stride-cli-windows-x86_64.exe'
+  & curl.exe -fsSL -o (Join-Path $mirror $cliName) "https://github.com/eschizoid/stride/releases/latest/download/$cliName"
+  if ($LASTEXITCODE -ne 0) {
+    $cliName = 'stride-cli-windows-x86_64'
+    & curl.exe -fsSL -o (Join-Path $mirror $cliName) "https://github.com/eschizoid/stride/releases/latest/download/$cliName"
+    if ($LASTEXITCODE -ne 0) { Fail 'could not download the latest windows command' }
+  }
+  & curl.exe -fsSL -o (Join-Path $mirror 'stride-app-windows-x86_64.zip') 'https://github.com/eschizoid/stride/releases/latest/download/stride-app-windows-x86_64.zip'
+  if ($LASTEXITCODE -ne 0) { Fail 'could not download the latest windows app' }
+  [IO.File]::WriteAllText((Join-Path $mirror 'SHA256SUMS.txt'), "$(Get-Sha (Join-Path $mirror $cliName))  $cliName`n$('0' * 64)  stride-app-windows-x86_64.zip`n")
+  $r = Invoke-Installer $installer $prof @{ STRIDE_INSTALL_APP = '1'; STRIDE_INSTALL_DIR = $tools; STRIDE_DOWNLOAD_BASE = [Uri]::new((Join-Path $mirror '')).AbsoluteUri.TrimEnd('/') }
+  if ($r.Code -eq 0) { Fail 'install.ps1 installed an app that failed its checksum' }
+  if ($r.Out -notlike '*stride-app-windows-x86_64.zip failed its checksum*') { Fail "install.ps1 did not refuse the app for its checksum: $($r.Out)" }
+  $v = Get-Version $exe
+  if ($v -ne "stride $($Older.TrimStart('v'))") { Fail "an app that failed its checksum still left the command saying '$v', not stride $($Older.TrimStart('v'))" }
+  if (-not (Test-Path -LiteralPath (Join-Path $app 'from-the-older-install'))) { Fail 'an app that failed its checksum still replaced the older app' }
+  Write-Host 'install-check: an app failing its checksum leaves the older command and app in place'
   $holders = @((Start-Holder $exe), (Start-Holder (Join-Path $app 'stride-viz.exe')))
   try {
     Install-Ok $prof @{ STRIDE_INSTALL_APP = '1'; STRIDE_INSTALL_DIR = $tools }

@@ -5,14 +5,19 @@
 #   install-check.sh release <older tag>   the GitHub releases
 #   install-check.sh local <folder>        packages built from this checkout
 #
-# `release` runs install.sh cut off at every line and short of its last
-# bytes, and checks that no cut installs anything while the whole file, run
-# the same way, installs; installs the latest release with
-# STRIDE_INSTALL_APP unset and no terminal, and checks that the command
-# starts and no app arrives; then installs the older tag with the app and
-# the latest over it, and checks the command and the app are the latest's,
-# replaced in place, the athlete's directory and the menu entry kept, and
-# no file carries macOS's quarantine attribute.
+# `release` runs install.sh, under sh and under dash where it is installed,
+# cut off at every line and short of its last bytes, and checks that no cut
+# installs anything while the whole file, run the same way, installs;
+# installs the latest release under each shell with STRIDE_INSTALL_APP
+# unset and no terminal, and checks that the install reaches its last line,
+# that the command starts and that no app arrives; checks that a folder
+# where the command goes stops the install untouched, and that a TERM
+# during a download ends it with status 143 and leaves nothing; then
+# installs the older tag with the app, checks that an app failing its
+# checksum leaves the older command and app in place, installs the latest
+# over it, and checks the command and the app are the latest's, replaced in
+# place, the athlete's directory and the menu entry kept, and no file
+# carries macOS's quarantine attribute.
 #
 # `local` takes a folder holding this checkout's command and app package
 # under their release names, writes its SHA256SUMS.txt, installs the latest
@@ -50,11 +55,19 @@ has_app=1
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-# runs install.sh from a fake home ($1), with no terminal and every
-# variable the installer reads set by the caller's environment alone
+# the shells install.sh runs under: sh, and dash where it is installed,
+# the strict POSIX shell Debian and Ubuntu run as sh. The cut-off and fresh
+# installs run under each, and every other install under the last of them
+shells="sh"
+command -v dash >/dev/null 2>&1 && shells="sh dash"
+inst_sh="${shells##* }"
+
+# runs install.sh from a fake home ($1) under $inst_sh, with no terminal
+# and every variable the installer reads set by the caller's environment
+# alone
 run_install() {
   local home="$1"; shift
-  (cd "$home" && env -u STRIDE_VERSION -u STRIDE_INSTALL_APP -u STRIDE_DOWNLOAD_BASE HOME="$home" XDG_DATA_HOME="" STRIDE_INSTALL_DIR="$home/bin" "$@" sh "$here/install.sh" </dev/null)
+  (cd "$home" && env -u STRIDE_VERSION -u STRIDE_INSTALL_APP -u STRIDE_DOWNLOAD_BASE HOME="$home" XDG_DATA_HOME="" STRIDE_INSTALL_DIR="$home/bin" "$@" "$inst_sh" "$here/install.sh" </dev/null)
 }
 
 app_home() {
@@ -140,33 +153,71 @@ case "$mode" in
     [ -n "$latest" ] && [ "$latest" != "$older" ] || { echo "::error::the latest release is '$latest', which is no update over $older"; exit 1; }
 
     # a download cut off anywhere installs nothing, while the whole file,
-    # run the same way, installs
+    # run the same way, installs, under each shell
     n="$(wc -l < install.sh | tr -d ' ')"
     home="$work/cut"
-    for cut in $(seq 1 $((n - 1))) bytes whole; do
-      rm -rf "$home"; mkdir -p "$home"
-      case "$cut" in
-        bytes) head -c $(($(wc -c < install.sh) - 4)) install.sh > "$work/cut.sh" ;;
-        whole) cp install.sh "$work/cut.sh" ;;
-        *) head -n "$cut" install.sh > "$work/cut.sh" ;;
-      esac
-      (cd "$home" && env -u STRIDE_VERSION -u STRIDE_DOWNLOAD_BASE HOME="$home" XDG_DATA_HOME="" STRIDE_INSTALL_DIR="$home/bin" STRIDE_INSTALL_APP=0 sh "$work/cut.sh" </dev/null >/dev/null 2>&1) || true
-      if [ "$cut" = whole ]; then
-        [ -x "$home/bin/stride" ] || { echo "::error::the whole install.sh, run as each cut was, installed nothing"; exit 1; }
-      else
-        [ -z "$(ls -A "$home")" ] || { echo "::error::install.sh cut after $cut lines wrote $(ls -A "$home")"; exit 1; }
-      fi
+    for s in $shells; do
+      for cut in $(seq 1 $((n - 1))) bytes whole; do
+        rm -rf "$home"; mkdir -p "$home"
+        case "$cut" in
+          bytes) head -c $(($(wc -c < install.sh) - 4)) install.sh > "$work/cut.sh" ;;
+          whole) cp install.sh "$work/cut.sh" ;;
+          *) head -n "$cut" install.sh > "$work/cut.sh" ;;
+        esac
+        (cd "$home" && env -u STRIDE_VERSION -u STRIDE_DOWNLOAD_BASE HOME="$home" XDG_DATA_HOME="" STRIDE_INSTALL_DIR="$home/bin" STRIDE_INSTALL_APP=0 "$s" "$work/cut.sh" </dev/null >/dev/null 2>&1) || true
+        if [ "$cut" = whole ]; then
+          [ -x "$home/bin/stride" ] || { echo "::error::the whole install.sh, run under $s as each cut was, installed nothing"; exit 1; }
+        else
+          [ -z "$(ls -A "$home")" ] || { echo "::error::install.sh cut after $cut lines wrote $(ls -A "$home") under $s"; exit 1; }
+        fi
+      done
     done
-    echo "install-check: install.sh cut at each of its $n lines, and short of its last bytes, installs nothing, and whole it installs"
+    echo "install-check: install.sh cut at each of its $n lines, and short of its last bytes, installs nothing, and whole it installs, under $shells"
 
-    # the latest release, STRIDE_INSTALL_APP unset and no terminal: the
-    # command alone
-    home="$work/fresh"; mkdir -p "$home"
-    run_install "$home"
-    out="$("$home/bin/stride" --version)"
-    [ "$out" = "stride ${latest#v}" ] || { echo "::error::the installed command says '$out', not stride ${latest#v}"; exit 1; }
-    [ ! -e "$(app_home "$home")" ] || { echo "::error::the app arrived without being asked for"; exit 1; }
-    echo "install-check: the latest release installs $out and no app unasked"
+    # the latest release, STRIDE_INSTALL_APP unset and no terminal, under
+    # each shell: the command alone, and the install ends with its last line
+    for s in $shells; do
+      home="$work/fresh-$s"; mkdir -p "$home"
+      out="$(inst_sh="$s" run_install "$home" 2>&1)" || { printf '%s\n' "$out"; echo "::error::install.sh under $s failed with no terminal"; exit 1; }
+      grep -q '^next: run' <<<"$out" || { printf '%s\n' "$out"; echo "::error::install.sh under $s stopped before its last line"; exit 1; }
+      out="$("$home/bin/stride" --version)"
+      [ "$out" = "stride ${latest#v}" ] || { echo "::error::the installed command says '$out', not stride ${latest#v}"; exit 1; }
+      [ ! -e "$(app_home "$home")" ] || { echo "::error::the app arrived without being asked for"; exit 1; }
+    done
+    echo "install-check: the latest release installs $out and no app unasked, under $shells"
+
+    # a folder where the command would go is left alone, and nothing is
+    # installed
+    home="$work/folder"; mkdir -p "$home/bin/stride"
+    : > "$home/bin/stride/kept"
+    if out="$(run_install "$home" STRIDE_INSTALL_APP=1 2>&1)"; then
+      echo "::error::install.sh installed over the folder $home/bin/stride"; exit 1
+    fi
+    grep -q 'is not a file' <<<"$out" || { printf '%s\n' "$out"; echo "::error::install.sh did not say why it refused the folder"; exit 1; }
+    [ -e "$home/bin/stride/kept" ] && [ "$(ls -A "$home/bin")" = stride ] && [ ! -e "$(app_home "$home")" ] ||
+      { echo "::error::install.sh changed $home while refusing the folder: $(ls -A "$home/bin")"; exit 1; }
+    echo "install-check: a folder at the command's name stops the install, untouched"
+
+    # a TERM while the checksums download ends the install with status 143
+    # and removes its downloads: the list is a pipe, opened by the fetch
+    # and written only after the signal is sent
+    home="$work/term"; mkdir -p "$home/tmp" "$work/pipe"
+    mkfifo "$work/pipe/SHA256SUMS.txt"
+    env -u STRIDE_VERSION HOME="$home" XDG_DATA_HOME="" TMPDIR="$home/tmp" STRIDE_INSTALL_DIR="$home/bin" STRIDE_INSTALL_APP=0 \
+      STRIDE_DOWNLOAD_BASE="file://$work/pipe" "$inst_sh" "$here/install.sh" </dev/null >"$work/term.log" 2>&1 &
+    pid=$!
+    for _ in $(seq 100); do [ -n "$(ls -A "$home/tmp")" ] && break; sleep 0.1; done
+    [ -n "$(ls -A "$home/tmp")" ] || { kill "$pid" 2>/dev/null; echo "::error::install.sh never started its download"; exit 1; }
+    sleep 1
+    kill -TERM "$pid"
+    printf 'interrupted\n' > "$work/pipe/SHA256SUMS.txt" &
+    writer=$!
+    rc=0; wait "$pid" || rc=$?
+    kill "$writer" 2>/dev/null || true
+    [ "$rc" = 143 ] || { cat "$work/term.log"; echo "::error::install.sh ended with $rc after a TERM, not 143"; exit 1; }
+    [ -z "$(ls -A "$home/tmp")" ] && [ ! -e "$home/bin" ] ||
+      { echo "::error::install.sh left $(ls -A "$home/tmp" "$home") after a TERM"; exit 1; }
+    echo "install-check: a TERM mid-download ends the install with 143 and leaves nothing"
 
     # the older release with the app, then the latest over it
     home="$work/update"; mkdir -p "$home"
@@ -177,6 +228,22 @@ case "$mode" in
     if [ "$has_app" = 1 ]; then
       [ -d "$(app_home "$home")" ] || { echo "::error::$older's app was not installed"; exit 1; }
       : > "$(app_home "$home")/.from-the-older-install"
+
+      # an app that fails its checksum stops the update before the command
+      # is replaced, so the command and the app stay one release's
+      mirror="$work/mirror"; mkdir -p "$mirror"
+      cli="stride-cli-$os-$arch"
+      case "$os" in macos) pkg="stride-app-macos-$arch.zip" ;; linux) pkg="stride-app-linux-x86_64.tar.gz" ;; esac
+      for f in "$cli" "$pkg"; do curl -fsSL -o "$mirror/$f" "https://github.com/eschizoid/stride/releases/latest/download/$f"; done
+      printf '%s  %s\n%s  %s\n' "$(hash_of "$mirror/$cli")" "$cli" "$(printf '0%.0s' $(seq 64))" "$pkg" > "$mirror/SHA256SUMS.txt"
+      if out="$(run_install "$home" STRIDE_INSTALL_APP=1 STRIDE_DOWNLOAD_BASE="file://$mirror" 2>&1)"; then
+        echo "::error::install.sh installed an app that failed its checksum"; exit 1
+      fi
+      grep -q "$pkg failed its checksum" <<<"$out" || { printf '%s\n' "$out"; echo "::error::install.sh did not refuse the app for its checksum"; exit 1; }
+      out="$("$home/bin/stride" --version)"
+      [ "$out" = "stride ${older#v}" ] || { echo "::error::an app that failed its checksum still left the command saying '$out', not stride ${older#v}"; exit 1; }
+      [ -e "$(app_home "$home")/.from-the-older-install" ] || { echo "::error::an app that failed its checksum still replaced the older app"; exit 1; }
+      echo "install-check: an app failing its checksum leaves the older command and app in place"
     fi
     run_install "$home" STRIDE_INSTALL_APP=1
     out="$("$home/bin/stride" --version)"

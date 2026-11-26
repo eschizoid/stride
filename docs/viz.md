@@ -640,25 +640,30 @@ starts is verified on a real machine. The prove step prints where each
 profile's folders resolve. CI runs it on every pull request as well as at
 release.
 
-`tools/install-check.sh` (macOS and linux) and `tools/install-check.ps1`
-(windows, under Windows PowerShell and PowerShell 7) prove the one-line
-installers in fake homes. Against the published releases they cut the
-installer off at every line and check that nothing installs while the
-whole file does, install the latest release and check the command starts
-and no app arrives unasked, then install an older release with the app and
+`tools/install-check.sh` (macOS and linux, under `sh` and under `dash`
+where it is installed) and `tools/install-check.ps1` (windows, under
+Windows PowerShell and PowerShell 7) prove the one-line installers in fake
+homes. Against the published releases they cut the installer off at every
+line and check that nothing installs while the whole file does, install
+the latest release and check the command starts and no app arrives
+unasked, check that a folder where the command goes stops the install with
+nothing changed, then install an older release with the app, check that an
+app failing its checksum leaves the older command and app in place, install
 the latest over it and check that the command and the app are the
 latest's, replaced in place, that the athlete's directory is kept and that
 nothing installed carries the quarantine attribute or the Mark of the Web.
-On windows they also check that a new terminal runs the command by name,
-that the update replaces the command and the window while both are
-running, and that the next install removes what it renamed aside. Against
-this checkout's own packages, built in the viz jobs, they install the
-latest release and then the packages over it, twice, and check that the
-command and the app's command are the ones built, that the menu entry or
-shortcut is written and kept and each PATH entry is there once. The
-script's `static` mode, which needs only PowerShell, parses `install.ps1`
-cut off after every byte and checks that no cut parses to a statement, and
-runs its download and file-replacing functions on local files.
+`install.sh` must also end with status 143 and leave nothing when a TERM
+arrives during a download. On windows they also check that a new terminal
+runs the command by name, that the update replaces the command and the
+window while both are running, and that the next install removes what it
+renamed aside. Against this checkout's own packages, built in the viz jobs,
+they install the latest release and then the packages over it, twice, and
+check that the command and the app's command are the ones built, that the
+menu entry or shortcut is written and kept and each PATH entry is there
+once. The script's `static` mode, which needs only PowerShell, parses
+`install.ps1` cut off after every byte and checks that no cut parses to a
+statement, and runs its download and file-replacing functions on local
+files.
 
 On every launch the launcher copies a font or image when the athlete's
 directory lacks it or holds a copy of a different size, so an interrupted

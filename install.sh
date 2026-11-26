@@ -60,6 +60,15 @@ main() {
     esac
   fi
 
+  # the command replaces a file at $dir/stride, or a link there; anything
+  # else by that name, such as a folder, belongs to something else and
+  # stops the install before it changes anything
+  if [ -L "$dir/stride" ]; then
+    [ -f "$dir/stride" ] || [ ! -e "$dir/stride" ] || fail "$dir/stride links to something that is not a file; move it, or set STRIDE_INSTALL_DIR to another folder"
+  elif [ -e "$dir/stride" ] && [ ! -f "$dir/stride" ]; then
+    fail "$dir/stride is not a file; move it, or set STRIDE_INSTALL_DIR to another folder"
+  fi
+
   if command -v curl >/dev/null 2>&1; then
     fetch() { curl -fsSL -o "$2" "$1"; }
   elif command -v wget >/dev/null 2>&1; then
@@ -75,8 +84,32 @@ main() {
     fail "needs sha256sum or shasum to verify the download"
   fi
 
-  tmp=$(mktemp -d)
-  trap 'rm -rf "$tmp"' EXIT INT TERM
+  # an interrupt removes the downloads and ends the install with the
+  # signal's status, as a shell's own interrupt would
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/stride-install.XXXXXX")
+  trap 'rm -rf "$tmp"' EXIT
+  trap 'rm -rf "$tmp"; trap - EXIT; exit 130' INT
+  trap 'rm -rf "$tmp"; trap - EXIT; exit 143' TERM
+
+  # roc-ray builds the window for macOS and for linux x86_64 alone
+  app=""
+  case "$os-$arch" in
+    macos-*) app="stride-app-macos-$arch.zip" ; app_home="$HOME/Applications/Stride.app" ;;
+    linux-x86_64) app="stride-app-linux-x86_64.tar.gz" ; app_home="${XDG_DATA_HOME:-$HOME/.local/share}/stride-app" ;;
+  esac
+
+  # `curl | sh` feeds this script on stdin, so the question is asked on the
+  # terminal itself. The probe opens it in a subshell: a redirect that fails
+  # on a builtin ends a POSIX shell such as dash, and only the subshell ends
+  want_app="${STRIDE_INSTALL_APP:-}"
+  if [ -z "$app" ]; then
+    [ "$want_app" = 1 ] && say "note: there is no desktop app for $os $arch; the command is installed"
+    want_app=0
+  elif [ -z "$want_app" ] && ( : >/dev/tty ) 2>/dev/null; then
+    printf 'Also install the desktop app into %s? [y/N] ' "$app_home" > /dev/tty
+    read -r answer < /dev/tty || answer=""
+    case "$answer" in y | Y | yes | YES) want_app=1 ;; *) want_app=0 ;; esac
+  fi
 
   fetch "$base/SHA256SUMS.txt" "$tmp/SHA256SUMS.txt" || fail "could not download $base/SHA256SUMS.txt"
 
@@ -101,11 +134,25 @@ main() {
     rm -rf "$2.old"
   }
 
+  # every download is fetched, checked and unpacked before anything is
+  # replaced, so a failure leaves the command and the app from one release
   asset="stride-cli-$os-$arch"
   say "downloading $asset ($version)"
   get "$asset"
-  mkdir -p "$dir"
   chmod 755 "$tmp/$asset"
+  if [ "$want_app" = 1 ]; then
+    get "$app"
+    mkdir -p "$tmp/app"
+    if [ "$os" = macos ]; then
+      (cd "$tmp/app" && unzip -q "$tmp/$app") || fail "could not unpack $app"
+      [ -d "$tmp/app/Stride.app" ] || fail "$app holds no Stride.app"
+    else
+      tar -xzf "$tmp/$app" -C "$tmp/app" || fail "could not unpack $app"
+      [ -x "$tmp/app/stride-app/stride-app" ] || fail "$app holds no stride-app launcher"
+    fi
+  fi
+
+  mkdir -p "$dir"
   put "$tmp/$asset" "$dir/stride"
   say "installed $dir/stride ($("$dir/stride" --version 2>/dev/null || echo "version unknown"))"
 
@@ -115,35 +162,12 @@ main() {
     *) cmd="$dir/stride" ; say "" ; say "note: $dir is not on your PATH. Add this to your shell profile:" ; say "  export PATH=\"$dir:\$PATH\"" ;;
   esac
 
-  # roc-ray builds the window for macOS and for linux x86_64 alone
-  app=""
-  case "$os-$arch" in
-    macos-*) app="stride-app-macos-$arch.zip" ; app_home="$HOME/Applications/Stride.app" ;;
-    linux-x86_64) app="stride-app-linux-x86_64.tar.gz" ; app_home="${XDG_DATA_HOME:-$HOME/.local/share}/stride-app" ;;
-  esac
-
-  # `curl | sh` feeds this script on stdin, so the question is asked on the
-  # terminal itself
-  want_app="${STRIDE_INSTALL_APP:-}"
-  if [ -z "$app" ]; then
-    [ "$want_app" = 1 ] && say "note: there is no desktop app for $os $arch; the command is installed"
-    want_app=0
-  elif [ -z "$want_app" ] && { : >/dev/tty; } 2>/dev/null; then
-    printf 'Also install the desktop app into %s? [y/N] ' "$app_home" > /dev/tty
-    read -r answer < /dev/tty || answer=""
-    case "$answer" in y | Y | yes | YES) want_app=1 ;; *) want_app=0 ;; esac
-  fi
   if [ "$want_app" = 1 ]; then
-    get "$app"
-    mkdir -p "$tmp/app" "$(dirname "$app_home")"
+    mkdir -p "$(dirname "$app_home")"
     if [ "$os" = macos ]; then
-      (cd "$tmp/app" && unzip -q "$tmp/$app")
-      [ -d "$tmp/app/Stride.app" ] || fail "$app holds no Stride.app"
       put "$tmp/app/Stride.app" "$app_home"
       say "installed $app_home"
     else
-      tar -xzf "$tmp/$app" -C "$tmp/app"
-      [ -x "$tmp/app/stride-app/stride-app" ] || fail "$app holds no stride-app launcher"
       put "$tmp/app/stride-app" "$app_home"
       say "installed $app_home"
       # the package's install step adds the menu entry; the app is not started
