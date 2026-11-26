@@ -415,7 +415,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1486)?
+	checks_ran_exactly!(1489)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6805,6 +6805,9 @@ b_threshold_tests! = |ctx| {
 	check!("the power zones read the test's FTP", strjq!(ctx, ["zones"], ".data | [.ftp, .source, .test_kind] | map(tostring) | join(\",\")") == "375,test,ramp")?
 	check!("the ride power curve carries the test in force", strjq!(ctx, ["power-curve", "90", "Ride"], ".data | [.test_known, (.test_value | round), .test_kind] | map(tostring) | join(\",\")") == "true,375,ramp")?
 	check!("...and a curve over no named sport carries none", strjq!(ctx, ["power-curve"], ".data.test_known") == "false")?
+	# the curve carries the family's FTP today and what set it, the very
+	# number and source `zones` reports, which the window prints
+	check!("the ride power curve's FTP and its source are the zones' own", strjq!(ctx, ["power-curve", "90", "Ride"], ".data | [.ftp_w, .ftp_source] | map(tostring) | join(\",\")") == strjq!(ctx, ["zones"], ".data | [.ftp, .source] | map(tostring) | join(\",\")"))?
 	check!("the human summary names the test", Str.contains(stride_human!(ctx.bin, ctx.home, ["summary"]), "from your ramp test on ${ctx.d1}"))?
 	removed = strjq!(ctx, ["test", "remove", "9901"], "[.data.activity_id, .data.removed] | map(tostring) | join(\",\")")
 	check!("test remove unmarks the session", removed == "9901,true")?
@@ -6812,6 +6815,8 @@ b_threshold_tests! = |ctx| {
 	after = Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(ftp_used) AS INTEGER) FROM activity_metrics WHERE activity_id = 9901;"))
 	check!("...and analyze hands the ride back to its derived FTP (before ${before}, after ${after})", after == before and after != "375")?
 	check!("...as summary does", strjq!(ctx, ["summary"], ".data.ftp | [.source, .test_known] | map(tostring) | join(\",\")") == "derived,false")?
+	check!("...and the ride power curve's FTP is the derived one zones reports", strjq!(ctx, ["power-curve", "90", "Ride"], ".data | [.ftp_w, .ftp_source] | map(tostring) | join(\",\")") == strjq!(ctx, ["zones"], ".data | [.ftp, .source] | map(tostring) | join(\",\")") and strjq!(ctx, ["zones"], ".data.source") == "derived")?
+	check!("a curve over no named sport carries no FTP and no threshold speed", strjq!(ctx, ["power-curve"], ".data | [.ftp_w, .ftp_source] | map(tostring) | join(\",\")") == "0,derived" and strjq!(ctx, ["pace-curve"], ".data | [.threshold_speed, .threshold_source] | map(tostring) | join(\",\")") == "0,derived")?
 	check!("removing a session that is no test is refused by name", strjq!(ctx, ["test", "remove", "9901"], ".error.code") == "test_not_found")?
 	# tt30 is the best 20-minute heart rate; --apply-zones writes Friel's ceilings
 	# (85/89/94/99% of 160) to every sport type of the ride family
