@@ -8567,7 +8567,7 @@ b_cross_surface! = |ctx| {
 	anchor_sites = Str.trim(sh!("grep -c \"'now', '..today_mod.'\" src/viz/Db.roc"))
 	local_sites = Str.trim(sh!("grep -c \"'now', 'localtime')\\|date('now', '-'\\|strftime('%Y-%m', 'now')\" src/viz/Db.roc"))
 	check!("the window's calendar anchor, read from its source, names the athlete's day under a far zone and never the machine's (${window_today} vs ${athlete_today}/${machine_today})", !Str.is_empty(anchor_expr) and window_today == athlete_today and window_today != machine_today)?
-	check!("...and every window loader that reads the calendar spells that anchor (the plan strip, the plan rows, both curve windows, the 20-minute best's age, the planned power and pace targets, the most-trained family, the open month, the strength weeks and the strength month in progress); none anchors on localtime or on UTC's now (${anchor_sites}/${local_sites})", anchor_sites == "11" and local_sites == "0")?
+	check!("...and every window loader that reads the calendar spells that anchor (the plan strip, the plan rows, both curve windows, the most-trained family, the open month, the strength weeks and the strength month in progress); none anchors on localtime or on UTC's now (${anchor_sites}/${local_sites})", anchor_sites == "8" and local_sites == "0")?
 	# end-of-week CTL: weekly_ramp's newest week vs the load series on that
 	# week's last loaded day, both in thousandths
 	wk_ctl = Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(ctl_end * 1000) AS INTEGER) FROM weekly_ramp ORDER BY wk DESC LIMIT 1;"))
@@ -8821,12 +8821,13 @@ b_viz_tick! = |ctx| {
 	check!("...and a family outside the vocabulary is refused by name", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/family Bike not a sport family or pace:<sport>")?
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, family) VALUES (1, 'pace:Ride');")
 	check!("...as is a pace key over a sport whose speed is not its effort", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/family pace:Ride not a pace sport")?
-	# the power view's short rungs: 1 shows them, 0 folds them, the tick echoes
-	# what was asked, and any other value is refused by name
+	# the power view's short rungs: the view folds none, so a directive's
+	# short is refused by name whatever its value, and the tick still echoes
+	# what was asked
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, short) VALUES (1, 1);")
-	check!("a directive asking for the short rungs is applied with it", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + (.short | tostring)") == "applied/1")?
-	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, short) VALUES (1, 2);")
-	check!("...and a short value other than 0 or 1 is refused by name", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/short 2 not 0/1")?
+	check!("a directive asking for the short rungs is refused by name, its value echoed", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + (.short | tostring) + \"/\" + .error") == "applied_partial/1/short 1 refused: the power view has no short rungs")?
+	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, short) VALUES (1, 0);")
+	check!("...and so is one folding them", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/short 0 refused: the power view has no short rungs")?
 	# pending until reported: a cycle that does not ack leaves the winner
 	# pending, and the next cycle returns the SAME row - a crash between
 	# apply and report retries rather than loses the directive

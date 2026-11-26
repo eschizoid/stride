@@ -33,11 +33,10 @@ Db :: [].{
 	# in the fit's own units (watts, or a speed in m/s), 0 when none is
 	TestAnchor : { value : F32, kind : Str, date : Str }
 
-	# what the power tab's headline tiles read beside the curve: the window's
-	# fit, a marked test in force, the engine's newest threshold for the
-	# curve's key (0: none), and the window's 20-minute best's age in days
-	# (-1: none)
-	CurveInfo : { fit : Fit, test : TestAnchor, thr : F32, best20_age : I64 }
+	# what the power tab's top line reads: the window's fit, a marked test
+	# in force, and the engine's newest threshold for the curve's key (0:
+	# none)
+	CurveInfo : { fit : Fit, test : TestAnchor, thr : F32 }
 
 	Point : { ctl : F32, atl : F32, tsb : F32, tss : F32 }
 	# integer tenths -> "41.9" / "-8.9"; the rule lives in core.Fmt so the CLI
@@ -205,13 +204,13 @@ Db :: [].{
 	# type, in millimetres per second, so both curves travel through the
 	# same integer rungs. The view and column names are this module's own
 	# literals, so splicing them is safe; the key itself is always bound.
-	Ladder : { view : Str, rungs : Str, val : Str, keycol : Str, key : Str, best20 : Str, thr : Str }
+	Ladder : { view : Str, rungs : Str, val : Str, keycol : Str, key : Str, thr : Str }
 
 	ladder_of : Str -> Ladder
 	ladder_of = |curve|
 		match Bus.curve_key(curve) {
-			Pace(sp) => { view: "activity_pace_ladder", rungs: "pace_ladder_rungs", val: "speed * 1000.0", keycol: "sport_type", key: sp, best20: "best_20min_speed", thr: "threshold_pace_used" }
-			Power(fam) => { view: "activity_power_ladder", rungs: "power_ladder_rungs", val: "watts", keycol: "sport_family", key: fam, best20: "best_20min_w", thr: "ftp_used" }
+			Pace(sp) => { view: "activity_pace_ladder", rungs: "pace_ladder_rungs", val: "speed * 1000.0", keycol: "sport_type", key: sp, thr: "threshold_pace_used" }
+			Power(fam) => { view: "activity_power_ladder", rungs: "power_ladder_rungs", val: "watts", keycol: "sport_family", key: fam, thr: "ftp_used" }
 		}
 
 	expect ladder_of("pace:Run").view == "activity_pace_ladder" and ladder_of("pace:Run").key == "Run" and ladder_of("pace:Run").keycol == "sport_type"
@@ -271,21 +270,6 @@ Db :: [].{
 						Ok({ dur_s: d, watts: I64.to_f32(p), aid: 0, name: "", day: cdy, ago: -1 })
 					},
 				)
-		}
-	}
-
-	# how many days before the athlete's today the window's best 20-minute
-	# effort for the key was set (the latest day holding that best), or -1
-	# when the window has none
-	load_best20_age! : Sqlite.Db, I64, Str, Str => I64
-	load_best20_age! = |db, days, today_mod, curve| {
-		lad = ladder_of(curve)
-		match db.query!("SELECT CAST(julianday(date('now', '${today_mod}')) - julianday(substr(a.start_local, 1, 10)) AS INTEGER) AS ag FROM activity_metrics m JOIN activities a ON a.id = m.activity_id WHERE a.${lad.keycol} = :fam AND a.start_local >= date('now', '${today_mod}', '-' || :d || ' days') AND COALESCE(m.${lad.best20}, 0) > 0 ORDER BY m.${lad.best20} DESC, a.start_local DESC LIMIT 1", [{ name: ":d", value: Integer(days) }, { name: ":fam", value: String(lad.key) }]) {
-			Err(_) => -1
-			Ok(rows) => match List.first(rows) {
-				Ok(r) => r.i64("ag") ?? -1
-				Err(_) => -1
-			}
 		}
 	}
 
@@ -358,96 +342,6 @@ Db :: [].{
 	expect default_curve({ power: [], pace: ["pace:Swim"] }, "WeightTraining") == "pace:Swim"
 	expect default_curve({ power: ["Ride"], pace: [] }, "Swim") == "Ride"
 	expect default_curve({ power: [], pace: [] }, "") == "Ride"
-
-	# the open sessions from the athlete's today on that carry a PACE
-	# target, earliest first, read from the canonical literal the engine
-	# stores ('5x4:00@4:10/km', '10x100m@1:40/100m'): what the pace view
-	# plots against its curve. A literal this cannot read is skipped, never
-	# guessed at.
-	PaceTarget : { day : Str, typ : Str, reps : I64, dur_s : I64, dist_m : I64, pace_s : I64, unit : Str }
-	load_pace_targets_at! : Sqlite.Db, Str => List(PaceTarget)
-	load_pace_targets_at! = |db, today_mod|
-		match db.query!("SELECT CAST(target_date AS TEXT) AS tgd, CAST(COALESCE(session_type, '') AS TEXT) AS tgt, CAST(COALESCE(target_literal, '') AS TEXT) AS tgl FROM plan_current WHERE COALESCE(status, 'open') = 'open' AND COALESCE(target_literal, '') LIKE '%/%' AND target_date >= date('now', '${today_mod}') ORDER BY target_date, id", []) {
-			Err(_) => []
-			Ok(rows) =>
-				List.keep_oks(
-					rows,
-					|r| {
-						day = r.str("tgd") ? |_| BadRow
-						typ = r.str("tgt") ? |_| BadRow
-						lit = r.str("tgl") ? |_| BadRow
-						p = parse_pace_literal(lit) ? |_| BadRow
-						Ok({ day, typ: ascii_safe(typ), reps: p.reps, dur_s: p.dur_s, dist_m: p.dist_m, pace_s: p.pace_s, unit: p.unit })
-					},
-				)
-		}
-
-	# a clock spelling, m:ss or h:mm:ss, in seconds
-	clock_secs : Str -> Try(I64, [BadClock])
-	clock_secs = |s|
-		match List.map(Str.split_on(s, ":"), |x| I64.from_str(x)) {
-			[Ok(m), Ok(sec)] => if (m >= 0 and sec >= 0 and sec < 60) Ok(m * 60 + sec) else Err(BadClock)
-			[Ok(h), Ok(m), Ok(sec)] => if (h >= 0 and m >= 0 and m < 60 and sec >= 0 and sec < 60) Ok(h * 3600 + m * 60 + sec) else Err(BadClock)
-			_ => Err(BadClock)
-		}
-
-	# the metres a pace unit reads over: the international mile is exact
-	pace_unit_m : Str -> F64
-	pace_unit_m = |u| if (u == "/100m") 100.0 else if (u == "/500m") 500.0 else if (u == "/mi") 1609.344 else 1000.0
-
-	parse_pace_literal : Str -> Try({ reps : I64, dur_s : I64, dist_m : I64, pace_s : I64, unit : Str }, [BadLiteral])
-	parse_pace_literal = |lit|
-		match Str.split_first(lit, "x") {
-			Err(_) => Err(BadLiteral)
-			Ok({ before: reps_s, after: rest }) =>
-				match Str.split_first(rest, "@") {
-					Err(_) => Err(BadLiteral)
-					Ok({ before: rep, after: sig }) =>
-						match List.first(List.keep_if(Sports.pace_target_units, |u| Str.ends_with(sig, u))) {
-							Err(_) => Err(BadLiteral)
-							Ok(unit) => {
-								reps = I64.from_str(reps_s) ? |_| BadLiteral
-								pace_s = clock_secs(Str.drop_suffix(sig, unit)) ? |_| BadLiteral
-								# a distance rep ends in metres, a thousand of them under a k
-								metres = Str.drop_suffix(rep, "m")
-								dist_m =
-									if (!(Str.ends_with(rep, "m"))) 0
-									else if (Str.ends_with(metres, "k")) ((I64.from_str(Str.drop_suffix(metres, "k")) ?? 0) * 1000)
-									else (I64.from_str(metres) ?? 0)
-								dur_s = if (dist_m > 0) 0 else (clock_secs(rep) ?? 0)
-								if (reps <= 0 or pace_s <= 0 or (dist_m <= 0 and dur_s <= 0)) Err(BadLiteral) else Ok({ reps, dur_s, dist_m, pace_s, unit })
-							}
-						}
-				}
-		}
-
-	expect parse_pace_literal("5x4:00@4:10/km") == Ok({ reps: 5, dur_s: 240, dist_m: 0, pace_s: 250, unit: "/km" })
-	expect parse_pace_literal("10x100m@1:40/100m") == Ok({ reps: 10, dur_s: 0, dist_m: 100, pace_s: 100, unit: "/100m" })
-	expect parse_pace_literal("4x1km@3:50/km") == Ok({ reps: 4, dur_s: 0, dist_m: 1000, pace_s: 230, unit: "/km" })
-	expect parse_pace_literal("1x1:00:00@9:00/mi") == Ok({ reps: 1, dur_s: 3600, dist_m: 0, pace_s: 540, unit: "/mi" })
-	expect parse_pace_literal("6x500m@1:55/500m") == Ok({ reps: 6, dur_s: 0, dist_m: 500, pace_s: 115, unit: "/500m" })
-	expect parse_pace_literal("3x12:00@230W") == Err(BadLiteral) and parse_pace_literal("1x1:00:00@HR125-147") == Err(BadLiteral) and parse_pace_literal("") == Err(BadLiteral)
-
-	# the open sessions from the athlete's today on that carry a structured
-	# target, earliest first: what the power view plots against the curve
-	Target : { day : Str, typ : Str, reps : I64, dur_s : I64, watts : I64 }
-	load_targets_at! : Sqlite.Db, Str => List(Target)
-	load_targets_at! = |db, today_mod|
-		match db.query!("SELECT CAST(target_date AS TEXT) AS tgd, CAST(COALESCE(session_type, '') AS TEXT) AS tgt, CAST(target_reps AS INTEGER) AS tgr, CAST(COALESCE(target_dur_s, 0) AS INTEGER) AS tgs, CAST(ROUND(COALESCE(target_watts, 0)) AS INTEGER) AS tgw FROM plan_current WHERE COALESCE(status, 'open') = 'open' AND COALESCE(target_reps, 0) > 0 AND target_date >= date('now', '${today_mod}') ORDER BY target_date, id", []) {
-			Err(_) => []
-			Ok(rows) =>
-				List.keep_oks(
-					rows,
-					|r| {
-						day = r.str("tgd") ? |_| "bad tgd"
-						typ = r.str("tgt") ? |_| "bad tgt"
-						reps = r.i64("tgr") ? |_| "bad tgr"
-						dur_s = r.i64("tgs") ? |_| "bad tgs"
-						w = r.i64("tgw") ? |_| "bad tgw"
-						Ok({ day, typ: ascii_safe(typ), reps, dur_s, watts: w })
-					},
-				)
-		}
 
 	# The most recent activity that HAS detected work blocks — the only kind this
 	# view can say anything about. Its id anchors both loaders below.

@@ -494,8 +494,8 @@ polls about once a second and every row reaches a status you can read back.
    curve: a family head (`'Rowing'`, `'Run'`) for its power curve, record book and CP
    fit, or `'pace:<sport_type>'` (`'pace:Run'`, `'pace:Swim'`) for that sport's pace
    curve and critical-speed fit; a curve the athlete has no data for is refused by name.
-   `short = 1` shows the power view's short rungs (under 5 minutes), which it folds
-   when none was pushed all-out, and `short = 0` folds them again.
+   The power view shows no rungs under 5 minutes, so a `short` value is refused by
+   name.
 3. **Verify by id.** `stride viz --json` lists the last ten directives newest first in
    `history` and capture rows in `captures`, each
    `{id, created_at, status, error, applied_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id, capture, result}`
@@ -507,9 +507,9 @@ polls about once a second and every row reaches a status you can read back.
 4. **Observe with freshness.** `stride viz --json` serves `focus`
    `{present, live, age_seconds, updated_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id, detail_day, sport, family, curve_family, curve_short, map_id}`
    (`family` is the career view's family, `curve_family` the power view's,
-   `curve_short` whether it shows the short rungs it folds when none was pushed:
-   1 shown, 0 folded, -1 unreported, and `map_id` the activity id of the session whose
-   route card is up on the map, named while a map mode shows it, -1 otherwise).
+   `curve_short` always -1, since the power view folds nothing, and `map_id` the
+   activity id of the session whose route card is up on the map, named while a map
+   mode shows it, -1 otherwise).
    Read `live`, never the timestamp: a window closed by the OS leaves a row that is
    present but not live; `present: false` is a clean quit (ESC) or a window that never ran.
 5. **Focus is context, not evidence.** It tells you what the athlete is asking about,

@@ -197,12 +197,13 @@ Gate :: [].{
 	round_i : F32 -> I64
 	round_i = |v| F32.round_to_i64_try(v) ?? 0
 
-	# One power view per curve key, range and short-rung choice. The range
-	# picks the story: 30 days set records this week with a usable fit, 60
-	# days fell back from the window before with flat short rungs and no
-	# usable fit, 90 days moved both ways with a marked test standing in.
-	curve_model : Ui.Model, Athlete, Str, I64, Bool -> Ui.Model
-	curve_model = |base, a, key, days, show_short| {
+	# One power view per curve key and range. The range picks the story: 30
+	# days gained on the window before with a usable fit, so no test is due;
+	# 60 days fell back from the window before with a fit through steady
+	# efforts, so a test is due; 90 days moved both ways with a marked test
+	# in force.
+	curve_model : Ui.Model, Athlete, Str, I64 -> Ui.Model
+	curve_model = |base, a, key, days| {
 		pace = Str.starts_with(key, "pace:")
 		ladder = if (pace) pace_rungs else power_rungs
 		b = base_of(key)
@@ -223,34 +224,17 @@ Gate :: [].{
 				{ cp: if (pace) r20 * 0.9 / 1000.0 else r20 * 0.9, w_prime: if (pace) 2.0 else 2980.0, r2: 0.84, points: 3.0, ok: Bool.True }
 			}
 		test = if (days == 90) { value: if (pace) r20 * 0.95 / 1000.0 else r20 * 0.95, kind: "cp3-12", date: "2026-10-27" } else { value: 0.0, kind: "none", date: "none" }
-		keys = curve_keys_of(a)
-		fam = Sports.canonical(Str.drop_prefix(key, "pace:"))
-		# a pace target in the unit the athlete reads the family's pace in
-		pu = Curve.pace_unit_for(a.units, fam)
-		unit = pu.label
-		pace_s = round_i(F64.to_f32_wrap(pu.m) * 1000.0 / b)
 		{
 			..base,
 			view: 1,
 			units: a.units,
 			curve_family: key,
-			curve_keys: keys,
+			curve_keys: curve_keys_of(a),
 			curve_days: days,
-			show_short,
 			prs,
 			curve,
 			curve_prev: prev,
-			fit_cp: Curve.anchor_line(key, fit, test),
-			curve_info: { fit, test, thr: if (pace) r20 * 0.95 / 1000.0 else r20 * 0.95, best20_age: if (days == 60) -1 else 13 },
-			plan_targets: [
-				{ day: "2026-11-14", typ: "threshold", reps: 2, dur_s: 1200, watts: round_i(r20 * 0.98) },
-				{ day: "2026-11-15", typ: "threshold", reps: 3, dur_s: 1200, watts: round_i(r20 * 0.99) },
-				{ day: "2026-11-18", typ: "vo2", reps: 5, dur_s: 300, watts: round_i(r20 * 1.08) },
-			],
-			pace_targets: [
-				{ day: "2026-11-14", typ: "threshold", reps: 3, dur_s: 600, dist_m: 0, pace_s, unit },
-				{ day: "2026-11-16", typ: "intervals", reps: 6, dur_s: 0, dist_m: 400, pace_s: pace_s - 5, unit },
-			],
+			curve_info: { fit, test, thr: if (pace) r20 * 0.95 / 1000.0 else r20 * 0.95 },
 		}
 	}
 
@@ -266,12 +250,7 @@ Gate :: [].{
 							sizes,
 							|sz| {
 								base = athlete_model(a, sz)
-								List.join(
-									List.map(
-										List.concat(keys.power, keys.pace),
-										|key| List.join(List.map([30, 60, 90], |days| List.map([Bool.False, Bool.True], |sh| { name: "${a.name} power ${key} ${I64.to_str(days)}d short=${if (sh) "shown" else "folded"} at ${size_name(sz)}", model: curve_model(base, a, key, days, sh) }))),
-									),
-								)
+								List.join(List.map(List.concat(keys.power, keys.pace), |key| List.map([30, 60, 90], |days| { name: "${a.name} power ${key} ${I64.to_str(days)}d at ${size_name(sz)}", model: curve_model(base, a, key, days) })))
 							},
 						),
 					)
@@ -279,84 +258,57 @@ Gate :: [].{
 			),
 		)
 
-	# ── the power view's targets around the threshold ───────────────────────
-	# Every 30- and 90-day folded curve fixture at the default window, with
-	# targets at 8% under, at and 8% over the threshold: at each rung one
-	# target alone and two a step apart on different days, which share a
-	# ring; and one target at every rung at once, each its own ring.
-	threshold_models : List({ name : Str, model : Ui.Model })
-	threshold_models =
+	# Power curves of sports outside every family under long Strava names,
+	# beside a ride and a row, at every range and size: their chip widens to
+	# hold the name in plain words and the title carries it too
+	long_sports : List(Str)
+	long_sports = ["StandUpPaddling", "HighIntensityIntervalTraining"]
+
+	long_models : List({ name : Str, model : Ui.Model })
+	long_models = {
+		a = { name: "long names", units: Metric, sports: [{ sport: "Ride", sessions: 100 }, { sport: "Rowing", sessions: 80 }] }
 		List.join(
 			List.map(
-				List.keep_if(curve_models, |c| c.model.curve_days != 60 and !(c.model.show_short) and Str.ends_with(c.name, " at ${size_name(default_size)}")),
+				sizes,
+				|sz| List.join(
+					List.map(
+						long_sports,
+						|key| List.map([30, 60, 90], |days| { name: "${a.name} power ${key} ${I64.to_str(days)}d at ${size_name(sz)}", model: { ..curve_model(athlete_model(a, sz), a, key, days), curve_keys: { power: List.concat(["Ride", "Rowing"], long_sports), pace: ["pace:Rowing"] } } }),
+					),
+				),
+			),
+		)
+	}
+
+	# The rows' and the card's other strings, on every 90-day fixture. "new
+	# athlete": no threshold yet, nothing in the window before, and only a
+	# 5-minute best, so the card says how to get a threshold (on foot, both
+	# ways), the legend names the empty window before, and every longer row
+	# is empty. "mixed rows": the first row level within a watt, the second
+	# with a best only in the window before and the third only in this one.
+	# "too few for a fit": the engine found too few hard efforts to fit, and
+	# no test is in force, so the card asks for one.
+	story_models : List({ name : Str, model : Ui.Model })
+	story_models =
+		List.join(
+			List.map(
+				List.keep_if(List.concat(curve_models, long_models), |c| c.model.curve_days == 90),
 				|c| {
-					thr_w = c.model.curve_info.thr
-					pace_thr = (List.first(c.model.pace_targets)).ok_or({ day: "", typ: "", reps: 0, dur_s: 0, dist_m: 0, pace_s: 0, unit: "" })
-					List.join(
-						List.map(
-							[0.92, 1.0, 1.08],
-							|f| {
-								w = round_i(thr_w * f)
-								p = round_i(I64.to_f32(pace_thr.pace_s) / (0.95 * f))
-								# each target on its own day, as a power and a pace target
-								power = |ts| List.map_with_index(ts, |t, i| { day: "2026-11-${U64.to_str(10 + i)}", typ: "threshold", reps: 3, dur_s: t.secs, watts: t.w })
-								pace = |ts| List.map_with_index(ts, |t, i| { ..pace_thr, day: "2026-11-${U64.to_str(10 + i)}", dur_s: t.secs, dist_m: 0, pace_s: t.p })
-								at = |tag, ts| { name: "${c.name} ${tag} x${Db.fmt_f(f)}", model: { ..c.model, plan_targets: power(ts), pace_targets: pace(ts) } }
-								per_rung = List.join(List.map(c.model.prs, |pr| [at("one target at ${pr.rung}", [{ secs: pr.secs, w, p }]), at("two targets at ${pr.rung}", [{ secs: pr.secs, w, p }, { secs: pr.secs, w: w + 2, p: p - 1 }])]))
-								List.append(per_rung, at("one target at every rung", List.map(c.model.prs, |pr| { secs: pr.secs, w, p })))
-							},
-						),
-					)
+					m = c.model
+					keep5 = |pts| List.keep_if(pts, |p| p.dur_s <= 300)
+					prev5 = match List.find_first(m.curve_prev, |q| q.dur_s == 300) {
+						Ok(q) => q.watts
+						Err(_) => 0.0
+					}
+					level = List.map(m.curve, |p| if (p.dur_s == 300 and prev5 > 0.0) { ..p, watts: prev5 + 1.0 } else p)
+					[
+						{ name: "${c.name} new athlete", model: { ..m, curve: keep5(m.curve), curve_prev: [], curve_info: { ..m.curve_info, thr: 0.0, test: { value: 0.0, kind: "none", date: "none" } } } },
+						{ name: "${c.name} mixed rows", model: { ..m, curve: List.keep_if(level, |p| p.dur_s != 600), curve_prev: List.keep_if(m.curve_prev, |p| p.dur_s != 1200) } },
+						{ name: "${c.name} too few for a fit", model: { ..m, curve_info: { ..m.curve_info, fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 1.0, ok: Bool.True }, test: { value: 0.0, kind: "none", date: "none" } } } },
+					]
 				},
 			),
 		)
-
-	# what the placer would give the scene with no lifted stack: every
-	# label on the spots its own list names, a ring label on its first four
-	ring_reference : Ui.Model, Scene.Measure -> List(Labels.Placed(Scene.Item))
-	ring_reference = |m, ms| {
-		ls = List.map(Curve.texts(m, ms), |l| if (Str.starts_with(l.item.text, "planned ")) { ..l, spots: List.take_first(l.spots, 4) } else l)
-		Labels.place(ls, Curve.obstacles(m, ms))
-	}
-
-	# a scene against its reference: every label the reference places keeps
-	# its box, only ring labels are added, a ring's added labels read top to
-	# bottom in the order its labels are listed, and the label gate passes
-	# the scene; with the ring labels the scene adds, the rings it adds two
-	# or more to, and the ring labels it places nowhere
-	ring_check : Ui.Model, Scene.Measure -> { fails : List(Str), lifted : U64, stacked : U64, dropped : U64 }
-	ring_check = |m, ms| {
-		ref = ring_reference(m, ms)
-		sc = Curve.scene(m, ms)
-		g = Curve.geom(m)
-		same_box = |a, b| a.item.text == b.item.text and Labels.same(a.box, b.box)
-		moved = List.keep_oks(ref, |r| if (List.any(sc, |s| same_box(r, s))) Err(Kept) else Ok("'${r.item.text}' moved or vanished"))
-		added = List.keep_if(sc, |s| !(List.any(ref, |r| same_box(r, s))))
-		strays = List.keep_oks(added, |s| if (Str.starts_with(s.item.text, "planned ")) Err(Ring) else Ok("'${s.item.text}' appeared"))
-		per_ring = List.map(
-			g.rings,
-			|rg| {
-				ls = Curve.ring_labels(rg.ts, |t| Curve.best_at(g.now_pts, t.dur_s))
-				ys = List.keep_oks(ls, |l| (List.find_first(added, |s| s.item.text == l)).map_ok(|s| s.box.y))
-				rising = List.all(
-					List.map_with_index(ys, |y, i| { y, i }),
-					|e| match List.get(ys, e.i + 1) {
-						Ok(ny) => ny > e.y
-						Err(_) => Bool.True
-					},
-				)
-				{ x: rg.x, rising, n_added: List.len(ys), dropped: List.len(List.keep_if(ls, |l| !(List.any(sc, |s| s.item.text == l)))) }
-			},
-		)
-		order = List.keep_oks(per_ring, |r| if (r.rising) Err(InOrder) else Ok("the ring at ${Db.fmt_i(r.x)} stacks its lifted labels out of order"))
-		{
-			fails: List.join([moved, strays, order, judge(List.concat(Scene.owned(Chrome.placed(m, ms)), Scene.owned(sc)), Curve.marks(m, ms))]),
-			lifted: List.fold(per_ring, 0, |a, r| a + r.n_added),
-			stacked: List.len(List.keep_if(per_ring, |r| r.n_added >= 2)),
-			dropped: List.fold(per_ring, 0, |a, r| a + r.dropped),
-		}
-	}
-
 	size_name : { w : F32, h : F32 } -> Str
 	size_name = |sz| "${I64.to_str(round_i(sz.w))}x${I64.to_str(round_i(sz.h))}"
 
@@ -496,8 +448,6 @@ Gate :: [].{
 			view: 0,
 			curve: [],
 			curve_prev: [],
-			curve_lbls: [],
-			fit_lbl: p,
 			curve_title: p,
 			curve_hint: p,
 			trace_hint: p,
@@ -542,13 +492,8 @@ Gate :: [].{
 			trace_cache: [],
 			curve_days: 90,
 			curve_family: "Ride",
-			show_short: Bool.False,
 			curve_keys: { power: [], pace: [] },
-			pace_targets: [],
-			fit_cp: 0.0,
-			curve_info: { fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: { value: 0.0, kind: "none", date: "none" }, thr: 0.0, best20_age: -1 },
-			plan_targets: [],
-			cp_lbl: p,
+			curve_info: { fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: { value: 0.0, kind: "none", date: "none" }, thr: 0.0 },
 			data: [],
 			days: [],
 			day_notes: [],
@@ -1534,10 +1479,42 @@ expect (Gate.measure("Stride", 24.0, Prose) - (10.0 + 6.0 + 7.0 + 3.0 + 11.0 + 1
 expect List.len(Gate.athletes) == List.len(Sports.families) + List.len(Sports.pace_target_families) + 1
 expect !(List.contains(List.join(List.map(Sports.families, |f| f.sports)), Gate.rare))
 
-# the power view's gate: every curve, range and short-rung choice of every
-# athlete at every size; no text over a chip, a tile, a dot, a planned ring
-# or a legend swatch
-expect Gate.failures(|m| Gate.judge(Curve.owned(m, Gate.measure), Curve.marks(m, Gate.measure)), Gate.curve_models) == []
+# the power view's gate: every curve and range of every athlete, sports
+# under long Strava names, and the rows' and the card's other strings, at
+# every size, in the brand faces and in the built-in face; no text over a
+# chip, the test card, a dot or a legend dot
+expect Gate.failures(|m| Gate.judge(Curve.owned(m, Gate.measure), Curve.marks(m, Gate.measure)), List.join([Gate.curve_models, Gate.long_models, Gate.story_models])) == []
+expect Gate.failures(|m| Gate.judge(Curve.owned(m, Gate.builtin_measure), Curve.marks(m, Gate.builtin_measure)), List.join([Gate.curve_models, Gate.long_models, Gate.story_models])) == []
+
+# the gate above judges the strings it claims to: a card whose line wraps
+# at the minimum window and none at the wide one, a run's two ways to a
+# threshold, both test-due lines (bests not flat out, too few to fit), a
+# test in force, a usable fit, the empty window before, an empty row on a
+# power and a pace curve, a level row, a row only the window before has
+# and one only this window has, and both long sport names in plain words
+# are all on screen somewhere
+expect {
+	models = List.join([Gate.curve_models, Gate.long_models, Gate.story_models])
+	texts = |f| List.map(Curve.scene(f.model, Gate.measure), |p| p.item.text)
+	all = List.join(List.map(models, texts))
+	lines_at = |sz| List.map(List.keep_if(models, |f| Str.contains(f.name, "at ${sz}")), |f| List.len((Curve.story(f.model, Gate.measure)).lines))
+	shows = |s| List.any(all, |t| Str.starts_with(t, s))
+	shows("No threshold pace yet - run 20 minutes")
+		and List.any(lines_at("980x600"), |n| n >= 2)
+		and List.all(lines_at("2560x1440"), |n| n == 1)
+		and shows("Test due: your 5, 10 and 20-minute bests of the last 60 days were not flat out") and shows("Test due: too few hard 5 to 20-minute efforts in the last 90 days")
+		and List.any(all, |t| Str.contains(t, "set by your test on 10-27"))
+		and List.any(all, |t| Str.ends_with(t, "- no test due"))
+		and shows("the 90 days before: no runs")
+		and shows("no 20 minutes without stopping yet")
+		and shows("no 60-minute ride yet")
+		and List.contains(all, "level")
+		and List.contains(all, "none in the last 90 days")
+		and List.contains(all, "none before")
+		and shows("no 60-minute session yet")
+		and List.any(all, |t| Str.contains(t, "stand up paddling"))
+		and List.any(all, |t| Str.contains(t, "high intensity interval training"))
+}
 
 # the career view's gate: every page of every athlete at every size, the
 # pages without a trend among them; no text over a chip, a card, a dot, a
@@ -1870,69 +1847,6 @@ expect List.join(List.map(Gate.splash_models, |f| List.map(Labels.check(Scene.ow
 # the XP rail's sheet holds its lines inside its card for every athlete at
 # every size
 expect List.join(List.map(Gate.board_models, |f| List.map(Labels.check(Scene.owned(Labels.place((Hud.sheet(f.model, Gate.measure)).lines, { boxes: [], segs: [] }))), |e| "${f.name}: ${e}"))) == []
-
-# the power view draws one label for a workout planned on nine days, the
-# first two days and a count of the rest, at the default window, where nine
-# days written out would fit nowhere
-expect {
-	power = List.keep_if(Gate.curve_models, |c| Str.contains(c.name, " power ") and Str.contains(c.name, "90d") and Str.contains(c.name, "folded") and Str.contains(c.name, "at 980x600"))
-	match List.first(power) {
-		Ok(c) => {
-			nine = List.map(["01", "02", "03", "04", "05", "06", "07", "08", "09"], |d| { day: "2026-11-${d}", typ: "vo2", reps: 6, dur_s: 300, watts: 270 })
-			m = { ..c.model, plan_targets: nine, pace_targets: [] }
-			labels = List.keep_if(List.map(Curve.scene(m, Gate.measure), |p| p.item.text), |t| Str.starts_with(t, "planned "))
-			List.len(labels) == 1 and List.any(labels, |t| Str.starts_with(t, "planned 11-01, 11-02 +7 270W"))
-		}
-		Err(_) => Bool.False
-	}
-}
-
-# a target at the threshold on the 20min rung at the default window, where
-# its ring sits on the threshold line near the axis floor, under the rung's
-# name and dots: just under the threshold and on it, each target alone gets
-# its label, centred on its ring's column, in a scene the gate passes
-expect {
-	power = List.keep_if(Gate.curve_models, |c| Str.contains(c.name, " power ") and Str.contains(c.name, "90d") and Str.contains(c.name, "folded") and Str.contains(c.name, "at 980x600"))
-	match List.first(power) {
-		Ok(c) =>
-			List.all(
-				[230, 238],
-				|w| {
-					m = { ..c.model, plan_targets: [{ day: "2026-11-24", typ: "threshold", reps: 3, dur_s: 1200, watts: w }], pace_targets: [] }
-					g = Curve.geom(m)
-					on_line = match (List.first(g.rings), Curve.cp_y(m, g)) {
-						(Ok(rg), Ok(cy)) => (rg.y - cy).abs() <= Curve.ring_r
-						_ => Bool.False
-					}
-					labelled = match (List.first(g.rings), List.find_first(Curve.scene(m, Gate.measure), |p| Str.starts_with(p.item.text, "planned 11-24 ${I64.to_str(w)}W"))) {
-						(Ok(rg), Ok(p)) => (p.box.x + p.box.w / 2.0 - rg.x).abs() < 0.5
-						_ => Bool.False
-					}
-					on_line and labelled and Gate.judge(Curve.owned(m, Gate.measure), Curve.marks(m, Gate.measure)) == []
-				},
-			)
-		Err(_) => Bool.False
-	}
-}
-
-# a ring's lifted labels move nothing and keep apart: over every power-view
-# fixture and every target at every rung at once, in the shipped faces and
-# the built-in one, and every target around the threshold in the shipped
-# faces, each label the placer gives a spot keeps it, only ring labels are
-# added, a ring's added labels stack in date order, the label gate passes
-# the scene, and no ring label is left without a spot; the threshold
-# targets lift labels, alone and in stacks
-expect {
-	every = List.keep_if(Gate.threshold_models, |f| Str.contains(f.name, "at every rung"))
-	runs = List.concat(List.map(List.concat(Gate.curve_models, every), |f| { f, ms: Gate.builtin_measure }), List.map(List.concat(Gate.curve_models, Gate.threshold_models), |f| { f, ms: Gate.measure }))
-	checks = List.map(runs, |r| { name: r.f.name, c: Gate.ring_check(r.f.model, r.ms) })
-	fails = List.join(List.map(checks, |e| List.map(e.c.fails, |s| "${e.name}: ${s}")))
-	total = List.fold(checks, { lifted: 0, stacked: 0, dropped: 0 }, |a, e| { lifted: a.lifted + e.c.lifted, stacked: a.stacked + e.c.stacked, dropped: a.dropped + e.c.dropped })
-	fails == []
-		and total.dropped == 0
-		and total.lifted > 0
-		and total.stacked > 0
-}
 
 # a route an ocean from the rest leaves the map opening on the rest: every
 # point of the home route lies inside the map at every size

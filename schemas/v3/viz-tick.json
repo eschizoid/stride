@@ -69,7 +69,7 @@
     },
     "short": {
       "type": "integer",
-      "description": "what the directive asked of the power view's folded short rungs: 1 shows them, 0 folds them, -1 when it asked nothing; any other value is refused by name"
+      "description": "what the directive asked of the power view's short rungs, -1 when it asked nothing; the power view has none, so any value is refused by name"
     }
   }
 }

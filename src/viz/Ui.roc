@@ -52,10 +52,8 @@ Ui :: [].{
 		view : U8,
 		curve : List(Db.CurvePt),
 		# the same rungs over the window immediately BEFORE the visible one -
-		# what the curve view's deltas argue against
+		# what each power-view row's change is measured from
 		curve_prev : List(Db.CurvePt),
-		curve_lbls : List({ p : Text.Prepared, d : I64 }),
-		fit_lbl : Text.Prepared,
 		curve_title : Text.Prepared,
 		curve_hint : Text.Prepared,
 		trace_hint : Text.Prepared,
@@ -144,24 +142,12 @@ Ui :: [].{
 		# the curve the power view draws, a Bus curve key: a family head for
 		# that family's power, or pace:<sport_type> for that sport's speed
 		curve_family : Str,
-		# whether the power view shows the short rungs it would fold (the short
-		# chip, or a directive's `short`)
-		show_short : Bool,
-		# the curves the athlete has data for, most-used first: the power
-		# families and the pace keys the chips offer
+		# the curves the athlete has data for: the power families and the pace
+		# keys the chips offer
 		curve_keys : Db.CurveKeys,
-		# open sessions ahead with a pace target, for the pace curve
-		pace_targets : List(Db.PaceTarget),
-		# the threshold line: the window's CP when its fit is usable, else a marked
-		# test's threshold in force (Curve.anchor_line), else 0
-		fit_cp : F32,
-		# what the power tab's headline tiles read: the window's fit, a marked
-		# test in force, the engine's newest threshold for the curve, and the
-		# window's 20-minute best's age
+		# what the power tab's top line reads: the window's fit, a marked test
+		# in force, and the engine's newest threshold for the curve
 		curve_info : Db.CurveInfo,
-		# open sessions ahead with a structured target, for the power view
-		plan_targets : List(Db.Target),
-		cp_lbl : Text.Prepared,
 		data : List(Db.Point),
 		days : List(Str),
 		day_notes : List({ day : Str, note : Str }),
