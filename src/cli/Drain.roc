@@ -184,6 +184,17 @@ Drain :: [].{
 	held : { window : I64, day : I64 } -> { window : I64, day : I64 }
 	held = |l| { window: (l.window).min(limit_ceiling.window), day: (l.day).min(limit_ceiling.day) }
 
+	# The limit kept in the database, from its two rows: both positive, it is
+	# held to the ceiling, and anything else is none kept. A row set by hand can
+	# hold any whole number, and holding it here, before it reaches a count's
+	# plausibility bound or a cap's margin, keeps those sums within an I64.
+	kept_limit : [Known(I64), Corrupt], [Known(I64), Corrupt] -> Usage
+	kept_limit = |window, day|
+		match (window, day) {
+			(Known(w), Known(d)) if w > 0 and d > 0 => Reported(held({ window: w, day: d }))
+			_ => Unreported
+		}
+
 	# ── the caps a limit gives ─────────────────────────────────────────
 	# A cap is the limit less a margin that absorbs reads another app makes
 	# between the engine's own: five percent of the limit, and never fewer than
@@ -340,36 +351,89 @@ Drain :: [].{
 	# A period's stored count as it stands now, from its two rows: the count and
 	# the mark it was stamped with. A mark that is not the current period's, past
 	# or future, means nothing spent in this one. A damaged row is read in the
-	# direction that cannot pass a limit, as the UTC day's two rows are:
+	# direction that cannot pass a limit:
 	#
 	# - an unreadable mark is read as the current period's, its count kept. The
 	#   two rows are written together after every read, so a count is never below
 	#   the reads made in the period its mark named, and read against the current
 	#   period it can only overstate what this one spent;
-	# - an unreadable count, or one negative or more than twice the period's limit
-	#   (no run could reach it), says nothing of what was spent, so the period is
-	#   read as spent.
+	# - an unreadable count, or one `plausible` refuses (no run could reach it),
+	#   says nothing of what was spent, so the period is read as spent.
 	#
 	# Either way `repaired` says the rows need writing back, stamped with the
 	# current mark: the period refuses no longer than its next mark, and a damaged
 	# row cannot refuse every run while no read is made to rewrite it.
 	stamped : [Known(I64), Corrupt], [Known(I64), Corrupt], I64, I64 -> { count : I64, repaired : Bool }
 	stamped = |mark, count, mark_now, limit| {
-		plausible = |n| n >= 0 and n <= limit * 2
 		match mark {
 			Known(m) if m == mark_now =>
 				match count {
-					Known(n) if plausible(n) => { count: n, repaired: Bool.False }
+					Known(n) if plausible(n, limit) => { count: n, repaired: Bool.False }
 					_ => { count: limit, repaired: Bool.True }
 				}
 			Known(_) => { count: 0, repaired: Bool.False }
 			Corrupt =>
 				match count {
-					Known(n) if plausible(n) => { count: n, repaired: Bool.True }
+					Known(n) if plausible(n, limit) => { count: n, repaired: Bool.True }
 					_ => { count: limit, repaired: Bool.True }
 				}
 		}
 	}
+
+	# whether a stored count is one some run could have reached in a period of
+	# `limit`: not negative and at most twice the limit, tested without a
+	# product so no pair of I64s overflows it
+	plausible : I64, I64 -> Bool
+	plausible = |n, limit| if (n < 0 or limit < 0) Bool.False else n - limit <= limit
+
+	# What reading a period's two rows found, for the narration: a count of the
+	# current period, a mark of another period (nothing spent in this one), an
+	# unreadable mark read as the current period's with its count kept, or a
+	# count read as the period spent. Taken from the same predicate `stamped`
+	# reads by, so what a run says cannot disagree with how it paces.
+	Damage : [Current, Elsewhere, MarkUnread, CountSpent]
+
+	damage : [Known(I64), Corrupt], [Known(I64), Corrupt], I64, I64 -> Damage
+	damage = |mark, count, mark_now, limit|
+		match (mark, count) {
+			(Known(m), _) if m != mark_now => Elsewhere
+			(Known(_), Known(n)) if plausible(n, limit) => Current
+			(Corrupt, Known(n)) if plausible(n, limit) => MarkUnread
+			_ => CountSpent
+		}
+
+	# The lines a run prints about the UTC day's rows (`today`) and the paced
+	# day's (`daywin`), with the UTC day's count as now read. A day count read as
+	# spent refuses reads until midnight UTC, so its line names the one row whose
+	# reset clears it, offered only while the other row holds a count of today:
+	# both rows count every read of the day and both are checked before each
+	# read, so with one reset the other still stops the run at the day's
+	# allowance. With no other count of today, a reset could spend a second
+	# allowance, so none is offered and the day is left to clear at midnight UTC.
+	day_notes : Damage, Damage, I64 -> List(Str)
+	day_notes = |today, daywin, today_count| {
+		holds = |d| d == Current or d == MarkUnread
+		hatch = |row, other| "cannot read today's Strava read count (${row}), so the day's allowance is taken as spent until midnight UTC; `stride config set ${row} 0` clears it and cannot spend a second allowance, because ${other} still counts today's reads"
+		none = |rows| "cannot read today's Strava read count (${rows}), and no other row counts today's reads, so the day's allowance is taken as spent until midnight UTC, when it returns; no reset is offered, because one could spend a second allowance"
+		stamp =
+			if today == MarkUnread {
+				["cannot read the day stamp on Strava's read count (strava_reads_day), so its count of ${I64.to_str(today_count)} is taken as today's and the stamp is rewritten as today"]
+			} else {
+				[]
+			}
+		spent =
+			if today == CountSpent and daywin == CountSpent {
+				[none("strava_reads_today, strava_reads_daywin")]
+			} else if today == CountSpent {
+				if (holds(daywin)) [hatch("strava_reads_today", "strava_reads_daywin")] else [none("strava_reads_today")]
+			} else if daywin == CountSpent {
+				if (holds(today)) [hatch("strava_reads_daywin", "strava_reads_today")] else [none("strava_reads_daywin")]
+			} else {
+				[]
+			}
+		List.concat(stamp, spent)
+	}
+
 	# A first sync owes more than the window it starts in, so its summaries are
 	# scored before the first stream is fetched: load, form and every report
 	# work from the first window on. A routine sync owes less and scores once,
@@ -646,3 +710,82 @@ expect Drain.stamped(Corrupt, Known(-1), 900, 100) == { count: 100, repaired: Bo
 expect Drain.stamped(Known(900), Corrupt, 900, 100) == { count: 100, repaired: Bool.True }
 expect Drain.stamped(Known(900), Known(201), 900, 100) == { count: 100, repaired: Bool.True }
 expect Drain.stamped(Known(900), Known(200), 900, 100) == { count: 200, repaired: Bool.False }
+# a negative count is impossible, so it reads as the period spent and is
+# written back, the UTC day's count (stamped with its day number) as any other
+expect Drain.stamped(Known(900), Known(-50), 900, 100) == { count: 100, repaired: Bool.True }
+expect Drain.stamped(Known(20782), Known(-5), 20782, 1000) == { count: 1000, repaired: Bool.True }
+expect Drain.stamped(Known(900), Known(I64.lowest), 900, 100) == { count: 100, repaired: Bool.True }
+expect Drain.stamped(Known(900), Known(0), 900, 100) == { count: 0, repaired: Bool.False }
+# the bound judges any whole number against any limit without overflowing
+expect Drain.stamped(Known(900), Known(I64.highest), 900, 100) == { count: 100, repaired: Bool.True }
+expect Drain.stamped(Known(900), Known(I64.highest), 900, I64.highest) == { count: I64.highest, repaired: Bool.False }
+expect Drain.stamped(Known(900), Known(5), 900, I64.highest) == { count: 5, repaired: Bool.False }
+expect Drain.stamped(Corrupt, Known(I64.highest), 900, I64.highest - 1) == { count: I64.highest, repaired: Bool.True }
+expect Drain.stamped(Known(900), Known(0), 900, 0) == { count: 0, repaired: Bool.False }
+expect Drain.stamped(Known(900), Known(1), 900, 0) == { count: 0, repaired: Bool.True }
+# ...and at the ceiling's bound: twice the held quarter-hour limit, and one past it
+expect Drain.stamped(Known(900), Known(2000), 900, 1000) == { count: 2000, repaired: Bool.False }
+expect Drain.stamped(Known(900), Known(2001), 900, 1000) == { count: 1000, repaired: Bool.True }
+
+# the limit kept in the database: both rows positive, held to the ceiling,
+# however large; anything else is none kept
+expect Drain.kept_limit(Known(I64.highest), Known(I64.highest)) == Reported({ window: 1000, day: 10000 })
+expect Drain.kept_limit(Known(5000000000000000000), Known(3000)) == Reported({ window: 1000, day: 3000 })
+expect Drain.kept_limit(Known(999), Known(9999)) == Reported({ window: 999, day: 9999 })
+expect Drain.kept_limit(Known(1000), Known(10000)) == Reported({ window: 1000, day: 10000 })
+expect Drain.kept_limit(Known(1001), Known(10001)) == Reported({ window: 1000, day: 10000 })
+expect Drain.kept_limit(Known(1), Known(1)) == Reported({ window: 1, day: 1 })
+expect Drain.kept_limit(Known(0), Known(1000)) == Unreported
+expect Drain.kept_limit(Known(100), Known(-1)) == Unreported
+expect Drain.kept_limit(Known(I64.lowest), Known(1000)) == Unreported
+expect Drain.kept_limit(Corrupt, Known(1000)) == Unreported
+# ...which paces as the ceiling, and bounds a count the way the ceiling does
+expect Drain.caps_for(Drain.kept_limit(Known(I64.highest), Known(I64.highest))) == { quarter: 950, day: 9500 }
+expect match Drain.kept_limit(Known(I64.highest), Known(I64.highest)) {
+	Reported(l) => Drain.stamped(Known(900), Known(949), 900, l.window) == { count: 949, repaired: Bool.False }
+	Unreported => False
+}
+
+# what reading a period's rows found: a count of this period, a mark of
+# another, an unreadable mark with its count kept, or a count read as spent
+expect Drain.damage(Known(20782), Known(3), 20782, 1000) == Current
+expect Drain.damage(Known(20781), Known(-1), 20782, 1000) == Elsewhere
+expect Drain.damage(Corrupt, Known(3), 20782, 1000) == MarkUnread
+expect Drain.damage(Known(20782), Known(-1), 20782, 1000) == CountSpent
+expect Drain.damage(Known(20782), Corrupt, 20782, 1000) == CountSpent
+expect Drain.damage(Corrupt, Corrupt, 20782, 1000) == CountSpent
+expect Drain.damage(Corrupt, Known(2001), 20782, 1000) == CountSpent
+# ...the same reading `stamped` paces by, at the bound and past it
+expect Drain.damage(Known(900), Known(2000), 900, 1000) == Current and !(Drain.stamped(Known(900), Known(2000), 900, 1000).repaired)
+expect Drain.damage(Known(900), Known(2001), 900, 1000) == CountSpent and Drain.stamped(Known(900), Known(2001), 900, 1000).count == 1000
+
+# an unreadable day stamp keeps its count, and the line says so: no spent
+# allowance, no reset to make
+expect Drain.day_notes(MarkUnread, Current, 3) == ["cannot read the day stamp on Strava's read count (strava_reads_day), so its count of 3 is taken as today's and the stamp is rewritten as today"]
+# a damaged day count names the one row whose reset clears it, and the row
+# that still counts the day's reads
+expect Drain.day_notes(CountSpent, Current, 1000) == ["cannot read today's Strava read count (strava_reads_today), so the day's allowance is taken as spent until midnight UTC; `stride config set strava_reads_today 0` clears it and cannot spend a second allowance, because strava_reads_daywin still counts today's reads"]
+expect Drain.day_notes(Current, CountSpent, 4) == ["cannot read today's Strava read count (strava_reads_daywin), so the day's allowance is taken as spent until midnight UTC; `stride config set strava_reads_daywin 0` clears it and cannot spend a second allowance, because strava_reads_today still counts today's reads"]
+expect match Drain.day_notes(MarkUnread, CountSpent, 4) {
+	[stamp, spent] => Str.contains(stamp, "count of 4 is taken as today's") and Str.contains(spent, "`stride config set strava_reads_daywin 0` clears it")
+	_ => False
+}
+expect match Drain.day_notes(CountSpent, MarkUnread, 1000) {
+	[spent] => Str.contains(spent, "`stride config set strava_reads_today 0` clears it")
+	_ => False
+}
+# with no other count of today, no reset is offered
+expect match Drain.day_notes(CountSpent, CountSpent, 1000) {
+	[spent] => Str.contains(spent, "(strava_reads_today, strava_reads_daywin)") and !(Str.contains(spent, "config set"))
+	_ => False
+}
+expect match Drain.day_notes(CountSpent, Elsewhere, 1000) {
+	[spent] => Str.contains(spent, "(strava_reads_today)") and !(Str.contains(spent, "config set"))
+	_ => False
+}
+expect match Drain.day_notes(Elsewhere, CountSpent, 0) {
+	[spent] => Str.contains(spent, "(strava_reads_daywin)") and !(Str.contains(spent, "config set"))
+	_ => False
+}
+# rows read as they are say nothing
+expect Drain.day_notes(Current, Current, 3) == [] and Drain.day_notes(Elsewhere, Elsewhere, 0) == [] and Drain.day_notes(Current, MarkUnread, 3) == []

@@ -1238,7 +1238,9 @@ Strava :: [].{
 	# that is not the current period's means nothing spent in this one, so the
 	# reset is free and nothing has to run at midnight or on the mark. Persisted,
 	# because the limits are Strava's across every run: a run that started a
-	# second after another one filled the window must not get a fresh one.
+	# second after another one filled the window must not get a fresh one. Each
+	# pair is read by the one rule Drain.stamped states, against the kept limit
+	# already held to the ceiling.
 	load_reads! : Str => Try(Drain.Reads, _)
 	load_reads! = |path| {
 		now = Db.now_secs!({})
@@ -1252,14 +1254,18 @@ Strava :: [].{
 				Reported(l) => l
 				Unreported => Drain.limit_default
 			}
-		today = reads_today!(path, day)?
-		dtoday = stamped_count!(path, "strava_reads_daywin", dmark, limit.day)?
-		window = stamped_count!(path, "strava_reads_window", wmark, limit.window)?
-		quarter = stamped_count!(path, "strava_reads_quarter", qmark, limit.window)?
-		reads = { day, today, dmark, dtoday: dtoday.count, wmark, window: window.count, qmark, quarter: quarter.count }
+		today = stamped_count!(path, "strava_reads_day", "strava_reads_today", day, limit.day)?
+		dtoday = stamped_count!(path, "strava_reads_daywin_mark", "strava_reads_daywin", dmark, limit.day)?
+		window = stamped_count!(path, "strava_reads_window_mark", "strava_reads_window", wmark, limit.window)?
+		quarter = stamped_count!(path, "strava_reads_quarter_mark", "strava_reads_quarter", qmark, limit.window)?
+		reads = { day, today: today.count, dmark, dtoday: dtoday.count, wmark, window: window.count, qmark, quarter: quarter.count }
+		# A day count read as spent refuses reads until midnight UTC, so a repair
+		# of either day's rows is said aloud (Drain.day_notes), or the athlete
+		# would get no signal of why the day is refused or which row to reset.
+		_ = say_all!(Drain.day_notes(today.damage, dtoday.damage, today.count))?
 		# a damaged row is written back as it now reads, so it is repaired once
 		# rather than read past on every run
-		_ = if dtoday.repaired or window.repaired or quarter.repaired {
+		_ = if today.repaired or dtoday.repaired or window.repaired or quarter.repaired {
 			save_reads!(path, reads)?
 		} else {
 			{}
@@ -1267,18 +1273,33 @@ Strava :: [].{
 		Ok(reads)
 	}
 
-	# a period's count from its two rows, `<key>` and `<key>_mark` (Drain.stamped)
-	stamped_count! : Str, Str, I64, I64 => Try({ count : I64, repaired : Bool }, _)
-	stamped_count! = |path, key, mark_now, limit| {
-		known = |r|
-			match r {
-				Known(n) => Known(n)
-				Corrupt(_) => Corrupt
+	say_all! : List(Str) => Try({}, _)
+	say_all! = |lines|
+		match lines {
+			[] => Ok({})
+			[line, .. as rest] => {
+				Output.say!(line)?
+				say_all!(rest)
 			}
-		mark = known(config_reads!(path, "${key}_mark")?)
-		count = known(config_reads!(path, key)?)
-		Ok(Drain.stamped(mark, count, mark_now, limit))
+		}
+
+	# a period's count from its two rows, the mark and the count (Drain.stamped),
+	# and what reading them found (Drain.damage)
+	stamped_count! : Str, Str, Str, I64, I64 => Try({ count : I64, repaired : Bool, damage : Drain.Damage }, _)
+	stamped_count! = |path, mark_key, count_key, mark_now, limit| {
+		mark = known(config_reads!(path, mark_key)?)
+		count = known(config_reads!(path, count_key)?)
+		read = Drain.stamped(mark, count, mark_now, limit)
+		Ok({ count: read.count, repaired: read.repaired, damage: Drain.damage(mark, count, mark_now, limit) })
 	}
+
+	# a read count row as Drain judges it, the unreadable text dropped
+	known : [Known(I64), Corrupt(Str)] -> [Known(I64), Corrupt]
+	known = |r|
+		match r {
+			Known(n) => Known(n)
+			Corrupt(_) => Corrupt
+		}
 
 	# Write the counts back after EVERY read, not at the end of the run: reads are
 	# spent at Strava the moment they happen, so a drain that dies mid-way must not
@@ -1321,7 +1342,8 @@ Strava :: [].{
 	# only for the app it came from, so an athlete who authorizes another app
 	# does not inherit the first one's. Absent, unreadable, not positive or
 	# another app's, none is reported, and the documented limits apply
-	# (Drain.caps_for).
+	# (Drain.caps_for); otherwise the kept limit is held to the ceiling
+	# (Drain.kept_limit) before any caller does arithmetic with it.
 	stored_limit! : Str => Try(Drain.Usage, _)
 	stored_limit! = |path| {
 		client = (client_cred!(path, "STRAVA_CLIENT_ID", "strava_client_id")) ?? ""
@@ -1333,10 +1355,7 @@ Strava :: [].{
 		if stored_app != client {
 			Ok(Unreported)
 		} else {
-			match (config_reads!(path, "strava_limit_window")?, config_reads!(path, "strava_limit_day")?) {
-				(Known(w), Known(d)) if w > 0 and d > 0 => Ok(Reported({ window: w, day: d }))
-				_ => Ok(Unreported)
-			}
+			Ok(Drain.kept_limit(known(config_reads!(path, "strava_limit_window")?), known(config_reads!(path, "strava_limit_day")?)))
 		}
 	}
 
@@ -1359,61 +1378,23 @@ Strava :: [].{
 	day_spent! : Str => Try(Bool, _)
 	day_spent! = |path| Ok(Drain.may_read(load_reads!(path)?, read_limits!(path)?) == DayFull)
 
-	# takes the day rather than reading its own clock, so a caller that already has
-	# one cannot compare a count against a different day than it saves against.
-	reads_today! = |path, day_now| {
-		# BOTH rows get the conservative reading: unreadable means today, and today
-		# means the count is consulted.
-		stored_day =
-			match config_reads!(path, "strava_reads_day")? {
-				Known(n) => Ok(n)
-				Corrupt(v) => {
-					_ = Output.say!("cannot read the day stamp on Strava's read counter ('${v}') — treating it as today so the count still applies; `stride config set strava_reads_today 0` clears both")
-					# ...and REPAIR it, which is what makes the conservative reading affordable: a
-					# corrupt COUNT self-heals when its stamp goes stale, but a corrupt STAMP is read
-					# as today FOREVER, refusing every run.
-					# Writing a real day keeps this run refused — the count still applies — and makes
-					# the stamp genuinely stale tomorrow.
-					_ = Db.config_set!(path, "strava_reads_day", I64.to_str(day_now))?
-					Ok(day_now)
-				}
-			}?
-		if stored_day != day_now {
-			Ok(0)
-		} else {
-			match config_reads!(path, "strava_reads_today")? {
-				Known(n) => Ok(n)
-				Corrupt(v) => {
-					# NARRATED, because the consequence is a day of refused reads and the
-					# athlete would otherwise get no signal at all. This is the one place
-					# in the codebase that deliberately breaks the "unreadable config is
-					# an error" rule, so it says so out loud rather than quietly.
-					_ = Output.say!("cannot read today's Strava read count ('${v}') — assuming the daily allowance is spent; `stride config set strava_reads_today 0` clears it")
-					Ok((read_limits!(path)?).reads_per_utc_day)
-				}
-			}
-		}
-	}
-
-	# ABSENT and UNREADABLE are different facts. Absent is 0 because it is TRUE: a
-	# database that never synced has spent nothing. Unreadable is the full allowance,
-	# because 0 is the most PERMISSIVE value, not the conservative one — "I cannot
-	# tell how many reads were spent" conservatively means "they may all be spent".
-	# Guessing 0 also ERASES the day's history on the first save and spends a second
-	# full allowance inside one UTC day, every read refused by Strava; guessing the
-	# cap costs one day, self-heals at midnight, and `config set strava_reads_today
-	# 0` is the escape hatch.
-	#
-	# Clamped at 0: arg_i64 accepts negatives, and a parseable -5000 would buy MORE
-	# headroom than an unparseable value, inverting the argument above. Swallowed
-	# rather than raised — refusing to sync over a corrupt pacing counter is worse
-	# than pacing badly — but no longer silent: see the caller.
+	# A read count or limit row, as stored. ABSENT and UNREADABLE are different
+	# facts. Absent is 0 because it is TRUE: a database that never synced has
+	# spent nothing. Unreadable is kept apart, because 0 is the most PERMISSIVE
+	# value, not the conservative one: "I cannot tell how many reads were spent"
+	# conservatively means "they may all be spent", and Drain.stamped reads it
+	# so, while Drain.kept_limit reads an unreadable limit as none kept. A
+	# negative number is passed through as stored, not raised to 0: no run can
+	# spend a negative count, so Drain.stamped reads it as the period spent,
+	# where 0 would buy a whole period of reads. Swallowed rather than raised,
+	# because refusing to sync over a corrupt pacing row is worse than pacing in
+	# the direction that cannot pass a limit, and the caller narrates the day's.
 	config_reads! = |path, key|
 		match Db.config_opt!(path, key)? {
 			NotFound => Ok(Known(0))
 			Found(v) =>
 				match Metrics.arg_i64(v) {
-					Ok(n) => Ok(Known((n).max(0)))
+					Ok(n) => Ok(Known(n))
 					Err(_) => Ok(Corrupt(v))
 				}
 		}
