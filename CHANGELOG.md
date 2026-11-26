@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.24.0](https://github.com/eschizoid/stride/compare/v0.23.0...v0.24.0) (2026-11-26)
+
+
+### Features
+
+* one-line install on every OS, with the stride command inside each app package ([#744](https://github.com/eschizoid/stride/issues/744)) ([6d6db3b](https://github.com/eschizoid/stride/commit/6d6db3bd3295515c17796aee23c645c351fe0b6e))
+* **sync:** the first sync waits out Strava's read windows and ends fully analyzed ([#736](https://github.com/eschizoid/stride/issues/736)) ([cea2a39](https://github.com/eschizoid/stride/commit/cea2a39bcb5c3e47c02acc439190a4cca3308366))
+* **viz:** click a route on the map to open its session ([#730](https://github.com/eschizoid/stride/issues/730)) ([377a62c](https://github.com/eschizoid/stride/commit/377a62c350307fd5d9ddd68371c5eef95823c0b5))
+* **viz:** draw the plan's projection on the form board ([#739](https://github.com/eschizoid/stride/issues/739)) ([3b691bb](https://github.com/eschizoid/stride/commit/3b691bbdb3b05333e06ab2df2c070349258c902b))
+* **viz:** put the linux and windows app in the system menu with its icon ([#734](https://github.com/eschizoid/stride/issues/734)) ([69322a0](https://github.com/eschizoid/stride/commit/69322a089accf6672ff3591dd819b89af3158e29))
+* **viz:** reference marks on the weeks bars, an 80/20 line and a CTL hold tick ([#735](https://github.com/eschizoid/stride/issues/735)) ([8a9f423](https://github.com/eschizoid/stride/commit/8a9f423daeb62519ab41cf54150475d0a2e77b8f))
+* **viz:** street and place names on the map ([#729](https://github.com/eschizoid/stride/issues/729)) ([ef8cff1](https://github.com/eschizoid/stride/commit/ef8cff14470cd0072ee641ec7c8344fb3dc042a3))
+
+
+### Bug Fixes
+
+* **viz:** a planned target on the threshold line keeps its label ([#727](https://github.com/eschizoid/stride/issues/727)) ([82c8b88](https://github.com/eschizoid/stride/commit/82c8b88ce13ea220102cdf557320122be7a6b4bf))
+* **viz:** ship the logo on linux and windows, and never draw a splash in its place ([#733](https://github.com/eschizoid/stride/issues/733)) ([55eaa38](https://github.com/eschizoid/stride/commit/55eaa3882a0377bb8f53d3f207391d8ed241237d))
+
 ## [0.23.0](https://github.com/eschizoid/stride/compare/v0.22.0...v0.23.0) (2026-11-20)
 
 
