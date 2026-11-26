@@ -249,7 +249,7 @@ load_flame! = |acc, boot|
 # face, so a window that cannot reach the athlete's data says why.
 skeleton : Str -> _
 skeleton = |err|
-	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: NoDirective, ht: [], hev: [], zw: [], ph: "", b20: -1, tg: [], rw: [], csp: [], ctm: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric, cf: "", keys: { power: [], pace: [] }, ptg: [], sv: Db.empty_strength_view, thr: 0.0 }
+	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: NoDirective, ht: [], hev: [], zw: [], ph: "", rw: [], csp: [], ctm: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric, cf: "", keys: { power: [], pace: [] }, sv: Db.empty_strength_view }
 
 # Everything the window knows, rebuilt from the local stride sources in one
 # call: the database for every series, plus the engine's power-curve
@@ -303,10 +303,6 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 			ht = Db.load_heat!(db)
 			hev = Db.load_event_days!(db)
 			zw = Db.load_zone_weeks!(db)
-			b20 = Db.load_best20_age!(db, curve_days, tm, cf)
-			thr = Db.load_threshold!(db, cf)
-			tg = Db.load_targets_at!(db, tm)
-			ptg = Db.load_pace_targets_at!(db, tm)
 			ph = Db.load_plan_horizon!(db)
 			cs = Db.load_career_sports!(db)
 			sfs = Career.cycle_fams(Db.load_spine_fams!(db), cs)
@@ -318,7 +314,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 			nts = Db.load_day_notes!(db)
 			cpv = Db.load_curve_prev!(db, curve_days, tm, cf)
 			sv = Db.load_strength_view!(db, tm)
-			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, ph, b20, tg, rw, csp, ctm, cs, cfm, prs, tcache, un, cf, keys, ptg, sv, thr }
+			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, ph, rw, csp, ctm, cs, cfm, prs, tcache, un, cf, keys, sv }
 		}
 		Err(NoStrideDir) => skeleton("no stride directory — the launcher passes it as the first argument")
 		Err(Unreachable) => skeleton("cannot open ${acc.dir}/db.sqlite")
@@ -327,9 +323,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 	# the database could not answer, and still unchosen while booting; then
 	# the fit, which runs the engine, so the skeleton skips it
 	cf = if (boot) curve_family else if (loaded.cf == "") "Ride" else loaded.cf
-	ft = if (boot) ({ fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: { value: 0.0, kind: "none", date: "none" } }) else Db.load_fit!(acc.io.commands(), curve_days, cf)
-	fit = ft.fit
-	fit_text = Curve.anchor_caption_for(cf, loaded.un, fit, ft.test, loaded.b20)
+	ft = if (boot) ({ fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: { value: 0.0, kind: "none", date: "none" }, thr: 0.0, thr_known: Bool.False, from_test: Bool.False }) else Db.load_fit!(acc.io.commands(), curve_days, cf)
 	# the board projects as far as the written plan reaches, never past the
 	# next event (load_plan_horizon! caps it there), and reads the numbers
 	# and the day-by-day series from the engine's own walk
@@ -354,13 +348,6 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 	mkb! = |txt, sz| Text.from(txt, mono_big).size(sz).prepare!()
 	# a prose copy that keeps the string and size it was prepared from
 	mkt! = |txt, sz| mk!(txt, sz).map_ok(|p| { p, s: txt, size: sz })
-	curve_lbls = List.map_try!(
-		loaded.c,
-		|c| {
-			p = mkm!(I64.to_str(c.dur_s), 12)?
-			Ok({ p, d: c.dur_s })
-		},
-	)?
 	ylabels = List.map_try!(
 		[-30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
 		|v| {
@@ -415,14 +402,10 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		view: 0,
 		curve: loaded.c,
 		curve_prev: loaded.cpv,
-		curve_lbls: curve_lbls,
-		fit_lbl: mk!(Db.ascii_safe(fit_text), 14)?,
-		curve_title: mk!(Curve.title_text(cf, curve_days), 15)?,
+		curve_title: mk!(Curve.title_text(cf), 15)?,
 		curve_days,
 		curve_family: cf,
-		show_short: Curve.show_short_at_boot,
 		curve_keys: loaded.keys,
-		pace_targets: loaded.ptg,
 		trace_ids: loaded.tids,
 		trace_sel: 0.U64,
 		trace_gen: 0.U64,
@@ -485,10 +468,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		trace_cache: loaded.tcache,
 		segs: loaded.sg,
 		trace_dur: loaded.du,
-		fit_cp: Curve.anchor_line(cf, fit, ft.test),
-		curve_info: { fit, test: ft.test, thr: loaded.thr, best20_age: loaded.b20 },
-		plan_targets: loaded.tg,
-		cp_lbl: mkm!(Curve.anchor_tag(cf, loaded.un, fit, ft.test), 12)?,
+		curve_info: ft,
 		data: loaded.s.data,
 		days: loaded.s.days,
 		stride_dir: acc.dir,
@@ -2110,50 +2090,34 @@ focus_task! = |acc, f|
 	}
 
 # What a curve change (its window or its family) depends on: the curve over
-# the window and over the window before it, the window's 20-minute best,
-# the curve's record rungs and threshold, and the CP fit. Everything else
-# the model holds (the series, the heat, the career, the plan, the trace)
-# is the same whatever the window says, so a chip click reads only these.
-# R still runs the full loader, which is what R is for.
-CurveWindow : { days : I64, fam : Str, prs : List(Db.PrRung), c : List(Db.CurvePt), cpv : List(Db.CurvePt), lbls : List({ p : Text.Prepared, d : I64 }), title : Text.Prepared, fit_lbl : Text.Prepared, cp_lbl : Text.Prepared, fit_cp : F32, info : Db.CurveInfo }
+# the window and over the window before it, the curve's record rungs, and
+# the engine's fit and threshold. Everything else the model holds (the
+# series, the heat, the career, the plan, the trace) is the same whatever
+# the window says, so a chip click reads only these. R still runs the full
+# loader, which is what R is for.
+CurveWindow : { days : I64, fam : Str, prs : List(Db.PrRung), c : List(Db.CurvePt), cpv : List(Db.CurvePt), title : Text.Prepared, info : Db.CurveInfo }
 
 load_curve_window! : Access, Text.Font, I64, Str => Try(CurveWindow, [ResourceLimit])
 load_curve_window! = |acc, font, curve_days, curve_family| {
 	read = match open_db!(acc) {
 		Ok(db) => {
 			tm = Db.today_mod!(acc.io.commands(), db)
-			{ c: Db.load_curve!(db, curve_days, tm, curve_family), cpv: Db.load_curve_prev!(db, curve_days, tm, curve_family), b20: Db.load_best20_age!(db, curve_days, tm, curve_family), prs: Db.load_prs!(db, curve_family), un: Db.units!(db), thr: Db.load_threshold!(db, curve_family) }
+			{ c: Db.load_curve!(db, curve_days, tm, curve_family), cpv: Db.load_curve_prev!(db, curve_days, tm, curve_family), prs: Db.load_prs!(db, curve_family) }
 		}
-		Err(_) => { c: [], cpv: [], b20: -1, prs: [], un: Metric, thr: 0.0 }
+		Err(_) => { c: [], cpv: [], prs: [] }
 	}
 	ft = Db.load_fit!(acc.io.commands(), curve_days, curve_family)
-	fit = ft.fit
-	fit_text = Curve.anchor_caption_for(curve_family, read.un, fit, ft.test, read.b20)
-	# the same two faces the full loader prepares these labels with, so a
-	# window switch cannot re-set the curve in a different type
+	# the same face the full loader prepares the title with, so a window
+	# switch cannot re-set it in a different type
 	head = brand_font!(acc, "Quicksand-Medium.ttf", 24, font)
-	mono = brand_font!(acc, "JetBrainsMono-Regular.ttf", 24, font)
-	mk! = |txt, sz| Text.from(txt, head).size(sz).prepare!()
-	mkm! = |txt, sz| Text.from(txt, mono).size(sz).prepare!()
-	lbls = List.map_try!(
-		read.c,
-		|x| {
-			p = mkm!(I64.to_str(x.dur_s), 12)?
-			Ok({ p, d: x.dur_s })
-		},
-	)?
 	Ok({
 		days: curve_days,
 		fam: curve_family,
 		prs: read.prs,
 		c: read.c,
 		cpv: read.cpv,
-		lbls,
-		title: mk!(Curve.title_text(curve_family, curve_days), 15)?,
-		fit_lbl: mk!(Db.ascii_safe(fit_text), 14)?,
-		cp_lbl: mkm!(Curve.anchor_tag(curve_family, read.un, fit, ft.test), 12)?,
-		fit_cp: Curve.anchor_line(curve_family, fit, ft.test),
-		info: { fit, test: ft.test, thr: read.thr, best20_age: read.b20 },
+		title: Text.from(Curve.title_text(curve_family), head).size(15).prepare!()?,
+		info: ft,
 	})
 }
 
@@ -2274,7 +2238,7 @@ caps_fields = [
 	{ name: "ghost_id", kind: "integer", accepts: "an activity id among the trace picker's sessions, of the same kind as the session shown; takes precedence over ghost_day, and 'none' in ghost_day still dismisses" },
 	{ name: "capture", kind: "text", accepts: "'png' writes the view the directive lands on, once it has settled, to captures/<view>.png under the window's working directory; 'webm_start' and 'webm_stop' begin and end a WebM recording of it; the row stays pending until the host answers, then result names the file by its absolute path once it exists: a written PNG, or the recording a stop finished; a start closes with no result" },
 	{ name: "family", kind: "text", accepts: "a sport family's head ('Ride', 'Rowing', 'Run', ...) switches the power view to that family's power curve, record book and CP fit; 'pace:' and a sport type ('pace:Run', 'pace:Swim', 'pace:Rowing') switches it to that sport's pace curve and critical-speed fit; refused by name when the athlete has no such data; omitted leaves it unchanged" },
-	{ name: "short", kind: "integer", accepts: "1 shows the power or pace curve's short rungs (under 5 minutes), 0 folds them when none was pushed all-out; any other value is refused by name; omitted leaves it unchanged" },
+	{ name: "short", kind: "integer", accepts: "none: the power view shows no rungs under 5 minutes, so any value is refused by name; the column stays for the bus shape" },
 ]
 
 update! : Model, App.Input(Msg), App.Io => Try(Model, [Exit(I64)])
@@ -2306,7 +2270,7 @@ update! = |model0, program_input, io| {
 				# matched the same way
 				CurveReloaded(w) =>
 					if (w.days != acc.curve_days or w.fam != acc.curve_family) acc
-					else { ..acc, prs: w.prs, curve: w.c, curve_prev: w.cpv, curve_lbls: w.lbls, curve_title: w.title, fit_lbl: w.fit_lbl, cp_lbl: w.cp_lbl, fit_cp: w.fit_cp, curve_info: w.info, reloading: Bool.False }
+					else { ..acc, prs: w.prs, curve: w.c, curve_prev: w.cpv, curve_title: w.title, curve_info: w.info, reloading: Bool.False }
 				CurveReloadFailed(days, fam) => if (days != acc.curve_days or fam != acc.curve_family) acc else { ..acc, reloading: Bool.False }
 				# a failed fetch lowers the loading flag only if it was the current
 				# fetch: a failure for a superseded switch must not clear the flag
@@ -2373,7 +2337,7 @@ update! = |model0, program_input, io| {
 					# while R refreshes everything else. A model still booting has
 					# chosen no curve yet and takes the one the load chose.
 					if (acc.curve_family == "" or (fresh.curve_days == acc.curve_days and fresh.curve_family == acc.curve_family)) merged
-					else { ..merged, curve_family: acc.curve_family, prs: acc.prs, curve: acc.curve, curve_prev: acc.curve_prev, curve_lbls: acc.curve_lbls, curve_title: acc.curve_title, curve_days: acc.curve_days, fit_lbl: acc.fit_lbl, cp_lbl: acc.cp_lbl, fit_cp: acc.fit_cp, curve_info: acc.curve_info, reloading: acc.reloading }
+					else { ..merged, curve_family: acc.curve_family, prs: acc.prs, curve: acc.curve, curve_prev: acc.curve_prev, curve_title: acc.curve_title, curve_days: acc.curve_days, curve_info: acc.curve_info, reloading: acc.reloading }
 				}
 				# only the reply for the current trace generation lands: two switches
 				# faster than the first fetch resolves would otherwise let the first,
@@ -2669,18 +2633,11 @@ update! = |model0, program_input, io| {
 			else model.curve_days
 		# the power view's curve: a directive's (a refused one changes nothing),
 		# or the curve or mode chip clicked on the power view
-		clicked_family = if (view == 1 and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0) (Curve.chip_at(Curve.chips_for(win.w, model.curve_keys, model.curve_family, model.curve_days), m0.x)) else ""
+		clicked_family = if (view == 1 and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0) (Curve.chip_at(Curve.chips_for(win.w, model.curve_keys, model.curve_family), m0.x)) else ""
 		want_family =
 			if (directive.has_d and directive.family != "" and Bus.family_refusal(directive.family) == "" and curve_on_record(model.curve_keys, directive.family)) directive.family
 			else if (clicked_family != "") clicked_family
 			else model.curve_family
-		# the short chip toggles the folded short rungs; a directive's `short`
-		# (1 shows, 0 folds) sets it outright
-		clicked_short = view == 1 and Mouse.button_pressed(d.mouse, Left) and m0.y >= 64.0 and m0.y <= 86.0 and Curve.chip_at(Curve.short_chips(win.w, model.curve_keys, model.curve_family, Curve.layout(model).foldable, model.show_short), m0.x) == Curve.short_chip_key
-		want_short =
-			if (directive.has_d and Bus.short_refusal(directive.short) == "" and directive.short >= 0) directive.short == 1
-			else if (clicked_short) !(model.show_short)
-			else model.show_short
 		# on the trace view, [ and ] walk the picker, X narrows it to one sport.
 		# A filter change moves the selection itself, because the session the
 		# window is showing may be one the new filter does not admit.
@@ -2800,20 +2757,16 @@ update! = |model0, program_input, io| {
 		# a view that draws no projection holds the latest measured day in
 		# place of a projected one (Board.held)
 		ahead3 = (Board.held({ back: cursor3, ahead: ahead2 }, view2)).ahead
-		# TAB on the power view with a rung hovered opens the session that set
-		# that rung's window best (TAB already moves the power view to the trace),
-		# and the map's card opens the session whose route was clicked.
-		# A directive's session wins over both: an id names one session exactly
+		# The map's card opens the session whose route was clicked. A
+		# directive's session wins over it: an id names one session exactly
 		# and wins over a day, and a day names whichever session of that day
 		# sorts first, which is the newest. Reloads and trace switches SPAWN -
 		# Cmd panics in update!, and the task lane is where Sqlite and text
 		# preparation park legally
-		tab_source = if (model.view == 1 and d.key_pressed(KeyTab)) (Curve.hovered_source(model)) else -1
 		want_sel2 =
 			if (directive.has_d and directive.trace_id >= 0) (sel_for_id(model.trace_ids, directive.trace_id, want_sel))
 			else if (directive.has_d and directive.trace_day != "") (sel_for_day(model.trace_ids, directive.trace_day, want_sel))
 			else if (map_open >= 0) (sel_for_id(model.trace_ids, map_open, want_sel))
-			else if (tab_source >= 0) (sel_for_id(model.trace_ids, tab_source, want_sel))
 			else want_sel
 		# a switch is the selection moving, or a refetch the picker re-read
 		# asked for: the shown session is gone and the index it fell to
@@ -2994,7 +2947,7 @@ update! = |model0, program_input, io| {
 		chip0h = win.w - 420.0
 		# per-chip, not one wide band: the 8px gaps between chips are not
 		# clickable and must not claim the pointer
-		over_chip = m.y >= 64.0 and m.y <= 86.0 and (((view2 == 0 or view2 == 1) and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0) or (view2 == 1 and Curve.chip_at(List.concat(Curve.chips_for(win.w, model.curve_keys, model.curve_family, model.curve_days), Curve.short_chips(win.w, model.curve_keys, model.curve_family, Curve.layout(model).foldable, model.show_short)), m.x) != ""))) or (view2 == 8 and Career.kind_chip_at(Career.kind_chips(model), m.x).is_ok()) or (Days.is_day(view2) and Days.mode_at(m.x, m.y) >= 0) or (Weeks.is_week(view2) and Weeks.mode_at(m.x, m.y) >= 0) or (Map.is_map(view2) and Map.mode_at(m.x, m.y) >= 0))
+		over_chip = m.y >= 64.0 and m.y <= 86.0 and (((view2 == 0 or view2 == 1) and ((m.x >= chip0h and m.x <= chip0h + 46.0) or (m.x >= chip0h + 54.0 and m.x <= chip0h + 100.0) or (m.x >= chip0h + 108.0 and m.x <= chip0h + 154.0) or (view2 == 1 and Curve.chip_at(Curve.chips_for(win.w, model.curve_keys, model.curve_family), m.x) != ""))) or (view2 == 8 and Career.kind_chip_at(Career.kind_chips(model), m.x).is_ok()) or (Days.is_day(view2) and Days.mode_at(m.x, m.y) >= 0) or (Weeks.is_week(view2) and Weeks.mode_at(m.x, m.y) >= 0) or (Map.is_map(view2) and Map.mode_at(m.x, m.y) >= 0))
 		over_row = view2 == 3 and m.x >= 36.0 and m.x < Table.table_edge(win.w, detail_day2) and (
 			match Table.row_at(Table.page_for(model, cursor2), m.y) {
 				Row(_) => Bool.True
@@ -3085,7 +3038,7 @@ update! = |model0, program_input, io| {
 			sport: want_sport2,
 			family: Career.spine_at(model.career_spines, spine_idx).fam,
 			curve_family: want_family,
-			curve_short: Curve.focus_short(Curve.layout(model).foldable, want_short),
+			curve_short: Curve.focus_short,
 			# the session the map's card is up for, named while a map mode shows it
 			map_id: Map.map_focus({ ..model, view: view2, map_card: map_card2 }),
 		}
@@ -3297,7 +3250,7 @@ update! = |model0, program_input, io| {
 		used = !List.is_empty(d.events) or List.any(d.keys, |k| k != 0) or pointer.x != 0.0 or pointer.y != 0.0 or wheel.x != 0.0 or wheel.y != 0.0 or Mouse.button_down(d.mouse, Left) or Mouse.button_down(d.mouse, Right) or win.w != model.win.w or win.h != model.win.h or directive.has_d
 		last_active = if (used) tick else model.last_active
 		Window.set_target_fps!(frame_rate({ busy, tick, last_active }))
-		Ok({ ..model, map: map2, map_speed: map_speed2, map_marks: map_marks2, map_tiles: tile_plan.slots, map_source: map_source2, map_planned: (if (planning) { cam: map_shown, tick } else model.map_planned), map_plan_due: model.map_plan_due and !planning, map_heat: map_heat2, map_play: map_play2, map_painted_view: (if (map_paint2) view2 else model.map_painted_view), map_load: (if (map_spawn) Loading else model.map_load), map_gen: map_gen2, map_cam: map_cam2, map_moved: map_moved2, map_drag: map_drag2, map_card: map_card2, map_rt: map_rt2, map_paint: map_paint2, map_painted: (if (map_paint2) map_shown else model.map_painted), lifts_off: lifts_off2, last_off: last_off2, week_off: week_off2, week_cursor: week_cursor2, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, cursor_ahead: ahead3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, show_short: want_short, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else if (view2 == 1) Curve.plot_top else Theme.pad_t) and m.y < win.h - Theme.pad_b })
+		Ok({ ..model, map: map2, map_speed: map_speed2, map_marks: map_marks2, map_tiles: tile_plan.slots, map_source: map_source2, map_planned: (if (planning) { cam: map_shown, tick } else model.map_planned), map_plan_due: model.map_plan_due and !planning, map_heat: map_heat2, map_play: map_play2, map_painted_view: (if (map_paint2) view2 else model.map_painted_view), map_load: (if (map_spawn) Loading else model.map_load), map_gen: map_gen2, map_cam: map_cam2, map_moved: map_moved2, map_drag: map_drag2, map_card: map_card2, map_rt: map_rt2, map_paint: map_paint2, map_painted: (if (map_paint2) map_shown else model.map_painted), lifts_off: lifts_off2, last_off: last_off2, week_off: week_off2, week_cursor: week_cursor2, last_active, reloading: (if (reload_spawned) Bool.True else model.reloading), range, view: view2, cursor: cursor3, cursor_ahead: ahead3, rec_status: program_input.capture, pending_capture: pending2, rec_path: rec_path2, glow: glow2, glow_on: glow_on2, last_directive: (if (directive.has_d and directive.id >= 0) ({ id: directive.id, refused: refused9, result: "" }) else last_directive1), trace_zoom: trace_zoom2, trace_pan: trace_pan2, curve_days: want_days, curve_family: want_family, trace_sel: want_sel2, trace_refetch: Bool.False, trace_gen: trace_gen2, trace_loading: (if (trace_fetch) Bool.True else if (moving) Bool.False else model.trace_loading), ghost_sel: want_ghost2, ghost_gen: ghost_gen2, ghost_loading: ghost_loading2, ghost: ghost2, ghost_day: ghost_day2, ghost_dur: ghost_dur2, trace: trace2, segs: segs2m, trace_dur: trace_dur2, trace_day: trace_day2, trace_unit: trace_unit2, trace_splits: trace_splits2, trace_sets: trace_sets2, trace_sport: want_sport2, tick, view_anim, spine_idx, last_focus, win, ui_percent, ui_scale: layout.scale, detail_day: detail_day2, detail: (if (detail_day2 != model.detail_day) [] else model.detail), mouse_x: m.x, mouse_y: m.y, mouse_in: m.y > (if (view2 == 0) (Theme.pad_t + Board.band_h) else if (view2 == 1) Curve.plot_top else Theme.pad_t) and m.y < win.h - Theme.pad_b })
 	}
 }
 

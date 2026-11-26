@@ -33,8 +33,7 @@ streak in consecutive Mon–Sun weeks with any load. The detail lives where it
 belongs — the career view wears the level chip, XP bar and streak flame; the
 plan view turns the week into a quest row of seven pips (one per weekday,
 Monday first, colored by what became of that day, gold when done, pulsing
-when every session is done); the power view
-rings a ride record set in the last seven days in gold; the career view
+when every session is done); the career view
 turns the spine's peak gold with a breathing "all-time high" halo when the
 peak is the current month, which celebrates a threshold record for EVERY
 family the athlete trains, not only ride power; and the form board wears
@@ -465,7 +464,7 @@ and resumes, and the clock starts over each time the mode opens.
 | click a week (weeks tab) | keep that week in focus in both modes; click it again to drop it |
 | `routes` / `heat` / `play` chips (map tab) | switch the map tab between the routes in the accent, the summed segments as heat, and playback |
 | `P` (map playback) | pause and resume playback |
-| `1` / `2` / `3` or the chips (power view) | re-window the blue ladder and CP fit to 30/60/90 days |
+| `1` / `2` / `3` or the chips (power view) | re-window the rows and the top line to 30/60/90 days |
 | `shift+[` / `shift+]` (trace view) | summon / walk the ghost overlay through sessions of the live one's KIND - same sport, same unit; the walk skips the live session itself, and stepping past the last compatible one dismisses it |
 | `C` (trace view) | clear the ghost in one press, from any state |
 | `X` (trace view) | cycle the picker's sport filter (all / each sport the menu holds); the header names the active filter |
@@ -776,36 +775,24 @@ first spot and the gate below decides whether that was clear.
 
 `src/viz/Scene.roc` is the layer a view writes its strings through. Fixed
 text (titles, chips, tile and card text, axis labels, legends, table cells,
-footers) keeps one spot and never drops. Essential text with somewhere else
-to go keeps, trying its spots in order: the power view's threshold value;
+footers, and every string of the power view) keeps one spot and never drops.
+Essential text with somewhere else to go keeps, trying its spots in order:
 the career view's milestone values, the all-time-high cheer, test kinds and
 withheld dot values; the form board's line-end values, its event warning,
 the zero rule's "fresh above" caption and the projection's key; and the session trace's unit label
-and zoom note. Text that another surface also shows may drop: the power
-view's deltas, `pr` and `new record` marks, unpushed caption and zone names
-(the rung's hover card carries its values, record and push), its
-planned-ring labels (the ring's card), the career view's year names and
+and zoom note. Text that another surface also shows may drop: the career view's year names and
 strip names (the strip's tooltip), the form board's event marker name (the
 event tile) and its key hint when the stale note needs the footer row (the controls section lists the keys), and the trace footer's shared keys (every other view's footer
 carries them). The map's place and street names may drop too, being the
 street map's own detail rather than anything the engine measured. The view's
-own placement rules are the candidate lists: a
-delta tries between its dots on the right, then the left, then above and
-below; a planned ring's label tries under the ring, over it, then beside
-it on the right and the left, and the labels of a ring that find none of
-those come back once every other label is placed, as one stack in date
-order lifted over the ring a label row at a time until it clears every
-placed label and every other ring's stack, so a ring near the axis floor
-under its rung's name and dots keeps its labels and no other label moves
-(a ring whose other labels kept their spots reads in date order within
-the stack only); a strip name tries under its segment, then beside the
+own placement rules are the candidate lists: a strip name tries under its segment, then beside the
 strip's end; the zero rule's caption tries the rule's right end, its left
 end, steps inward from the right, the column past the rule's end, and last
 the same row lifted to just above the tallest load bar.
 
-Hover cards and tooltips (the power view's rung and ring cards, the form
-board's day card, the year's day line, the XP rail's sheet, the map's route card) draw over
-everything through the same layer, as fixed text inside their card.
+Hover cards and tooltips (the form board's day card, the year's day line,
+the XP rail's sheet, the map's route card) draw over everything through
+the same layer, as fixed text inside their card.
 
 The chrome every view shares (the wordmark, the scale chip, the nav pills,
 the recording badge, the form board's legend and the XP rail's level) is
@@ -831,8 +818,14 @@ families in `core.Sports`: one per family, each pace family again in
 imperial units, and a mixed athlete with a single session of a strength-like
 sport no family holds. The fixtures per view:
 
-- power: every curve each athlete has, at 30, 60 and 90 days, with the short
-  rungs folded and shown;
+- power: every curve each athlete has, at 30, 60 and 90 days (a usable fit,
+  a test due on a fit through steady efforts, a marked test that set the
+  threshold), power curves of sports outside every family under long Strava
+  names, and on each 90-day curve a new athlete (no threshold, nothing in
+  the window before, no best ever past 5 minutes), a mix of a level row, a
+  row only the window before has and one only this window has, too few
+  bests for a fit with rows whose bests are older than both windows, and a
+  test under the derivation, in the brand faces and in the built-in face;
 - career: every page of every athlete, again with no threshold at all, an
   athlete with short runs and no running threshold beside a power trend,
   and one whose sports sit in no family under long Strava names, in the
@@ -885,7 +878,7 @@ chrome's included, that every box stays inside its region, and that no text
 covers a shape other than the one it is written inside. Each view lists the
 shapes it draws in its `marks`: the nav pills and the XP rail on every view,
 the bars, chips, ticks, tiles and cards of the views that draw them, the power
-view's dots, planned rings and legend swatches, and the career view's spine
+view's test card, dots and legend dots, and the career view's spine
 dots, load bars, legend swatches and composition strip. The boot splash, the XP rail's sheet, the form board's day card and the map's card run
 the first two checks alone; the day card must also lie inside the plot and say its day is projected, and the map's card must lie inside the map. `roc test` reports only that the expect failed;
 `Gate.failures` names each failure by fixture, size and the texts and
@@ -950,10 +943,10 @@ INSERT INTO viz_directives (view, capture) VALUES (1, 'png');
 -- vocabulary is refused by name, and so is a valid one the athlete has no
 -- data for.
 INSERT INTO viz_directives (view, family) VALUES (1, 'pace:Run');
--- the power view's short rungs (under 5 minutes), which it folds into a
--- gutter when none was pushed all-out: 1 shows them, 0 folds them again; any
--- other value is refused by name
-INSERT INTO viz_directives (view, short) VALUES (1, 1);
+-- short: the power view shows no rungs under 5 minutes, so any value is
+-- refused by name ("short 1 refused: the power view has no short rungs");
+-- the column stays for the bus shape, and `stride viz --json` lists the
+-- field with that refusal as what it accepts
 -- view 0..12 (form/power/trace/table/plan/heat/zones/ramp/career/lifts/map/map-heat/map-play;
 -- 3, 4 and 5 are the day tab's log, week and year modes; 6 and 7 are the
 -- weeks tab's zones and load modes; 10, 11 and 12 are the map tab's
@@ -999,9 +992,9 @@ CREATE TABLE IF NOT EXISTS viz_focus (
 -- ~2/s) and on a heartbeat every 30 seconds regardless. Beyond the session
 -- it names the day whose detail panel is open on the table, the trace's
 -- sport filter, the family the career view is on, the power view's curve
--- (curve_family), whether its short rungs are shown (curve_short, 1
--- shown, 0 folded) and the session whose route the map's card is up for
--- (map_id), each NULL when none
+-- (curve_family), the session whose route the map's card is up for
+-- (map_id), each NULL when none, and curve_short, always NULL since the
+-- power view folds nothing
 SELECT view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id,
        detail_day, sport, family, curve_family, curve_short, map_id, updated_at
 FROM viz_focus;
@@ -1103,66 +1096,76 @@ a reader who cares looks at focus, not at the losing row.
 
 ## The power view (TAB)
 
-A second screen, and the one that answers "am I holding power?": the
-window's power-duration ladder drawn over the same-length window before it,
-eight rungs from 5s to 60min.
+A second screen, and the one that answers "am I getting stronger?": the
+athlete's best power at 5, 10, 20 and 60 minutes in the window against the
+same-length window before it, and whether a test is due.
 
-Four tiles under the chips carry the headline numbers before the chart is
-read: the window's best at the ladder's longest rung and at the one before it
-(60 and 20 minutes on a power curve, 20 and 10 on a pace curve), each with
-its day and marked `PR` when it is the all-time best, else naming the record;
-the threshold the engine scores the curve's sessions with (FTP, or the
-threshold pace), captioned `from test` when a marked test is in force and
-`(20-min x 0.95)` otherwise, the derivation it comes from; and the window's
-fit, captioned `critical power (fit)` with W' (`critical speed (fit)` with D'
-on a pace curve) when it is usable, the test standing in when one is in
-force, or `test due` with the 20-minute best's age. The threshold and the
-fit are different models and can disagree; the captions name which is which.
+A card under the chips carries one line: the family's threshold today and
+what to do about it, amber with an amber stripe when a test is due and muted
+otherwise. The threshold is the engine's own, the number it scores with and
+`stride zones` reports for rides: `stride power-curve` names it as `ftp_w`
+(`stride pace-curve` as `threshold_speed`), the 60-day derivation (the best
+20 minutes of the last 60 days times 0.95, once two sessions carry one)
+raised to a marked test in force, with `ftp_source` (`threshold_source`)
+saying which of the two set it. A test is due by the rule the tab has always
+used: the window's critical power fit (critical speed on a pace curve, from
+the same command) is not usable and no marked test is in force. A usable fit
+needs r2 of at least 0.9 and W' between 5 and 40 kJ (D' inside the sport's
+own band on a pace curve: 5-100 m swimming, 10-300 m rowing, 10-600 m on
+foot), and a marked test stays in force for the engine's 90 days. The lines:
 
-The dashed threshold line carries its value at the line's left end, inside
-the plot, above the line or below it when a first-rung point sits just
-above.
+- due, naming what made the fit unusable: `Test due: your 5, 10 and
+  20-minute bests of the last 90 days were not flat out - ride 20 minutes as
+  hard as you can to update your FTP (now 241 W)` when the bests fall on no
+  curve or leave an implausible reserve, which steady efforts give, naming
+  only the durations the window has a best at (`your 5 and 20-minute
+  bests`); `too few hard 5 to 20-minute efforts in the last 90 days to check
+  your FTP` when fewer than two bests reach the fit. A pace curve asks for 20
+  minutes as hard as you can without stopping and names the threshold pace;
+- a marked test that set the threshold (it is at least the derivation):
+  `FTP 246 W - set by your test on 10-27`;
+- a marked test under the derivation, which then sets the threshold: `FTP
+  241 W - from your best 20 minutes of the last 60 days, higher than your
+  test on 11-14` (`faster than` on a pace curve);
+- a usable fit and no test: `FTP 241 W - no test due`;
+- no threshold, by the engine's own answer: `No FTP yet - ride 20 minutes
+  hard twice within 60 days to set one`; on foot it adds the other way in,
+  `or run 5 km as fast as you can and mark it as a test` (`stride test
+  <activity_id> 5k`);
+- an answer that could not be read (the command failed, or a `stride` that
+  predates `ftp_w` answered without it): `Your FTP could not be read from
+  stride - press R to try again, or update stride`, which asks for no test
+  and names no number.
 
-The plot draws this window as the solid blue line, the previous window
-dashed grey and the all-time record envelope as a thin faint line with small
-dots, and a legend on the row above the plot names each line on the chart.
-The value axis spans what is drawn on screen (all three lines, the planned
-targets and the threshold line; folded short rungs do not count) with a
-small margin (5% on a power curve, out to round watts; 3% under and 2% over
-on a pace curve), so the gaps between the lines get the height. Each rung's
-name sits on the axis row under its column; when a dot or a planned ring near
-the axis floor reaches into that row, the name rises to just above it. Behind
-the lines, faint bands mark the athlete's power zones from the FTP (Coggan's
-seven, the same table `stride zones` prints), alternate ones shaded and each
-named at the window's right edge where it is tall enough.
-A pace curve draws no bands, since Stride has no pace zones.
+The line wraps inside the card when the window is too narrow for it, and
+the card grows to hold it.
 
-The signed change at each rung is printed in watts beside it: teal going up,
-alarm going down, nothing when either window lacks the rung. A rung whose
-window best IS the record collapses to one teal dot marked "pr", with its
-delta beside it, and a record set in the last seven days rings gold.
-Hovering a rung opens a card beside it: the duration, this window's,
-the previous window's and the all-time best with their days, the session
-that set this window's best, and `not all-out` or `stale` when they apply.
-The card stays inside the plot and beside the point. The CP fit reports from
-the bottom-right status corner, its dashed line on the chart, only when the
-fit is usable: r2 at least 0.9 and W' between 5 and 40 kJ. A fit through
-steady class bests rather than maximal ones returns a W' of a few kJ, so
-otherwise the line is not drawn and the footer says why, how many days ago
-the window's 20-minute best was set, and that an all-out 20 minutes would
-anchor the fit.
+Under the card a legend names the two windows: a grey dot for `the 90 days
+before` and a blue dot for `last 90 days`. A window before with no best at
+any duration is said once in the legend instead, with no dot (`the 90 days
+before: no rides`, `no runs`, `no rowing`), and its rows draw only the blue
+dot.
 
-Every open session ahead with a structured target is a dashed gold ring at
-its rep duration and target watts (between rungs, placed linearly in
-seconds), labelled `planned`, its day and the target's share of this
-window's best at that duration, read off the line between the rungs around
-it. The dashes and the `planned` prefix keep a prescription from reading as a
-measured best. When every spot next to a ring is taken, as under a rung's
-dots near the axis floor, its labels sit higher in the ring's column, above
-that rung's name and dots, and at either edge of the plot they shift
-inward from the ring; the gold and the `planned` prefix tie them to it, and
-its card repeats them. Hovering a ring opens the same card for each session
-in it: its date, type, reps, duration and watts.
+Then one row per duration the curve's ladder carries: 5, 10, 20 and 60
+minutes on a power curve, 5, 10 and 20 on a pace curve, whose ladder stops
+at 20 minutes. Each row draws the window before's best as a grey dot and
+this window's as a larger blue one on one scale shared by every row, prints
+each value beside its own dot (the higher one on its right, the lower on its
+left), joins the two with a bar coloured by the change, and prints the change
+just past the pair: green with a plus for a gain, red with a minus for a
+drop, and grey `level` when the two are within a watt (on a pace curve, the
+same printed pace). A row with a best only in the window before says `none
+in the last 90 days`; one with a best only in this window, while other rows
+have both, says `none before`. A row with neither says `none in the last 180
+days` when the record book holds an older best, and otherwise what it has
+never had: on a pace curve `no 20 minutes without stopping yet`, since a
+pace best rolls over moving seconds, counts walking as moving and closes a
+pause of up to 30 seconds, but a longer stop ends the stretch; on a power
+curve `no 60-minute ride yet`. The scale's faint rules carry round watts
+(round paces on a pace curve) under the last row, and stop short of an empty
+row's sentence. The scale spans the printed values with their spread's 15%
+plus 2% of the highest beyond each end, so every dot has room for its value
+beside it.
 
 The tab draws one curve at a time, named by a curve key: a sport family's
 head for that family's POWER curve, or `pace:<sport_type>` for that sport's
@@ -1172,66 +1175,37 @@ and only the sports whose effort is their pace (the run, walk, swim and
 rowing families) take a pace curve: a ride's speed follows the terrain.
 
 The chips come from the data. Left of the range chips, right-aligned, sit the
-curves the athlete has on record, most-used first, as many as fit beside the
-title, the one on screen always among them: in power mode every power family,
-then each pace sport whose family has no power curve; in pace mode the
-reverse, so every curve is one click away. Right of the range chips, a power
-and a pace chip switch between the two curves of the sport on screen, shown
-only when that sport has both: a ride has no pace curve, so a bike curve shows
-no pace chip. Each switch reloads the curve, the previous
-window, the record book and the fit: CP and W' from `stride power-curve
-<days> <family>`, or critical speed and D' from `stride pace-curve <days>
-<sport>`. At launch the tab opens on the athlete's most-trained family of the
+curves the athlete has on record in one fixed order on every page (bike, row,
+run, then any other sport), as many as fit beside the title, the one on
+screen always among them: in power mode every power family, then each pace
+sport whose family has no power curve; in pace mode the reverse, so every
+curve is one click away. A family's chip carries its own short word (`bike`,
+`row`, `run`), and a sport outside every family its name in plain words, the
+career view's `sport_word` (`stand up paddling`), the chip widening to hold
+it; the title names the sport the same way (`your best cycling power`,
+`your best trail run pace`). Right of the range chips, a power and a pace
+chip switch between the two curves of the sport on screen, shown only when
+that sport has both: a ride has no pace curve, so a bike curve shows no pace
+chip. Each switch reloads the curve, the window before, the record book and
+the fit. At launch the tab opens on the athlete's most-trained family of the
 last 90 days: its power curve when it has one, else its most-used pace sport.
+A directive's `family` field steers the same switch, and the focus row
+reports the curve on screen as `curve_family`, in the same vocabulary.
 
-A pace curve plots speed, so the faster effort is the higher dot, and reads
-it aloud as pace in the sport's own unit: per 500m for rowing, per 100m for
-swimming, per kilometre or mile (as `units` says) for the foot sports. Its
-gridlines, hover card, deltas (seconds per unit, negative when the window got
-faster) and the CS line speak pace. The CS line follows the CP line's rule:
-drawn only from a fit with r2 at the floor and D' inside the sport's own
-band (5-100 m for swimming, 10-300 m for rowing, 10-600 m on foot), and
-otherwise the caption names what is wrong and the effort that would fix it.
-
-Planned targets show where they belong, drawn as dashed gold rings labelled `planned`: a power target on the curve of
-the power family the athlete trains most (a planned session names no sport, and watts do not compare across families),
-a pace target on every pace curve its unit fits (`/km` and `/mi` on the run and
-walk families, `/100m` on the swim family, `/500m` on the rowing family), at
-the speed its pace names and the time one rep takes at that speed. A
-directive's `family` field steers the same switch, and the focus row reports
-the curve on screen as `curve_family`, in the same vocabulary.
-
-A rung whose window best is within 5% of the next longer rung's best
-(`flat_ratio`) was not pushed: it is that session's ordinary output, not an
-all-out effort. Its dot goes muted in that window, no delta is printed
-beside it (a gap between two unpushed rungs reflects which workouts were
-chosen, not fitness), and the row above the plot names the window's
-unpushed durations at its right, where it clears the legend. The longest rung has nothing longer to beat and is never
-marked. A window best set more than half the window ago fades. Hovering a
-rung names the session that set the window's best and its day, and TAB on a
-hovered rung opens that session in the trace view.
-
-A short rung (under 5 minutes) counts as pushed only when it is not flat
-against the next longer rung and reaches 90% of the athlete's record at that
-duration (`short_record_share`): a 1-minute best stands well above a 5-minute
-one even inside an ordinary class, so flatness alone would call it all-out.
-When the window holds short rungs and none was pushed, they fold into a narrow
-`short / not pushed` gutter at the left and the remaining rungs take the
-width; one pushed short rung shows them all. The `short` chip, right of the
-range chips, shows them on demand, and appears only while there is something
-to fold. The tab opens folded, and the choice holds for the rest of the
-session. A directive's `short` field (1 shows, 0 folds) steers the same
-switch, and the focus row reports it as `curve_short`: 1 shown, 0 folded, and
--1 (NULL in the row) when the curve on screen has nothing to fold.
+A pace curve plots speed, so the faster effort is the dot further right, and
+reads it aloud as pace in the sport's own unit: per 500m for rowing, per 100m
+for swimming, per kilometre or mile (as `units` says) for the foot sports.
+Its rules and changes (seconds per unit, negative when the window got
+faster) speak pace.
 
 The ladder itself - which columns, which family, that zero and NULL both mean unrecorded - is
 the `activity_power_ladder` view's, shared with the record book and the
 CLI's health report; the speed ladder is the `activity_pace_ladder` view's,
 shared with `stride pace-curve`, with its rung list in `pace_ladder_rungs`.
 
-The **points** come from the stored per-activity bests (`activity_metrics.best_*_w`),
+The **values** come from the stored per-activity bests (`activity_metrics.best_*_w`),
 maxed over the window. `CAST(ROUND(...))` matters — a bare `CAST` truncates and
-draws the whole ladder a watt low; rounded, every rung matches
+prints the whole row a watt low; rounded, every value matches
 `stride power-curve 90 Ride --json`.
 
 **CP, W′ and r2 come from the engine**, not from a second regression here. The fit
@@ -1239,11 +1213,8 @@ is `Metrics.hyperbolic_fit`'s job and a copy in the viz would drift from it, so 
 view runs `stride power-curve --json` directly — no shell between, so the
 window declares that program by name (`sh` is the one other, for the zone offset
 `date` reports under the configured timezone) — and extracts each field
-independently — key ORDER cannot silently break the parse, and a missing field
-shows "CP fit unavailable" rather than a fit of zeros.
-
-Rungs are spaced by INDEX rather than by duration: the ladder is a fixed 5s..60min
-set, and a linear time axis piles the short rungs onto the left edge.
+independently, so key ORDER cannot silently break the parse, and a missing
+field reads as an unusable fit, which makes a test due.
 
 ## Session trace view (TAB)
 

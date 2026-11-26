@@ -15,6 +15,8 @@
     "test_value",
     "test_kind",
     "test_date",
+    "threshold_speed",
+    "threshold_source",
     "durability"
   ],
   "additionalKeys": false,
@@ -75,6 +77,18 @@
     },
     "test_date": {
       "type": "string"
+    },
+    "threshold_speed": {
+      "type": "number",
+      "description": "The named sport's family's threshold speed today in m/s, the one stride scores with: the 60-day derivation (best 20-minute speed x 0.95, once two sessions carry one) raised to a marked pace test in force. 0 when no sport is named or the family has none."
+    },
+    "threshold_source": {
+      "type": "string",
+      "enum": [
+        "test",
+        "derived"
+      ],
+      "description": "Which number `threshold_speed` is: `test` when the test in force is at least the derivation, `derived` otherwise (also when no test is in force)."
     },
     "durability": {
       "type": "array",

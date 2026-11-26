@@ -67,8 +67,10 @@ Bus :: [].{
 		# the focus row
 		"ALTER TABLE viz_directives ADD COLUMN family TEXT",
 		"ALTER TABLE viz_focus ADD COLUMN curve_family TEXT",
-		# whether the power view shows its folded short rungs: asked for by a
-		# directive (1 shows, 0 folds), reported in the focus row
+		# the short-rung columns: a directive's `short` and the focus row's
+		# curve_short. The power view folds no rungs, so a `short` is refused
+		# by name and curve_short stays NULL; the columns stay so an earlier
+		# window or coach reading them still meets the shape it knows
 		"ALTER TABLE viz_directives ADD COLUMN short INTEGER",
 		"ALTER TABLE viz_focus ADD COLUMN curve_short INTEGER",
 		# the session whose route the map's card is up for, by activity id
@@ -184,10 +186,11 @@ Bus :: [].{
 			Pace(sp) => if (List.contains(pace_sport_types, sp)) "" else "family ${f} not a pace sport"
 		}
 
-	# the refusal a directive's `short` earns: -1 (NULL) asks for no change,
-	# 1 shows the folded short rungs and 0 folds them; anything else is named
+	# the refusal a directive's `short` earns: -1 (NULL) asks for nothing; the
+	# power view shows no rungs under 5 minutes to fold or show, so any
+	# value is refused by name
 	short_refusal : I64 -> Str
-	short_refusal = |v| if (v == -1 or v == 0 or v == 1) "" else "short ${v.to_str()} not 0/1"
+	short_refusal = |v| if (v == -1) "" else "short ${v.to_str()} refused: the power view has no short rungs"
 
 	focus_upsert_sql : Str
 	focus_upsert_sql = "INSERT INTO viz_focus (id, updated_at, view, range, cursor_day, trace_day, ghost_day, trace_id, ghost_id, detail_day, sport, family, curve_family, curve_short, map_id) VALUES (1, datetime('now'), :v, :rg, NULLIF(:cd, ''), NULLIF(:td, ''), NULLIF(:gd, ''), NULLIF(:ti, -1), NULLIF(:gi, -1), NULLIF(:dd, ''), NULLIF(:sp, ''), NULLIF(:fm, ''), NULLIF(:cf, ''), NULLIF(:cs, -1), NULLIF(:mi, -1)) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, view = excluded.view, range = excluded.range, cursor_day = excluded.cursor_day, trace_day = excluded.trace_day, ghost_day = excluded.ghost_day, trace_id = excluded.trace_id, ghost_id = excluded.ghost_id, detail_day = excluded.detail_day, sport = excluded.sport, family = excluded.family, curve_family = excluded.curve_family, curve_short = excluded.curve_short, map_id = excluded.map_id"
@@ -259,6 +262,6 @@ expect Bus.family_refusal("pace:Ride") == "family pace:Ride not a pace sport" an
 expect List.all(Sports.family("bike"), |s| Bus.family_refusal(Bus.pace_key(s)) == "family pace:${s} not a pace sport")
 expect Bus.curve_key("pace:Swim") == Pace("Swim") and Bus.curve_key("Ride") == Power("Ride") and Bus.pace_key("Run") == "pace:Run"
 expect Str.contains(Bus.winner_sql, "AS fm, ")
-# the short vocabulary: nothing asked, show, fold, and anything else refused
-expect Bus.short_refusal(-1) == "" and Bus.short_refusal(1) == "" and Bus.short_refusal(0) == "" and Bus.short_refusal(2) == "short 2 not 0/1"
+# a directive asking nothing of the short rungs passes; any value is refused
+expect Bus.short_refusal(-1) == "" and Bus.short_refusal(1) == "short 1 refused: the power view has no short rungs" and Bus.short_refusal(0) == "short 0 refused: the power view has no short rungs" and Bus.short_refusal(2) == "short 2 refused: the power view has no short rungs"
 expect Str.contains(Bus.winner_sql, "AS sh, ") and Str.contains(Bus.focus_upsert_sql, "curve_short = excluded.curve_short") and Str.contains(Bus.focus_upsert_sql, "map_id = excluded.map_id")

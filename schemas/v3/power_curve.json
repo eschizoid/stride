@@ -14,6 +14,8 @@
     "test_value",
     "test_kind",
     "test_date",
+    "ftp_w",
+    "ftp_source",
     "durability"
   ],
   "additionalKeys": false,
@@ -68,6 +70,18 @@
     },
     "test_date": {
       "type": "string"
+    },
+    "ftp_w": {
+      "type": "number",
+      "description": "The named sport's family's FTP today in whole watts, the one stride scores with and `zones` reports for rides: the 60-day derivation (best 20-minute power x 0.95, once two sessions carry one) raised to a marked test in force. 0 when no sport is named or the family has none."
+    },
+    "ftp_source": {
+      "type": "string",
+      "enum": [
+        "test",
+        "derived"
+      ],
+      "description": "Which number `ftp_w` is: `test` when the test in force is at least the derivation, `derived` otherwise (also when no test is in force)."
     },
     "durability": {
       "type": "array",

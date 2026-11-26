@@ -629,8 +629,8 @@ ReportHealth :: [].{
 				Ok(rows) => List.first(rows) ?? ""
 				Err(_) => ""
 			}
-			# whether the power view shows its folded short rungs, -1 when the
-			# window never reported it (its own read for the same reason)
+			# the short-rung column, which the window always leaves NULL since the
+			# power view folds nothing: -1 (its own read for the same reason)
 			cs_rows = Sql.query_many!({
 				path: Path.utf8(path),
 				query: "SELECT COALESCE(curve_short, -1) AS fcs FROM viz_focus WHERE id = 1",
@@ -1142,6 +1142,11 @@ ReportHealth :: [].{
 		test = if (Str.is_empty(sport)) ({ value: 0.0, date: "none", kind: "none", activity_id: 0 }) else Db.test_in_force_today!(path, "power", Sports.canonical(sport))?
 		test_known : Bool
 		test_known = test.value > 0.0
+		# the family's FTP today, the one stride scores with and `zones` reports:
+		# the 60-day derivation raised to a test in force, in whole watts, and
+		# which of the two set it, by the rule `zones` uses
+		ftp = if (Str.is_empty(sport)) 0.0 else Db.sport_ftp!(path, sport)?
+		ftp_source = if (test_known and ((test.value).round_to_i64_try().ok_or(0)).to_f64() >= ftp) "test" else "derived"
 		# durability over the same window and population as the curve: the best
 		# any session held after its first 500/1000/2000 kJ, beside the curve's
 		# own point at that duration, which is the fresh best
@@ -1169,7 +1174,7 @@ ReportHealth :: [].{
 			},
 		)
 		Output.out!(
-			{ window_days: days, sport, points, cp: cpfit.cp, w_prime: cpfit.w_prime, fit_r2: cpfit.r2, fit_points: cpfit.points, test_known, test_value: test.value, test_kind: if (test_known) test.kind else "", test_date: if (test_known) test.date else "", durability },
+			{ window_days: days, sport, points, cp: cpfit.cp, w_prime: cpfit.w_prime, fit_r2: cpfit.r2, fit_points: cpfit.points, test_known, test_value: test.value, test_kind: if (test_known) test.kind else "", test_date: if (test_known) test.date else "", ftp_w: ftp, ftp_source, durability },
 			|p| Render.power_curve_screen({ window_days: p.window_days, sport: p.sport, points: p.points, cp: p.cp, w_prime: p.w_prime, fit_r2: p.fit_r2, fit_points: p.fit_points }),
 		)
 	}
@@ -1228,6 +1233,10 @@ ReportHealth :: [].{
 		test = if (Str.is_empty(sport)) ({ value: 0.0, date: "none", kind: "none", activity_id: 0 }) else Db.test_in_force_today!(path, "pace", Sports.canonical(sport))?
 		test_known : Bool
 		test_known = test.value > 0.0
+		# the family's threshold speed today, the one stride scores with: the
+		# 60-day derivation raised to a test in force, and which of the two set it
+		threshold_speed = if (Str.is_empty(sport)) 0.0 else Db.derive_family_threshold_speed!(path, sport)?
+		threshold_source = if (test_known and test.value >= threshold_speed) "test" else "derived"
 		# durability for the named sport: the best speed any session held
 		# after its first 30/60/90 moving minutes, beside the window's fresh
 		# best at that duration. Refused with the fit when no sport is named,
@@ -1269,7 +1278,7 @@ ReportHealth :: [].{
 				)
 			}
 		Output.out!(
-			{ window_days: days, sport, points, cs: csfit.cs, d_prime: csfit.d_prime, fit_r2: csfit.r2, fit_points: csfit.points, available_sports: avail, test_known, test_value: test.value, test_kind: if (test_known) test.kind else "", test_date: if (test_known) test.date else "", durability },
+			{ window_days: days, sport, points, cs: csfit.cs, d_prime: csfit.d_prime, fit_r2: csfit.r2, fit_points: csfit.points, available_sports: avail, test_known, test_value: test.value, test_kind: if (test_known) test.kind else "", test_date: if (test_known) test.date else "", threshold_speed, threshold_source, durability },
 			|p| Render.pace_curve_screen(units, { window_days: p.window_days, sport: p.sport, points: p.points, cs: p.cs, d_prime: p.d_prime, fit_r2: p.fit_r2, fit_points: p.fit_points, available_sports: p.available_sports }),
 		)
 	}

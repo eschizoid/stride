@@ -415,7 +415,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1495)?
+	checks_ran_exactly!(1498)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -6806,6 +6806,9 @@ b_threshold_tests! = |ctx| {
 	check!("the power zones read the test's FTP", strjq!(ctx, ["zones"], ".data | [.ftp, .source, .test_kind] | map(tostring) | join(\",\")") == "375,test,ramp")?
 	check!("the ride power curve carries the test in force", strjq!(ctx, ["power-curve", "90", "Ride"], ".data | [.test_known, (.test_value | round), .test_kind] | map(tostring) | join(\",\")") == "true,375,ramp")?
 	check!("...and a curve over no named sport carries none", strjq!(ctx, ["power-curve"], ".data.test_known") == "false")?
+	# the curve carries the family's FTP today and what set it, the very
+	# number and source `zones` reports, which the window prints
+	check!("the ride power curve's FTP and its source are the zones' own", strjq!(ctx, ["power-curve", "90", "Ride"], ".data | [.ftp_w, .ftp_source] | map(tostring) | join(\",\")") == strjq!(ctx, ["zones"], ".data | [.ftp, .source] | map(tostring) | join(\",\")"))?
 	check!("the human summary names the test", Str.contains(stride_human!(ctx.bin, ctx.home, ["summary"]), "from your ramp test on ${ctx.d1}"))?
 	removed = strjq!(ctx, ["test", "remove", "9901"], "[.data.activity_id, .data.removed] | map(tostring) | join(\",\")")
 	check!("test remove unmarks the session", removed == "9901,true")?
@@ -6813,6 +6816,8 @@ b_threshold_tests! = |ctx| {
 	after = Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(ftp_used) AS INTEGER) FROM activity_metrics WHERE activity_id = 9901;"))
 	check!("...and analyze hands the ride back to its derived FTP (before ${before}, after ${after})", after == before and after != "375")?
 	check!("...as summary does", strjq!(ctx, ["summary"], ".data.ftp | [.source, .test_known] | map(tostring) | join(\",\")") == "derived,false")?
+	check!("...and the ride power curve's FTP is the derived one zones reports", strjq!(ctx, ["power-curve", "90", "Ride"], ".data | [.ftp_w, .ftp_source] | map(tostring) | join(\",\")") == strjq!(ctx, ["zones"], ".data | [.ftp, .source] | map(tostring) | join(\",\")") and strjq!(ctx, ["zones"], ".data.source") == "derived")?
+	check!("a curve over no named sport carries no FTP and no threshold speed", strjq!(ctx, ["power-curve"], ".data | [.ftp_w, .ftp_source] | map(tostring) | join(\",\")") == "0,derived" and strjq!(ctx, ["pace-curve"], ".data | [.threshold_speed, .threshold_source] | map(tostring) | join(\",\")") == "0,derived")?
 	check!("removing a session that is no test is refused by name", strjq!(ctx, ["test", "remove", "9901"], ".error.code") == "test_not_found")?
 	# tt30 is the best 20-minute heart rate; --apply-zones writes Friel's ceilings
 	# (85/89/94/99% of 160) to every sport type of the ride family
@@ -8612,7 +8617,7 @@ b_cross_surface! = |ctx| {
 	anchor_sites = Str.trim(sh!("grep -c \"'now', '..today_mod.'\" src/viz/Db.roc"))
 	local_sites = Str.trim(sh!("grep -c \"'now', 'localtime')\\|date('now', '-'\\|strftime('%Y-%m', 'now')\" src/viz/Db.roc"))
 	check!("the window's calendar anchor, read from its source, names the athlete's day under a far zone and never the machine's (${window_today} vs ${athlete_today}/${machine_today})", !Str.is_empty(anchor_expr) and window_today == athlete_today and window_today != machine_today)?
-	check!("...and every window loader that reads the calendar spells that anchor (the plan strip, the plan rows, both curve windows, the 20-minute best's age, the planned power and pace targets, the most-trained family, the open month, the strength weeks and the strength month in progress); none anchors on localtime or on UTC's now (${anchor_sites}/${local_sites})", anchor_sites == "11" and local_sites == "0")?
+	check!("...and every window loader that reads the calendar spells that anchor (the plan strip, the plan rows, both curve windows, the most-trained family, the open month, the strength weeks and the strength month in progress); none anchors on localtime or on UTC's now (${anchor_sites}/${local_sites})", anchor_sites == "8" and local_sites == "0")?
 	# end-of-week CTL: weekly_ramp's newest week vs the load series on that
 	# week's last loaded day, both in thousandths
 	wk_ctl = Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(ctl_end * 1000) AS INTEGER) FROM weekly_ramp ORDER BY wk DESC LIMIT 1;"))
@@ -8866,12 +8871,13 @@ b_viz_tick! = |ctx| {
 	check!("...and a family outside the vocabulary is refused by name", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/family Bike not a sport family or pace:<sport>")?
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, family) VALUES (1, 'pace:Ride');")
 	check!("...as is a pace key over a sport whose speed is not its effort", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/family pace:Ride not a pace sport")?
-	# the power view's short rungs: 1 shows them, 0 folds them, the tick echoes
-	# what was asked, and any other value is refused by name
+	# the power view's short rungs: the view folds none, so a directive's
+	# short is refused by name whatever its value, and the tick still echoes
+	# what was asked
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, short) VALUES (1, 1);")
-	check!("a directive asking for the short rungs is applied with it", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + (.short | tostring)") == "applied/1")?
-	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, short) VALUES (1, 2);")
-	check!("...and a short value other than 0 or 1 is refused by name", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/short 2 not 0/1")?
+	check!("a directive asking for the short rungs is refused by name, its value echoed", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + (.short | tostring) + \"/\" + .error") == "applied_partial/1/short 1 refused: the power view has no short rungs")?
+	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, short) VALUES (1, 0);")
+	check!("...and so is one folding them", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/short 0 refused: the power view has no short rungs")?
 	# pending until reported: a cycle that does not ack leaves the winner
 	# pending, and the next cycle returns the SAME row - a crash between
 	# apply and report retries rather than loses the directive
