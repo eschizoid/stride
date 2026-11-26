@@ -702,7 +702,8 @@ Gate :: [].{
 	# event record the database could not read, 2 an event the projection
 	# reaches, marked on its last day.
 	# The event name is fitted in `face`, as the window fits it in the face
-	# it draws with.
+	# it draws with. Each measured day carries the athlete's session note,
+	# so a day card opened on it is as tall as its note makes it.
 	board_model : Ui.Model, Athlete, U64, U64, U64 -> Ui.Model
 	board_model = |base, a, k, range, ev| board_model_in(prose_font, base, a, k, range, ev)
 
@@ -720,6 +721,7 @@ Gate :: [].{
 			range,
 			data,
 			days: series_days,
+			day_notes: day_notes_of(a),
 			ylabels: List.map([-30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100], |v| { p, v: I64.to_f32(v) }),
 			ends: List.map([0.U8, 1, 2], |sel| { p, sel }),
 			kpis: List.map([0.U8, 1, 2], |sel| { v: p, cap: p, sel }),
@@ -775,6 +777,77 @@ Gate :: [].{
 		)
 		List.concat(per_athlete, bare)
 	}
+
+	# the day card the cursor opens over every day a board with a projection
+	# draws: each measured day counted back from the latest, and each
+	# projected day counted on past it. Its lines clear one another and stay
+	# inside the card, and the card stays inside the plot and clear of the
+	# projection key along the plot's top. A measured day's header is the
+	# day and its note is on the card; a projected day's header says
+	# projected and no line says what was done.
+	card_failures : List({ name : Str, model : Ui.Model }), Scene.Measure -> List(Str)
+	card_failures = |boards, face_measure|
+		List.join(
+			List.map(
+				List.keep_if(boards, |f| !(List.is_empty(Board.shown_proj(f.model)))),
+				|f| {
+					g = Board.geom(f.model)
+					plot = Board.plot_box(g)
+					key = List.keep_if(Board.owned(f.model, face_measure), |o| Str.starts_with(o.key, "'dashed: projected"))
+					cursors = List.concat(
+						List.map_with_index(List.repeat({}, g.meas), |_u, b| { back: U64.to_i64_wrap(b), ahead: 0, at: "day -${U64.to_str(b)}" }),
+						List.map_with_index(List.repeat({}, List.len(Board.shown_proj(f.model))), |_u, k| { back: 0, ahead: k + 1, at: "day +${U64.to_str(k + 1)}" }),
+					)
+					if List.is_empty(key) {
+						["${f.name}: the board placed no projection key"]
+					} else {
+						List.join(
+							List.map(
+								cursors,
+								|c| {
+									mk = { ..f.model, cursor: c.back, cursor_ahead: c.ahead }
+									at = "${f.name} ${c.at}"
+									match Board.hovered(mk, g) {
+										Err(_) => ["${at}: no day under the cursor"]
+										Ok(i) => {
+											hp = (List.get(g.data, i)) ?? { ctl: 0.0, atl: 0.0, tsb: 0.0, tss: 0.0 }
+											day = (List.get(g.days, i)) ?? ""
+											card = Board.tip_card(mk, g, i, hp, face_measure)
+											owned = Scene.owned(Labels.place(card.lines, { boxes: [], segs: [] }))
+											texts = List.map(owned, |o| o.key)
+											b = card.box
+											inside = b.x >= plot.x and b.y >= plot.y and b.x + b.w <= plot.x + plot.w and b.y + b.h <= plot.y + plot.h
+											note = Db.note_for(mk.day_notes, day)
+											says =
+												if c.ahead > 0 {
+													List.join([
+														if (List.contains(texts, "'${day} projected'")) [] else ["the card does not say projected"],
+														if (List.any(texts, |t| t == "'rest day'" or t == "'${note}'")) ["the card says what was done on a day still to come"] else [],
+													])
+												} else {
+													List.join([
+														if (List.contains(texts, "'${day}'")) [] else ["the card does not name its day"],
+														if (List.any(texts, |t| t != "''" and Str.starts_with("'${note}'", Str.drop_suffix(t, "'")))) [] else ["the card does not carry the day's note"],
+													])
+												}
+											List.map(
+												List.join([
+													Labels.check(owned),
+													if (inside) [] else ["the card leaves the plot"],
+													if (List.any(key, |o| Labels.intersects(o.box, b))) ["the card covers the projection key"] else [],
+													says,
+												]),
+												|e| "${at}: ${e}",
+											)
+										}
+									}
+								},
+							),
+						)
+					}
+				},
+			),
+		)
 
 	# ── the session trace's fixtures ────────────────────────────────────────
 	# the channel a session plots: power on a ride, pace where a pace unit
@@ -1685,55 +1758,11 @@ expect {
 		and Board.step({ back: -1, ahead: 0 }, Newer, 3) == { back: -1, ahead: 0 }
 }
 
-# the day card the arrow cursor opens over each projected day: its lines
-# clear one another and stay inside the card, the card inside the plot and
-# clear of the projection key the board places along the plot's top, its
-# header says the day is projected and no line says what was done, for
-# every board with a projection at every size, in the brand faces and in
-# the built-in face
-expect {
-	cards = |boards, measure|
-		List.join(
-			List.map(
-				List.keep_if(boards, |f| !(List.is_empty(Board.shown_proj(f.model)))),
-				|f| {
-					g = Board.geom(f.model)
-					plot = Board.plot_box(g)
-					List.join(
-						List.map(
-							List.map_with_index(List.repeat({}, List.len(Board.shown_proj(f.model))), |_u, i| i + 1),
-							|k| {
-								mk = { ..f.model, cursor: 0, cursor_ahead: k }
-								match Board.hovered(mk, g) {
-									Err(_) => ["${f.name} day +${U64.to_str(k)}: no day under the cursor"]
-									Ok(i) => {
-										hp = (List.get(g.data, i)) ?? { ctl: 0.0, atl: 0.0, tsb: 0.0, tss: 0.0 }
-										card = Board.tip_card(mk, g, i, hp, measure)
-										owned = Scene.owned(Labels.place(card.lines, { boxes: [], segs: [] }))
-										b = card.box
-										inside = b.x >= plot.x and b.y >= plot.y and b.x + b.w <= plot.x + plot.w and b.y + b.h <= plot.y + plot.h
-										head = List.any(owned, |o| Str.ends_with(o.key, " projected'"))
-										done = List.any(owned, |o| o.key == "'rest day'")
-										key = List.keep_if(Board.owned(mk, measure), |o| Str.starts_with(o.key, "'dashed: projected"))
-										covered = List.any(key, |o| Labels.intersects(o.box, b))
-										List.join([
-											List.map(Labels.check(owned), |e| "${f.name} day +${U64.to_str(k)}: ${e}"),
-											if (inside) [] else ["${f.name} day +${U64.to_str(k)}: the card leaves the plot"],
-											if (head) [] else ["${f.name} day +${U64.to_str(k)}: the card does not say projected"],
-											if (done) ["${f.name} day +${U64.to_str(k)}: the card says what was done on a day still to come"] else [],
-											if (List.is_empty(key)) ["${f.name} day +${U64.to_str(k)}: the board placed no projection key"] else [],
-											if (covered) ["${f.name} day +${U64.to_str(k)}: the card covers the projection key"] else [],
-										])
-									}
-								}
-							},
-						),
-					)
-				},
-			),
-		)
-	List.concat(cards(Gate.board_models, Gate.measure), cards(Gate.board_models_in(Gate.builtin_font), Gate.builtin_measure)) == []
-}
+# the day card the cursor opens over every measured and projected day of
+# every board that draws a projection, judged as Gate.card_failures states,
+# in the brand faces and in the built-in face
+expect Gate.card_failures(Gate.board_models, Gate.measure) == []
+expect Gate.card_failures(Gate.board_models_in(Gate.builtin_font), Gate.builtin_measure) == []
 
 # the event the projection reaches is marked on the projection's last day
 expect {
