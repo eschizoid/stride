@@ -421,8 +421,8 @@ Gate :: [].{
 	short_runner = { name: "short runs beside rides", units: Metric, sports: [{ sport: "Ride", sessions: 300 }, { sport: "Rowing", sessions: 120 }, { sport: "Run", sessions: 20 }] }
 
 	# an athlete whose sports sit in no family and carry long Strava names,
-	# beside a ride trend: each is a page without a trend, named on its
-	# cards and in its heading
+	# beside a ride trend: stand-up paddling with a power trend, the rest
+	# pages without one, each named on its cards and in its heading
 	long_names : Athlete
 	long_names = { name: "long sport names beside rides", units: Metric, sports: [{ sport: "Ride", sessions: 300 }, { sport: "HighIntensityIntervalTraining", sessions: 60 }, { sport: "StandUpPaddling", sessions: 40 }, { sport: "BackcountrySki", sessions: 30 }, { sport: "EBikeRide", sessions: 20 }] }
 
@@ -452,7 +452,9 @@ Gate :: [].{
 					},
 					{
 						m = career_model(athlete_model(long_names, sz), long_names)
-						pages("${long_names.name} career at ${size_name(sz)}", m)
+						# stand-up paddling carries power, so it draws a trend
+						trends = List.append(List.keep_if(m.career_spines, |s| s.kind != Career.no_trend), { fam: "StandUpPaddling", kind: "power", rows: spine_rows("StandUpPaddling", "power", 1) })
+						pages("${long_names.name} career at ${size_name(sz)}", { ..m, career_spines: career_pages(trends, m.career_sports) })
 					},
 				]),
 			),
@@ -2019,6 +2021,26 @@ expect {
 		and Map.waiting_on(held(Opening).map_card) == 1 and Map.waiting_on(up.map_card) == -1
 }
 
-# the long-named sports are in the career gate as pages without a trend,
-# every one at every size
-expect List.len(List.keep_if(Gate.career_models, |e| Str.starts_with(e.name, Gate.long_names.name) and (Career.spine_at(e.model.career_spines, e.model.spine_idx)).kind == Career.no_trend)) == 4 * List.len(Gate.sizes)
+# the long-named sports are in the career gate at every size: stand-up
+# paddling as a power trend, the other three as pages without one
+expect {
+	long = List.keep_if(Gate.career_models, |e| Str.starts_with(e.name, Gate.long_names.name))
+	cur = |e| Career.spine_at(e.model.career_spines, e.model.spine_idx)
+	List.len(List.keep_if(long, |e| (cur(e)).kind == Career.no_trend)) == 3 * List.len(Gate.sizes)
+		and List.len(List.keep_if(long, |e| (cur(e)).fam == "StandUpPaddling" and (cur(e)).kind == "power")) == List.len(Gate.sizes)
+}
+
+# a trend page of a sport outside every family names it in plain words in
+# its heading, and no text on any of the athlete's pages, in either face,
+# carries a raw Strava spelling
+expect {
+	long = List.keep_if(Gate.career_models, |e| Str.starts_with(e.name, Gate.long_names.name))
+	sup = List.keep_if(long, |e| (Career.spine_at(e.model.career_spines, e.model.spine_idx)).fam == "StandUpPaddling")
+	raw = ["standuppaddling", "StandUpPaddling", "highintensityintervaltraining", "HighIntensityIntervalTraining", "backcountryski", "BackcountrySki", "ebikeride", "EBikeRide"]
+	!(List.is_empty(sup))
+		and List.all(sup, |e| Career.subtitle(e.model) == "career - stand up paddling threshold watts   F  next sport")
+		and List.all(
+			[Gate.measure, Gate.builtin_measure],
+			|measure| List.all(long, |e| List.all(Career.owned(e.model, measure), |o| !(List.any(raw, |r| Str.contains(o.key, r))))),
+		)
+}

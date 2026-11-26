@@ -89,10 +89,10 @@ Career :: [].{
 		else if (List.contains(Sports.family("strength"), fam)) "strength"
 		else Str.from_utf8_lossy(List.join(List.map_with_index(Str.to_utf8(fam), |b, i| if (b >= 65 and b <= 90) (if (i == 0) [b + 32] else [32, b + 32]) else [b])))
 
-	# the sport a page is about, as its heading, cards and legend name it: in
-	# plain words on a page without a trend, by its family's name on a trend
+	# the sport a page is about, as its heading, cards and legend name it, in
+	# plain words on every page, with a trend or without
 	page_word : Db.CareerSpine -> Str
-	page_word = |cur| if (cur.kind == no_trend) sport_word(cur.fam) else Str.with_ascii_lowercased(family_name(cur.fam))
+	page_word = |cur| sport_word(cur.fam)
 
 	# a card's caption: the quantity and the sport it counts when the two fit
 	# the card's width, the quantity alone when the sport's name is too long
@@ -313,12 +313,6 @@ Career :: [].{
 		if (s.lw + 12.0 <= s.seg - 1.5) Under(s.x0 + 6.0)
 		else if (s.last and s.lw <= beside_room) Beside(s.x0 + s.seg + 6.0)
 		else Unlabeled
-
-	# a family's name on the strip: what the athlete does, not one of its
-	# Strava spellings. The strength family pools Workout and WeightTraining
-	# into one segment, and naming it after either reads as only that one.
-	family_name : Str -> Str
-	family_name = |head| if (List.contains(Sports.family("strength"), head)) "Strength" else head
 
 	# the monthly-bar legend shares the gutter under the curve with the
 	# valley's label, so it takes the half of the plot the valley is not on
@@ -977,7 +971,7 @@ Career :: [].{
 		match over {
 			Ok(s) if tot > 0 => {
 				pct = (I64.to_f32(s.sessions) / I64.to_f32(tot) * 100.0).round_to_i64_try().ok_or(0)
-				label = "${family_name(s.sport)}  ${Db.grouped(s.sessions)} sessions  ${I64.to_str(pct)}%"
+				label = "${sport_word(s.sport)}  ${Db.grouped(s.sessions)} sessions  ${I64.to_str(pct)}%"
 				tw = 8.0 * U64.to_f32(Str.count_utf8_bytes(label)) + 20.0
 				tx = F32.max(36.0, F32.min(s.x0 + s.seg / 2.0 - tw / 2.0, g.plot_r - tw))
 				box = { x: tx, y: cy - 30.0, w: tw, h: 22.0 }
@@ -1208,7 +1202,7 @@ Career :: [].{
 			|s|
 				if s.seg > 1.0 {
 					col = Theme.sport_color(s.sport)
-					lbl = "${family_name(s.sport)} ${Db.grouped(s.sessions)}"
+					lbl = "${sport_word(s.sport)} ${Db.grouped(s.sessions)}"
 					lw = measure(lbl, 10.0, Data)
 					match strip_label_at({ x0: s.x0, seg: s.seg, lw, last: s.last }) {
 						Under(lx) => Ok(Scene.free(measure, Scene.data(lbl, 10.0, Color.with_alpha(col, 235)), [{ x: lx, y: cy + 15.0, align: Left }], prio_strip, panel))
@@ -1261,7 +1255,7 @@ Career :: [].{
 			swatches = List.map(legend_rows(g, measure), |e| { key: "the ${e.k.label} swatch", box: { x: e.x, y: ky + 1.0, w: 10.0, h: 10.0 } })
 			cards = List.map([0, 1, 2, 3], |i| { key: "card ${I64.to_str(i + 1)}", box: card_box(model.win.w, i) })
 			cy = comp_y(model.win.h)
-			segments = List.keep_oks(strip(model, g), |s| if (s.seg > 1.0) Ok({ key: "the ${family_name(s.sport)} strip segment", box: { x: s.x0, y: cy, w: (s.seg - 1.5).max(1.0), h: 12.0 } }) else Err(Undrawn))
+			segments = List.keep_oks(strip(model, g), |s| if (s.seg > 1.0) Ok({ key: "the ${sport_word(s.sport)} strip segment", box: { x: s.x0, y: cy, w: (s.seg - 1.5).max(1.0), h: 12.0 } }) else Err(Undrawn))
 			List.join([shapes, cards, spine_dots, tests, withheld, load_bars(g), swatches, segments])
 		}
 	}
@@ -1380,10 +1374,11 @@ expect {
 expect Career.strip_widths([3, 1], 400.0) == [300.0, 100.0]
 expect Career.strip_widths([], 400.0) == []
 
-# the strength family is named for what it is, whichever spelling heads it;
-# other families keep their head
-expect Career.family_name("WeightTraining") == "Strength" and Career.family_name("Workout") == "Strength"
-expect Career.family_name("Ride") == "Ride" and Career.family_name("other") == "other"
+# a sport is named for what the athlete does, in plain words: the strength
+# family as one whichever spelling heads it, a family by its activity, and a
+# sport outside every family by its words
+expect Career.sport_word("WeightTraining") == "strength" and Career.sport_word("Workout") == "strength"
+expect Career.sport_word("Ride") == "cycling" and Career.sport_word("StandUpPaddling") == "stand up paddling" and Career.sport_word("other") == "other"
 
 # the legend takes the half of the plot the valley label is not on
 expect Career.legend_left(900.0, 64.0, 1000.0) and !Career.legend_left(100.0, 64.0, 1000.0)
@@ -1478,13 +1473,13 @@ expect {
 }
 
 # a card's caption names the sport when both fit the card and the quantity
-# alone when the name is too long, and a page names a sport without a trend
-# in plain words and a trend by its family
+# alone when the name is too long, and a page names its sport in plain
+# words whether it draws a trend or not
 expect {
 	w = |t| U64.to_f32(Str.count_utf8_bytes(t)) * 5.0
 	Career.card_caption("sessions", "running", 180.0, w) == "sessions - running"
 		and Career.card_caption("months trained", "high intensity interval training", 180.0, w) == "months trained"
 		and Career.card_caption("sessions", "", 180.0, w) == "sessions"
 		and Career.page_word({ fam: "HighIntensityIntervalTraining", kind: Career.no_trend, rows: [] }) == "high intensity interval training"
-		and Career.page_word({ fam: "Ride", kind: "power", rows: [] }) == "ride"
+		and Career.page_word({ fam: "StandUpPaddling", kind: "power", rows: [] }) == "stand up paddling"
 }
