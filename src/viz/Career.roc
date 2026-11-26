@@ -59,6 +59,109 @@ Career :: [].{
 		}
 	}
 
+	# the kind of a page whose family has sessions and no threshold trend:
+	# its cards and its share of the monthly load still draw, and the empty
+	# state stands where the trend line would
+	no_trend : Str
+	no_trend = "none"
+
+	# the pages F cycles: every family's threshold trends in the order given,
+	# then every family the athlete has sessions in and no trend for, widest
+	# first by sessions, so no sport the athlete trains is missing from the
+	# view. The trends lead, so the page the view opens on draws a line
+	# whenever the athlete has one.
+	cycle_fams : List(Db.SpineFam), List(Db.CareerSport) -> List(Db.SpineFam)
+	cycle_fams = |fams, sports| {
+		missing = List.keep_if(fold_families(sports), |f| f.sport != "" and !(List.any(fams, |s| s.fam == f.sport)))
+		List.concat(fams, List.map(missing, |f| { fam: f.sport, kind: no_trend, months: 0 }))
+	}
+
+	# a family named in a sentence: the activity, in lower case, and a sport
+	# outside every family split into its words (HighIntensityIntervalTraining
+	# reads as high intensity interval training)
+	sport_word : Str -> Str
+	sport_word = |fam|
+		if (fam == "Run") "running"
+		else if (fam == "Ride") "cycling"
+		else if (fam == "Rowing") "rowing"
+		else if (fam == "Swim") "swimming"
+		else if (fam == "Walk") "walking"
+		else if (List.contains(Sports.family("strength"), fam)) "strength"
+		else Str.from_utf8_lossy(List.join(List.map_with_index(Str.to_utf8(fam), |b, i| if (b >= 65 and b <= 90) (if (i == 0) [b + 32] else [32, b + 32]) else [b])))
+
+	# the sport a page is about, as its heading, cards and legend name it, in
+	# plain words on every page, with a trend or without
+	page_word : Db.CareerSpine -> Str
+	page_word = |cur| sport_word(cur.fam)
+
+	# a card's caption: the quantity and the sport it counts when the two fit
+	# the card's width, the quantity alone when the sport's name is too long
+	# for it (the heading above the cards names the sport either way)
+	card_caption : Str, Str, F32, (Str -> F32) -> Str
+	card_caption = |quantity, word, room, width| {
+		full = "${quantity} - ${word}"
+		if (word == "") quantity else if (width(full) <= room) full else quantity
+	}
+
+	# the families a threshold can be derived for and the window can say how:
+	# the pace families (a 20-minute best speed) and cycling (a 20-minute
+	# best power). Every other sport's page promises nothing; should one of
+	# them carry a power meter, its threshold turns the page into a trend.
+	threshold_family : Str -> Bool
+	threshold_family = |fam| fam == Sports.family_head("bike") or List.contains(Sports.pace_target_families, fam)
+
+	# one session of a family, and several, as a sentence says them
+	session_nouns : Str -> { one : Str, many : Str }
+	session_nouns = |fam|
+		if (fam == "Run") { one: "run", many: "runs" }
+		else if (fam == "Ride") { one: "ride", many: "rides" }
+		else if (fam == "Rowing") { one: "row", many: "rows" }
+		else if (fam == "Swim") { one: "swim", many: "swims" }
+		else if (fam == "Walk") { one: "walk", many: "walks" }
+		else { one: "session", many: "sessions" }
+
+	# what a page without a trend says where the line would be: what is
+	# missing, why, and what would draw it. A threshold is derived from the
+	# best 20 minutes of two sessions within 60 days, on the moving clock for
+	# pace (a stop breaks the window) and from a power meter for power, or set
+	# by a marked test (stride test). A sport outside the threshold families
+	# is told it has none, with nothing promised. `cmd` is the command line
+	# to type, empty when no test applies.
+	EmptyState : { head : Str, lines : List(Str), cmd : Str }
+
+	empty_state : Str -> EmptyState
+	empty_state = |fam| {
+		word = sport_word(fam)
+		n = session_nouns(fam)
+		if !(threshold_family(fam)) {
+			lifts = if (List.contains(Sports.family("strength"), fam)) ["Your lifts and how they progress are on the lifts tab."] else []
+			{ head: "No ${word} trend", lines: List.prepend(lifts, "This page draws a threshold month by month, and ${word} has none."), cmd: "" }
+		} else if List.contains(Sports.pace_target_families, fam) {
+			test = if (fam == "Run") ({ line: "or mark one 5 km time trial as a test with", cmd: "stride test <activity_id> 5k" }) else if (fam == "Swim") ({ line: "or mark one 400 m and 200 m swim test with", cmd: "stride test <activity_id> css" }) else { line: "", cmd: "" }
+			{
+				head: "No ${word} trend yet",
+				lines: List.concat(
+					[
+						"This page draws your threshold pace month by month, and no ${n.one} has set one yet.",
+						"Two ${n.many} of 20 minutes or more without stopping, within two months, set one${if (test.cmd == "") "." else ","}",
+					],
+					if (test.line == "") [] else [test.line],
+				),
+				cmd: test.cmd,
+			}
+		} else {
+			{
+				head: "No ${word} trend yet",
+				lines: [
+					"This page draws your threshold power month by month, and no ${n.one} has set one yet.",
+					"Two ${n.many} of 20 minutes or more with a power meter, within two months, set one,",
+					"or mark one 20-minute all-out effort as a test with",
+				],
+				cmd: "stride test <activity_id> ftp20",
+			}
+		}
+	}
+
 	# a spine value in tenths, in its family's own units - and, for the
 	# kilometre family, the ATHLETE's units. Power reads as watts; pace
 	# converts the stored SPEED to time over the family's distance, which is
@@ -211,12 +314,6 @@ Career :: [].{
 		else if (s.last and s.lw <= beside_room) Beside(s.x0 + s.seg + 6.0)
 		else Unlabeled
 
-	# a family's name on the strip: what the athlete does, not one of its
-	# Strava spellings. The strength family pools Workout and WeightTraining
-	# into one segment, and naming it after either reads as only that one.
-	family_name : Str -> Str
-	family_name = |head| if (List.contains(Sports.family("strength"), head)) "Strength" else head
-
 	# the monthly-bar legend shares the gutter under the curve with the
 	# valley's label, so it takes the half of the plot the valley is not on
 	legend_left : F32, F32, F32 -> Bool
@@ -237,7 +334,9 @@ Career :: [].{
 	subtitle = |model| {
 		cur = spine_at(model.career_spines, model.spine_idx)
 		switch_note = if (List.len(model.career_spines) > 1) "   F  next sport" else ""
-		if (cur.fam == "") "career - every month since the first session" else "career - ${Str.with_ascii_lowercased(cur.fam)} ${unit_note(model.units, cur.kind, cur.fam)}${switch_note}"
+		if (cur.fam == "") "career - every month since the first session"
+		else if (cur.kind == no_trend) "career - ${page_word(cur)}${switch_note}"
+		else "career - ${page_word(cur)} ${unit_note(model.units, cur.kind, cur.fam)}${switch_note}"
 	}
 
 	# ── the kind chips. A family can carry more than one threshold kind (a
@@ -520,7 +619,7 @@ Career :: [].{
 		fam = g.cur.fam
 		List.join([
 			[{ label: "monthly load, every sport", fill: Color.with_alpha(Theme.ctl_c, 90), base: Color.with_alpha(Theme.ctl_c, 90), split: Bool.False }],
-			if (fam == "") [] else [{ label: Str.with_ascii_lowercased(family_name(fam)), fill: Color.with_alpha(Theme.sport_color(fam), 210), base: Color.with_alpha(Theme.sport_color(fam), 210), split: Bool.False }],
+			if (fam == "") [] else [{ label: page_word(g.cur), fill: Color.with_alpha(Theme.sport_color(fam), 210), base: Color.with_alpha(Theme.sport_color(fam), 210), split: Bool.False }],
 			if (List.any(g.months, |m| m.partial)) [{ label: "month in progress", fill: Color.with_alpha(Theme.ctl_c, 50), base: if (fam == "") Color.with_alpha(Theme.ctl_c, 50) else Color.with_alpha(Theme.sport_color(fam), 120), split: Bool.True }] else [],
 		])
 	}
@@ -589,14 +688,18 @@ Career :: [].{
 			p = g.p
 			nf = U64.to_f32(g.n)
 			sp = { fam: g.cur.fam, kind: g.cur.kind }
-			# faint gridlines at the quarter marks, labelled in the scene
-			List.for_each!(
-				grid_qs,
-				|q| {
-					gy = g.line_bot - q * (g.line_bot - g.line_top)
-					frame.line!({ start: { x: g.plot_l, y: gy }, end: { x: g.plot_r, y: gy }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 40), 1) })
-				},
-			)
+			# faint gridlines at the quarter marks, labelled in the scene; a
+			# page without a trend has no scale to rule, and its empty state
+			# stands there instead
+			if g.cur.kind != no_trend {
+				List.for_each!(
+					grid_qs,
+					|q| {
+						gy = g.line_bot - q * (g.line_bot - g.line_top)
+						frame.line!({ start: { x: g.plot_l, y: gy }, end: { x: g.plot_r, y: gy }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 40), 1) })
+					},
+				)
+			}
 			# the withheld spine withholds the STROKE, not the measurements: a
 			# line through two points claims a direction two points cannot
 			# support, but the points are measured, and hiding them reads as
@@ -868,7 +971,7 @@ Career :: [].{
 		match over {
 			Ok(s) if tot > 0 => {
 				pct = (I64.to_f32(s.sessions) / I64.to_f32(tot) * 100.0).round_to_i64_try().ok_or(0)
-				label = "${family_name(s.sport)}  ${Db.grouped(s.sessions)} sessions  ${I64.to_str(pct)}%"
+				label = "${sport_word(s.sport)}  ${Db.grouped(s.sessions)} sessions  ${I64.to_str(pct)}%"
 				tw = 8.0 * U64.to_f32(Str.count_utf8_bytes(label)) + 20.0
 				tx = F32.max(36.0, F32.min(s.x0 + s.seg / 2.0 - tw / 2.0, g.plot_r - tw))
 				box = { x: tx, y: cy - 30.0, w: tw, h: 22.0 }
@@ -880,12 +983,12 @@ Career :: [].{
 
 	# ── every string the view writes, placed ───────────────────────────────
 	# Fixed text first: the subtitle and kind chips, the character sheet,
-	# the cards, the axis, the bars' legend and the footer. Then the labels
-	# on the chart: the milestone values (kept, they never drop), the
-	# all-time-high cheer and the test kinds (kept), the withheld spine's
-	# dot values (kept), the year names and the strip's family names. A
-	# year name is its tick and its neighbours; a strip name is in the
-	# strip's hover tooltip.
+	# the cards, the axis, the bars' legend, a page's empty state when it
+	# has no trend, and the footer. Then the labels on the chart: the
+	# milestone values (kept, they never drop), the all-time-high cheer and
+	# the test kinds (kept), the withheld spine's dot values (kept), the
+	# year names and the strip's family names. A year name is its tick and
+	# its neighbours; a strip name is in the strip's hover tooltip.
 	scene : Ui.Model, Scene.Measure -> List(Labels.Placed(Scene.Item))
 	scene = |model, measure| Labels.place(texts(model, measure), obstacles(model, measure))
 
@@ -954,12 +1057,12 @@ Career :: [].{
 		chart = { x: g.plot_l - 40.0, y: g.line_top - 64.0, w: g.plot_w + 40.0 + Theme.pad_r - 24.0, h: comp_y(model.win.h) - g.line_top + 64.0 }
 		# ── header: the career racking up. The final figures are the true
 		# ones; the count-up is the feeling of accumulation, nothing else. The
-		# cards count the spine's own family, not the whole career: rows fold
-		# through Sports.canonical to reach the family the spine names, and
-		# the captions carry the family, since a scoped number under an
-		# unscoped word reads as the whole career's.
+		# cards count the page's own family, not the whole career: rows fold
+		# through Sports.canonical to reach the family the page names, and
+		# each caption carries the sport (card_caption), since a scoped number
+		# under an unscoped word reads as the whole career's.
 		scoped = if (sp.fam == "") (model.career_sports) else List.keep_if(model.career_sports, |s| Sports.canonical(s.sport) == sp.fam)
-		fam_cap = if (sp.fam == "") "" else " - ${Str.with_ascii_lowercased(sp.fam)}"
+		word = page_word(g.cur)
 		tot = List.fold(scoped, { h10: 0.I64, m: 0.0.F64, ss: 0.I64 }, |a, s| { h10: a.h10 + s.hours10, m: a.m + s.dist_m, ss: a.ss + s.sessions })
 		# metres held until here; the card is the last moment (core.Units)
 		dist_whole = (Units.dist_value(units, tot.m)).round_to_i64_try().ok_or(0)
@@ -977,17 +1080,18 @@ Career :: [].{
 		# zero: 0 km under a lifting arc reads as a measurement that came back
 		# empty, when the sport does not carry the quantity
 		cards = [
-			{ v: Db.num_unit(ease_i(tot.h10) // 10, "h"), c: "moving time${fam_cap}" },
-			{ v: if (tot.m <= 0.0) "-" else Db.num_unit(ease_i(dist_whole), Units.dist_unit(units)), c: "distance${fam_cap}" },
-			{ v: Db.grouped(ease_i(tot.ss)), c: "sessions${fam_cap}" },
-			{ v: Db.grouped(ease_i(trained)), c: "months trained${fam_cap}" },
+			{ v: Db.num_unit(ease_i(tot.h10) // 10, "h"), c: "moving time" },
+			{ v: if (tot.m <= 0.0) "-" else Db.num_unit(ease_i(dist_whole), Units.dist_unit(units)), c: "distance" },
+			{ v: Db.grouped(ease_i(tot.ss)), c: "sessions" },
+			{ v: Db.grouped(ease_i(trained)), c: "months trained" },
 		]
 		card_texts = List.join(
 			List.map_with_index(
 				cards,
 				|c, i| {
 					b = card_box(win_w, U64.to_i64_wrap(i))
-					[fix(Scene.data(c.v, 22.0, Color.white), b.x + 16.0, b.y + 10.0, Left, b), fix(Scene.data(c.c, 11.0, ink_faint), b.x + 16.0, b.y + 42.0, Left, b)]
+					cap = card_caption(c.c, word, b.w - 32.0, |t| measure(t, 11.0, Data))
+					[fix(Scene.data(c.v, 22.0, Color.white), b.x + 16.0, b.y + 10.0, Left, b), fix(Scene.data(cap, 11.0, ink_faint), b.x + 16.0, b.y + 42.0, Left, b)]
 				},
 			),
 		)
@@ -1020,6 +1124,19 @@ Career :: [].{
 					List.map(withheld_dots(g), |d| Scene.kept(measure, Scene.data(spine_label(units, d.f, sp.kind, sp.fam), 11.0, col), [{ x: d.x, y: d.y - 20.0, align: Center }, { x: d.x, y: d.y + 9.0, align: Center }], prio_milestone, chart)),
 					fix(Scene.data("tonnage arc: ${U64.to_str(g.measured)} of 3 months measured - the spine draws at 3", 13.0, ink_muted), g.plot_l + g.plot_w / 2.0, g.line_top + 24.0, Center, panel),
 				)
+			}
+		# a page without a trend says so where the line would be, centred on
+		# the plot: what is missing, why, and the command that would draw it
+		empty =
+			if g.cur.kind == no_trend {
+				es = empty_state(sp.fam)
+				cx = g.plot_l + g.plot_w / 2.0
+				y0 = g.line_top + 8.0
+				lines = List.map_with_index(es.lines, |l, i| fix(Scene.prose(l, 13.0, ink_muted), cx, y0 + 36.0 + U64.to_f32(i) * 20.0, Center, panel))
+				cmd = if (es.cmd == "") [] else [fix(Scene.data(es.cmd, 13.0, Theme.tsb_c), cx, y0 + 40.0 + U64.to_f32(List.len(es.lines)) * 20.0, Center, panel)]
+				List.join([[fix(Scene.prose(es.head, 18.0, Color.white), cx, y0, Center, panel)], lines, cmd])
+			} else {
+				[]
 			}
 		# the milestone values: a peak's goes ABOVE, far enough that the
 		# stroke and its halo clear the glyphs, since the curve rises steeply
@@ -1085,7 +1202,7 @@ Career :: [].{
 			|s|
 				if s.seg > 1.0 {
 					col = Theme.sport_color(s.sport)
-					lbl = "${family_name(s.sport)} ${Db.grouped(s.sessions)}"
+					lbl = "${sport_word(s.sport)} ${Db.grouped(s.sessions)}"
 					lw = measure(lbl, 10.0, Data)
 					match strip_label_at({ x0: s.x0, seg: s.seg, lw, last: s.last }) {
 						Under(lx) => Ok(Scene.free(measure, Scene.data(lbl, 10.0, Color.with_alpha(col, 235)), [{ x: lx, y: cy + 15.0, align: Left }], prio_strip, panel))
@@ -1096,7 +1213,7 @@ Career :: [].{
 					Err(Unlabeled)
 				},
 		)
-		List.join([card_texts, grid, legend, withheld, extreme_labels, cheer, tests, years, names])
+		List.join([card_texts, grid, legend, withheld, empty, extreme_labels, cheer, tests, years, names])
 	}
 
 	# what the chart's labels keep off: the chrome, every shape the view
@@ -1138,7 +1255,7 @@ Career :: [].{
 			swatches = List.map(legend_rows(g, measure), |e| { key: "the ${e.k.label} swatch", box: { x: e.x, y: ky + 1.0, w: 10.0, h: 10.0 } })
 			cards = List.map([0, 1, 2, 3], |i| { key: "card ${I64.to_str(i + 1)}", box: card_box(model.win.w, i) })
 			cy = comp_y(model.win.h)
-			segments = List.keep_oks(strip(model, g), |s| if (s.seg > 1.0) Ok({ key: "the ${family_name(s.sport)} strip segment", box: { x: s.x0, y: cy, w: (s.seg - 1.5).max(1.0), h: 12.0 } }) else Err(Undrawn))
+			segments = List.keep_oks(strip(model, g), |s| if (s.seg > 1.0) Ok({ key: "the ${sport_word(s.sport)} strip segment", box: { x: s.x0, y: cy, w: (s.seg - 1.5).max(1.0), h: 12.0 } }) else Err(Undrawn))
 			List.join([shapes, cards, spine_dots, tests, withheld, load_bars(g), swatches, segments])
 		}
 	}
@@ -1257,10 +1374,11 @@ expect {
 expect Career.strip_widths([3, 1], 400.0) == [300.0, 100.0]
 expect Career.strip_widths([], 400.0) == []
 
-# the strength family is named for what it is, whichever spelling heads it;
-# other families keep their head
-expect Career.family_name("WeightTraining") == "Strength" and Career.family_name("Workout") == "Strength"
-expect Career.family_name("Ride") == "Ride" and Career.family_name("other") == "other"
+# a sport is named for what the athlete does, in plain words: the strength
+# family as one whichever spelling heads it, a family by its activity, and a
+# sport outside every family by its words
+expect Career.sport_word("WeightTraining") == "strength" and Career.sport_word("Workout") == "strength"
+expect Career.sport_word("Ride") == "cycling" and Career.sport_word("StandUpPaddling") == "stand up paddling" and Career.sport_word("other") == "other"
 
 # the legend takes the half of the plot the valley label is not on
 expect Career.legend_left(900.0, 64.0, 1000.0) and !Career.legend_left(100.0, 64.0, 1000.0)
@@ -1283,3 +1401,85 @@ expect {
 
 expect Career.marks_spine({ fam: "Run", month: "2026-11", kind: "ftp20", signal: "power" }, "Run", "power")
 expect !(Career.marks_spine({ fam: "Run", month: "2026-11", kind: "5k", signal: "pace" }, "Run", "power")) and !(Career.marks_spine({ fam: "Ride", month: "2026-11", kind: "ftp20", signal: "power" }, "Run", "power"))
+
+# a family with sessions and no threshold is in the cycle, after every
+# trend: the trends keep their order and kinds, and each family without one
+# comes once, its members merged, widest first by sessions
+expect {
+	sports = [
+		{ sport: "Ride", sessions: 300, hours10: 0, dist_m: 0.0 },
+		{ sport: "Run", sessions: 14, hours10: 0, dist_m: 0.0 },
+		{ sport: "Yoga", sessions: 18, hours10: 0, dist_m: 0.0 },
+		{ sport: "TrailRun", sessions: 6, hours10: 0, dist_m: 0.0 },
+		{ sport: "VirtualRide", sessions: 40, hours10: 0, dist_m: 0.0 },
+	]
+	got = Career.cycle_fams([{ fam: "Ride", kind: "power", months: 30 }], sports)
+	got
+		== [
+			{ fam: "Ride", kind: "power", months: 30 },
+			{ fam: "Run", kind: Career.no_trend, months: 0 },
+			{ fam: "Yoga", kind: Career.no_trend, months: 0 },
+		]
+}
+
+# on a database with no threshold at all every family the athlete trains
+# is a page without a trend, widest first; with no sessions there is none
+expect {
+	sports = [
+		{ sport: "Run", sessions: 20, hours10: 131, dist_m: 69548.0 },
+		{ sport: "WeightTraining", sessions: 31, hours10: 0, dist_m: 0.0 },
+	]
+	Career.cycle_fams([], sports) == [{ fam: "WeightTraining", kind: Career.no_trend, months: 0 }, { fam: "Run", kind: Career.no_trend, months: 0 }]
+		and Career.cycle_fams([], []) == []
+}
+
+# the running page without a trend says what is missing, why, and the
+# command that would draw it
+expect {
+	es = Career.empty_state("Run")
+	es.head == "No running trend yet"
+		and es.lines
+			== [
+				"This page draws your threshold pace month by month, and no run has set one yet.",
+				"Two runs of 20 minutes or more without stopping, within two months, set one,",
+				"or mark one 5 km time trial as a test with",
+			]
+		and es.cmd == "stride test <activity_id> 5k"
+}
+
+# lifting has no threshold to draw and points at its own tab; a sport
+# outside every family is named in words, and a pace family with no test
+# ends its sentence
+expect {
+	lift = Career.empty_state("WeightTraining")
+	row = Career.empty_state("Rowing")
+	lift.head == "No strength trend" and lift.cmd == "" and List.len(lift.lines) == 2
+		and Career.sport_word("HighIntensityIntervalTraining") == "high intensity interval training"
+		and row.cmd == "" and List.last(row.lines) == Ok("Two rows of 20 minutes or more without stopping, within two months, set one.")
+		and (Career.empty_state("Ride")).cmd == "stride test <activity_id> ftp20"
+}
+
+# a sport outside the threshold families promises nothing, whatever its
+# class: ball games, skiing and an e-bike read like yoga, and only the
+# families a threshold is derived for name a session or a test
+expect {
+	nothing = |fam| {
+		es = Career.empty_state(fam)
+		es.head == "No ${Career.sport_word(fam)} trend" and es.cmd == "" and es.lines == ["This page draws a threshold month by month, and ${Career.sport_word(fam)} has none."]
+	}
+	nothing("Soccer") and nothing("Elliptical") and nothing("BackcountrySki") and nothing("EBikeRide") and nothing("Yoga")
+		and Career.empty_state("Soccer").head == "No soccer trend"
+		and List.all(["Ride", "Run", "Swim", "Walk", "Rowing"], |f| Career.threshold_family(f))
+}
+
+# a card's caption names the sport when both fit the card and the quantity
+# alone when the name is too long, and a page names its sport in plain
+# words whether it draws a trend or not
+expect {
+	w = |t| U64.to_f32(Str.count_utf8_bytes(t)) * 5.0
+	Career.card_caption("sessions", "running", 180.0, w) == "sessions - running"
+		and Career.card_caption("months trained", "high intensity interval training", 180.0, w) == "months trained"
+		and Career.card_caption("sessions", "", 180.0, w) == "sessions"
+		and Career.page_word({ fam: "HighIntensityIntervalTraining", kind: Career.no_trend, rows: [] }) == "high intensity interval training"
+		and Career.page_word({ fam: "StandUpPaddling", kind: "power", rows: [] }) == "stand up paddling"
+}
