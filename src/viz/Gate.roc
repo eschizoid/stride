@@ -32,14 +32,14 @@ Gate :: [].{
 	# A headless layout pass of every view over fixture athletes at the
 	# minimum, default and wide window sizes. Every scene's placed text, the
 	# chrome's included, must hold no two overlapping boxes and no box
-	# outside its region (Labels.check), and on every view no text may cover
-	# a shape but the one it is written inside (Labels.covers); the boot
-	# splash and the XP rail's sheet run the first check alone. The athletes
-	# come from the sport families in core.Sports, one per family plus a
-	# mixed one carrying a single session of a sport no family holds, and
-	# every pace family is also drawn in imperial units. Text is measured
-	# with headless fonts carrying the shipped faces' advances, so the gate
-	# needs no font file.
+	# outside its region (Labels.check); on every view no text may cover a
+	# shape but the one it is written inside (Labels.covers), and no text may
+	# call a load TSS (wording); the boot splash and the XP rail's sheet run
+	# the first check alone. The athletes come from the sport families in
+	# core.Sports, one per family plus a mixed one carrying a single session
+	# of a sport no family holds, and every pace family is also drawn in
+	# imperial units. Text is measured with headless fonts carrying the
+	# shipped faces' advances, so the gate needs no font file.
 
 	# the data face's metrics as the window loads them: JetBrains Mono's
 	# advance is 600 of 1320 units of line height, and the 24 px atlas
@@ -541,7 +541,7 @@ Gate :: [].{
 			plan: [],
 			week_tss: { this: 0, last: 0 },
 			plan_week: { done: 0, total: 0 },
-			bus_note: "",
+			bus_note: NoDirective,
 			plan_title: p,
 			plan_hint: p,
 			nav: List.map(Chrome.nav_views, |v| { p, v }),
@@ -603,9 +603,24 @@ Gate :: [].{
 	failures = |rule, fixtures| List.join(List.map(fixtures, |f| List.map(rule(f.model), |e| "${f.name}: ${e}")))
 
 	# one scene's failures: two texts that overlap, a text outside its
-	# region, and a text over a shape it must keep off
+	# region, a text over a shape it must keep off, and a text that names a
+	# load TSS
 	judge : List(Labels.Owned), List(Labels.Mark) -> List(Str)
-	judge = |texts, marks| List.concat(Labels.check(texts), Labels.covers(texts, marks))
+	judge = |texts, marks| List.join([Labels.check(texts), Labels.covers(texts, marks), wording(texts)])
+
+	# Every load the window shows is the engine's mixed model: TSS for a
+	# session scored by power or HR, session-RPE load for a rated lift, and
+	# a day's or a week's total blends both. No window string calls one TSS.
+	# A text fails when "tss" stands as a word in it, in any case; a word
+	# that merely holds those letters passes.
+	wording : List(Labels.Owned) -> List(Str)
+	wording = |texts| List.keep_oks(texts, |t| if (names_tss(t.key)) Ok("${t.key} names a load TSS; the window says load") else Err(Clean))
+
+	names_tss : Str -> Bool
+	names_tss = |s| {
+		folded = List.map(Str.to_utf8(s), |b| if (b >= 'A' and b <= 'Z') b + 32 else if ((b >= 'a' and b <= 'z') or (b >= '0' and b <= '9')) b else ' ')
+		List.contains(Str.split_on(Str.from_utf8_lossy(folded), " "), "tss")
+	}
 
 	# a prepared copy the gate stands in for: the string and size it was
 	# prepared from, which is all the scene measures
@@ -972,10 +987,12 @@ Gate :: [].{
 					List.map(
 						sizes,
 						|sz| {
-							base = { ..athlete_model(a, sz), view: 4, plan: plan_rows(a), week_tss: { this: 412, last: 1385 }, bus_note: "11-12 08:14 plan / 30d", plan_week: { done: 4, total: 6 } }
+							base = { ..athlete_model(a, sz), view: 4, plan: plan_rows(a), week_tss: { this: 412, last: 1385 }, bus_note: Note("11-12 08:14 plan / 30d"), plan_week: { done: 4, total: 6 } }
 							[
 								{ name: "${a.name} week at ${size_name(sz)}", model: base },
 								{ name: "${a.name} week scrolled with the quest complete at ${size_name(sz)}", model: { ..base, week_off: 4, plan_week: { done: 6, total: 6 } } },
+								{ name: "${a.name} week no coach has steered at ${size_name(sz)}", model: { ..base, bus_note: NoDirective } },
+								{ name: "${a.name} week with the bus unreadable at ${size_name(sz)}", model: { ..base, bus_note: Unreadable } },
 							]
 						},
 					),
@@ -993,7 +1010,7 @@ Gate :: [].{
 	detail_lines : Athlete -> List(Db.DayLine)
 	detail_lines = |a| {
 		du = Str.drop_prefix((Curve.pace_unit_for(a.units, "Run")).label, "/")
-		List.map([0, 1, 2], |i| { title: "Evening ${sport_at(a, i)} along the lakefront path and back through the park [${sport_at(a, i)}]", stats: "62 min  42.1${du}  85 tss  230 w np", extra: "IF 0.84   142 bpm avg   rpe 6.0", zones: [600, 1500, 900, 420, 60] })
+		List.map([0, 1, 2], |i| { title: "Evening ${sport_at(a, i)} along the lakefront path and back through the park [${sport_at(a, i)}]", stats: Db.stats_line({ mins: 62, dist: "42.1${du}", load: 85, np: 230 }), extra: "IF 0.84   142 bpm avg   rpe 6.0", zones: [600, 1500, 900, 420, 60] })
 	}
 
 	table_models : List({ name : Str, model : Ui.Model })
@@ -1214,6 +1231,25 @@ Gate :: [].{
 			Err(_) => ["no card is up"]
 		}
 
+	# the hover card's failures over the cells it is read from: the year's
+	# first day, which has no session note, and its last week, whose days
+	# carry short and long ones. A line outside the card, over another, or
+	# naming a load TSS fails, and so does a hovered cell with no card.
+	tip_judge : Ui.Model, Scene.Measure -> List(Str)
+	tip_judge = |m, ms| {
+		cells = (Heat.layout(m)).cells
+		hovered = List.concat(List.take_first(cells, 1), List.take_last(cells, 7))
+		List.join(
+			List.map(
+				hovered,
+				|c| match Heat.tip({ ..m, mouse_x: c.x + 1.0, mouse_y: c.y + 1.0 }, ms) {
+					Ok(t) => List.map(judge(Scene.owned(Labels.place(t.lines, { boxes: [], segs: [] })), []), |e| "${c.h.day}: ${e}")
+					Err(_) => ["${c.h.day}: no card is up"]
+				},
+			),
+		)
+	}
+
 	heat_models : List({ name : Str, model : Ui.Model })
 	heat_models = {
 		per_athlete = List.join(
@@ -1223,7 +1259,7 @@ Gate :: [].{
 					List.map(
 						sizes,
 						|sz| {
-							base = { ..athlete_model(a, sz), view: 5, heat: year_days }
+							base = { ..athlete_model(a, sz), view: 5, heat: year_days, day_notes: day_notes_of(a) }
 							[
 								{ name: "${a.name} year at ${size_name(sz)}", model: base },
 								{ name: "${a.name} year with event days at ${size_name(sz)}", model: { ..base, heat_events: ["2026-06-27", "2026-11-08"] } },
@@ -1495,6 +1531,28 @@ expect Gate.failures(|m| Gate.judge(Trace.owned(m, Gate.measure), Trace.marks(m)
 expect Gate.failures(|m| Gate.judge(Plan.owned(m, Gate.measure), Plan.marks(m)), Gate.plan_models) == []
 expect Gate.failures(|m| Gate.judge(Table.owned(m, Gate.measure), Table.marks(m)), Gate.table_models) == []
 expect Gate.failures(|m| Gate.judge(Heat.owned(m, Gate.measure), Heat.marks(m)), Gate.heat_models) == []
+
+# the same three in the built-in face the window falls back to without the
+# brand fonts, and the heat tab's hover card in both faces
+expect Gate.failures(|m| Gate.judge(Plan.owned(m, Gate.builtin_measure), Plan.marks(m)), Gate.plan_models) == []
+expect Gate.failures(|m| Gate.judge(Table.owned(m, Gate.builtin_measure), Table.marks(m)), Gate.table_models) == []
+expect Gate.failures(|m| Gate.judge(Heat.owned(m, Gate.builtin_measure), Heat.marks(m)), Gate.heat_models) == []
+expect Gate.failures(|m| Gate.tip_judge(m, Gate.measure), Gate.heat_models) == []
+expect Gate.failures(|m| Gate.tip_judge(m, Gate.builtin_measure), Gate.heat_models) == []
+
+# the coach corner draws nothing until a directive exists, the directive
+# once one does, and says so when the bus cannot be read
+expect {
+	m = { ..Gate.empty_model({ w: 1280.0, h: 800.0 }), view: 4 }
+	coach = |note| List.keep_if(List.map(Plan.owned({ ..m, bus_note: note }, Gate.measure), |t| t.key), |k| Str.starts_with(k, "'coach:"))
+	coach(NoDirective) == [] and coach(Note("11-12 08:14  ->  plan / 30d")) == ["'coach: 11-12 08:14  ->  plan / 30d'"] and coach(Unreadable) == ["'coach: directives unreadable'"]
+}
+
+# the wording rule: "tss" as a word fails in any case and beside any
+# punctuation; a word holding those letters, and the word load, pass
+expect Gate.names_tss("74 tss this week") and Gate.names_tss("'85 TSS'") and Gate.names_tss("load (Tss)") and Gate.names_tss("tss")
+expect !(Gate.names_tss("74 load this week")) and !(Gate.names_tss("rtss 40")) and !(Gate.names_tss("stress")) and !(Gate.names_tss("tssb"))
+expect Gate.wording([{ key: "'62 min  85 tss'", box: { x: 0.0, y: 0.0, w: 1.0, h: 1.0 }, region: { x: 0.0, y: 0.0, w: 1.0, h: 1.0 } }]) == ["'62 min  85 tss' names a load TSS; the window says load"]
 
 # the map's gate, over every map fixture
 expect Gate.failures(|m| Gate.judge(Map.owned(m, Gate.measure), Map.marks(m, Gate.measure)), Gate.map_models) == []

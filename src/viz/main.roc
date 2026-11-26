@@ -249,7 +249,7 @@ load_flame! = |acc, boot|
 # face, so a window that cannot reach the athlete's data says why.
 skeleton : Str -> _
 skeleton = |err|
-	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: "", ht: [], hev: [], zw: [], zo: [], ph: "", b20: -1, tg: [], rw: [], csp: [], ctm: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric, cf: "", keys: { power: [], pace: [] }, ptg: [], sv: Db.empty_strength_view, thr: 0.0 }
+	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: NoDirective, ht: [], hev: [], zw: [], zo: [], ph: "", b20: -1, tg: [], rw: [], csp: [], ctm: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric, cf: "", keys: { power: [], pace: [] }, ptg: [], sv: Db.empty_strength_view, thr: 0.0 }
 
 # Everything the window knows, rebuilt from the local stride sources in one
 # call: the database for every series, plus the engine's power-curve
@@ -2102,8 +2102,8 @@ Msg : [
 	# against, so a session synced since boot is steerable and one deleted
 	# since is refused, rather than either being judged against a boot-time
 	# cache. Kept means the directive named no session and nothing was read.
-	Directive({ dv : Db.Directive, note : Str, ids : [Kept, Fresh(List(TraceId))] }),
-	Polled(Str),
+	Directive({ dv : Db.Directive, note : Db.BusNote, ids : [Kept, Fresh(List(TraceId))] }),
+	Polled(Db.BusNote),
 	DirectiveNone,
 	FocusWritten,
 	FocusWriteFailed,

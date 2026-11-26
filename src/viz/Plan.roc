@@ -217,6 +217,21 @@ Plan :: [].{
 		if (h.above == 0 and h.below == 0) Err(Fits) else Ok({ x: s.at.x, y: s.at.top, w: 3.0, h: s.at.bottom - s.at.top })
 	}
 
+	# the load strip: this Monday-started week's load beside last week's. The
+	# total blends TSS with session-RPE load, so it is named load.
+	strip_text : { this : I64, last : I64 } -> Str
+	strip_text = |wk| "${Db.num_unit(wk.this, "load")} this week (last ${Db.grouped(wk.last)})"
+
+	# the coach corner's lines: none until a directive exists, the newest
+	# directive once one does, and a failed read of the bus said as such
+	coach_lines : Db.BusNote -> List(Str)
+	coach_lines = |note|
+		match note {
+			NoDirective => []
+			Note(s) => ["coach: ${s}"]
+			Unreadable => ["coach: directives unreadable"]
+		}
+
 	# ── every string the view writes, placed ───────────────────────────────
 	# All of it is fixed: the title and the quest label, today's card, each
 	# ladder row's day, type, prescription, outcome and status, the scroll
@@ -285,13 +300,13 @@ Plan :: [].{
 		)
 		# load strip + coach corner. The week's session count lives in the
 		# quest label only; the strip states load, Monday-aligned on both
-		# sides.
-		strip = "${Db.num_unit(model.week_tss.this, "tss")} this week (last ${Db.grouped(model.week_tss.last)})"
-		foot = [
-			fix(Scene.data(strip, 13.0, ink_muted), 36.0, win_h - 84.0, Left, panel),
-			fix(Scene.data("coach: ${model.bus_note}", 11.0, ink_faint), 36.0, win_h - 60.0, Left, panel),
-			fix(Scene.prepared(model.plan_hint, hint_text, 13.0, Prose, ink_faint), 36.0, win_h - 30.0, Left, panel),
-		]
+		# sides. The corner holds a line only once a coach has written a
+		# directive.
+		foot = List.join([
+			[fix(Scene.data(strip_text(model.week_tss), 13.0, ink_muted), 36.0, win_h - 84.0, Left, panel)],
+			List.map(coach_lines(model.bus_note), |ln| fix(Scene.data(ln, 11.0, ink_faint), 36.0, win_h - 60.0, Left, panel)),
+			[fix(Scene.prepared(model.plan_hint, hint_text, 13.0, Prose, ink_faint), 36.0, win_h - 30.0, Left, panel)],
+		])
 		List.join([head, quest, card_texts, rows, Scroll.hints(measure, s.at, s.off, s.n_shown, List.len(model.plan), panel), foot, Days.chip_texts(model, measure)])
 	}
 
@@ -401,4 +416,11 @@ Plan :: [].{
 	expect result_text({ ..blank_row, status: "skipped", reason: "sick", sub_id: 7, sub_name: "Z2 Ride" }) == "skipped: sick -> Z2 Ride"
 	expect result_text({ ..blank_row, status: "skipped" }) == "skipped"
 	expect result_text({ ..blank_row, past: Bool.False }) == ""
+	# the load strip names the week's blended total load, both weeks grouped
+	expect strip_text({ this: 74, last: 1702 }) == "74 load this week (last 1,702)"
+	# the coach corner: no line until a directive exists, the directive's
+	# line once one does, and a failed read said as such
+	expect coach_lines(NoDirective) == []
+	expect coach_lines(Note("11-12 08:14  ->  plan / 30d")) == ["coach: 11-12 08:14  ->  plan / 30d"]
+	expect coach_lines(Unreadable) == ["coach: directives unreadable"]
 }
