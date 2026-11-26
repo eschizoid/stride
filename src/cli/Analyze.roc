@@ -806,7 +806,7 @@ Analyze :: [].{
 				Streams.dist_time(streams.time, streams.distance)
 			else
 				graded_triple
-		gas_1s_pairs = Metrics.graded_speed_1s(pace_triple.time, pace_triple.dist, pace_triple.alt)
+		gas_1s_pairs = Metrics.graded_speed_1s_within(pace_triple.time, pace_triple.dist, pace_triple.alt, Metrics.pace_fill_gap(row.sport))
 		# aerobic decoupling — computed HERE, below the graded-speed
 		# derivation, so the pace variant reuses it instead of duplicating it. Power
 		# wins when real watts exist; pace-routed sports (runs/swims) fall to graded
@@ -1370,5 +1370,5 @@ Analyze :: [].{
 	# stays NULL on every row already in the db, so the feature reading it is
 	# inert for exactly the history that would make it useful — the whole
 	# activity archive.
-	metrics_rev = 38
+	metrics_rev = 39
 }

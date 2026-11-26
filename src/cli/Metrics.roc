@@ -2997,18 +2997,22 @@ Metrics :: [].{
 	# (stop / jitter) re-anchors prev so its time drops out of the next speed. Swim:
 	# pass a matching-length flat altitude list and it degrades to raw speed.
 	#
-	# `Gap` (dt > max_fill_gap) is deliberately NOT a speed sample: the resampler
-	# already refuses to fill a gap that long, and emitting the interval average would
-	# invent data for unrecorded time AND land it as ONE sample carrying a minute of
-	# movement, which the 30-SAMPLE NP window then weights as a single second.
-	pace_step_case : F64, F64 -> [Moving, Stopped, NoTime, Gap]
-	pace_step_case = |dt, dd|
-		if (dt <= 0.0) NoTime else if (dt > (max_fill_gap).to_f64()) Gap else if (dd > 0.0) Moving else Stopped
+	# `Gap` (dt above the fill bound the resampler was given) is deliberately NOT a
+	# speed sample: the resampler already refuses to fill a gap that long, and
+	# emitting the interval average would invent data for unrecorded time AND land
+	# it as ONE sample carrying a minute of movement, which the 30-SAMPLE NP window
+	# then weights as a single second. The two must be handed the same bound.
+	pace_step_case : F64, F64, I64 -> [Moving, Stopped, NoTime, Gap]
+	pace_step_case = |dt, dd, bound|
+		if (dt <= 0.0) NoTime else if (dt > (bound).to_f64()) Gap else if (dd > 0.0) Moving else Stopped
 
 	# grade-adjusted speed per interval, each carrying the REAL second it ends on, so a
 	# rolling window over the result can tell contiguous seconds from stitched ones.
 	grade_adjusted_speed_pairs : List(F64), List(F64), List(F64) -> List({ t : I64, v : F64 })
-	grade_adjusted_speed_pairs = |time, dist, alt| {
+	grade_adjusted_speed_pairs = |time, dist, alt| grade_adjusted_speed_pairs_within(time, dist, alt, max_fill_gap)
+
+	grade_adjusted_speed_pairs_within : List(F64), List(F64), List(F64), I64 -> List({ t : I64, v : F64 })
+	grade_adjusted_speed_pairs_within = |time, dist, alt, bound| {
 		td = List.map2(time, dist, |t, d| { t, d })
 		samples = List.map2(td, alt, |x, a| { t: x.t, d: x.d, a })
 		List.fold(
@@ -3017,15 +3021,15 @@ Metrics :: [].{
 			|acc, s|
 				match acc.prev {
 					Err(_) => { prev: Ok(s), out: acc.out }
-					Ok(p) => grade_step(acc.out, p, s)
+					Ok(p) => grade_step(acc.out, p, s, bound)
 				},
 		).out
 	}
 
-	grade_step = |out, p, s| {
+	grade_step = |out, p, s, bound| {
 		dt = s.t - p.t
 		dd = s.d - p.d
-		match pace_step_case(dt, dd) {
+		match pace_step_case(dt, dd, bound) {
 			# Not moving forward (a stop, or backwards GPS jitter) while time elapsed:
 			# re-anchor to THIS sample so the non-productive interval is dropped from the
 			# next segment's speed denominator — speed divides by Δt, so stopped time must
@@ -3062,17 +3066,36 @@ Metrics :: [].{
 	# (= the NGP speed) AND to best_rolling_mean (best sustained speed → derived threshold
 	# pace). Computing the stream once and reusing it avoids grade-adjusting twice.
 	graded_speed_1s : List(F64), List(F64), List(F64) -> List({ t : I64, v : F64 })
-	graded_speed_1s = |time, dist, alt| {
+	graded_speed_1s = |time, dist, alt| graded_speed_1s_within(time, dist, alt, max_fill_gap)
+
+	# the same stream with the interval bound named by the caller (pace_fill_gap):
+	# an interval up to `bound` seconds is recorded motion, a longer one a pause
+	graded_speed_1s_within : List(F64), List(F64), List(F64), I64 -> List({ t : I64, v : F64 })
+	graded_speed_1s_within = |time, dist, alt, bound| {
 		to_samples = |vals| List.map2(time, vals, |t, v| { t: (t).round_to_i64_try().ok_or(0), v })
 		# LINEAR, not held: distance is cumulative, so holding it flat and differencing
 		# would emit one spike per recording interval instead of a steady speed.
-		dist_1s = resample_1s_linear(to_samples(dist))
-		alt_1s = resample_1s_linear(to_samples(alt))
+		dist_1s = Series.resample_1s_pairs_within(to_samples(dist), Interpolate, bound)
+		alt_1s = Series.resample_1s_pairs_within(to_samples(alt), Interpolate, bound)
 		# REAL elapsed seconds, not list indices: across an unfilled pause the index is off
 		# by the whole pause, which would divide the distance covered by dt = 1.
 		time_1s = List.map(dist_1s, |p| (p.t).to_f64())
-		grade_adjusted_speed_pairs(time_1s, List.map(dist_1s, |p| p.v), List.map(alt_1s, |p| p.v))
+		grade_adjusted_speed_pairs_within(time_1s, List.map(dist_1s, |p| p.v), List.map(alt_1s, |p| p.v), bound)
 	}
+
+	# The longest sample interval a sport's pace stream counts as recorded motion.
+	# Strava streams a pool swim one sample per length, so its time stream steps
+	# by a length's duration: half a minute for 25 m, and 120 s covers a 50 m
+	# length at 4:00/100m. Every interval of such a stream is longer than the
+	# 1 Hz bound, and under it a pool swim would carry no speed at all. A wall
+	# rest recorded as a sample at the same distance is still a stop, since its
+	# filled seconds do not advance. Every other sport records about once a
+	# second, where an interval past the 1 Hz bound is a dropout or a pause.
+	swim_length_gap_s : I64
+	swim_length_gap_s = 120
+
+	pace_fill_gap : Str -> I64
+	pace_fill_gap = |sport| if (Sports.canonical(sport) == "Swim") swim_length_gap_s else max_fill_gap
 
 	# rTSS / sTSS: the power formula with speed for watts — IF = ngp_speed /
 	# threshold_speed, IF^exp x hours x 100; 1 h at threshold = 100 for any exponent.
@@ -5051,6 +5074,69 @@ expect {
 	# an average that NP would then weight as a single second.
 	List.all(gas, |p| p.v > 3.5 and p.v < 4.5) and List.len(gas) == 118
 }
+
+# a pool swim as Strava streams it: one sample per 25 m length, 28 s apart, for
+# 42 minutes. Under the swim bound every second of it is motion at 25/28 m/s and
+# the 20-minute best exists; under the 1 Hz bound every interval is a gap, so the
+# same stream carries no speed at all, which is what a run's dropout must still get
+pool_lengths : U64, U64, U64 -> { time : List(F64), dist : List(F64) }
+pool_lengths = |n, rest_every, rest_s| {
+	walked = Iter.fold(
+		(1.U64..<(n + 1)).iter(),
+		{ t: 0.0, d: 0.0, time: [0.0], dist: [0.0] },
+		|acc, i| {
+			t = acc.t + 28.0
+			d = acc.d + 25.0
+			if rest_every > 0 and i % rest_every == 0 and i < n {
+				rt = t + (rest_s).to_f64()
+				{ t: rt, d, time: List.concat(acc.time, [t, rt]), dist: List.concat(acc.dist, [d, d]) }
+			} else {
+				{ t, d, time: List.append(acc.time, t), dist: List.append(acc.dist, d) }
+			}
+		},
+	)
+	{ time: walked.time, dist: walked.dist }
+}
+
+expect {
+	s = pool_lengths(90, 0, 0)
+	flat = List.repeat(0.0, List.len(s.time))
+	swim = Metrics.graded_speed_1s_within(s.time, s.dist, flat, Metrics.pace_fill_gap("Swim"))
+	steady = List.len(swim) == 2520 and List.all(swim, |p| (p.v - 25.0 / 28.0).abs() < 0.001)
+	best = match Metrics.best_rolling_mean_moving(swim, 1200) {
+		Ok(v) => (v - 25.0 / 28.0).abs() < 0.001
+		Err(_) => Bool.False
+	}
+	steady and best and List.is_empty(Metrics.graded_speed_1s(s.time, s.dist, flat))
+}
+
+# a wall rest recorded as a sample at the same distance is a stop under the swim
+# bound: 45 s at the wall after every 16 lengths leaves no 20 unbroken minutes,
+# while the 5-minute best still stands, and 20 s rests collapse as any short stop does
+expect {
+	best_of = |s, secs| {
+		flat = List.repeat(0.0, List.len(s.time))
+		Metrics.best_rolling_mean_moving(Metrics.graded_speed_1s_within(s.time, s.dist, flat, Metrics.pace_fill_gap("Swim")), secs)
+	}
+	long_rests = pool_lengths(90, 16, 45)
+	short_rests = pool_lengths(90, 8, 20)
+	broken = match best_of(long_rests, 1200) {
+		Ok(_) => Bool.False
+		Err(_) => Bool.True
+	}
+	five = match best_of(long_rests, 300) {
+		Ok(v) => (v - 25.0 / 28.0).abs() < 0.001
+		Err(_) => Bool.False
+	}
+	whole = match best_of(short_rests, 1200) {
+		Ok(v) => (v - 25.0 / 28.0).abs() < 0.001
+		Err(_) => Bool.False
+	}
+	broken and five and whole
+}
+
+# only the swim family takes the length bound; every other sport keeps the 1 Hz one
+expect Metrics.pace_fill_gap("Swim") == 120 and Metrics.pace_fill_gap("OpenWaterSwim") == 120 and Metrics.pace_fill_gap("Run") == Metrics.max_fill_gap and Metrics.pace_fill_gap("Rowing") == Metrics.max_fill_gap
 
 # resample_1s_linear interpolates a cumulative stream instead of holding it: two samples
 # 5 s apart, 20 m covered, must produce 4 m per second — not four zeros and a 20 m jump.
