@@ -3,6 +3,8 @@ name: manual-release
 # A release cut by hand, separate from release-please. It tags the version in
 # main.roc when that tag is absent, builds the CLI binaries, and attaches them to
 # the release, creating it with notes from CHANGELOG.md when it does not exist.
+# The app archives it carries over each hold the command from the build that
+# made them, not the one this run makes.
 # Do not dispatch it while release-please has a release PR open.
 on:
   workflow_dispatch: {}
@@ -49,17 +51,23 @@ jobs:
       matrix:
         include:
           - target: linux-x86_64
+            asset: stride-cli-linux-x86_64
             runs-on: ubuntu-latest
           - target: linux-arm64
+            asset: stride-cli-linux-arm64
             runs-on: ubuntu-24.04-arm
             # Left to itself the compiler detects arm64v1musl on this runner, which
             # resolves to no usable host. verify-arm64.yml re-checks this flag on demand.
             roc_target: arm64musl
           - target: macos-arm64
+            asset: stride-cli-macos-arm64
             runs-on: macos-latest
           - target: macos-x86_64
+            asset: stride-cli-macos-x86_64
             runs-on: macos-15-intel
+          # Windows runs a program by its extension, so its asset carries one
           - target: windows-x86_64
+            asset: stride-cli-windows-x86_64.exe
             runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -73,21 +81,20 @@ jobs:
           # only linux-arm64 sets roc_target; everywhere else the native default is right
           target_flag=""
           if [ -n "${{ matrix.roc_target }}" ]; then target_flag="--target=${{ matrix.roc_target }}"; fi
-          roc build src/cli/main.roc --output="stride-cli-${{ matrix.target }}" --opt=dev $target_flag
-          ls -la stride-cli-${{ matrix.target }}* || true
-          test -f "stride-cli-${{ matrix.target }}" || test -f "stride-cli-${{ matrix.target }}.exe"
+          roc build src/cli/main.roc --output="${{ matrix.asset }}" --opt=dev $target_flag
+          ls -la "${{ matrix.asset }}"
+          test -s "${{ matrix.asset }}"
       - name: Verify binary version
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
-          bin="stride-cli-${{ matrix.target }}"; [ -f "$bin" ] || bin="${bin}.exe"
-          out=$(./"$bin" --version)
+          out=$(./"${{ matrix.asset }}" --version)
           [ "$out" = "stride ${TAG#v}" ] || { echo "::error::binary says '$out', tag is $TAG"; exit 1; }
       - uses: actions/upload-artifact@v7
         with:
           name: stride-cli-${{ matrix.target }}
-          path: stride-cli-${{ matrix.target }}*
+          path: ${{ matrix.asset }}
           if-no-files-found: error
 
   publish:

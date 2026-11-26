@@ -220,9 +220,10 @@ because the 2026-08-17 compiler pin gives 0 aborts per 1400 invocations with out
 byte-identical to `--opt=dev`. Builds still pin `--opt=dev`, now purely for build time.
 `roc build` on the old alpha4 toolchain is gone with the migration.
 
-Windows ships as `stride-cli-windows-x86_64` and has done since v0.3.0, because the new
-compiler and basic-cli's x64win host target it, and `OsStr.display` decodes the
-`WindowsU16s` argv arm. All five release targets ship, linux-arm64 included.
+Windows has shipped since v0.3.0, as `stride-cli-windows-x86_64` through v0.23.0 and as
+`stride-cli-windows-x86_64.exe` after it, because the new compiler and basic-cli's x64win
+host target it, and `OsStr.display` decodes the `WindowsU16s` argv arm. All five release
+targets ship, linux-arm64 included.
 `release-please.yml` passes that target an explicit `roc_target: arm64musl`,
 `verify-arm64.yml` re-checks it on dispatch, and every release from v0.4.0 onward carries
 the linux-arm64 CLI, named `stride-cli-linux-arm64` and named `stride-linux-arm64` before
