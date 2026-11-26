@@ -814,12 +814,13 @@ imperial units, and a mixed athlete with a single session of a strength-like
 sport no family holds. The fixtures per view:
 
 - power: every curve each athlete has, at 30, 60 and 90 days (a usable fit,
-  a test due on a fit through steady efforts, a marked test in force), power
-  curves of sports outside every family under long Strava names, and on
-  each 90-day curve a new athlete (no threshold, nothing in the window
-  before, only a 5-minute best), a mix of a level row, a row only the window
-  before has and one only this window has, and too few bests for a fit, in
-  the brand faces and in the built-in face;
+  a test due on a fit through steady efforts, a marked test that set the
+  threshold), power curves of sports outside every family under long Strava
+  names, and on each 90-day curve a new athlete (no threshold, nothing in
+  the window before, no best ever past 5 minutes), a mix of a level row, a
+  row only the window before has and one only this window has, too few
+  bests for a fit with rows whose bests are older than both windows, and a
+  test under the derivation, in the brand faces and in the built-in face;
 - career: every page of every athlete, again with no threshold at all, an
   athlete with short runs and no running threshold beside a power trend,
   and one whose sports sit in no family under long Strava names, in the
@@ -1074,31 +1075,38 @@ A second screen, and the one that answers "am I getting stronger?": the
 athlete's best power at 5, 10, 20 and 60 minutes in the window against the
 same-length window before it, and whether a test is due.
 
-A card under the chips carries one line, the threshold the engine scores the
-curve with and what to do about it, amber with an amber stripe when a test
-is due and muted otherwise. A test is due by the rule the tab has always
+A card under the chips carries one line: the family's threshold today and
+what to do about it, amber with an amber stripe when a test is due and muted
+otherwise. The threshold is the engine's own, the number it scores with and
+`stride zones` reports for rides: `stride power-curve` names it as `ftp_w`
+(`stride pace-curve` as `threshold_speed`), the 60-day derivation (the best
+20 minutes of the last 60 days times 0.95, once two sessions carry one)
+raised to a marked test in force, with `ftp_source` (`threshold_source`)
+saying which of the two set it. A test is due by the rule the tab has always
 used: the window's critical power fit (critical speed on a pace curve, from
-`stride power-curve` or `stride pace-curve`) is not usable and no marked
-test is in force. A usable fit needs r2 of at least 0.9 and W' between 5 and
-40 kJ (D' inside the sport's own band on a pace curve: 5-100 m swimming,
-10-300 m rowing, 10-600 m on foot), and a marked test stays in force for the
-engine's 90 days. The lines:
+the same command) is not usable and no marked test is in force. A usable fit
+needs r2 of at least 0.9 and W' between 5 and 40 kJ (D' inside the sport's
+own band on a pace curve: 5-100 m swimming, 10-300 m rowing, 10-600 m on
+foot), and a marked test stays in force for the engine's 90 days. The lines:
 
 - due, naming what made the fit unusable: `Test due: your 5, 10 and
   20-minute bests of the last 90 days were not flat out - ride 20 minutes as
   hard as you can to update your FTP (now 241 W)` when the bests fall on no
-  curve or leave an implausible reserve, which steady efforts give; `too few
-  hard 5 to 20-minute efforts in the last 90 days to check your FTP` when
-  fewer than two bests reach the fit; `your FTP could not be checked` when
-  the engine gave no answer. A pace curve asks for 20 minutes as hard as you
-  can without stopping and names the threshold pace;
-- a marked test in force: `FTP 246 W - set by your test on 10-27`;
-- a usable fit: `FTP 241 W - no test due`;
+  curve or leave an implausible reserve, which steady efforts give, naming
+  only the durations the window has a best at (`your 5 and 20-minute
+  bests`); `too few hard 5 to 20-minute efforts in the last 90 days to check
+  your FTP` when fewer than two bests reach the fit; `your FTP could not be
+  checked` when the engine gave no answer. A pace curve asks for 20 minutes
+  as hard as you can without stopping and names the threshold pace;
+- a marked test that set the threshold (it is at least the derivation):
+  `FTP 246 W - set by your test on 10-27`;
+- a marked test under the derivation, which then sets the threshold: `FTP
+  241 W - from your best 20 minutes of the last 60 days, higher than your
+  test on 11-14` (`faster than` on a pace curve);
+- a usable fit and no test: `FTP 241 W - no test due`;
 - no threshold at all: `No FTP yet - ride 20 minutes hard twice within 60
-  days to set one`, the engine's derivation (the best 20 minutes of the last
-  60 days times 0.95, once two sessions carry one); on foot it adds the
-  other way in, `or run 5 km as fast as you can and mark it as a test`
-  (`stride test <activity_id> 5k`).
+  days to set one`; on foot it adds the other way in, `or run 5 km as fast
+  as you can and mark it as a test` (`stride test <activity_id> 5k`).
 
 The line wraps inside the card when the window is too narrow for it, and
 the card grows to hold it.
@@ -1119,14 +1127,16 @@ just past the pair: green with a plus for a gain, red with a minus for a
 drop, and grey `level` when the two are within a watt (on a pace curve, the
 same printed pace). A row with a best only in the window before says `none
 in the last 90 days`; one with a best only in this window, while other rows
-have both, says `none before`; and one with neither says what it lacked: on
-a pace curve `no 20 minutes without stopping yet`, since a pace best rolls
-over moving seconds, counts walking as moving and closes a pause of up to 30
-seconds, but a longer stop ends the stretch; on a power curve `no 60-minute
-ride yet`. The scale's faint rules carry round watts (round paces on a pace
-curve) under the last row, and stop short of an empty row's sentence. The
-scale spans the printed values with their spread's 15% plus 2% of the
-highest beyond each end, so every dot has room for its value beside it.
+have both, says `none before`. A row with neither says `none in the last 180
+days` when the record book holds an older best, and otherwise what it has
+never had: on a pace curve `no 20 minutes without stopping yet`, since a
+pace best rolls over moving seconds, counts walking as moving and closes a
+pause of up to 30 seconds, but a longer stop ends the stretch; on a power
+curve `no 60-minute ride yet`. The scale's faint rules carry round watts
+(round paces on a pace curve) under the last row, and stop short of an empty
+row's sentence. The scale spans the printed values with their spread's 15%
+plus 2% of the highest beyond each end, so every dot has room for its value
+beside it.
 
 The tab draws one curve at a time, named by a curve key: a sport family's
 head for that family's POWER curve, or `pace:<sport_type>` for that sport's

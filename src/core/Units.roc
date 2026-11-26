@@ -139,8 +139,8 @@ Units :: [].{
 	expect mass_label(Metric, 0.0) == "0.0 kg"
 
 	# Power zones, Coggan's 7-zone model, as watt ranges from an FTP. lo_w 0
-	# opens Z1 at 0 W and hi_w 0 leaves Z7 open above. `stride zones` and the
-	# window's zone bands both read this table, so the two draw the same edges.
+	# opens Z1 at 0 W and hi_w 0 leaves Z7 open above. `stride zones` reads
+	# this table through Metrics.power_zones.
 	power_zones : F64 -> List({ z : Str, name : Str, lo_w : F64, hi_w : F64 })
 	power_zones = |ftp|
 		[

@@ -249,7 +249,7 @@ load_flame! = |acc, boot|
 # face, so a window that cannot reach the athlete's data says why.
 skeleton : Str -> _
 skeleton = |err|
-	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: NoDirective, ht: [], hev: [], zw: [], ph: "", rw: [], csp: [], ctm: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric, cf: "", keys: { power: [], pace: [] }, sv: Db.empty_strength_view, thr: 0.0 }
+	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: NoDirective, ht: [], hev: [], zw: [], ph: "", rw: [], csp: [], ctm: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric, cf: "", keys: { power: [], pace: [] }, sv: Db.empty_strength_view }
 
 # Everything the window knows, rebuilt from the local stride sources in one
 # call: the database for every series, plus the engine's power-curve
@@ -303,7 +303,6 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 			ht = Db.load_heat!(db)
 			hev = Db.load_event_days!(db)
 			zw = Db.load_zone_weeks!(db)
-			thr = Db.load_threshold!(db, cf)
 			ph = Db.load_plan_horizon!(db)
 			cs = Db.load_career_sports!(db)
 			sfs = Career.cycle_fams(Db.load_spine_fams!(db), cs)
@@ -315,7 +314,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 			nts = Db.load_day_notes!(db)
 			cpv = Db.load_curve_prev!(db, curve_days, tm, cf)
 			sv = Db.load_strength_view!(db, tm)
-			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, ph, rw, csp, ctm, cs, cfm, prs, tcache, un, cf, keys, sv, thr }
+			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, ph, rw, csp, ctm, cs, cfm, prs, tcache, un, cf, keys, sv }
 		}
 		Err(NoStrideDir) => skeleton("no stride directory — the launcher passes it as the first argument")
 		Err(Unreachable) => skeleton("cannot open ${acc.dir}/db.sqlite")
@@ -324,7 +323,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 	# the database could not answer, and still unchosen while booting; then
 	# the fit, which runs the engine, so the skeleton skips it
 	cf = if (boot) curve_family else if (loaded.cf == "") "Ride" else loaded.cf
-	ft = if (boot) ({ fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: { value: 0.0, kind: "none", date: "none" } }) else Db.load_fit!(acc.io.commands(), curve_days, cf)
+	ft = if (boot) ({ fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: { value: 0.0, kind: "none", date: "none" }, thr: 0.0, from_test: Bool.False }) else Db.load_fit!(acc.io.commands(), curve_days, cf)
 	fit = ft.fit
 	# the board projects as far as the written plan reaches, never past the
 	# next event (load_plan_horizon! caps it there), and reads the numbers
@@ -470,7 +469,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		trace_cache: loaded.tcache,
 		segs: loaded.sg,
 		trace_dur: loaded.du,
-		curve_info: { fit, test: ft.test, thr: loaded.thr },
+		curve_info: { fit, test: ft.test, thr: ft.thr, from_test: ft.from_test },
 		data: loaded.s.data,
 		days: loaded.s.days,
 		stride_dir: acc.dir,
@@ -2001,11 +2000,11 @@ focus_task! = |acc, f|
 	}
 
 # What a curve change (its window or its family) depends on: the curve over
-# the window and over the window before it, the curve's record rungs and
-# threshold, and the CP fit. Everything else the model holds (the series,
-# the heat, the career, the plan, the trace) is the same whatever the window
-# says, so a chip click reads only these. R still runs the full loader,
-# which is what R is for.
+# the window and over the window before it, the curve's record rungs, and
+# the engine's fit and threshold. Everything else the model holds (the
+# series, the heat, the career, the plan, the trace) is the same whatever
+# the window says, so a chip click reads only these. R still runs the full
+# loader, which is what R is for.
 CurveWindow : { days : I64, fam : Str, prs : List(Db.PrRung), c : List(Db.CurvePt), cpv : List(Db.CurvePt), title : Text.Prepared, info : Db.CurveInfo }
 
 load_curve_window! : Access, Text.Font, I64, Str => Try(CurveWindow, [ResourceLimit])
@@ -2013,9 +2012,9 @@ load_curve_window! = |acc, font, curve_days, curve_family| {
 	read = match open_db!(acc) {
 		Ok(db) => {
 			tm = Db.today_mod!(acc.io.commands(), db)
-			{ c: Db.load_curve!(db, curve_days, tm, curve_family), cpv: Db.load_curve_prev!(db, curve_days, tm, curve_family), prs: Db.load_prs!(db, curve_family), thr: Db.load_threshold!(db, curve_family) }
+			{ c: Db.load_curve!(db, curve_days, tm, curve_family), cpv: Db.load_curve_prev!(db, curve_days, tm, curve_family), prs: Db.load_prs!(db, curve_family) }
 		}
-		Err(_) => { c: [], cpv: [], prs: [], thr: 0.0 }
+		Err(_) => { c: [], cpv: [], prs: [] }
 	}
 	ft = Db.load_fit!(acc.io.commands(), curve_days, curve_family)
 	# the same face the full loader prepares the title with, so a window
@@ -2028,7 +2027,7 @@ load_curve_window! = |acc, font, curve_days, curve_family| {
 		c: read.c,
 		cpv: read.cpv,
 		title: Text.from(Curve.title_text(curve_family), head).size(15).prepare!()?,
-		info: { fit: ft.fit, test: ft.test, thr: read.thr },
+		info: { fit: ft.fit, test: ft.test, thr: ft.thr, from_test: ft.from_test },
 	})
 }
 

@@ -78,11 +78,12 @@ Curve :: [].{
 	story_secs = [300, 600, 1200, 3600]
 
 	# a row: its duration, this window's and the window before's best at it
-	# (0 for none), and its place top to bottom
-	Pair : { secs : I64, now : I64, prev : I64, i : U64 }
+	# (0 for none), whether the record book holds any best at it, and its
+	# place top to bottom
+	Pair : { secs : I64, now : I64, prev : I64, ever : Bool, i : U64 }
 
 	pairs_of : List(Db.PrRung), List(Db.CurvePt), List(Db.CurvePt) -> List(Pair)
-	pairs_of = |prs, now, prev| List.map_with_index(List.keep_if(story_secs, |s| List.any(prs, |pr| pr.secs == s)), |s, i| { secs: s, now: window_w(now, s), prev: window_w(prev, s), i })
+	pairs_of = |prs, now, prev| List.map_with_index(List.keep_if(story_secs, |s| List.any(prs, |pr| pr.secs == s)), |s, i| { secs: s, now: window_w(now, s), prev: window_w(prev, s), ever: List.any(prs, |pr| pr.secs == s and pr.w > 0), i })
 
 	pairs : Ui.Model -> List(Pair)
 	pairs = |model| pairs_of(model.prs, model.curve, model.curve_prev)
@@ -205,15 +206,18 @@ Curve :: [].{
 			}
 		}
 
-	# What a row with no best in either window lacked. A pace best rolls
-	# over moving seconds: walking counts as moving and a pause of up to 30
-	# seconds closes up, but a longer stop ends the stretch, so a run with
-	# real stops holds no 10 or 20 minutes. A power best needs that many
-	# recorded minutes in one session.
-	empty_text : Str, Pair -> Str
-	empty_text = |curve, p| {
+	# What a row with no best in either window says. With a best on record
+	# from before both windows, that it is older than both. With none ever,
+	# what it lacked: a pace best rolls over moving seconds, walking counts
+	# as moving and a pause of up to 30 seconds closes up, but a longer stop
+	# ends the stretch, so a run with real stops holds no 10 or 20 minutes;
+	# a power best needs that many recorded minutes in one session.
+	empty_text : Str, I64, Pair -> Str
+	empty_text = |curve, days, p| {
 		mins = I64.to_str(p.secs // 60)
-		if (is_pace(curve)) "no ${mins} minutes without stopping yet" else "no ${mins}-minute ${effort_noun(curve)} yet"
+		if (p.ever) "none in the last ${I64.to_str(days * 2)} days"
+		else if (is_pace(curve)) "no ${mins} minutes without stopping yet"
+		else "no ${mins}-minute ${effort_noun(curve)} yet"
 	}
 
 	# a row with a best only in the window before
@@ -239,7 +243,7 @@ Curve :: [].{
 				if (p.now > 0 or p.prev > 0) Err(HasBest)
 				else {
 					y = c_y(g, p.i)
-					Ok({ x0: g.xl - 8.0, x1: g.xl + measure(empty_text(model.curve_family, p), empty_size, Prose) + 8.0, y0: y - 14.0, y1: y + 14.0 })
+					Ok({ x0: g.xl - 8.0, x1: g.xl + measure(empty_text(model.curve_family, model.curve_days, p), empty_size, Prose) + 8.0, y0: y - 14.0, y1: y + 14.0 })
 				},
 		)
 
@@ -328,8 +332,8 @@ Curve :: [].{
 	# marked 5 km time trial sets it too.
 	TestNote : { text : Str, due : Bool }
 
-	top_line : Str, [Metric, Imperial], I64, Db.CurveInfo -> TestNote
-	top_line = |curve, units, days, info| {
+	top_line : Str, [Metric, Imperial], I64, Db.CurveInfo, List(I64) -> TestNote
+	top_line = |curve, units, days, info, bests| {
 		pace = is_pace(curve)
 		verb = effort_verb(curve)
 		thr_name = if (pace) "threshold pace" else "FTP"
@@ -344,15 +348,39 @@ Curve :: [].{
 			why =
 				if (!(info.fit.ok)) "your ${thr_name} could not be checked"
 				else if (info.fit.points < 2.0) "too few hard 5 to 20-minute efforts in the ${now_name(days)} to check your ${thr_name}"
-				else "your 5, 10 and 20-minute bests of the ${now_name(days)} were not flat out"
+				else "${bests_named(bests)} of the ${now_name(days)} ${if_one(bests, "was", "were")} not flat out"
 			how = if (pace) "as hard as you can without stopping" else "as hard as you can"
 			{ text: "Test due: ${why} - ${verb} 20 minutes ${how} to update your ${thr_name} (now ${shown})", due: Bool.True }
-		} else if info.test.value > 0.0 {
+		} else if info.from_test {
 			{ text: "${thr_name} ${shown} - set by your test on ${short_day(info.test.date)}", due: Bool.False }
+		} else if info.test.value > 0.0 {
+			above = if (pace) "faster" else "higher"
+			{ text: "${thr_name} ${shown} - from your best 20 minutes of the last 60 days, ${above} than your test on ${short_day(info.test.date)}", due: Bool.False }
 		} else {
 			{ text: "${thr_name} ${shown} - no test due", due: Bool.False }
 		}
 	}
+
+	# one word for a single item, another for several
+	if_one : List(a), Str, Str -> Str
+	if_one = |xs, one, many| if (List.len(xs) == 1) one else many
+
+	# the fit's bests named by their durations: "your 5, 10 and 20-minute
+	# bests", "your 5 and 20-minute bests", "your 20-minute best"
+	bests_named : List(I64) -> Str
+	bests_named = |secs| {
+		mins = List.map(secs, |s| I64.to_str(s // 60))
+		n = List.len(mins)
+		joined =
+			if (n <= 1) Str.join_with(mins, "")
+			else "${Str.join_with(List.take_first(mins, n - 1), ", ")} and ${(List.last(mins)) ?? ""}"
+		if (n == 1) "your ${joined}-minute best" else "your ${joined}-minute bests"
+	}
+
+	# the window's bests the fit reads: this window's 5, 10 and 20-minute
+	# bests that exist
+	fit_bests : List(Pair) -> List(I64)
+	fit_bests = |ps| List.map(List.keep_if(ps, |p| p.now > 0 and p.secs >= 300 and p.secs <= 1200), |p| p.secs)
 
 	# "2026-08-16" -> "08-16"
 	short_day : Str -> Str
@@ -388,7 +416,7 @@ Curve :: [].{
 
 	story : Ui.Model, Scene.Measure -> Story
 	story = |model, measure| {
-		note = top_line(model.curve_family, model.units, model.curve_days, model.curve_info)
+		note = top_line(model.curve_family, model.units, model.curve_days, model.curve_info, fit_bests(pairs(model)))
 		card_w = model.win.w - 76.0
 		lines = wrap(measure, note.text, card_w - 2.0 * card_inset)
 		card_h = 16.0 + U64.to_f32(List.len(lines)) * note_pitch
@@ -506,7 +534,7 @@ Curve :: [].{
 						else c_x(g, p.prev) + 14.0 + measure(prev_txt, 14.0, Data)
 					end_x = right_end + 28.0
 					tail =
-						if (p.now <= 0 and p.prev <= 0) [fix(Scene.prose(empty_text(curve, p), empty_size, Theme.ink_faint), g.xl, y - 8.0, Left)]
+						if (p.now <= 0 and p.prev <= 0) [fix(Scene.prose(empty_text(curve, model.curve_days, p), empty_size, Theme.ink_faint), g.xl, y - 8.0, Left)]
 						else if (p.now <= 0) [fix(Scene.prose(gone_text(model.curve_days), 15.0, Theme.ink_faint), end_x, y - 8.0, Left)]
 						else if (p.prev <= 0 and any_prev) [fix(Scene.prose(new_text, 15.0, Theme.ink_faint), end_x, y - 8.0, Left)]
 						else if (p.prev <= 0) []
@@ -829,16 +857,18 @@ Curve :: [].{
 # ── the rows ────────────────────────────────────────────────────────────────
 # a row for each story duration the curve's ladder carries: four on a power
 # ladder, three on the pace ladder, which stops at 20 minutes; a window
-# with no best at a duration reads 0 there, and a best rounds to whole units
+# with no best at a duration reads 0 there, a best rounds to whole units,
+# and a row knows whether the record book holds any best at its duration
 expect {
-	pt = |d, w| { dur_s: d, watts: w, aid: 1, name: "a", day: "2026-11-01", ago: 3 }
+	pt = |d, w| { dur_s: d, watts: w }
 	power = [5, 15, 30, 60, 300, 600, 1200, 3600]
 	pace = [300, 600, 1200]
-	prs = |secs| List.map(secs, |s| { rung: "r", secs: s, w: 300, day: "2026-05-04" })
+	prs = |secs| List.map(secs, |s| { secs: s, w: if (s == 3600) 0 else 300 })
 	p = Curve.pairs_of(prs(power), [pt(300, 262.4), pt(1200, 254.6)], [pt(300, 274.0), pt(3600, 230.0)])
 	List.map(p, |r| r.secs) == [300, 600, 1200, 3600]
 		and List.map(p, |r| r.now) == [262, 0, 255, 0]
 		and List.map(p, |r| r.prev) == [274, 0, 0, 230]
+		and List.map(p, |r| r.ever) == [Bool.True, Bool.True, Bool.True, Bool.False]
 		and List.map(p, |r| r.i) == [0, 1, 2, 3]
 		and List.map(Curve.pairs_of(prs(pace), [], []), |r| r.secs) == [300, 600, 1200]
 		and List.map(p, Curve.rung_name) == ["5 min", "10 min", "20 min", "60 min"]
@@ -848,15 +878,15 @@ expect {
 # grey and smaller, this window's blue; an absent best draws no dot
 expect {
 	g = { xl: 170.0, xr: 1000.0, top: 300.0, pitch: 50.0, rows: 4, lo: 200.0, hi: 300.0 }
-	both = Curve.row_dots(g, { secs: 300, now: 262, prev: 274, i: 1 })
+	both = Curve.row_dots(g, { secs: 300, now: 262, prev: 274, ever: Bool.False, i: 1 })
 	near = |a, b| (a - b).abs() < 0.01
 	match both {
 		[prev, now] =>
 			near(prev.x, 170.0 + 0.74 * 830.0) and near(prev.y, 350.0) and prev.r == Curve.prev_r and !prev.now
 				and near(now.x, 170.0 + 0.62 * 830.0) and near(now.y, 350.0) and now.r == Curve.now_r and now.now
 				and Curve.now_r > Curve.prev_r
-				and List.len(Curve.row_dots(g, { secs: 600, now: 0, prev: 274, i: 2 })) == 1
-				and Curve.row_dots(g, { secs: 600, now: 0, prev: 0, i: 2 }) == []
+				and List.len(Curve.row_dots(g, { secs: 600, now: 0, prev: 274, ever: Bool.False, i: 2 })) == 1
+				and Curve.row_dots(g, { secs: 600, now: 0, prev: 0, ever: Bool.False, i: 2 }) == []
 		_ => Bool.False
 	}
 }
@@ -886,9 +916,12 @@ expect Curve.change_text("pace:Run", Metric, 4000, 4001) == "level" and Curve.ch
 
 # a row with no best in either window says what it lacked: on a pace curve
 # that many minutes without a stop, on a power curve a session that long
-expect Curve.empty_text("pace:Run", { secs: 1200, now: 0, prev: 0, i: 2 }) == "no 20 minutes without stopping yet"
-expect Curve.empty_text("pace:Rowing", { secs: 600, now: 0, prev: 0, i: 1 }) == "no 10 minutes without stopping yet"
-expect Curve.empty_text("Ride", { secs: 3600, now: 0, prev: 0, i: 3 }) == "no 60-minute ride yet" and Curve.empty_text("Rowing", { secs: 3600, now: 0, prev: 0, i: 3 }) == "no 60-minute row yet"
+expect Curve.empty_text("pace:Run", 90, { secs: 1200, now: 0, prev: 0, ever: Bool.False, i: 2 }) == "no 20 minutes without stopping yet"
+expect Curve.empty_text("pace:Rowing", 90, { secs: 600, now: 0, prev: 0, ever: Bool.False, i: 1 }) == "no 10 minutes without stopping yet"
+expect Curve.empty_text("Ride", 90, { secs: 3600, now: 0, prev: 0, ever: Bool.False, i: 3 }) == "no 60-minute ride yet" and Curve.empty_text("Rowing", 90, { secs: 3600, now: 0, prev: 0, ever: Bool.False, i: 3 }) == "no 60-minute row yet"
+# a row with a best on record from before both windows says it is older
+# than both, never that there has been none
+expect Curve.empty_text("Ride", 90, { secs: 3600, now: 0, prev: 0, ever: Bool.True, i: 3 }) == "none in the last 180 days" and Curve.empty_text("pace:Run", 30, { secs: 1200, now: 0, prev: 0, ever: Bool.True, i: 2 }) == "none in the last 60 days"
 expect Curve.gone_text(90) == "none in the last 90 days" and Curve.new_text == "none before"
 
 # a scale rule leaves a gap around each empty row's sentence and runs
@@ -901,8 +934,8 @@ expect Curve.rule_pieces(100.0, 400.0, [{ x0: 0.0, x1: 10.0, y0: 190.0, y1: 210.
 # the window before, then this window; an empty window before is said once,
 # with no dot, named for the sport
 expect {
-	with_prev = [{ secs: 300, now: 262, prev: 274, i: 0 }]
-	no_prev = [{ secs: 300, now: 262, prev: 0, i: 0 }, { secs: 600, now: 0, prev: 0, i: 1 }]
+	with_prev = [{ secs: 300, now: 262, prev: 274, ever: Bool.False, i: 0 }]
+	no_prev = [{ secs: 300, now: 262, prev: 0, ever: Bool.False, i: 0 }, { secs: 600, now: 0, prev: 0, ever: Bool.False, i: 1 }]
 	Curve.legend_items("Ride", 90, with_prev) == [{ now: Bool.False, dot: Bool.True, label: "the 90 days before" }, { now: Bool.True, dot: Bool.True, label: "last 90 days" }]
 		and Curve.legend_items("Ride", 90, no_prev) == [{ now: Bool.False, dot: Bool.False, label: "the 90 days before: no rides" }, { now: Bool.True, dot: Bool.True, label: "last 90 days" }]
 		and Curve.legend_items("pace:Run", 30, no_prev) == [{ now: Bool.False, dot: Bool.False, label: "the 30 days before: no runs" }, { now: Bool.True, dot: Bool.True, label: "last 30 days" }]
@@ -911,50 +944,64 @@ expect {
 
 # ── the top line ────────────────────────────────────────────────────────────
 # each due line names the condition that fired and nothing else: steady
-# bests that fit no curve, too few bests to fit, or no answer from the
-# engine; none carries a day count of its own
+# bests that fit no curve, named by the durations the window has, too few
+# bests to fit, or no answer from the engine; none carries a day count of
+# its own
 expect {
 	weak = { cp: 252.9, w_prime: 2980.0, r2: 0.84, points: 3.0, ok: Bool.True }
 	none = { value: 0.0, kind: "none", date: "none" }
-	info = { fit: weak, test: none, thr: 241.0 }
-	Curve.top_line("Ride", Metric, 90, info) == { text: "Test due: your 5, 10 and 20-minute bests of the last 90 days were not flat out - ride 20 minutes as hard as you can to update your FTP (now 241 W)", due: Bool.True }
-		and Curve.top_line("Ride", Metric, 90, { ..info, fit: { ..weak, r2: 0.95, w_prime: 60000.0 } }) == Curve.top_line("Ride", Metric, 90, info)
-		and Curve.top_line("Ride", Metric, 90, { ..info, fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 1.0, ok: Bool.True } }) == { text: "Test due: too few hard 5 to 20-minute efforts in the last 90 days to check your FTP - ride 20 minutes as hard as you can to update your FTP (now 241 W)", due: Bool.True }
-		and Curve.top_line("Ride", Metric, 90, { ..info, fit: { ..weak, ok: Bool.False } }) == { text: "Test due: your FTP could not be checked - ride 20 minutes as hard as you can to update your FTP (now 241 W)", due: Bool.True }
-		and (Curve.top_line("Rowing", Metric, 30, { ..info, thr: 124.0 })).text == "Test due: your 5, 10 and 20-minute bests of the last 30 days were not flat out - row 20 minutes as hard as you can to update your FTP (now 124 W)"
+	info = { fit: weak, test: none, thr: 241.0, from_test: Bool.False }
+	all3 = [300, 600, 1200]
+	due = Curve.top_line("Ride", Metric, 90, info, all3)
+	due == { text: "Test due: your 5, 10 and 20-minute bests of the last 90 days were not flat out - ride 20 minutes as hard as you can to update your FTP (now 241 W)", due: Bool.True }
+		and !(Str.contains(due.text, " ago"))
+		and Curve.top_line("Ride", Metric, 90, { ..info, fit: { ..weak, r2: 0.95, w_prime: 60000.0 } }, all3) == due
+		and (Curve.top_line("Ride", Metric, 90, info, [300, 1200])).text == "Test due: your 5 and 20-minute bests of the last 90 days were not flat out - ride 20 minutes as hard as you can to update your FTP (now 241 W)"
+		and Curve.top_line("Ride", Metric, 90, { ..info, fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 1.0, ok: Bool.True } }, [1200]) == { text: "Test due: too few hard 5 to 20-minute efforts in the last 90 days to check your FTP - ride 20 minutes as hard as you can to update your FTP (now 241 W)", due: Bool.True }
+		and Curve.top_line("Ride", Metric, 90, { ..info, fit: { ..weak, ok: Bool.False } }, all3) == { text: "Test due: your FTP could not be checked - ride 20 minutes as hard as you can to update your FTP (now 241 W)", due: Bool.True }
+		and (Curve.top_line("Rowing", Metric, 30, { ..info, thr: 121.0 }, all3)).text == "Test due: your 5, 10 and 20-minute bests of the last 30 days were not flat out - row 20 minutes as hard as you can to update your FTP (now 121 W)"
 }
+expect Curve.bests_named([300, 600, 1200]) == "your 5, 10 and 20-minute bests" and Curve.bests_named([600, 1200]) == "your 10 and 20-minute bests" and Curve.bests_named([1200]) == "your 20-minute best"
+expect Curve.fit_bests([{ secs: 300, now: 262, prev: 0, ever: Bool.True, i: 0 }, { secs: 600, now: 0, prev: 271, ever: Bool.True, i: 1 }, { secs: 1200, now: 254, prev: 0, ever: Bool.True, i: 2 }, { secs: 3600, now: 233, prev: 0, ever: Bool.True, i: 3 }]) == [300, 1200]
 
-# a usable fit says no test is due however long ago its bests were set,
-# and never asks for flat-out efforts; a marked test in force stands in for
-# a weak fit
+# a test is credited only when it set the threshold the engine scores
+# with: in force and at least the derivation, the line names the test;
+# in force but under the 60-day derivation, it names the derivation and
+# says the test is lower, both orders; a usable fit with no test says no
+# test is due and never asks for flat-out efforts
 expect {
 	weak = { cp: 252.9, w_prime: 2980.0, r2: 0.84, points: 3.0, ok: Bool.True }
 	good = { cp: 250.0, w_prime: 15000.0, r2: 0.95, points: 3.0, ok: Bool.True }
 	none = { value: 0.0, kind: "none", date: "none" }
-	test = { value: 246.5, kind: "cp3-12", date: "2026-10-27" }
-	usable = Curve.top_line("Ride", Metric, 90, { fit: good, test: none, thr: 241.0 })
-	usable == { text: "FTP 241 W - no test due", due: Bool.False }
+	all3 = [300, 600, 1200]
+	low = Curve.top_line("Ride", Metric, 90, { fit: weak, test: { value: 217.0, kind: "ftp20", date: "2026-11-14" }, thr: 241.0, from_test: Bool.False }, all3)
+	high = Curve.top_line("Ride", Metric, 90, { fit: weak, test: { value: 246.5, kind: "cp3-12", date: "2026-10-27" }, thr: 246.5, from_test: Bool.True }, all3)
+	usable = Curve.top_line("Ride", Metric, 90, { fit: good, test: none, thr: 241.0, from_test: Bool.False }, all3)
+	low == { text: "FTP 241 W - from your best 20 minutes of the last 60 days, higher than your test on 11-14", due: Bool.False }
+		and !(Str.contains(low.text, "set by your test"))
+		and high == { text: "FTP 247 W - set by your test on 10-27", due: Bool.False }
+		and usable == { text: "FTP 241 W - no test due", due: Bool.False }
 		and !(Str.contains(usable.text, "flat out"))
-		and Curve.top_line("Ride", Metric, 90, { fit: weak, test, thr: 246.0 }) == { text: "FTP 246 W - set by your test on 10-27", due: Bool.False }
+		and (Curve.top_line("pace:Run", Metric, 90, { fit: weak, test: { value: 3.2, kind: "5k", date: "2026-11-02" }, thr: 3.5, from_test: Bool.False }, all3)).text == "threshold pace ${Curve.v_text("pace:Run", Metric, 3500)} - from your best 20 minutes of the last 60 days, faster than your test on 11-02"
 }
 
 # a curve with no threshold says how to get one, in the sport's own verb,
 # and on foot names the 5 km time trial too
 expect {
 	none = { value: 0.0, kind: "none", date: "none" }
-	info = { fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: none, thr: 0.0 }
-	Curve.top_line("Ride", Metric, 90, info) == { text: "No FTP yet - ride 20 minutes hard twice within 60 days to set one", due: Bool.True }
-		and (Curve.top_line("Rowing", Metric, 90, info)).text == "No FTP yet - row 20 minutes hard twice within 60 days to set one"
-		and (Curve.top_line("pace:Run", Imperial, 90, info)).text == "No threshold pace yet - run 20 minutes without stopping twice within 60 days, or run 5 km as fast as you can and mark it as a test"
-		and (Curve.top_line("pace:TrailRun", Metric, 90, info)).text == "No threshold pace yet - run 20 minutes without stopping twice within 60 days, or run 5 km as fast as you can and mark it as a test"
-		and (Curve.top_line("pace:Rowing", Metric, 90, info)).text == "No threshold pace yet - row 20 minutes without stopping twice within 60 days to set one"
+	info = { fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: none, thr: 0.0, from_test: Bool.False }
+	Curve.top_line("Ride", Metric, 90, info, []) == { text: "No FTP yet - ride 20 minutes hard twice within 60 days to set one", due: Bool.True }
+		and (Curve.top_line("Rowing", Metric, 90, info, [])).text == "No FTP yet - row 20 minutes hard twice within 60 days to set one"
+		and (Curve.top_line("pace:Run", Imperial, 90, info, [])).text == "No threshold pace yet - run 20 minutes without stopping twice within 60 days, or run 5 km as fast as you can and mark it as a test"
+		and (Curve.top_line("pace:TrailRun", Metric, 90, info, [])).text == "No threshold pace yet - run 20 minutes without stopping twice within 60 days, or run 5 km as fast as you can and mark it as a test"
+		and (Curve.top_line("pace:Rowing", Metric, 90, info, [])).text == "No threshold pace yet - row 20 minutes without stopping twice within 60 days to set one"
 }
 
 # a pace curve's due line asks for the effort without stopping and reads
 # the threshold as a pace in the sport's unit
 expect {
-	info = { fit: { cp: 3.4, w_prime: 2000.0, r2: 0.95, points: 3.0, ok: Bool.True }, test: { value: 0.0, kind: "none", date: "none" }, thr: 3.5 }
-	(Curve.top_line("pace:Run", Metric, 60, info)).text == "Test due: your 5, 10 and 20-minute bests of the last 60 days were not flat out - run 20 minutes as hard as you can without stopping to update your threshold pace (now ${Curve.v_text("pace:Run", Metric, 3500)})" and Curve.pace_secs(3500, 1000.0) == 286
+	info = { fit: { cp: 3.4, w_prime: 2000.0, r2: 0.95, points: 3.0, ok: Bool.True }, test: { value: 0.0, kind: "none", date: "none" }, thr: 3.5, from_test: Bool.False }
+	(Curve.top_line("pace:Run", Metric, 60, info, [300, 600, 1200])).text == "Test due: your 5, 10 and 20-minute bests of the last 60 days were not flat out - run 20 minutes as hard as you can without stopping to update your threshold pace (now ${Curve.v_text("pace:Run", Metric, 3500)})" and Curve.pace_secs(3500, 1000.0) == 286
 }
 
 # a long note wraps greedily at word breaks, a word wider than the line
@@ -1033,7 +1080,7 @@ expect Curve.chip_bottom - Curve.chip_top == 22.0
 expect Curve.title_text("Ride") == "your best cycling power" and Curve.title_text("Rowing") == "your best rowing power" and Curve.title_text("pace:TrailRun") == "your best trail run pace" and Curve.title_text("StandUpPaddling") == "your best stand up paddling power"
 expect Curve.empty_note("Rowing") == "no rowing power on record yet" and Curve.empty_note("Ride") == "no cycling power on record yet" and Curve.empty_note("pace:Swim") == "no swimming pace on record yet" and Curve.empty_note("StandUpPaddling") == "no stand up paddling power on record yet"
 expect Curve.chip_label("StandUpPaddling") == "stand up paddling" and Curve.chip_label("pace:Hike") == "hike" and Curve.chip_label("pace:Rowing") == "row" and Curve.chip_label("pace:Run") == "run"
-expect Curve.empty_text("StandUpPaddling", { secs: 3600, now: 0, prev: 0, i: 3 }) == "no 60-minute session yet"
+expect Curve.empty_text("StandUpPaddling", 90, { secs: 3600, now: 0, prev: 0, ever: Bool.False, i: 3 }) == "no 60-minute session yet"
 # a chip widens to hold a long label and still ends 14 px short of the
 # range chips; a click anywhere on it names its curve
 expect {

@@ -209,12 +209,12 @@ Gate :: [].{
 		b = base_of(key)
 		n = List.len(ladder)
 		rec = |r| r.share * b
-		prs = List.map_with_index(ladder, |r, i| { rung: r.rung, secs: r.secs, w: round_i(rec(r)), day: if (days == 30 and i + 2 >= n) "2026-11-10" else "2026-05-04" })
+		prs = List.map(ladder, |r| { secs: r.secs, w: round_i(rec(r)) })
 		now_share = |i| if (days == 30) (if (i + 2 >= n) 1.0 else 0.9) else if (days == 60) (if (i < 4) 0.86 - 0.01 * U64.to_f32(i) else 0.85) else if (i % 2 == 0) 0.93 else 0.97
 		prev_share = |i| if (days == 30) 0.88 else if (days == 60) 0.95 else if (i % 3 == 0) 0.99 else 0.94
-		pt = |r, share, day, ago| { dur_s: r.secs, watts: I64.to_f32(round_i(rec(r) * share)), aid: 1000 + r.secs, name: "fixture ${r.rung} session", day, ago }
-		curve = List.map_with_index(ladder, |r, i| pt(r, now_share(i), if (days == 30 and i + 2 >= n) "2026-11-10" else "2026-10-20", if (days == 30) 2 else days * 2 // 3))
-		prev = List.map_with_index(ladder, |r, i| pt(r, prev_share(i), "2026-08-01", days + 10))
+		pt = |r, share| { dur_s: r.secs, watts: I64.to_f32(round_i(rec(r) * share)) }
+		curve = List.map_with_index(ladder, |r, i| pt(r, now_share(i)))
+		prev = List.map_with_index(ladder, |r, i| pt(r, prev_share(i)))
 		r20 = rec({ rung: "20min", secs: 1200, share: 1.0 })
 		fit =
 			if days == 30 {
@@ -234,7 +234,7 @@ Gate :: [].{
 			prs,
 			curve,
 			curve_prev: prev,
-			curve_info: { fit, test, thr: if (pace) r20 * 0.95 / 1000.0 else r20 * 0.95 },
+			curve_info: { fit, test, thr: if (pace) r20 * 0.95 / 1000.0 else r20 * 0.95, from_test: days == 90 },
 		}
 	}
 
@@ -281,13 +281,16 @@ Gate :: [].{
 	}
 
 	# The rows' and the card's other strings, on every 90-day fixture. "new
-	# athlete": no threshold yet, nothing in the window before, and only a
-	# 5-minute best, so the card says how to get a threshold (on foot, both
-	# ways), the legend names the empty window before, and every longer row
-	# is empty. "mixed rows": the first row level within a watt, the second
-	# with a best only in the window before and the third only in this one.
-	# "too few for a fit": the engine found too few hard efforts to fit, and
-	# no test is in force, so the card asks for one.
+	# athlete": no threshold yet, nothing in the window before, and no best
+	# ever past 5 minutes, so the card says how to get a threshold (on foot,
+	# both ways), the legend names the empty window before, and every longer
+	# row says what it lacks. "mixed rows": the first row level within a
+	# watt, the second with a best only in the window before and the third
+	# only in this one. "too few for a fit": the engine found too few bests
+	# to fit and no test is in force, so the card asks for one, and the rows
+	# from 20 minutes have bests only from before both windows. "test under
+	# the derivation": the test in force is lower than the 60-day derivation,
+	# so the card credits the derivation.
 	story_models : List({ name : Str, model : Ui.Model })
 	story_models =
 		List.join(
@@ -302,9 +305,10 @@ Gate :: [].{
 					}
 					level = List.map(m.curve, |p| if (p.dur_s == 300 and prev5 > 0.0) { ..p, watts: prev5 + 1.0 } else p)
 					[
-						{ name: "${c.name} new athlete", model: { ..m, curve: keep5(m.curve), curve_prev: [], curve_info: { ..m.curve_info, thr: 0.0, test: { value: 0.0, kind: "none", date: "none" } } } },
+						{ name: "${c.name} new athlete", model: { ..m, prs: List.map(m.prs, |pr| if (pr.secs <= 300) pr else { ..pr, w: 0 }), curve: keep5(m.curve), curve_prev: [], curve_info: { ..m.curve_info, thr: 0.0, test: { value: 0.0, kind: "none", date: "none" }, from_test: Bool.False } } },
 						{ name: "${c.name} mixed rows", model: { ..m, curve: List.keep_if(level, |p| p.dur_s != 600), curve_prev: List.keep_if(m.curve_prev, |p| p.dur_s != 1200) } },
-						{ name: "${c.name} too few for a fit", model: { ..m, curve_info: { ..m.curve_info, fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 1.0, ok: Bool.True }, test: { value: 0.0, kind: "none", date: "none" } } } },
+						{ name: "${c.name} too few for a fit", model: { ..m, curve: List.keep_if(m.curve, |p| p.dur_s < 1200), curve_prev: List.keep_if(m.curve_prev, |p| p.dur_s < 1200), curve_info: { ..m.curve_info, fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 1.0, ok: Bool.True }, test: { value: 0.0, kind: "none", date: "none" }, from_test: Bool.False } } },
+						{ name: "${c.name} test under the derivation", model: { ..m, curve_info: { ..m.curve_info, test: { ..m.curve_info.test, value: m.curve_info.thr * 0.9 }, from_test: Bool.False } } },
 					]
 				},
 			),
@@ -493,7 +497,7 @@ Gate :: [].{
 			curve_days: 90,
 			curve_family: "Ride",
 			curve_keys: { power: [], pace: [] },
-			curve_info: { fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: { value: 0.0, kind: "none", date: "none" }, thr: 0.0 },
+			curve_info: { fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: { value: 0.0, kind: "none", date: "none" }, thr: 0.0, from_test: Bool.False },
 			data: [],
 			days: [],
 			day_notes: [],
@@ -1489,10 +1493,11 @@ expect Gate.failures(|m| Gate.judge(Curve.owned(m, Gate.builtin_measure), Curve.
 # the gate above judges the strings it claims to: a card whose line wraps
 # at the minimum window and none at the wide one, a run's two ways to a
 # threshold, both test-due lines (bests not flat out, too few to fit), a
-# test in force, a usable fit, the empty window before, an empty row on a
-# power and a pace curve, a level row, a row only the window before has
-# and one only this window has, and both long sport names in plain words
-# are all on screen somewhere
+# test that set the threshold and one under the derivation, a usable fit,
+# the empty window before, an empty row that never had a best on a power
+# and a pace curve and one whose best is older than both windows, a level
+# row, a row only the window before has and one only this window has, and
+# both long sport names in plain words are all on screen somewhere
 expect {
 	models = List.join([Gate.curve_models, Gate.long_models, Gate.story_models])
 	texts = |f| List.map(Curve.scene(f.model, Gate.measure), |p| p.item.text)
@@ -1512,6 +1517,8 @@ expect {
 		and List.contains(all, "none in the last 90 days")
 		and List.contains(all, "none before")
 		and shows("no 60-minute session yet")
+		and List.contains(all, "none in the last 180 days")
+		and List.any(all, |t| Str.contains(t, "from your best 20 minutes of the last 60 days, higher than your test on 10-27"))
 		and List.any(all, |t| Str.contains(t, "stand up paddling"))
 		and List.any(all, |t| Str.contains(t, "high intensity interval training"))
 }
