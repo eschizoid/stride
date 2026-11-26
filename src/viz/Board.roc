@@ -216,40 +216,197 @@ Board :: [].{
 	geom = |model| {
 		take = U64.min(model.range, List.len(model.data))
 		measured = List.take_last(model.data, take)
-		# a projection continues a plotted series, so a board too short to
-		# plot draws none
-		proj = if (take >= 2) model.proj else []
+		proj = shown_proj(model)
 		data = List.concat(measured, List.map(proj, proj_point))
 		days = List.concat(List.take_last(model.days, take), List.map(proj, |d| d.day))
 		top = Theme.pad_t + band_h
 		{ data, days, n: List.len(data), meas: take, off: List.len(model.data) - take, lo: lo_of(data), hi: hi_of(data), left: Theme.pad_l, top, pw: model.win.w - Theme.pad_l - Theme.pad_r, ph: model.win.h - top - Theme.pad_b }
 	}
 
+	# the projected days the plot draws after the measured ones: a
+	# projection continues a plotted series, so a board too short to plot
+	# draws none
+	shown_proj : Ui.Model -> List(Db.ProjDay)
+	shown_proj = |model| if (U64.min(model.range, List.len(model.data)) >= 2) model.proj else []
+
 	# a projected day's index in the plot, when `i` is one
 	proj_day : Ui.Model, Geom, U64 -> Try(Db.ProjDay, [Measured])
 	proj_day = |model, g, i| if (i < g.meas) Err(Measured) else List.get(model.proj, i - g.meas).map_err(|_| Measured)
+
+	# the day cursor as the arrow keys walk it: `back` days before the
+	# latest measured day (-1 off), or `ahead` projected days after it
+	Cursor : { back : I64, ahead : U64 }
+
+	# one arrow press. Older steps a day back, and from off lands on the
+	# latest measured day; Newer steps a day forward, on past the latest
+	# measured day into the `projected` days the board draws, and past the
+	# last of those turns the cursor off
+	step : Cursor, [Older, Newer], U64 -> Cursor
+	step = |c, dir, projected|
+		match dir {
+			Older =>
+				if (c.ahead > 0) { back: 0, ahead: c.ahead - 1 }
+				else if (c.back < 0) { back: 0, ahead: 0 }
+				else { back: c.back + 1, ahead: 0 }
+			Newer =>
+				if (c.back > 0) { back: c.back - 1, ahead: 0 }
+				else if (c.back == 0 and c.ahead < projected) { back: 0, ahead: c.ahead + 1 }
+				else { back: -1, ahead: 0 }
+		}
+
+	# the views that draw the plan's projection: the form board alone, so a
+	# cursor on a projected day exists there and nowhere else
+	draws_projection : U8 -> Bool
+	draws_projection = |view| view == 0
+
+	# the cursor a view holds: a view that draws no projection holds the
+	# latest measured day in place of a projected one, so the table never
+	# stands on, or reports, a day it does not show
+	held : Cursor, U8 -> Cursor
+	held = |c, view| if (c.back < 0) { back: -1, ahead: 0 } else if (draws_projection(view)) c else { back: c.back, ahead: 0 }
+
+	# the cursor a day names on `view`: a measured day of the series, or a
+	# projected day when the view draws the projection. Any other day is
+	# refused with the reason in the athlete's words: not a date, before the
+	# series, past the projection's last day, after the series with no plan
+	# projected, or a projected day on a view that draws no projection
+	cursor_at : Ui.Model, Str, U8 -> Try(Cursor, Str)
+	cursor_at = |model, day, view| {
+		total = List.len(model.days)
+		measured = List.keep_oks(List.map_with_index(model.days, |d, i| { d, i }), |e| if (e.d == day) (U64.to_i64_try(total - 1 - e.i)) else Err(OutOfRange))
+		proj = shown_proj(model)
+		projected = List.keep_oks(List.map_with_index(proj, |p, i| { p, i }), |e| if (e.p.day == day) Ok(e.i + 1) else Err(Other))
+		first = (List.first(model.days)) ?? ""
+		last = (List.last(model.days)) ?? ""
+		match (List.last(measured), List.first(projected)) {
+			(Ok(back), _) => Ok({ back, ahead: 0 })
+			(_, Ok(ahead)) => if (draws_projection(view)) Ok({ back: 0, ahead }) else Err("a projected day, and this view draws no projection")
+			_ =>
+				if !(is_date(day)) {
+					Err("not a YYYY-MM-DD date")
+				} else if total == 0 {
+					Err("no series is loaded")
+				} else if earlier(day, first) {
+					Err("before the series, which starts ${first}")
+				} else if earlier(last, day) {
+					match List.last(proj) {
+						Ok(p) => Err("past the projection's last day, ${p.day}")
+						Err(_) => Err("after the last measured day, ${last}, and no plan is projected")
+					}
+				} else {
+					Err("a day missing from the series")
+				}
+		}
+	}
+
+	# a date in the canonical YYYY-MM-DD form the series stores
+	is_date : Str -> Bool
+	is_date = |s| {
+		b = Str.to_utf8(s)
+		digit = |c| c >= '0' and c <= '9'
+		List.len(b) == 10 and List.all(List.map_with_index(b, |c, i| if (i == 4 or i == 7) c == '-' else digit(c)), |ok| ok)
+	}
+
+	# whether canonical date `a` falls before `b`: for YYYY-MM-DD the byte
+	# order is the date order
+	earlier : Str, Str -> Bool
+	earlier = |a, b| {
+		walk = List.fold(
+			List.map2(Str.to_utf8(a), Str.to_utf8(b), |x, y| { x, y }),
+			Same,
+			|acc, p|
+				match acc {
+					Same => if (p.x < p.y) Before else if (p.x > p.y) After else Same
+					_ => acc
+				},
+		)
+		walk == Before
+	}
+
+	# the projected day `ahead` days past the latest measured one, clamped
+	# to the last the board draws; "" when it draws none
+	ahead_day : Ui.Model, U64 -> Str
+	ahead_day = |model, ahead| {
+		proj = shown_proj(model)
+		n = List.len(proj)
+		if ahead == 0 or n == 0 {
+			""
+		} else {
+			match List.get(proj, U64.min(ahead, n) - 1) {
+				Ok(p) => p.day
+				Err(_) => ""
+			}
+		}
+	}
 
 	# the key under the legend: what the dashed part is, and how much of the
 	# plan's load it carries
 	proj_key_text : I64, I64 -> Str
 	proj_key_text = |considered, projected| "dashed: projected, ${I64.to_str(projected)} of ${I64.to_str(considered)} sessions priced"
 
-	# a segment cut into dashes `on` long with `off` between, from its start;
-	# the last dash stops at the segment's end
-	dashes : { x : F32, y : F32 }, { x : F32, y : F32 }, F32, F32 -> List({ a : { x : F32, y : F32 }, b : { x : F32, y : F32 } })
-	dashes = |p0, p1, on, off| {
-		dx = p1.x - p0.x
-		dy = p1.y - p0.y
-		len = F32.sqrt(dx * dx + dy * dy)
-		at = |t| { x: p0.x + dx * t, y: p0.y + dy * t }
-		if len <= 0.0 {
+	# a line through `pts` cut into dashes `on` long with `off` between,
+	# measured by distance along the whole line from its first point, so the
+	# rhythm runs on through every corner; a dash a corner splits is drawn
+	# as one piece on each side, and the last dash stops at the line's end
+	dashes_along : List({ x : F32, y : F32 }), F32, F32 -> List({ a : { x : F32, y : F32 }, b : { x : F32, y : F32 } })
+	dashes_along = |pts, on, off| {
+		period = on + off
+		spans = List.fold(
+			List.drop_first(pts, 1),
+			{ prev: List.first(pts), dist: 0.0, out: [] },
+			|acc, p1|
+				match acc.prev {
+					Ok(p0) => {
+						dx = p1.x - p0.x
+						dy = p1.y - p0.y
+						len = F32.sqrt(dx * dx + dy * dy)
+						{ prev: Ok(p1), dist: acc.dist + len, out: List.append(acc.out, { p0, dx, dy, len, start: acc.dist }) }
+					}
+					Err(_) => { prev: Ok(p1), dist: acc.dist, out: acc.out }
+				},
+		)
+		List.join(
+			List.map(
+				spans.out,
+				|s|
+					if s.len <= 0.0 {
+						[]
+					} else {
+						at = |d| { x: s.p0.x + s.dx * (d - s.start) / s.len, y: s.p0.y + s.dy * (d - s.start) / s.len }
+						k0 = F32.round_to_u64_try(F32.div_floor_by(s.start, period)) ?? 0
+						k1 = F32.round_to_u64_try(F32.div_floor_by(s.start + s.len, period)) ?? 0
+						List.keep_oks(
+							List.map_with_index(List.repeat({}, k1 - k0 + 1), |_u, j| U64.to_f32(k0 + j) * period),
+							|d0| {
+								a = F32.max(d0, s.start)
+								b = F32.min(d0 + on, s.start + s.len)
+								if (b > a) Ok({ a: at(a), b: at(b) }) else Err(Gap)
+							},
+						)
+					},
+			),
+		)
+	}
+
+	# the projected stretch of one series as the draw-in has reached it:
+	# from the latest measured day through each projected day whose segment
+	# starts before `limit`, the index the sweep has drawn up to; none when
+	# the board draws no projection
+	proj_line : Geom, U8, F32 -> List({ x : F32, y : F32 })
+	proj_line = |g, sel, limit|
+		if g.n <= g.meas or g.meas == 0 {
 			[]
 		} else {
-			k = F32.round_to_u64_try(F32.div_floor_by(len, on + off)) ?? 0
-			starts = List.keep_if(List.map_with_index(List.repeat({}, k + 1), |_u, j| U64.to_f32(j) * (on + off)), |s| s < len)
-			List.map(starts, |s| { a: at(s / len), b: at(F32.min(len, s + on) / len) })
+			List.keep_oks(
+				List.map_with_index(g.data, |p, i| { p, i }),
+				|e| if (e.i + 1 == g.meas or (e.i >= g.meas and U64.to_f32(e.i) - 1.0 < limit)) Ok({ x: x_at(g, e.i), y: y_at(g, value_of(e.p, sel)) }) else Err(Off),
+			)
 		}
-	}
+
+	# the height the projection key's two candidate rows take at the top of
+	# the plot, the first at 4 px below its top and the second 18 px lower
+	key_rows_h : F32
+	key_rows_h = 36.0
 
 	# the plot draws once the series holds two days and no error stands
 	plotted : Ui.Model -> Bool
@@ -338,9 +495,12 @@ Board :: [].{
 	rug_share : F32
 	rug_share = 0.22
 
-	# the series index the crosshair reads: the pointer while it is inside
-	# the plot, projected days included, else the arrow cursor counting
-	# days back from the latest measured day
+	# the series index the crosshair reads: the parked cursor (arrows or a
+	# directive), counting days back from the latest measured day or
+	# projected days on past it, held to the days the board draws; else the
+	# pointer while it is inside the plot, projected days included. A pointer
+	# that moves un-parks the cursor (update!), so a resting one never hides
+	# the day a directive or an arrow parked on
 	hovered : Ui.Model, Geom -> Try(U64, [NoHover])
 	hovered = |model, g| {
 		hi_idx = g.n - 1
@@ -350,10 +510,10 @@ Board :: [].{
 			Ok(c) => if (c > last_meas) (last_meas) else c
 			Err(_) => 0.U64
 		}
-		if mouse_sel {
+		if model.cursor >= 0 {
+			if (model.cursor_ahead > 0) Ok(U64.min(last_meas + model.cursor_ahead, hi_idx)) else Ok(last_meas - cur_back)
+		} else if mouse_sel {
 			Ok(clamp_idx((model.mouse_x - g.left) / g.pw * U64.to_f32(hi_idx), hi_idx))
-		} else if model.cursor >= 0 {
-			Ok(last_meas - cur_back)
 		} else {
 			Err(NoHover)
 		}
@@ -364,19 +524,26 @@ Board :: [].{
 	# glyph budget, up to four lines and cut past them; flipped left when
 	# the cursor nears the right edge. A projected day says so in its
 	# header and reads its load as the plan's, and a day holding a session
-	# the engine could not price says that rather than showing a load.
+	# the engine could not price says that rather than showing a load; it
+	# carries no done line, since nothing on it has been done yet.
 	tip_card : Ui.Model, Geom, U64, Db.Point, Scene.Measure -> { box : Labels.Rect, lines : List(Labels.Label(Scene.Item)) }
 	tip_card = |model, g, i, hp, measure| {
 		hx = x_at(g, i)
 		day = (List.get(g.days, i)) ?? ""
 		tip_w = 240.0
-		note_lines = Wrap.fit(Db.note_for(model.day_notes, day), Wrap.cols_for(tip_w - 20.0, 6.7), 4)
+		planned = proj_day(model, g, i)
+		note_lines =
+			match planned {
+				Ok(_) => []
+				Err(_) => Wrap.fit(Db.note_for(model.day_notes, day), Wrap.cols_for(tip_w - 20.0, 6.7), 4)
+			}
 		tip_h = 107.0 + U64.to_f32(List.len(note_lines)) * 14.0 + 9.0
 		tip_x = if (hx + 14.0 + tip_w > g.left + g.pw) (hx - 14.0 - tip_w) else hx + 14.0
-		tip_y = g.top + 8.0
+		# under the projection key's two rows when the board draws one, so a
+		# card over the projected days never covers the caption that reads them
+		tip_y = if (g.n > g.meas) g.top + key_rows_h + 8.0 else g.top + 8.0
 		box = { x: tip_x, y: tip_y, w: tip_w, h: tip_h }
 		fix = |it, x, y, align| Scene.fixed(measure, it, { x, y, align }, box)
-		planned = proj_day(model, g, i)
 		load_row = match planned {
 			Ok(pd) => { lbl: "Planned load", v: planned_load_text(pd) }
 			Err(_) => { lbl: "Load", v: Db.fmt_f(hp.tss) }
@@ -684,23 +851,14 @@ Board :: [].{
 				List.for_each!(
 					List.map_with_index(g.data, |p, i| { i, v: value_of(p, sel) }),
 					|cur|
-						if U64.to_f32(cur.i) < limit {
+						if U64.to_f32(cur.i) < limit and cur.i + 1 < g.meas {
 							match List.get(g.data, cur.i + 1) {
-								Ok(nxt) => {
-									a = { x: x_at(g, cur.i), y: y_at(g, cur.v) }
-									b = { x: x_at(g, cur.i + 1), y: y_at(g, value_of(nxt, sel)) }
-									# from the last measured day on, the line is the projection
-									if cur.i + 1 >= g.meas {
-										List.for_each!(dashes(a, b, 5.0, 4.0), |d| frame.line!({ start: d.a, end: d.b, stroke: Draw.stroke(col, 2) }))
-									} else {
-										frame.line!({ start: a, end: b, stroke: Draw.stroke(col, 2) })
-									}
-								}
-
+								Ok(nxt) => frame.line!({ start: { x: x_at(g, cur.i), y: y_at(g, cur.v) }, end: { x: x_at(g, cur.i + 1), y: y_at(g, value_of(nxt, sel)) }, stroke: Draw.stroke(col, 2) })
 								Err(_) => {}
 							}
 						},
 				)
+				List.for_each!(dashes_along(proj_line(g, sel, limit), 5.0, 4.0), |d| frame.line!({ start: d.a, end: d.b, stroke: Draw.stroke(col, 2) }))
 			}
 			draw_line!(2, tsb_c)
 			draw_line!(1, atl_c)
@@ -796,13 +954,19 @@ expect {
 		and at({ boxes: [bar(870.0), bar(80.0)], segs: [] }) == [64.0 + 830.0 - 6.0 - 830.0 / 6.0 - 55.0]
 }
 
-# a dashed segment: dashes of `on` from its start with `off` between, the
-# last cut at the segment's end, and none for a segment of no length
+# a dashed line: dashes of `on` from its start with `off` between, the
+# last cut at the line's end, none for a line of no length; the rhythm is
+# measured along the whole line, so a corner splits the dash it falls in
+# and the next segment takes up the pattern where the last left it
 expect {
-	ds = Board.dashes({ x: 10.0, y: 50.0 }, { x: 30.0, y: 50.0 }, 5.0, 4.0)
-	List.map(ds, |d| { a: d.a.x, b: d.b.x }) == [{ a: 10.0, b: 15.0 }, { a: 19.0, b: 24.0 }, { a: 28.0, b: 30.0 }]
-		and List.all(ds, |d| d.a.y == 50.0 and d.b.y == 50.0)
-		and List.is_empty(Board.dashes({ x: 10.0, y: 50.0 }, { x: 10.0, y: 50.0 }, 5.0, 4.0))
+	near = |a, b| (a - b).abs() < 0.001
+	flat = |ds| List.map(ds, |d| [d.a.x, d.a.y, d.b.x, d.b.y])
+	same = |ds, want| List.len(ds) == List.len(want) and List.all(List.map2(flat(ds), want, |got, w| List.len(got) == 4 and List.all(List.map2(got, w, near), |ok| ok)), |ok| ok)
+	same(Board.dashes_along([{ x: 10.0, y: 50.0 }, { x: 30.0, y: 50.0 }], 5.0, 4.0), [[10.0, 50.0, 15.0, 50.0], [19.0, 50.0, 24.0, 50.0], [28.0, 50.0, 30.0, 50.0]])
+		and List.is_empty(Board.dashes_along([{ x: 10.0, y: 50.0 }, { x: 10.0, y: 50.0 }], 5.0, 4.0))
+		and List.is_empty(Board.dashes_along([{ x: 10.0, y: 50.0 }], 5.0, 4.0))
+		and same(Board.dashes_along([{ x: 0.0, y: 0.0 }, { x: 3.0, y: 0.0 }, { x: 3.0, y: 10.0 }], 5.0, 4.0), [[0.0, 0.0, 3.0, 0.0], [3.0, 0.0, 3.0, 2.0], [3.0, 6.0, 3.0, 10.0]])
+		and same(Board.dashes_along([{ x: 0.0, y: 0.0 }, { x: 7.0, y: 0.0 }, { x: 7.0, y: 10.0 }], 5.0, 4.0), [[0.0, 0.0, 5.0, 0.0], [7.0, 2.0, 7.0, 7.0]])
 }
 
 # the key names the dashed part and how many sessions are priced; a
