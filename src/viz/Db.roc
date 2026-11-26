@@ -913,39 +913,63 @@ Db :: [].{
 			}
 		}
 
-	# the coach corner: the newest directive (consumed or not), timestamped
-	load_bus_note! : Sqlite.Db => Str
-	load_bus_note! = |db| {
-		ensure_bus!(db)
-		match db.query!("SELECT CAST(strftime('%m-%d %H:%M', created_at, 'localtime') AS TEXT) AS at, CAST(COALESCE(view, -1) AS INTEGER) AS v, CAST(COALESCE(range, -1) AS INTEGER) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd FROM viz_directives ORDER BY id DESC LIMIT 1", []) {
-			Err(_) => "no directives yet"
+	# The coach corner's state: no directive has ever been written, the
+	# newest one described, or a read of the bus that failed. Only the first
+	# draws nothing; a failed read is not an empty table.
+	BusNote : [NoDirective, Note(Str), Unreadable]
+
+	# the newest-row read the corner makes, over any row type: a failed query
+	# is Unreadable, no row is NoDirective, a row is its description
+	bus_note_from : Try(List(r), e), (r -> Str) -> BusNote
+	bus_note_from = |res, describe|
+		match res {
+			Err(_) => Unreadable
 			Ok(rows) => match List.first(rows) {
-				Err(_) => "no directives yet"
-				Ok(r) => {
-					at = match r.str("at") {
-						Ok(x) => x
-						Err(_) => ""
-					}
-					v = match r.i64("v") {
-						Ok(x) => x
-						Err(_) => -1
-					}
-					rg = match r.i64("rg") {
-						Ok(x) => x
-						Err(_) => -1
-					}
-					cd = match r.str("cd") {
-						Ok(x) => x
-						Err(_) => ""
-					}
-					vn = if (v == 0) "form" else if (v == 1) "power" else if (v == 2) "trace" else if (v == 3) "table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else if (v == 8) "career" else if (v == 9) "lifts" else if (v == 10) "map" else if (v == 11) "map heat" else if (v == 12) "map play" else if (v >= 0) "view ${I64.to_str(v)} (ignored)" else ""
-					rgp = if (rg > 0) "${I64.to_str(rg)}d" else ""
-					joined = Str.join_with(List.keep_if([vn, rgp], |s2| s2 != ""), " / ")
-					parts = if (joined == "") "steer" else joined
-					if (cd != "") "${at}  ->  ${parts} @ ${cd}" else "${at}  ->  ${parts}"
-				}
+				Err(_) => NoDirective
+				Ok(r) => Note(describe(r))
 			}
 		}
+
+	# one directive told as the corner tells it: when it was written, the
+	# view and range it asked for, and the day it put the cursor on. View -1
+	# and range -1 are absent fields; a view the window does not draw is
+	# named as ignored.
+	directive_text : { at : Str, view : I64, range : I64, cursor_day : Str } -> Str
+	directive_text = |d| {
+		v = d.view
+		vn = if (v == 0) "form" else if (v == 1) "power" else if (v == 2) "trace" else if (v == 3) "table" else if (v == 4) "plan" else if (v == 5) "heat" else if (v == 6) "zones" else if (v == 7) "ramp" else if (v == 8) "career" else if (v == 9) "lifts" else if (v == 10) "map" else if (v == 11) "map heat" else if (v == 12) "map play" else if (v >= 0) "view ${I64.to_str(v)} (ignored)" else ""
+		rgp = if (d.range > 0) "${I64.to_str(d.range)}d" else ""
+		joined = Str.join_with(List.keep_if([vn, rgp], |s2| s2 != ""), " / ")
+		parts = if (joined == "") "steer" else joined
+		if (d.cursor_day != "") "${d.at}  ->  ${parts} @ ${d.cursor_day}" else "${d.at}  ->  ${parts}"
+	}
+
+	# the coach corner: the newest directive (consumed or not), timestamped
+	load_bus_note! : Sqlite.Db => BusNote
+	load_bus_note! = |db| {
+		ensure_bus!(db)
+		bus_note_from(
+			db.query!("SELECT CAST(strftime('%m-%d %H:%M', created_at, 'localtime') AS TEXT) AS at, CAST(COALESCE(view, -1) AS INTEGER) AS v, CAST(COALESCE(range, -1) AS INTEGER) AS rg, CAST(COALESCE(cursor_day, '') AS TEXT) AS cd FROM viz_directives ORDER BY id DESC LIMIT 1", []),
+			|r| {
+				at = match r.str("at") {
+					Ok(x) => x
+					Err(_) => ""
+				}
+				view = match r.i64("v") {
+					Ok(x) => x
+					Err(_) => -1
+				}
+				range = match r.i64("rg") {
+					Ok(x) => x
+					Err(_) => -1
+				}
+				cursor_day = match r.str("cd") {
+					Ok(x) => x
+					Err(_) => ""
+				}
+				directive_text({ at, view, range, cursor_day })
+			},
+		)
 	}
 
 	# a year of (day, load, weekday) for the heatmap grid, oldest first, plus
@@ -1297,6 +1321,16 @@ Db :: [].{
 	note_for = |notes, dy|
 		List.fold(notes, "rest day", |acc, x| if (x.day == dy) x.note else acc)
 
+	# a session's numbers line in the detail panel: minutes, distance, its
+	# load, and normalized power when a meter measured it. The load is the
+	# session's under whichever model scored it (power or HR TSS, session-RPE
+	# for a rated lift), so the line names it load, never TSS.
+	stats_line : { mins : I64, dist : Str, load : I64, np : I64 } -> Str
+	stats_line = |s| {
+		head = "${num_unit(s.mins, "min")}  ${s.dist}  ${num_unit(s.load, "load")}"
+		if (s.np > 0) "${head}  ${num_unit(s.np, "w")} np" else head
+	}
+
 	# one day's full story for the detail panel: each activity with its type,
 	# duration, distance and load - pre-formatted lines, coach-legible, in the
 	# athlete's own units (distance arrives in SI metres and converts here)
@@ -1319,7 +1353,7 @@ Db :: [].{
 		mins = secs // 60
 		dk = Fmt.tenths((Units.dist_value(units, dist_m) * 10.0).round_to_i64_try().ok_or(0))
 		du = Units.dist_unit(units)
-		stats = if (np > 0) "${num_unit(mins, "min")}  ${dk}${du}  ${num_unit(tss, "tss")}  ${num_unit(np, "w")} np" else "${num_unit(mins, "min")}  ${dk}${du}  ${num_unit(tss, "tss")}"
+		stats = stats_line({ mins, dist: "${dk}${du}", load: tss, np })
 		# if100 is intensity_factor * 100 rounded: 98 -> "IF 0.98", 105 -> "IF 1.05"
 		p1 = if (if100 > 0) "IF ${Fmt.hundredths(if100)}" else ""
 		p2 = if (hr > 0) "${I64.to_str(hr)} bpm avg" else ""
@@ -2522,3 +2556,22 @@ expect {
 	up == ["ALTER TABLE map_tiles ADD COLUMN used INTEGER NOT NULL DEFAULT 0"] and Db.tiles_upgrade(List.append(old, "used")) == []
 		and Str.contains(Db.tiles_ddl, "used INTEGER NOT NULL") and Str.contains(Db.tile_sizes_sql, "used AS u")
 }
+
+# the coach corner's read: a failed query is not an empty table, no row is
+# no directive, and a row is told by its description
+expect Db.bus_note_from(Err(Locked), |r| r) == Unreadable
+expect Db.bus_note_from(Ok([]), |r| r) == NoDirective
+expect Db.bus_note_from(Ok(["newest", "older"]), |r| r) == Note("newest")
+
+# a directive names its view, range and cursor day; an absent field drops
+# out, a view the window does not draw is named as ignored, and a directive
+# naming nothing is a bare steer
+expect Db.directive_text({ at: "11-12 08:14", view: 4, range: 30, cursor_day: "" }) == "11-12 08:14  ->  plan / 30d"
+expect Db.directive_text({ at: "11-12 08:14", view: 0, range: -1, cursor_day: "2026-11-10" }) == "11-12 08:14  ->  form @ 2026-11-10"
+expect Db.directive_text({ at: "11-12 08:14", view: 42, range: -1, cursor_day: "" }) == "11-12 08:14  ->  view 42 (ignored)"
+expect Db.directive_text({ at: "11-12 08:14", view: -1, range: -1, cursor_day: "" }) == "11-12 08:14  ->  steer"
+
+# a session's numbers line names its load as load, and adds normalized
+# power only when a meter measured it
+expect Db.stats_line({ mins: 62, dist: "42.1km", load: 85, np: 230 }) == "62 min  42.1km  85 load  230 w np"
+expect Db.stats_line({ mins: 45, dist: "0.0km", load: 1250, np: 0 }) == "45 min  0.0km  1,250 load"

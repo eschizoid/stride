@@ -10,7 +10,8 @@ import Ui
 
 Heat :: [].{
 	# The contributions-style load calendar: one cell per day, columns are
-	# Monday-started weeks, intensity is TSS against the shown window's max.
+	# Monday-started weeks, intensity is the day's load against the shown
+	# window's max.
 	# As many weeks as the width holds, newest at the right edge.
 
 	cell : F32
@@ -90,14 +91,21 @@ Heat :: [].{
 		d1 == 48 and d2 >= 49 and d2 <= 55
 	}
 
+	# a day told on one line: its date, its load, and its session note when
+	# it has one. The day's load blends TSS with session-RPE load, so it is
+	# named load.
+	tip_text : Db.HeatDay, Str -> Str
+	tip_text = |h, note| {
+		head = "${h.day}   ${Db.num_unit(h.tss, "load")}"
+		if (note == "rest day") head else "${head}   ${note}"
+	}
+
 	# the hovered cell's day, told on one line in a card under the grid
 	tip : Ui.Model, Scene.Measure -> Try({ box : Labels.Rect, lines : List(Labels.Label(Scene.Item)) }, [NoHover])
 	tip = |model, measure|
 		match List.find_first((layout(model)).cells, |c| model.mouse_x >= c.x and model.mouse_x < c.x + cell and model.mouse_y >= c.y and model.mouse_y < c.y + cell) {
 			Ok(c) => {
-				note = Db.note_for(model.day_notes, c.h.day)
-				# the note joins only when the day actually has one
-				line = if (note == "rest day") ("${c.h.day}   ${Db.num_unit(c.h.tss, "tss")}") else "${c.h.day}   ${Db.num_unit(c.h.tss, "tss")}   ${note}"
+				line = tip_text(c.h, Db.note_for(model.day_notes, c.h.day))
 				short = if (Str.count_utf8_bytes(line) > 70) (Str.concat(Str.from_utf8_lossy(List.take_first(Str.to_utf8(line), 68)), "..")) else line
 				box = { x: grid_x, y: grid_y + 7.0 * step + 18.0, w: model.win.w - 132.0, h: 26.0 }
 				Ok({ box, lines: [Scene.fixed(measure, Scene.data(short, 12.0, Color.white), { x: 108.0, y: box.y + 6.0, align: Left }, box)] })
@@ -203,3 +211,7 @@ Heat :: [].{
 expect Heat.day_labels == ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 # a month's first Monday falls on day 01 to 07 and on no other
 expect Heat.first_monday("2026-11-02") and Heat.first_monday("2026-09-07") and !(Heat.first_monday("2026-11-09")) and !(Heat.first_monday("2026-10-31"))
+# a hovered day reads its date and its load as load, and its session note
+# only when it has one
+expect Heat.tip_text({ day: "2026-11-10", tss: 74, dow: 2 }, "rest day") == "2026-11-10   74 load"
+expect Heat.tip_text({ day: "2026-11-10", tss: 1250, dow: 2 }, "Morning Ride") == "2026-11-10   1,250 load   Morning Ride"

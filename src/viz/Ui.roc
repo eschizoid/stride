@@ -222,7 +222,7 @@ Ui :: [].{
 		plan : List(Db.PlanRow),
 		week_tss : { this : I64, last : I64 },
 		plan_week : { done : I64, total : I64 },
-		bus_note : Str,
+		bus_note : Db.BusNote,
 		plan_title : Text.Prepared,
 		plan_hint : Text.Prepared,
 		nav : List({ p : Text.Prepared, v : U8 }),

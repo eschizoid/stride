@@ -9,7 +9,7 @@ the SQLite — no export step, no baked data, nothing the CLI has to prepare.
 
 - **Fitness** (CTL, blue, filled), **fatigue** (ATL, violet), **form** (TSB,
   teal — the brand accent) over the selected range.
-- Daily load (TSS) as a rug along the bottom, on its own scale.
+- Daily load as a rug along the bottom, on its own scale.
 - Y-axis labels, current values at the line ends, and the next planned event:
   a dashed in-plot marker when its date is inside the plotted window, or the
   event tile's countdown (in the KPI row) when it is beyond it. A future event
@@ -109,7 +109,11 @@ stated for it (stored on the session by `complete` and refreshed by
 instead. The quest strip carries the week's done count and one pip per
 weekday colored by that day's status, with a substitute day distinct from a
 plain skip; the bottom strip states this week's load beside last week's,
-and the coach corner shows the newest bus directive. Steerable like
+and the coach corner shows the newest bus directive: no line until a coach
+has written one, and "directives unreadable" when the bus cannot be read.
+The strip, the table's day detail and the heat card all say load, never
+TSS: a session scores in TSS or session-RPE load by its model, and a
+day's or a week's total blends both. Steerable like
 everything else: a directive with view 4 opens it. "Today" here, and the
 week it lists, is the athlete's civil day resolved the way the CLI resolves
 it (config `timezone`, then `utc_offset_minutes`, then UTC), not the machine
@@ -120,11 +124,11 @@ machine is set.
 
 The year mode is a year of training at a glance: a contributions-style
 calendar, one cell per day, Monday-started weeks as columns, cell intensity
-scaled to the biggest TSS day in the shown window. As many weeks as the
+scaled to the biggest load day in the shown window. As many weeks as the
 window width holds, newest at the right edge, month ticks along the top.
-Event days already ridden wear a white ring (the grid is history; the
+Event days already ridden wear a gold ring (the grid is history; the
 plan view carries the coming one). Hovering a cell reads the
-day back - date, TSS, and the session note when there is one. A directive
+day back - date, load, and the session note when there is one. A directive
 with view 5 opens it.
 
 ## The weeks tab: zones and load
@@ -430,7 +434,7 @@ and resumes, and the clock starts over each time the mode opens.
 | `Enter` / click the card (map view) | open the card's session on the trace view |
 | `[` / `]` (trace view) | older / newer session among those the active sport filter admits - every one is cached at load, so a switch is a memory read, not a query |
 | `←` / `→` (table view) | scroll the window through the whole series (rows fill the window height) |
-| click a date (table view) | open that day's detail panel: sessions, minutes, km, TSS, NP |
+| click a date (table view) | open that day's detail panel: sessions, minutes, km, load, NP |
 | window edges | drag to resize; every view reflows live (980x600 floor) |
 | `S` | save a PNG of the current view into `captures/` under the window's working directory |
 | mouse hover | crosshair + per-day dots + a top-right readout (form board) |
@@ -1230,7 +1234,8 @@ TRAINING — but it is the only way to see whether the drawing itself is right.
 Code can type-check and have every data path diffed against the engine and
 still overprint one label on another, render a glyph the font lacks as `?`,
 format a count as `3.0`, or describe a line in a comment it never draws. The
-label gate catches the overlaps; a capture is how the rest is seen.
+label gate catches the overlaps and a load named TSS; a capture is how the
+rest is seen.
 
 ![app window](img/form-board.png)
 
