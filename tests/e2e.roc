@@ -118,6 +118,12 @@ respond! = |req, _ctx| {
 				}
 			_ => ""
 		}
+	# E2E_SLOW_READ_MS: every API read is answered that many milliseconds late,
+	# so a read outlives a test day shorter than that
+	match U64.from_str(env_or!("E2E_SLOW_READ_MS", "")) {
+		Ok(ms) if Str.contains(uri, "/api/v3/") => Sleep.millis!(ms)
+		_ => {}
+	}
 	resp = mock_response!(uri)?
 	Ok(Server.respond(with_rate_headers!(uri, resp)))
 }
@@ -1542,7 +1548,7 @@ run_stops! = || {
 		# 25 seconds, so a run that waited again and again fails this arm (alarm, exit
 		# 142) instead of holding the suite.
 		_ = sql!(db, "DELETE FROM streams;")
-		rl_rc = Str.trim(sh!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' STRIDE_WINDOW_SECONDS=2 perl -e 'alarm 25; exec @ARGV' '${bin}' sync >'${bo}' 2>'${home}/rl.err'; echo $?"))
+		rl_rc = exit_status!("HOME='${home}' STRIDE_FORMAT=human STRIDE_API_BASE='${base}' STRIDE_WINDOW_SECONDS=2 perl -e 'alarm 25; exec @ARGV' '${bin}' sync >'${bo}' 2>'${home}/rl.err'")
 		check!("a refused window waited for once ends the run within its bound (exit ${rl_rc})", rl_rc == "0")?
 		rl_human = Str.trim(sh!("cat '${bo}'"))
 		check!("a human run waits out the refused window once", Str.contains(sh!("cat '${home}/rl.err'"), "waiting for Strava"))?
@@ -1638,7 +1644,8 @@ run_stops! = || {
 # another app already spent; E2E_PLAIN_BASE is the main mock, which sends none;
 # E2E_STRENGTH_BASE lists three strength Workouts with descriptions;
 # E2E_HIGH_LIMIT_BASE reports a limit of 300,3000 and E2E_LOW_LIMIT_BASE one of
-# 100,10.
+# 100,10; E2E_SLOW_BASE is the main mock's fixture, every read answered 1.1
+# seconds late.
 run_pace! : () => Try({}, _)
 run_pace! = || {
 	reset_checks!({})?
@@ -1650,16 +1657,19 @@ run_pace! = || {
 	sbase = env_or!("E2E_STRENGTH_BASE", "")
 	hibase = env_or!("E2E_HIGH_LIMIT_BASE", "")
 	lobase = env_or!("E2E_LOW_LIMIT_BASE", "")
+	slowbase = env_or!("E2E_SLOW_BASE", "")
 	_ = wait_ready!(base, 50)
 	check!("the two-second-window mock came up on ${base}", mock_up!(base))?
 	_ = wait_ready!(hbase, 50)
 	check!("the header mock came up on ${hbase}", mock_up!(hbase))?
-	# a home with a token, zones, and six activities beyond the mock's two, each
-	# answered 404 for its streams and route, so a first sync owes sixteen reads
+	# a home with a token and zones, and six activities beyond the mock's two,
+	# each answered 404 for its streams and route, so a first sync owes sixteen
+	# reads
+	token_rows = "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','mock-access'),('strava_refresh_token','mock-refresh'),('strava_expires_at','9999999999'),('hr_z1_max','123'),('hr_z2_max','153'),('hr_z3_max','168'),('hr_z4_max','183');"
 	seeded! = |_| {
 		h = Str.trim(sh!("mktemp -d"))
 		_ = sh!("HOME='${h}' '${bin}' init >/dev/null 2>&1")
-		_ = sql!("${h}/.stride/db.sqlite", "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','mock-access'),('strava_refresh_token','mock-refresh'),('strava_expires_at','9999999999'),('hr_z1_max','123'),('hr_z2_max','153'),('hr_z3_max','168'),('hr_z4_max','183'); INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) WITH RECURSIVE seq(x) AS (SELECT 901 UNION ALL SELECT x+1 FROM seq WHERE x<906) SELECT x,'seed','Ride','2026-08-01T10:00:00Z',3600,1000.0,0.0,NULL FROM seq;")
+		_ = sql!("${h}/.stride/db.sqlite", "${token_rows} INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) WITH RECURSIVE seq(x) AS (SELECT 901 UNION ALL SELECT x+1 FROM seq WHERE x<906) SELECT x,'seed','Ride','2026-08-01T10:00:00Z',3600,1000.0,0.0,NULL FROM seq;")
 		h
 	}
 	owed! = |h| Str.trim(sh!("HOME='${h}' STRIDE_FORMAT=json '${bin}' doctor 2>/dev/null | jq -r '.data.pending_streams + .data.pending_routes'"))
@@ -1669,7 +1679,7 @@ run_pace! = || {
 	# ── a first sync across several windows, waiting, to the end
 	w = seeded!({})
 	w_start = str_to_i64(Str.trim(sh!("date +%s")))
-	w_rc = Str.trim(sh!("HOME='${w}' STRIDE_API_BASE='${base}' ${seams} '${bin}' sync >'${w}/out' 2>'${w}/err'; echo $?"))
+	w_rc = exit_status!("HOME='${w}' STRIDE_API_BASE='${base}' ${seams} '${bin}' sync >'${w}/out' 2>'${w}/err'")
 	w_elapsed = str_to_i64(Str.trim(sh!("date +%s"))) - w_start
 	w_out = Str.trim(sh!("cat '${w}/out'"))
 	w_err = sh!("cat '${w}/err'")
@@ -1826,13 +1836,36 @@ run_pace! = || {
 
 	# ── a human first sync waits through the daily reset as through a window: a
 	# test day of three seconds allowing six reads, so seventeen reads span three
-	# days, and the run ends with everything fetched and analyzed
+	# days, and the run ends with everything fetched and analyzed. Its waits are
+	# for two test days at most, so it is bounded at 25 seconds: a run that waits
+	# for anything longer fails this check (alarm, exit 142) inside the harness's
+	# own command deadline, which would leave no exit status to report.
 	dw = seeded!({})
-	dw_rc = Str.trim(sh!("HOME='${dw}' STRIDE_API_BASE='${pbase}' STRIDE_DAY_SECONDS=3 STRIDE_READS_PER_DAY=6 '${bin}' sync >'${dw}/out' 2>'${dw}/err'; echo $?"))
+	dw_start = str_to_i64(Str.trim(sh!("date +%s")))
+	dw_rc = exit_status!("HOME='${dw}' STRIDE_API_BASE='${pbase}' STRIDE_DAY_SECONDS=3 STRIDE_READS_PER_DAY=6 perl -e 'alarm 25; exec @ARGV' '${bin}' sync >'${dw}/out' 2>'${dw}/err'")
+	dw_elapsed = str_to_i64(Str.trim(sh!("date +%s"))) - dw_start
 	dw_err = sh!("cat '${dw}/err'")
-	check!("a human sync spanning daily resets runs to its end in one command (exit ${dw_rc})", dw_rc == "0" and owed!(dw) == "0" and scored!(dw) == "8/8" and Str.contains(Str.trim(sh!("cat '${dw}/out'")), "; everything analyzed"))?
+	check!("a human sync spanning daily resets runs to its end in one command (exit ${dw_rc}, ${I64.to_str(dw_elapsed)} s)", dw_rc == "0" and owed!(dw) == "0" and scored!(dw) == "8/8" and Str.contains(Str.trim(sh!("cat '${dw}/out'")), "; everything analyzed"))?
 	check!("...waiting for the daily allowance on the same line a window's wait takes", Str.contains(dw_err, "daily allowance     ") and Str.contains(dw_err, " left") and Str.contains(dw_err, "returned "))?
 	_ = sh!("rm -rf '${dw}'")
+
+	# ── a day that ends while the read that filled it is in flight: a mock
+	# answering every read 1.1 seconds late, against a test day of one second
+	# allowing one read, so each day's one read outlives it. Every wait is for
+	# the day that read was counted in, which has already ended, and none for
+	# the read window, whose next mark is a quarter-hour away. Bounded at 25
+	# seconds, so a run that waits for that mark fails here (alarm, exit 142),
+	# or names that wait if the mark is near.
+	_ = wait_ready!(slowbase, 50)
+	check!("the slow mock came up on ${slowbase}", mock_up!(slowbase))?
+	sd = Str.trim(sh!("mktemp -d"))
+	_ = sh!("HOME='${sd}' '${bin}' init >/dev/null 2>&1")
+	_ = sql!("${sd}/.stride/db.sqlite", token_rows)
+	sd_rc = exit_status!("HOME='${sd}' STRIDE_API_BASE='${slowbase}' STRIDE_DAY_SECONDS=1 STRIDE_READS_PER_DAY=1 perl -e 'alarm 25; exec @ARGV' '${bin}' sync >'${sd}/out' 2>'${sd}/err'")
+	sd_err = sh!("cat '${sd}/err'")
+	check!("a day ending while its read is in flight is waited for as that day, to the end of the run (exit ${sd_rc})", sd_rc == "0" and owed!(sd) == "0" and scored!(sd) == "2/2" and Str.contains(sd_err, "daily allowance     returned "))?
+	check!("...never as the read window's next mark", !(Str.contains(sd_err, "waiting for Strava")))?
+	_ = sh!("rm -rf '${sd}'")
 
 	# ── ...and a day that is still spent once its reset has passed (here Strava
 	# reporting the day's reads spent, as another app on the token would) ends the
@@ -1841,7 +1874,7 @@ run_pace! = || {
 	# (alarm, exit 142) instead of holding the suite.
 	gd = seeded!({})
 	gd_start = str_to_i64(Str.trim(sh!("date +%s")))
-	gd_rc = Str.trim(sh!("HOME='${gd}' STRIDE_API_BASE='${lobase}' STRIDE_DAY_SECONDS=2 perl -e 'alarm 25; exec @ARGV' '${bin}' sync >'${gd}/out' 2>/dev/null; echo $?"))
+	gd_rc = exit_status!("HOME='${gd}' STRIDE_API_BASE='${lobase}' STRIDE_DAY_SECONDS=2 perl -e 'alarm 25; exec @ARGV' '${bin}' sync >'${gd}/out' 2>/dev/null")
 	gd_elapsed = str_to_i64(Str.trim(sh!("date +%s"))) - gd_start
 	check!("a day still spent after its reset ends the run after one wait (exit ${gd_rc}, ${I64.to_str(gd_elapsed)} s)", gd_rc == "0" and Str.contains(Str.trim(sh!("cat '${gd}/out'")), "was still spent after its reset, so another app on this token may be using it") and gd_elapsed < 20)?
 	_ = sh!("rm -rf '${gd}'")
@@ -1856,7 +1889,7 @@ run_pace! = || {
 	_ = sh!("HOME='${nq}' STRIDE_FORMAT=json STRIDE_API_BASE='${pbase}' '${bin}' sync >/dev/null 2>&1")
 	nq_day = Str.trim(sh!("date -u +%s | awk '{ print int($1 / 86400) }'"))
 	_ = sql!("${nq}/.stride/db.sqlite", "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_reads_day','${nq_day}'),('strava_reads_today','1000');")
-	nq_rc = Str.trim(sh!("HOME='${nq}' STRIDE_API_BASE='${pbase}' perl -e 'alarm 25; exec @ARGV' '${bin}' sync >'${nq}/out' 2>/dev/null; echo $?"))
+	nq_rc = exit_status!("HOME='${nq}' STRIDE_API_BASE='${pbase}' perl -e 'alarm 25; exec @ARGV' '${bin}' sync >'${nq}/out' 2>/dev/null")
 	nq_out = Str.trim(sh!("cat '${nq}/out'"))
 	check!("a routine human sync on a spent day with nothing owed ends at once, naming the time (exit ${nq_rc})", nq_rc == "0" and owed!(nq) == "0" and Str.contains(nq_out, "this run made no request") and Str.contains(nq_out, "it returns at "))?
 	# ...and in a spent quarter-hour, the run's first page refused before it is
@@ -1865,7 +1898,7 @@ run_pace! = || {
 	_ = sh!("s=$(( $(date +%s) % 900 )); if [ $s -gt 870 ]; then sleep $(( 902 - s )); fi")
 	nq_mark = Str.trim(sh!("date -u +%s | awk '{ print int($1 / 900) * 900 }'"))
 	_ = sql!("${nq}/.stride/db.sqlite", "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_reads_today','95'),('strava_reads_quarter_mark','${nq_mark}'),('strava_reads_quarter','95');")
-	nw_rc = Str.trim(sh!("HOME='${nq}' STRIDE_API_BASE='${pbase}' perl -e 'alarm 25; exec @ARGV' '${bin}' sync >'${nq}/out' 2>/dev/null; echo $?"))
+	nw_rc = exit_status!("HOME='${nq}' STRIDE_API_BASE='${pbase}' perl -e 'alarm 25; exec @ARGV' '${bin}' sync >'${nq}/out' 2>/dev/null")
 	nw_out = Str.trim(sh!("cat '${nq}/out'"))
 	check!("...and in a spent quarter-hour it ends at once, naming when the next window opens (exit ${nw_rc})", nw_rc == "0" and Str.contains(nw_out, "this run made no request") and Str.contains(nw_out, "the next window opens at "))?
 	_ = sh!("rm -rf '${nq}'")
@@ -1888,7 +1921,7 @@ run_pace! = || {
 	hl_q! = |key| Str.trim(sql!("${hl}/.stride/db.sqlite", "SELECT COALESCE((SELECT value FROM config WHERE key = '${key}'), 'none');"))
 	hl_mark = Str.trim(sh!("date -u +%s | awk '{ print int($1 / 900) * 900 }'"))
 	hl_sets = [hl_set!("strava_limit_app 1"), hl_set!("strava_limit_window 5000000000000000000"), hl_set!("strava_limit_day 5000000000000000000"), hl_set!("strava_reads_quarter_mark ${hl_mark}"), hl_set!("strava_reads_quarter 949")]
-	hl_rc = Str.trim(sh!("HOME='${hl}' STRIDE_FORMAT=json STRIDE_API_BASE='${pbase}' '${bin}' sync >'${hl}/out' 2>'${hl}/err'; echo $?"))
+	hl_rc = exit_status!("HOME='${hl}' STRIDE_FORMAT=json STRIDE_API_BASE='${pbase}' '${bin}' sync >'${hl}/out' 2>'${hl}/err'")
 	check!("a huge kept limit paces at the ceiling with no crash: one read from 949 to its cap of 950 (exit ${hl_rc}, ${hl_q!("strava_reads_quarter")} this quarter-hour, ${hl_q!("strava_reads_today")} today)", List.all(hl_sets, |rc| Str.trim(rc) == "0") and hl_rc == "0" and hl_q!("strava_reads_quarter") == "950" and hl_q!("strava_reads_today") == "1" and !(Str.contains(sh!("cat '${hl}/err'"), "overflow")))?
 	# ...and a negative quarter-hour count beside it reads as the quarter-hour
 	# spent: the run asks for nothing, and the row is rewritten as the held
@@ -1955,7 +1988,7 @@ run_pace! = || {
 	check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(56)?
+	checks_ran_exactly!(59)?
 	Stdout.line!("PACE E2E CHECKS PASS")
 }
 
@@ -9233,6 +9266,43 @@ sh! = |script|
 		Ok(o) => o.stdout_utf8
 		Err(NonZeroExitCode(e)) => e.stdout_utf8_lossy
 		Err(_) => ""
+	}
+
+# The exit status of a shell line's last command, as a FAIL line should show
+# it. A status past 128 is the shell reporting a child killed by a signal, and
+# names the signal. When the shell reports no status, the reason is named
+# instead: the platform's command deadline ended the shell (Cmd's default, as
+# sh! sets none), its own exit code was lost, or it died before printing.
+exit_status! : Str => Str
+exit_status! = |script|
+	match Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", "${script}; echo $?"], OsStr.from_str)).exec_output!() {
+		Ok(o) => status_named(Str.trim(o.stdout_utf8), "0")
+		Err(NonZeroExitCode(e)) => status_named(Str.trim(e.stdout_utf8_lossy), e.exit_code.to_str())
+		Err(CommandTimedOut(t)) => "none: the harness's ${(t.timeout_ms // 1000).to_str()} s command deadline ended the shell"
+		Err(FailedToGetExitCode(_)) => "none: the shell's exit code was lost"
+		Err(_) => "none: the shell's output could not be read"
+	}
+
+# `printed` is what the shell's `echo $?` printed, `shell` the shell's own
+# exit code
+status_named : Str, Str -> Str
+status_named = |printed, shell|
+	match I64.from_str(printed) {
+		Ok(n) if n > 128 => "${printed}: killed by ${signal_name(n - 128)}"
+		Ok(_) => printed
+		Err(_) => "none: the shell exited ${shell} before printing it"
+	}
+
+signal_name : I64 -> Str
+signal_name = |n|
+	match n {
+		2 => "SIGINT"
+		6 => "SIGABRT, a crash"
+		9 => "SIGKILL"
+		11 => "SIGSEGV, a crash"
+		14 => "SIGALRM, the arm's alarm"
+		15 => "SIGTERM"
+		_ => "signal ${n.to_str()}"
 	}
 
 # run SQL against the db. The query is fed via a quoted heredoc so it can
