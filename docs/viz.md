@@ -223,7 +223,7 @@ view 7 opens it.
 Strength's own tab, the `lifts` pill (view 9, captured as `lifts.png`). Its headline is per lift: one row per exercise
 trained on at least two days with a weight logged, most-trained first, each
 with a sparkline of the heaviest weight it moved per day, the first and
-latest weights (whole pounds, or kilograms to one decimal: config `units` when set, else the unit most stored weights were entered in), and an up, flat or down mark (a move
+latest weights (at the precision they were entered at, 30 lb or 12.5 lb, in config `units` when set, else the unit most stored weights were entered in, metric on a tie; the rule `stride strength` prints with), and an up, flat or down mark (a move
 of more than 2% either way). Beside the lifts: the latest strength session's
 sets (when the newest session has none, the newest one that does, with a muted line naming the newer unlogged ones); twelve Monday-started
 weeks of strength sessions as bars split into sessions with sets logged and

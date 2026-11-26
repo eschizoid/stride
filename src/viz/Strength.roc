@@ -565,10 +565,14 @@ expect Strength.card_hint(0, 9, 12) == "3 more below" and Strength.card_hint(2, 
 # a rounding difference between sources draws flat; a real step keeps its size
 expect Strength.spark_span(11.3, 11.3398) > 1.6 and Strength.spark_span(9.0, 13.6) == 4.6
 
-# with `units` unset, logged whole-pound weights read in pounds, whole
-# pounds: the same two days `stride strength` prints "30 lb" and "35 lb"
-# for (pinned in the e2e suite)
+# with `units` unset, weights logged in pounds read in pounds at the
+# precision they were entered at: the same days `stride strength` prints
+# "30 lb", "35 lb" and "12.5 lb" for (pinned in the e2e suite)
 expect {
-	kgs = [13.6077711, 15.8757329]
-	Strength.lift_values(Db.mass_units("", kgs), [{ day: "a", kg: 13.6077711 }, { day: "b", kg: 15.8757329 }]) == "30 lb > 35 lb"
+	kgs = [13.6077711, 15.8757329, 5.669904625, 5.669904625]
+	units = Db.mass_units("", kgs)
+	Strength.lift_values(units, [{ day: "a", kg: 13.6077711 }, { day: "b", kg: 15.8757329 }]) == "30 lb > 35 lb"
+		and Strength.lift_values(units, [{ day: "a", kg: 5.669904625 }, { day: "b", kg: 5.669904625 }]) == "12.5 lb > 12.5 lb"
 }
+# a kilogram lifter on 5 and 10 kg reads kilograms, never "22 lb"
+expect Strength.lift_values(Db.mass_units("", [5.0, 10.0]), [{ day: "a", kg: 5.0 }, { day: "b", kg: 10.0 }]) == "5 kg > 10 kg"

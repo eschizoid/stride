@@ -1117,7 +1117,7 @@ expect Curve.empty_note("Rowing", []) == "no rowing power on record yet" and Cur
 # doctor` and `stride power-curve` print for the same sessions (pinned in
 # the e2e suite), never "no power"
 expect Curve.empty_note("Ride", ["Ride"]) == "cycling: estimated power only (no power meter)" and Curve.empty_note("Rowing", ["Ride"]) == "no rowing power on record yet"
-expect Curve.chip_label("StandUpPaddling") == "stand up paddling" and Curve.chip_label("pace:Hike") == "hike" and Curve.chip_label("pace:Rowing") == "row" and Curve.chip_label("pace:Run") == "run"
+expect Curve.chip_label("StandUpPaddling") == "stand up paddling" and Curve.chip_label("pace:Hike") == "hiking" and Curve.chip_label("pace:Rowing") == "row" and Curve.chip_label("pace:Run") == "run"
 expect Curve.empty_text("StandUpPaddling", 90, { secs: 3600, now: 0, prev: 0, ever: Bool.False, i: 3 }) == "no 60-minute session yet"
 # a chip widens to hold a long label and still ends 14 px short of the
 # range chips; a click anywhere on it names its curve

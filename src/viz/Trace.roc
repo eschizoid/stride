@@ -512,4 +512,4 @@ expect Trace.no_sets_note(Bool.False) == "no sets logged"
 expect Trace.panel_room(300.0, 1600.0) == 300.0
 expect Trace.panel_room(900.0, 1000.0) == 450.0
 expect Trace.panel_room(300.0, -50.0) == 0.0
-expect Trace.set_line(Metric, { exercise: "An Extremely Long Exercise Name That Keeps Going", sets: 3, reps: 8, kg: 10.0, hold_s: 0 }) == "An Extremely Long Exercise Na...  3x8 @ 10.0 kg"
+expect Trace.set_line(Metric, { exercise: "An Extremely Long Exercise Name That Keeps Going", sets: 3, reps: 8, kg: 10.0, hold_s: 0 }) == "An Extremely Long Exercise Na...  3x8 @ 10 kg"

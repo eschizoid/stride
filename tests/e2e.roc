@@ -8518,12 +8518,12 @@ b_window_agrees! = |ctx| {
 	human! = |args| stride_human!(wctx.bin, wctx.home, args)
 	# lift units: with `units` unset, two days logged in whole pounds read in
 	# pounds, whole pounds, as the window's lifts tab reads them
-	_ = sql!(wctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9901,'lift a','WeightTraining','${ago28}T07:00:00Z',2700,0),(9902,'lift b','Workout','${ago7}T07:00:00Z',2700,0); INSERT INTO strength_sets (activity_id, ordinal, exercise, sets, reps, weight_kg, source) VALUES (9901, 0, 'Floor Press', 3, 8, 13.6077711, 'strava'), (9902, 0, 'Floor Press', 3, 8, 15.8757329, 'strava');")
+	_ = sql!(wctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9901,'lift a','WeightTraining','${ago28}T07:00:00Z',2700,0),(9902,'lift b','Workout','${ago7}T07:00:00Z',2700,0); INSERT INTO strength_sets (activity_id, ordinal, exercise, sets, reps, weight_kg, source) VALUES (9901, 0, 'Floor Press', 3, 8, 13.6077711, 'strava'), (9902, 0, 'Floor Press', 3, 8, 15.8757329, 'strava'), (9901, 1, 'Hammer Curl', 3, 10, 5.669904625, 'strava'), (9902, 1, 'Hammer Curl', 3, 10, 5.669904625, 'strava');")
 	lifts = human!(["strength"])
-	check!("with units unset, strength reads whole-pound logs in pounds, as the lifts tab does (\"30 lb > 35 lb\")", Str.contains(lifts, "${ago28}  30 lb") and Str.contains(lifts, "${ago7}  35 lb") and !(Str.contains(lifts, "13.6 kg")))?
+	check!("with units unset, strength reads pound logs in pounds at their entered precision, as the lifts tab does (\"30 lb > 35 lb\", \"12.5 lb\")", Str.contains(lifts, "${ago28}  30 lb") and Str.contains(lifts, "${ago7}  35 lb") and Str.contains(lifts, "${ago7}  12.5 lb") and !(Str.contains(lifts, "13.6 kg")))?
 	# one plain name per sport: Workout and WeightTraining are one strength row
 	stats = human!(["stats"])
-	check!("stats names both strength spellings once, as \"strength\", the window's word for them", Str.contains(stats, "│ strength ") and !(Str.contains(stats, "Workout")) and !(Str.contains(stats, "WeightTraining")))?
+	check!("stats names each strength spelling in the window's plain words: a lift is strength, a generic Workout a workout", Str.contains(stats, "│ strength ") and Str.contains(stats, "│ workout ") and !(Str.contains(stats, "Workout")) and !(Str.contains(stats, "WeightTraining")))?
 	# shares: a week 81.5% easy reads 81, the window tile's 81/19
 	_ = sql!(wctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9903,'split week','Ride','2001-03-06T07:00:00Z',17244,100000); INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,pi_moderate_s,pi_hard_s,metrics_rev) VALUES (9903,200.0,200.0,14054,2845,345,1);")
 	week = human!(["review", "2001-03-05"])

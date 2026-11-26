@@ -218,30 +218,59 @@ Sports :: [].{
 	pace_tss_exponent = |sport|
 		if (Str.contains(Str.with_ascii_lowercased(sport), "swim")) 3.0 else 2.0
 
-	# A sport named in plain words, by its family: every ride spelling reads
-	# cycling and both strength spellings read strength, so one session has
+	# The spellings named on their own rather than by their family: a
+	# generic Workout can be anything, so it is a workout while it keeps the
+	# strength family's load rules; a hike is hiking, not walking; and an
+	# e-bike ride, outside the ride family's load rules, is still a ride.
+	own_names : List({ sport : Str, name : Str })
+	own_names = [
+		{ sport: "Workout", name: "workout" },
+		{ sport: "Hike", name: "hiking" },
+		{ sport: "EBikeRide", name: "e-bike ride" },
+	]
+
+	# A sport named in plain words: its own name when it has one, else its
+	# family's, where every ride spelling reads cycling, so one session has
 	# one name on every surface. A sport outside every family reads as its
 	# own words.
 	plain_name : Str -> Str
-	plain_name = |sport| {
-		fam = canonical(sport)
-		if (fam == "Run") "running"
-		else if (fam == "Ride") "cycling"
-		else if (fam == "Rowing") "rowing"
-		else if (fam == "Swim") "swimming"
-		else if (fam == "Walk") "walking"
-		else if (fam == "WeightTraining") "strength"
-		else words_of(fam)
-	}
+	plain_name = |sport|
+		match List.first(List.keep_if(own_names, |o| o.sport == sport)) {
+			Ok(o) => o.name
+			Err(_) => {
+				fam = canonical(sport)
+				if (fam == "Run") "running"
+				else if (fam == "Ride") "cycling"
+				else if (fam == "Rowing") "rowing"
+				else if (fam == "Swim") "swimming"
+				else if (fam == "Walk") "walking"
+				else if (fam == "WeightTraining") "strength"
+				else words_of(fam)
+			}
+		}
+
+	# whether a spelling has a plain name of its own or its family's, as
+	# opposed to reading as its own words
+	has_plain_name : Str -> Bool
+	has_plain_name = |sport| canonical(sport) == sport or List.any(own_names, |o| o.sport == sport) or canonical(sport) == "WeightTraining"
 
 	# a Strava sport spelling split into lower-case words:
 	# HighIntensityIntervalTraining reads high intensity interval training
 	words_of : Str -> Str
 	words_of = |s| Str.from_utf8_lossy(List.join(List.map_with_index(Str.to_utf8(s), |b, i| if (b >= 65 and b <= 90) (if (i == 0) [b + 32] else [32, b + 32]) else [b])))
 
-	expect plain_name("WeightTraining") == "strength" and plain_name("Workout") == "strength"
+	# The sports whose split reads as speed: every ride, the e-bike ride
+	# among them, since a rider's speed follows the terrain and nobody rides
+	# minutes per kilometre.
+	reads_speed : Str -> Bool
+	reads_speed = |sport| canonical(sport) == "Ride" or sport == "EBikeRide"
+
+	expect plain_name("WeightTraining") == "strength" and plain_name("Workout") == "workout" and class("Workout") == StrengthLike and canonical("Workout") == "WeightTraining"
+	expect plain_name("Hike") == "hiking" and plain_name("Walk") == "walking" and canonical("Hike") == "Walk"
+	expect plain_name("EBikeRide") == "e-bike ride" and reads_speed("EBikeRide") and canonical("EBikeRide") == "EBikeRide" and reads_speed("GravelRide") and !(reads_speed("Run"))
 	expect plain_name("Ride") == "cycling" and plain_name("GravelRide") == "cycling" and plain_name("VirtualRow") == "rowing"
 	expect plain_name("StandUpPaddling") == "stand up paddling" and plain_name("other") == "other" and words_of("TrailRun") == "trail run"
+	expect has_plain_name("Hike") and has_plain_name("Workout") and has_plain_name("Ride") and !(has_plain_name("TrailRun"))
 
 	# What a session whose only watts are Strava's estimate is said to have.
 	# Estimated watts are a model of speed and gradient, not a measurement,
