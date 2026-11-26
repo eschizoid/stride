@@ -922,8 +922,11 @@ case "$os $step" in
       { echo "::error::the windows launcher has no start line this probe can replace"; exit 1; }
     USERPROFILE="$(cygpath -w "$fake")" PATH="$fake/other:$PATH" cmd //C "$(cygpath -w "$fake/pkg/probe.bat")" </dev/null ||
       { echo "::error::the probe launcher failed"; exit 1; }
+    # where prints a path in its long form and mktemp may name the folder by
+    # its 8.3 short form, so both sides are compared in the long form
     found="$(head -1 "$fake/found.txt" 2>/dev/null | tr -d '\r')"
-    want="$(cygpath -w "$fake/pkg/bin/stride.exe")"
+    [ -n "$found" ] && found="$(cygpath -w -l "$found")"
+    want="$(cygpath -w -l "$fake/pkg/bin/stride.exe")"
     [ "${found,,}" = "${want,,}" ] ||
       { echo "::error::the launcher finds '$found' as stride, not the package's own $want"; exit 1; }
 
