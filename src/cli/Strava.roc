@@ -398,7 +398,7 @@ Strava :: [].{
 				ended = Db.now_secs!({})
 				match Drain.after_round({ stop: FromDrain(DailyCapReached), owed: owed_known!(path)?, progressed: False, after_wait, waits }) {
 					Wait => {
-						wait_for_window!(path, ended)?
+						wait_for_window!(path, load_reads!(path)?)?
 						sync_from!(path, token, how, settle!, waits, True)
 					}
 					Finish => {
@@ -555,8 +555,9 @@ Strava :: [].{
 	# drain, and routes after complete descriptions: all three draw on one read
 	# window, and a drain that stopped on it would spend its refusal a second time.
 	# The run's stop is whichever drain stopped it: a drain that never ran inherits
-	# the stop of the one before it. The wait is timed from the round's last read,
-	# not from the end of the analyze after it.
+	# the stop, and the counts, of the one before it. The wait is timed from the
+	# counts that stop was decided on, so neither the analyze after the round nor
+	# a period turning while its last read was in flight moves it.
 	rounds! : Str, Str, Bool, (Str => Try(Settled, _)), Bool, { after_wait : Bool, tally : Tally, seen : Seen } => Try({ stop : Drain.StopReason, tally : Tally, settled : Settled, ended : I64, again : Bool }, _)
 	rounds! = |path, token, all, settle!, waits, r| {
 		t = r.tally
@@ -564,12 +565,12 @@ Strava :: [].{
 		notes =
 			match pull.stopped {
 				Complete => drain_missing!(path, token, Notes, all, (t.notes + t.notes_skipped).to_u64_wrap(), r.seen.notes)?
-				_ => { stored: 0, skipped: 0, stopped: pull.stopped, asked: [] }
+				_ => { stored: 0, skipped: 0, stopped: pull.stopped, asked: [], reads: pull.reads }
 			}
 		routes =
 			match notes.stopped {
 				Complete => drain_missing!(path, token, Routes, all, (t.routes + t.routes_skipped).to_u64_wrap(), r.seen.routes)?
-				_ => { stored: 0, skipped: 0, stopped: notes.stopped, asked: [] }
+				_ => { stored: 0, skipped: 0, stopped: notes.stopped, asked: [], reads: notes.reads }
 			}
 		ended = Db.now_secs!({})
 		tally = {
@@ -593,7 +594,7 @@ Strava :: [].{
 			# refusing its first read
 			Finish => Ok({ stop: routes.stopped, tally, settled, ended, again: waits and r.after_wait and !progressed and routes.stopped != Complete })
 			Wait => {
-				wait_for_window!(path, ended)?
+				wait_for_window!(path, routes.reads)?
 				rounds!(path, token, all, settle!, waits, { after_wait: True, tally, seen })
 			}
 		}
@@ -618,16 +619,16 @@ Strava :: [].{
 
 	# Wait for the next read window or day: a spinner beside the local time the
 	# next batch starts and the time left, redrawn about once a second, replaced by
-	# its result when the period opens. `from` is when the period filled; the
-	# wait is for whichever period is spent (Drain.next_read_at), and a spent day
-	# says so on the line, its wait being hours rather than minutes.
-	wait_for_window! : Str, I64 => Try({}, _)
-	wait_for_window! = |path, from| {
+	# its result when the period opens. `spent` is the counts the stop was
+	# decided on; the wait is for whichever period they spent, timed from the
+	# periods they were counted in (Drain.reopens_at), and a spent day says so
+	# on the line, its wait being hours rather than minutes.
+	wait_for_window! : Str, Drain.Reads => Try({}, _)
+	wait_for_window! = |path, spent| {
 		p = periods!({})
 		lim = read_limits!(path)?
-		at_from = Drain.roll_reads(load_reads!(path)?, from, p)
-		until = Drain.next_read_at(at_from, lim, from, p)
-		daily = Drain.may_read(at_from, lim) == DayFull
+		until = Drain.reopens_at(spent, lim, p)
+		daily = Drain.may_read(spent, lim) == DayFull
 		at = Render.local_time(until, Db.time_mode_offset(Db.resolve_time_mode!(path)), Db.now_secs!({}))
 		wait_ticks!(daily, until, at, 0)?
 		Output.step_done!(if (daily) "daily allowance" else "waiting for Strava", if (daily) "returned ${at}; next batch started" else "next batch started at ${at}")
@@ -667,7 +668,7 @@ Strava :: [].{
 			match Drain.after_round({ stop, owed: owed_known!(path)?, progressed, after_wait, waits }) {
 				Finish => Ok(out(Refused(stop)))
 				Wait => {
-					wait_for_window!(path, Db.now_secs!({}))?
+					wait_for_window!(path, load_reads!(path)?)?
 					list_all!(path, token, after_param, stamp, waits, { ..got, rate_limited: False }, True)
 				}
 			}
@@ -1478,8 +1479,10 @@ Strava :: [].{
 	# pure (Drain.may_read before a read, Drain.decide after it); this is the thin
 	# effectful skin. The four ways a drain ends are RETURNED, because "why did it
 	# stop?" is not derivable from the counts; a drain CANNOT report a list
-	# refusal, which lives on Drain.SyncStop.
-	DrainOutcome : { stored : I64, skipped : I64, stopped : Drain.StopReason, asked : List(I64) }
+	# refusal, which lives on Drain.SyncStop. `reads` = the counts the drain's
+	# last decision was made on, stamped with the periods it was made in, which
+	# time the wait for the next round (Drain.reopens_at).
+	DrainOutcome : { stored : I64, skipped : I64, stopped : Drain.StopReason, asked : List(I64), reads : Drain.Reads }
 
 	# what one queue item asks Strava for, and what storing the answer means.
 	# ONE loop serves every kind — the pacing, refresh, 429 and skip policies
@@ -1497,7 +1500,7 @@ Strava :: [].{
 		lim = read_limits!(path)?
 		ended! = |stopped, s| {
 			bar_done!(s)
-			Ok({ stored: s.stored, skipped: s.skipped, stopped, asked: s.asked })
+			Ok({ stored: s.stored, skipped: s.skipped, stopped, asked: s.asked, reads: s.reads })
 		}
 		match ids {
 			[] => ended!(Complete, st)
