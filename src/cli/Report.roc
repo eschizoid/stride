@@ -14,12 +14,10 @@ import Render
 Report :: [].{
 	# ── shared queries ──────────────────────────────────────────────────
 
-	# ONE home for the load_model -> confidence-tier mapping: doctor's session
-	# counts and summary's TSS-weighted coverage read these same lists, so the
-	# ladder cannot drift between surfaces. high = measured power (and rtss: pace
-	# threshold derives from measured speed), medium = HR/RPE-scaled, low =
-	# relative_effort (Strava's opaque estimate).
-	high_models_sql = "'power_stream','weighted_watts','avg_watts','rtss'"
+	# the load_model confidence tiers as SQL IN-lists. doctor's session counts
+	# and summary's load-weighted coverage read these, and the names come from
+	# Metrics' tier lists, the same lists the activity screen's unit reads.
+	high_models_sql = Metrics.sql_names(Metrics.high_load_models)
 
 	# "is this activity's stored date readable", in SQL, for the sites that need the
 	# answer inside a query — `date_known` on `activities` and `top`, and
@@ -45,8 +43,8 @@ Report :: [].{
 	# date_known rejects). This is the whole predicate, in the word the engine
 	# already uses.
 	rankable_sql = Metrics.rankable_sql("a.start_local")
-	medium_models_sql = "'hr_zones','hr_avg','session_rpe'"
-	low_models_sql = "'relative_effort'"
+	medium_models_sql = Metrics.sql_names(Metrics.medium_load_models)
+	low_models_sql = Metrics.sql_names(Metrics.low_load_models)
 
 	# TSS-weighted tier sums for one window: {high, medium, low} as F64 TSS
 	coverage_sums! : Str, Str => Try({ high : F64, medium : F64, low : F64 }, _)

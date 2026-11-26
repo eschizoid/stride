@@ -1813,6 +1813,20 @@ Render :: [].{
 		Str.join_with(List.join([[header, "", census, ""], rows, ["", legend]]), "\n")
 	}
 
+	# one session's load, named by the rung that scored it: power, pace and
+	# heart rate score in TSS, while a session rating or relative effort does
+	# not, so those read as load. A load under 1 means no usable data.
+	session_load_text : F64, Str -> Str
+	session_load_text = |load, load_model| {
+		if load < 1.0 {
+			"no usable data"
+		} else if List.contains(Metrics.tss_load_models, load_model) {
+			"${fmt0(load)} TSS"
+		} else {
+			"${fmt0(load)} load"
+		}
+	}
+
 	# ── compare command screen ──────────────────────────────────────────
 	# this rolling window vs the prior one, metric by metric, with a signed delta
 	# The compare verdict as a PURE producer, extracted so the boundary guard can
@@ -1823,7 +1837,7 @@ Render :: [].{
 			match Metrics.pct_change(prior_tss, cur_tss) {
 				Err(NoBaseline) =>
 					if cur_tss > 0.0 {
-						"load resumed (${fmt0(cur_tss)} TSS vs none the prior ${lab})"
+						"load resumed (${fmt0(cur_tss)} load vs none the prior ${lab})"
 					} else {
 						"no load recorded either ${lab}"
 					}
@@ -2421,11 +2435,24 @@ expect {
 	Str.contains(s, "load") and Str.contains(s, "+34") and Str.contains(s, "ramping") and Str.contains(s, "building")
 }
 
-# zero prior TSS must NOT read as "steady 0%" — it's a resumption
+# a session scored in TSS says TSS; a rated or relative-effort session says
+# load; nothing scored says so
+expect Render.session_load_text(110.4, "power_stream") == "110 TSS"
+expect Render.session_load_text(98.0, "weighted_watts") == "98 TSS"
+expect Render.session_load_text(80.0, "avg_watts") == "80 TSS"
+expect Render.session_load_text(72.0, "rtss") == "72 TSS"
+expect Render.session_load_text(55.0, "hr_zones") == "55 TSS"
+expect Render.session_load_text(48.0, "hr_avg") == "48 TSS"
+expect Render.session_load_text(52.5, "session_rpe") == "53 load"
+expect Render.session_load_text(30.0, "relative_effort") == "30 load"
+expect Render.session_load_text(0.0, "none") == "no usable data"
+
+# zero prior load must NOT read as "steady 0%" — it's a resumption. The
+# window total blends TSS with session-RPE load, so the screen names it load.
 expect {
 	w = |tss, sessions, hard, easy, ctl| { tss, sessions, hard_min: hard, easy_pct: easy, ctl, polarization_known: Bool.True }
 	s = Render.compare_screen({ period: "week", window_label: "7d", current: w(200.0, 4.I64, 10.I64, 40.I64, 20.0), prior: w(0.0, 0.I64, 0.I64, 0.I64, 18.0) })
-	Str.contains(s, "load resumed") and !(Str.contains(s, "steady"))
+	Str.contains(s, "load resumed (200 load vs none the prior 7d)") and !(Str.contains(s, "steady")) and !(Str.contains(s, "TSS"))
 }
 
 # the delta agrees with the columns it sits beside: 276.4 and 232.8 display as
@@ -2779,7 +2806,7 @@ expect {
 	Render.compare_verdict(1000.0, 1200.0, 6.0, "28d") == "load ramping (20%) · fitness building"
 		and Render.compare_verdict(1200.0, 900.0, -2.0, "28d") == "load backed off (-25%) · fitness slipping"
 		and Render.compare_verdict(1000.0, 1030.0, 0.0, "28d") == "load steady (3%) · fitness holding"
-		and Render.compare_verdict(0.0, 500.0, 3.0, "week") == "load resumed (500 TSS vs none the prior week) · fitness building"
+		and Render.compare_verdict(0.0, 500.0, 3.0, "week") == "load resumed (500 load vs none the prior week) · fitness building"
 		and Render.compare_verdict(0.0, 0.0, 0.0, "week") == "no load recorded either week · fitness holding"
 }
 
