@@ -12,21 +12,23 @@
 # Windows has) or pwsh.
 #
 # `static` checks that install.ps1 is ASCII and is one `& { ... }` statement
-# whose block defines functions and ends by calling Install-Stride, then
-# parses the file cut off after every byte and checks that each cut parses to
-# no statement or fails to parse, so a cut-off download runs nothing. It then
-# runs the installer's functions on local files: a download that fails its
-# checksum or is not listed is refused, an installed tree is replaced in
-# place and loses the files the new one lacks, and only the files the
-# installer moved aside are cleared.
+# whose block defines functions and ends by calling Install-Stride, and that
+# it and install.sh ask the app question in the same words and name
+# `stride setup` as the next step; then parses the file cut off after every
+# byte and checks that each cut parses to no statement or fails to parse, so
+# a cut-off download runs nothing. It then runs the installer's functions on
+# local files: a download that fails its checksum or is not listed is
+# refused, an installed tree is replaced in place and loses the files the new
+# one lacks, and only the files the installer moved aside are cleared.
 #
 # `release` runs install.ps1 cut off at every line, as `irm | iex` would run
 # a cut-off download, and checks that no cut writes an install or changes the
 # user's PATH, while the whole file in the same profile installs; installs
 # the latest release with STRIDE_INSTALL_APP unset and no console, and checks
-# that stride.exe lands in %LOCALAPPDATA%\Programs\stride\bin, that the
-# user's PATH names that folder once, that a new shell reading its PATH from
-# the registry runs it, and that no app arrives; checks that a folder named
+# that it ends by naming `stride setup`, that stride.exe lands in
+# %LOCALAPPDATA%\Programs\stride\bin, that the user's PATH names that folder
+# once, that a new shell reading its PATH from the registry runs it, and
+# that no app arrives; checks that a folder named
 # stride.exe stops the install untouched; then installs the older tag with
 # the app into STRIDE_INSTALL_DIR, checks that an app failing its checksum
 # leaves the older command and app in place, holds the command and the
@@ -82,6 +84,16 @@ function Test-Static {
   if ($text -match '[^\x00-\x7F]') { Fail 'install.ps1 holds a non-ASCII character, which Windows PowerShell reads from a file without a byte-order mark as another code page' }
   $whole = Get-TopStatements $text
   if ($null -eq $whole) { Fail 'install.ps1 does not parse' }
+
+  # the two one-line installers ask the app question in the same words, Enter
+  # answering yes, and end by naming `stride setup`
+  $sh = [IO.File]::ReadAllText((Join-Path $here 'install.sh'))
+  foreach ($pair in @(@('install.ps1', $text), @('install.sh', $sh))) {
+    if ($pair[1] -notmatch 'Also install the desktop app into \S+\? \[Y/n\]') { Fail "$($pair[0]) does not ask 'Also install the desktop app into ...? [Y/n]'" }
+    if (-not $pair[1].Contains('next: run ')) { Fail "$($pair[0]) names no next step" }
+  }
+  if (-not $text.Contains("Write-Host 'next: run ``stride setup`` ")) { Fail 'install.ps1 does not end by naming stride setup' }
+  Write-Host 'install-check: both one-line installers ask the app question alike and name stride setup next'
 
   # every cut short of the file's last statement-ending character parses
   # to no statement or fails to parse, and either way runs nothing
@@ -359,7 +371,14 @@ function Test-Release([string]$Older) {
   # the latest release, STRIDE_INSTALL_APP unset and no console: the
   # command alone, in its per-user folder, on the user's PATH
   $prof = New-Profile 'fresh'
-  Install-Ok $prof @{}
+  $r = Invoke-Installer $installer $prof @{}
+  Write-Host $r.Out
+  if ($r.Code -ne 0) { Fail "install.ps1 failed (exit $($r.Code))" }
+  # a child PowerShell whose output is redirected writes its progress
+  # stream as serialized CLIXML records; the last line the athlete reads is
+  # the last line that is not one
+  $last = @($r.Out.Trim() -split "`r?`n" | Where-Object { $_.Trim() -ne '' -and $_ -notmatch '^(#< CLIXML|<Objs )' })[-1]
+  if (-not $last.StartsWith('next: run `stride setup` ')) { Fail "install.ps1 did not end by naming stride setup; its last line was '$last'" }
   $bin = Join-Path $prof.Env.LOCALAPPDATA 'Programs\stride\bin'
   $exe = Join-Path $bin 'stride.exe'
   if (-not (Test-Path -LiteralPath $exe)) { Fail "no stride.exe at $exe" }

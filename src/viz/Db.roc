@@ -78,6 +78,21 @@ Db :: [].{
 
 	Loaded : { data : List(Point), days : List(Str), last : { c : I64, a : I64, t : I64 }, err : Str }
 
+	# the tables the database holds
+	table_names! : Sqlite.Db => Try(List(Str), [Unreadable])
+	table_names! = |db|
+		match db.query!("SELECT CAST(name AS TEXT) AS name FROM sqlite_master WHERE type = 'table'", []) {
+			Ok(rows) => Ok(List.keep_oks(rows, |r| r.str("name")))
+			Err(_) => Err(Unreadable)
+		}
+
+	# a database no `stride` command has written: the window opened it before
+	# the first setup, so it holds no series and nothing has failed. The engine
+	# creates every table at once, daily_load among them; the window's own bus
+	# tables say nothing about it
+	unwritten : List(Str) -> Bool
+	unwritten = |tables| !(List.contains(tables, "daily_load"))
+
 	load_series! : Sqlite.Db => Loaded
 	load_series! = |db| {
 		# day is the engine-written PRIMARY KEY in canonical YYYY-MM-DD; for
@@ -2436,3 +2451,7 @@ expect Db.directive_text({ at: "11-12 08:14", view: -1, range: -1, cursor_day: "
 # power only when a meter measured it
 expect Db.stats_line({ mins: 62, dist: "42.1km", load: 85, np: 230 }) == "62 min  42.1km  85 load  230 w np"
 expect Db.stats_line({ mins: 45, dist: "0.0km", load: 1250, np: 0 }) == "45 min  0.0km  1,250 load"
+
+# a database only the window has opened holds its bus tables and no series;
+# one the engine wrote holds daily_load, whatever else it holds
+expect Db.unwritten([]) and Db.unwritten(["viz_capabilities", "viz_directives", "viz_focus", "viz_views", "viz_fields"]) and !(Db.unwritten(["activities", "daily_load", "viz_focus"]))

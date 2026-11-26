@@ -182,16 +182,18 @@
     $exe = Join-Path $dir 'stride.exe'
     if (Test-Path -LiteralPath $exe -PathType Container) { throw "stride install: $exe is a folder; move it, or set STRIDE_INSTALL_DIR to another folder" }
 
-    # asked only on a console, before anything downloads; a host that
-    # cannot prompt, such as one started -NonInteractive, refuses Read-Host,
-    # and that is a no. Ctrl-C at the question stops the install
+    # asked only on a console, before anything downloads; Enter answers yes,
+    # as in install.sh. A host that cannot prompt, such as one started
+    # -NonInteractive, refuses Read-Host, and that is a no. Ctrl-C at the
+    # question stops the install
     $want = $env:STRIDE_INSTALL_APP
     if (-not $want) {
       $want = '0'
       if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
-        $answer = ''
-        try { $answer = Read-Host "Also install the desktop app into $appdir? [y/N]" } catch [Management.Automation.PSInvalidOperationException] {}
-        if ($answer -match '^(y|yes)$') { $want = '1' }
+        try {
+          $answer = Read-Host "Also install the desktop app into $appdir? [Y/n]"
+          if ($answer -notmatch '^(n|no)$') { $want = '1' }
+        } catch [Management.Automation.PSInvalidOperationException] {}
       }
     }
     if ($want -eq '1' -and (Test-Path -LiteralPath $appdir -PathType Leaf)) { throw "stride install: $appdir is a file; move it to install the app" }
@@ -263,7 +265,7 @@
     }
 
     Write-Host ''
-    Write-Host 'next: run "stride setup" to connect Strava, set your timezone and heart-rate zones, and pull your history. This terminal runs it now; any other terminal already open needs reopening first.'
+    Write-Host 'next: run `stride setup` to connect Strava, set your timezone and heart-rate zones, and pull your history. This terminal runs it now; any other terminal already open needs reopening first.'
   }
 
   Install-Stride

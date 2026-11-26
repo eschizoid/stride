@@ -30,9 +30,12 @@ reason `--json` and still answers in JSON).
   lists each form's codes on top of `universal_error_codes` (not promised exhaustive;
   `schemas/v3/envelope.json` holds every code Stride can emit). Report only what a
   payload returned: never invent a code, a skip reason, or a row. `interactive: true`
-  marks `auth`, the one form you never run unattended. Each payload's formal shape is
+  marks `auth` and `setup`, which prompt at a terminal when run bare: never run them
+  that way unattended (with no terminal they fail with `stdin_closed`); drive setup with
+  `stride setup --json`, which never prompts. Each payload's formal shape is
   `schemas/v3/<schema>` in the repo.
-- Universal error codes: `no_database` (run `stride init`), `unreadable_database`
+- Universal error codes: `no_database` (the first run has not happened: walk the athlete
+  through `stride setup --json`), `unreadable_database`
   (present but unopenable; `init` will not fix it), `corrupt_database`, `database_error`
   (SQLite refused, e.g. a lock), `internal_error` (a bug; the message carries the tag),
   `usage`. A misspelled command answers `unknown_command`.
@@ -533,7 +536,12 @@ from `stats` hours if asked.
 Day to day there is nothing to do: setup stored the Strava client id, secret and tokens
 in the database, and sync refreshes them (`STRAVA_CLIENT_ID`/`STRAVA_CLIENT_SECRET` in
 the environment override the stored values). A locked or corrupt database surfaces as
-its own error, not as `not_authenticated`.
+its own error, not as `not_authenticated`. `no_database` and `missing_config` (no heart-rate
+zones) mean the first run is unfinished: resume it with `stride setup --json`, which picks up
+at the first step not done. `not_authenticated` means no Strava connection yet or a
+credential Strava rejected; `stride setup --json` tells them apart: with no connection yet
+its `next_step` is `strava_app` or `authorize`, and past those steps the credential was
+rejected, and the error's message carries Strava's answer to relay.
 
 New machine: walk the athlete through `stride setup --json`. Each call returns
 `{complete, next_step, interactive, needs, instruction, authorize_url, timezone_detected, max_hr_proposed, zone_bounds_proposed, owed, resume_at, ran, steps}`

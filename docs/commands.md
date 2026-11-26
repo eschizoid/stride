@@ -16,11 +16,11 @@ The whole first run in one command, and it resumes wherever a previous run stopp
 
 ### `stride init`
 
-Creates `~/.stride/db.sqlite` and runs migrations. Idempotent — safe to re-run anytime.
+Creates `~/.stride/db.sqlite` and runs migrations. Idempotent — safe to re-run anytime. `stride setup` does this as its first step; `init` alone is for a database filled from a Strava export with `stride import`, which needs no Strava connection.
 
 ### `stride auth`
 
-One-time Strava OAuth: prints an authorize URL, you paste back the whole address the browser landed on (or just its `code=` value). Stores tokens _and_ client credentials in the db — no env vars needed afterward.
+One-time Strava OAuth: prints an authorize URL, you paste back the whole address the browser landed on (or just its `code=` value). Stores tokens _and_ client credentials in the db — no env vars needed afterward. `stride setup` runs this step on a first run and skips it once tokens are stored, so `auth` on its own is how an athlete authorizes again, for example after revoking the app on Strava.
 
 ### `stride config`
 

@@ -9,7 +9,8 @@
 # cut off at every line and short of its last bytes, and checks that no cut
 # installs anything while the whole file, run the same way, installs;
 # installs the latest release under each shell with STRIDE_INSTALL_APP
-# unset and no terminal, and checks that the install reaches its last line,
+# unset and no terminal, and checks that the install prints the line that
+# puts the command's folder on the PATH and ends by naming `stride setup`,
 # that the command starts and that no app arrives; checks that a folder
 # where the command goes stops the install untouched, and that a TERM
 # during a download ends it with status 143 and leaves nothing; then
@@ -26,6 +27,10 @@
 # byte for byte, that the app carries that same command, that on linux the
 # menu entry names the installed app, and that the athlete's directory and
 # the menu entry survive each update.
+#
+# Every mode first runs the function install.sh reads the app question's
+# answer with, and checks that n and no in any case decline and anything
+# else accepts.
 #
 # Run from the repository root. The latest release and the older tag are
 # read from GitHub, so both modes need the network.
@@ -146,6 +151,21 @@ check_entry() {
   grep -qxF "Exec=\"$app/stride-app\"" "$entry" || { echo "::error::the menu entry does not run $app/stride-app: $(grep '^Exec=' "$entry")"; exit 1; }
 }
 
+# the app question's answer, read by install.sh's own answer_is_no, the
+# one-line function it defines: n and no in any case decline, as in
+# install.ps1, and anything else accepts, Enter included. Every mode runs
+# this, before anything is downloaded
+answer_fn="$(grep -E '^  answer_is_no\(\) \{.*\}$' install.sh || true)"
+[ -n "$answer_fn" ] || { echo "::error::install.sh defines no one-line answer_is_no"; exit 1; }
+eval "$answer_fn"
+for a in n N no No nO NO; do
+  answer_is_no "$a" || { echo "::error::install.sh reads the answer '$a' as yes"; exit 1; }
+done
+for a in "" y Y yes YES nope "n o" non; do
+  ! answer_is_no "$a" || { echo "::error::install.sh reads the answer '$a' as no"; exit 1; }
+done
+echo "install-check: install.sh reads n and no in any case as no, and any other answer as yes"
+
 case "$mode" in
   release)
     older="${2:?an older release tag to update from}"
@@ -179,7 +199,14 @@ case "$mode" in
     for s in $shells; do
       home="$work/fresh-$s"; mkdir -p "$home"
       out="$(inst_sh="$s" run_install "$home" 2>&1)" || { printf '%s\n' "$out"; echo "::error::install.sh under $s failed with no terminal"; exit 1; }
-      grep -q '^next: run' <<<"$out" || { printf '%s\n' "$out"; echo "::error::install.sh under $s stopped before its last line"; exit 1; }
+      # its last line names `stride setup` by the path that runs it, since
+      # the fake home's bin is not on this PATH, and it prints the line that
+      # puts that folder there
+      case "$(tail -n 1 <<<"$out")" in
+        "next: run \`$home/bin/stride setup\`"*) ;;
+        *) printf '%s\n' "$out"; echo "::error::install.sh under $s did not end by naming $home/bin/stride setup"; exit 1 ;;
+      esac
+      grep -qxF "  export PATH=\"$home/bin:\$PATH\"" <<<"$out" || { printf '%s\n' "$out"; echo "::error::install.sh under $s did not print the export line for $home/bin"; exit 1; }
       out="$("$home/bin/stride" --version)"
       [ "$out" = "stride ${latest#v}" ] || { echo "::error::the installed command says '$out', not stride ${latest#v}"; exit 1; }
       [ ! -e "$(app_home "$home")" ] || { echo "::error::the app arrived without being asked for"; exit 1; }

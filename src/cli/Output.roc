@@ -30,16 +30,25 @@ Output :: [].{
 
 	# ── analyze ──────────────────────────────────────────────────────────
 
+	# The remedy for unset heart-rate zones, pointed at `stride setup`, which
+	# proposes them from the activities; the key=value form stores them from
+	# one number and works whatever step setup is at, so an athlete with no
+	# Strava connection (an export loaded with `stride import`) can use it too.
+	# Placeholders only: a number here reads as advice.
 	zone_config_help =
-		\\analyze needs your HR zone upper bounds in config first (FTP is derived from
-		\\your own power history, not configured):
+		\\heart-rate zones are not set yet. Run `stride setup`: it proposes them from
+		\\the heart rates in your activities. Or give one heart rate and all four zone
+		\\bounds follow from it:
 		\\
-		\\    stride config set hr_z1_max 123
-		\\    stride config set hr_z2_max 153
-		\\    stride config set hr_z3_max 168
-		\\    stride config set hr_z4_max 183
+		\\    stride setup threshold_hr=<bpm>   your average over an all-out 30 to 60 minute effort
+		\\    stride setup max_hr=<bpm>         your maximum heart rate
 		\\
-		\\(find yours at strava.com/settings/heartrate — z5 is everything above hr_z4_max)
+		\\(zone 5 is everything above the fourth bound; FTP is derived from your power history, never set)
+
+	# the same remedy on one line, for the machine envelope and doctor's payload
+	zones_unset_msg : Str
+	zones_unset_msg = "hr zone bounds are not set — run `stride setup`, which proposes them from the activities' heart rates, or give one heart rate and all four bounds follow: `stride setup threshold_hr=<bpm>` (the average over an all-out 30 to 60 minute effort) or `stride setup max_hr=<bpm>` (z5 is everything above hr_z4_max; FTP is derived from power history, never configured)"
+
 	# ── machine interface (JSON output for LLM/tool consumption) ────────
 	# Missing-value contract (#156, ADR 0009): literal JSON null is NOT expressible —
 	# the builtin encoder stringifies tags ("None"/"Null"), verified by probe. So the
@@ -214,7 +223,7 @@ Output :: [].{
 	# PAYLOAD; the other three exist for symmetry and have a single caller each.
 	missing_client_creds! : Str => Try({}, _)
 	missing_client_creds! = |name|
-		Output.err_out!("missing_client_creds", "${name} not set and no stored credentials yet — create a (free) Strava API app at strava.com/settings/api, then run:\n  STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth")
+		Output.err_out!("missing_client_creds", "${name} not set and no Strava API app is stored yet — run `stride setup`: it walks you through creating one (free, at strava.com/settings/api) and connecting your account")
 
 	# The value is THERE and cannot be parsed -- naming the key and echoing the stored
 	# text is the whole point, because `config get` will happily show it back and the
@@ -336,7 +345,7 @@ Output :: [].{
 	missing_config! : {} => Try({}, _)
 	missing_config! = |{}| {
 		(if (json_mode!({}))
-			emit_err!("missing_config", "hr zone bounds are not set — run `stride config set hr_z1_max <bpm>` through hr_z4_max (z5 is everything above hr_z4_max; find yours at strava.com/settings/heartrate; FTP is derived from your power history, never configured)")
+			emit_err!("missing_config", zones_unset_msg)
 		else
 			Stdout.line!(zone_config_help))?
 		Err(Exit(error_status))

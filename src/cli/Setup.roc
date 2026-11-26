@@ -66,8 +66,15 @@ Setup :: [].{
 				}
 				if human and when_bare {
 					# Ctrl-C anywhere in the walk names `stride setup`, which resumes it
-					Strava.interruptible!(True, "stride setup", |{}| walk!(path))?
-					report!(path, ran, 0)
+					match Strava.interruptible!(True, "stride setup", |{}| walk!(path)) {
+						Err(NoTerminal) => {
+							# the prompt was written without a newline; end its row first
+							Output.human_line!("")?
+							Output.err_out!("stdin_closed", no_terminal_msg)
+						}
+						Err(e) => Err(e)
+						Ok(_) => report!(path, ran, 0)
+					}
 				} else if when_bare {
 					# a step with nothing to supply runs in this call, without waiting
 					next = Config.setup_next(state!(path)?)
@@ -349,7 +356,7 @@ Setup :: [].{
 		marks = List.map(p.steps, |s| "  ${if (s.done) "[x]" else "[ ]"} ${s.step}")
 		head = if (p.complete) "setup complete" else "next: ${p.next_step}"
 		url = if (p.authorize_url == "") [] else ["", p.authorize_url]
-		Str.join_with(List.join([["setup"], marks, ["", head, p.instruction], url]), "\n")
+		Str.join_with(List.join([["setup"], marks, ["", head, Config.setup_human(p.next_step, p.timezone_detected, p.max_hr_proposed, p.zone_bounds_proposed)], url]), "\n")
 	}
 
 	# ── the steps that fetch ───────────────────────────────────────────
@@ -375,12 +382,21 @@ Setup :: [].{
 
 	# ── the human walk ─────────────────────────────────────────────────
 	# One prompt reader: stdin is read here and nowhere else in this module.
+	# Input that has ended (or a stream that was never opened) is NoTerminal:
+	# nobody is there to answer, so the walk stops with a way to run it.
 	ask! : Str => Try(Str, _)
 	ask! = |prompt| {
 		Output.human_write!(prompt)?
-		line = Stdin.line!()?
-		Ok(Str.trim(line))
+		match Stdin.line!() {
+			Ok(line) => Ok(Str.trim(line))
+			Err(EndOfInput) => Err(NoTerminal)
+			Err(StdinErr(_)) => Err(NoTerminal)
+			Err(other) => Err(other)
+		}
 	}
+
+	no_terminal_msg : Str
+	no_terminal_msg = "`stride setup` asks its questions in a terminal, and there is none here to answer them. Run it in a terminal window, or answer one step at a time with `stride setup --json` and `stride setup key=value`, the way an agent drives it."
 
 	# a secret read with terminal echo off, restored afterwards; with no
 	# terminal to switch, it is read as typed
@@ -421,6 +437,10 @@ Setup :: [].{
 				set_cred!(path, "strava_client_id", id)?
 				set_cred!(path, "strava_client_secret", secret)
 			}
+		} else if next == "authorize" and !(terminal!({})) {
+			# checked before the browser opens and the listener waits for it:
+			# with nobody at a terminal, no one clicks Authorize
+			Err(NoTerminal)
 		} else if next == "authorize" {
 			id = Strava.client_cred!(path, "STRAVA_CLIENT_ID", "strava_client_id")?
 			secret = Strava.client_cred!(path, "STRAVA_CLIENT_SECRET", "strava_client_secret")?
@@ -540,6 +560,17 @@ Setup :: [].{
 		Strava.open_browser!(url)
 		accept_code!(listener, state, 6)
 	}
+
+	# stdin is a terminal, asked of `test -t 0` in a child that inherits it.
+	# With no `sh` to ask, as on Windows, the walk carries on, and a prompt
+	# that meets the end of input stops it the same way
+	terminal! : {} => Bool
+	terminal! = |{}|
+		match Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", "test -t 0"], OsStr.from_str)).capture!() {
+			Ok(_) => Bool.True
+			Err(BadExitStatus(_)) => Bool.False
+			Err(_) => Bool.True
+		}
 
 	# no browser on this machine to receive a loopback redirect: an SSH
 	# session, or Linux with no display server

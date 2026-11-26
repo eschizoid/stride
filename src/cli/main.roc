@@ -173,10 +173,11 @@ help_text =
 	\\    --                          end flag parsing, so a following
 	\\                                --json is a literal value
 	\\
-	\\STRAVA CREDENTIALS (first time only)
-	\\    Create a Strava API app (strava.com/settings/api), then:
-	\\    STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... stride auth
-	\\    After that, creds live in the db — no env vars needed again.
+	\\FIRST RUN
+	\\    Run `stride setup` in a terminal. It creates the database, walks you through
+	\\    a Strava API app and connecting your account, sets your timezone and
+	\\    heart-rate zones, then syncs your history. Run it again and it carries on
+	\\    where it stopped. An agent drives the same steps with `stride setup --json`.
 
 # main! stays thin: parse argv into a typed Command (pure, in Command.roc), then
 # dispatch. All arity/count validation lives in the parser and is unit-tested there.
@@ -320,7 +321,7 @@ run_command! = |cmd|
 			if exists {
 				Output.err_out!("unreadable_database", "${p} exists but could not be opened — check its permissions and the ownership of its directory (`init` will not fix this)")
 			} else {
-				Output.err_out!("no_database", "no database at ${p} — run `stride init` first")
+				Output.err_out!("no_database", "no database at ${p} yet — run `stride setup`: it creates the database, connects your Strava account and syncs your history (to load a Strava export instead, `stride init` creates an empty database for `stride import`)")
 			}
 		}
 		# A stored config value the engine cannot parse. Converted HERE rather than at

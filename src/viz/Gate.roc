@@ -385,6 +385,10 @@ Gate :: [].{
 	long_names : Athlete
 	long_names = { name: "long sport names beside rides", units: Metric, sports: [{ sport: "Ride", sessions: 300 }, { sport: "HighIntensityIntervalTraining", sessions: 60 }, { sport: "StandUpPaddling", sessions: 40 }, { sport: "BackcountrySki", sessions: 30 }, { sport: "EBikeRide", sessions: 20 }] }
 
+	# the athlete after a first sync: one ride
+	one_ride : Athlete
+	one_ride = { name: "one ride", units: Metric, sports: [{ sport: "Ride", sessions: 1 }] }
+
 	career_models : List({ name : Str, model : Ui.Model })
 	career_models = {
 		pages = |name, m| List.map_with_index(m.career_spines, |s, i| { name: "${name} ${s.fam} ${s.kind}", model: { ..m, spine_idx: i } })
@@ -415,6 +419,14 @@ Gate :: [].{
 						trends = List.append(List.keep_if(m.career_spines, |s| s.kind != Career.no_trend), { fam: "StandUpPaddling", kind: "power", rows: spine_rows("StandUpPaddling", "power", 1) })
 						pages("${long_names.name} career at ${size_name(sz)}", { ..m, career_spines: career_pages(trends, m.career_sports) })
 					},
+					# a first ride: one month on record, beside the streak and the
+					# level its hours earn
+					{
+						m = career_model(athlete_model(one_ride, sz), one_ride)
+						pages("${one_ride.name} career at ${size_name(sz)}", { ..m, career_spines: List.map(m.career_spines, |s| { ..s, rows: List.take_last(s.rows, 1) }) })
+					},
+					# an empty database: no page at all
+					[{ name: "empty career at ${size_name(sz)}", model: { ..empty_model(sz), view: 8 } }],
 				]),
 			),
 		)
@@ -761,8 +773,8 @@ Gate :: [].{
 				),
 			),
 		)
-		# the two boards with no plot: an error loading the series, and a
-		# series too short to draw
+		# the three boards with no plot: an error loading the series, an
+		# empty database, and a series one day long
 		bare = List.join(
 			List.map(
 				sizes,
@@ -771,6 +783,7 @@ Gate :: [].{
 					[
 						{ name: "form with a load error at ${size_name(sz)}", model: { ..base, view: 0, has_error: Bool.True, status: txt("daily_load query failed - analyzed yet?", 16.0) } },
 						{ name: "form with no data at ${size_name(sz)}", model: { ..base, view: 0 } },
+						{ name: "form with one day at ${size_name(sz)}", model: { ..base, view: 0, data: [{ ctl: 1.0, atl: 7.0, tsb: -6.0, tss: 50.0 }], days: ["2026-11-26"] } },
 					]
 				},
 			),
@@ -1634,6 +1647,30 @@ expect {
 			and List.all(at("Ride"), |e| !(List.any(words, |t| says(e, measure, t)))),
 	)
 		and !(List.is_empty(at("Ride")))
+}
+
+# a first run in both faces: the empty board and the empty career name
+# `stride setup` and the key that loads what it wrote; a board one day long
+# and a career one ride long say the history is short, not that it is empty
+expect {
+	says = |owned, t| List.any(owned, |o| o.key == "'${t}'")
+	boards = |name| List.keep_if(Gate.board_models, |f| Str.starts_with(f.name, name))
+	careers = |name| List.keep_if(Gate.career_models, |e| Str.starts_with(e.name, name))
+	faces = [{ measure: Gate.measure, font: Gate.data_font }, { measure: Gate.builtin_measure, font: Gate.builtin_font }]
+	List.all(
+		faces,
+		|f| {
+			board = |m| Board.owned({ ..m, font: f.font }, f.measure)
+			career = |m| Career.owned({ ..m, font: f.font }, f.measure)
+			List.all(boards("form with no data"), |e| says(board(e.model), Board.empty_text))
+				and List.all(boards("form with one day"), |e| says(board(e.model), Board.one_day_text) and !(says(board(e.model), Board.empty_text)))
+				and List.all(careers("empty career"), |e| says(career(e.model), Career.empty_text))
+				and List.all(careers("one ride career"), |e| says(career(e.model), Career.one_month_text) and !(says(career(e.model), Career.empty_text)))
+		},
+	)
+		and List.len(boards("form with one day")) == List.len(Gate.sizes)
+		and List.len(careers("one ride career")) == List.len(Gate.sizes)
+		and List.all([Board.empty_text, Career.empty_text], |t| Str.contains(t, "stride setup") and Str.contains(t, "press R"))
 }
 
 # the form board's gate: every athlete's board at every range, with an

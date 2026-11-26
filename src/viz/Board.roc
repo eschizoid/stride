@@ -159,8 +159,14 @@ Board :: [].{
 	hint_text : Str
 	hint_text = "1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   V record   G glow   ESC quit"
 
+	# a board with no day to draw names the command that fills it, and R
+	# loads what that command wrote; one day on record is a series too
+	# short for a line, not an empty database
 	empty_text : Str
-	empty_text = "no data yet - stride sync fills it, then reopen"
+	empty_text = "no data yet - run stride setup in a terminal to connect Strava, then press R"
+
+	one_day_text : Str
+	one_day_text = "one day on record so far - the chart draws from the second"
 
 	zero_text : Str
 	zero_text = "fresh above"
@@ -671,8 +677,10 @@ Board :: [].{
 		body =
 			if model.has_error {
 				[fix(Scene.txt(model.status, Prose, Theme.atl_c), 36.0, g.top + 20.0, Left, panel)]
-			} else if List.len(model.data) < 2 {
+			} else if List.is_empty(model.data) {
 				[fix(Scene.prepared(model.empty, empty_text, 16.0, Prose, ink_muted), 36.0, g.top + 20.0, Left, panel)]
+			} else if List.len(model.data) < 2 {
+				[fix(Scene.prose(one_day_text, 16.0, ink_muted), 36.0, g.top + 20.0, Left, panel)]
 			} else {
 				# the key hint shares the footer row with the stale note, and gives
 				# it the row in a face too wide for both
