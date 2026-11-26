@@ -3,8 +3,8 @@
 # format, and proves each package and the macOS bundle. The release workflow
 # ships what this builds, and build.yml runs the same steps on every pull
 # request, so a package that lacks a file the window reads, the command it
-# runs, or a file that puts the app in the system's menu, or whose window
-# does not start, fails before a release carries it.
+# runs, or a file that puts the app in the system's menu, or a linux window
+# that does not start, fails before a release carries it.
 #
 #   package-viz.sh linux package <stride-viz binary> <stride binary>  -> stride-app-linux-x86_64.tar.gz
 #   package-viz.sh windows package <stride-viz.exe> <stride.exe>      -> stride-app-windows-x86_64.zip
@@ -13,7 +13,6 @@
 #   package-viz.sh linux start                         -> the window starts, on the display in $DISPLAY
 #   package-viz.sh macos verify <Stride.app> <stride binary>  -> the bundle's command, signatures, fonts, images and launcher
 #   package-viz.sh macos prove <Stride.app>            -> its launcher seeds a fresh home
-#   package-viz.sh macos start <Stride.app>            -> its window starts
 #
 # Run from the repository root. A package holds the binary, the stride
 # command from the same build (the release's own CLI asset, byte for byte),
@@ -48,9 +47,8 @@
 # it ran, why the wait ended and what the window logged, unless the window
 # comes up, lands its boot load and writes a capture of the form board
 # through its own bus (start_window says how each is read). It needs
-# sqlite3. No step requires the window to start on windows: the GitHub
-# windows runner has no OpenGL context, so that is verified on a real
-# machine.
+# sqlite3. The hosted macOS and windows runners have no OpenGL context, so
+# no step starts the window there; that is verified on a real machine.
 set -euo pipefail
 
 faces="Quicksand-Medium.ttf JetBrainsMono-Regular.ttf"
@@ -838,21 +836,43 @@ check_capture() {
   echo "package-viz: the capture is a ${w}x${h} PNG of $size bytes"
 }
 
+# the focus rows the fake home's database holds, 0 while the window has not
+# yet created the table
+focus_rows() {
+  if [ "$(bus "SELECT count(*) FROM sqlite_master WHERE name = 'viz_focus'")" = 0 ]; then
+    echo 0
+  else
+    bus "SELECT count(*) FROM viz_focus"
+  fi
+}
+
 # starts a launcher ($1) from a fake home holding a database its package's
 # command ($2) initialised, and proves through the window's own bus that the
 # window came up (it created viz_directives on its first poll, which its
-# frame loop runs), that its boot load landed (the focus row names a curve
+# frame loop runs), that its boot load landed (a focus row names a curve
 # family, which the boot skeleton leaves unchosen until the load answers),
 # and that it draws: a capture directive for the form board closes applied,
-# naming the file under the home's captures folder, which check_capture
-# accepts, and the package's command reports it. Then it stops the window
-# and every program the window started
+# naming a file under the home's captures folder that was written after the
+# directive and that check_capture accepts. Before the launch the home
+# holds no focus row and no file at that path, so only this run of the
+# window can satisfy either check. The package's `stride viz --json` must
+# list the capture as well; it reads the same result column, so it checks
+# the command against the bus rather than adding evidence. Then it stops
+# the window and every program the window started
 start_window() {
   launcher="$1"
-  local cli="$2" id status result err
+  local cli="$2" id status result err shot mark
   command -v sqlite3 >/dev/null 2>&1 || { echo "::error::package-viz: the start proof reads the window's bus with sqlite3, which is not installed"; exit 1; }
   fake="$(mktemp -d)"
+  shot="$fake/captures/form-board.png"
+  mark="$fake/directive-written"
   HOME="$fake" "$cli" init >/dev/null || { echo "::error::$cli init failed in $fake"; exit 1; }
+  # the window recreates the table on its first poll, so dropping it clears
+  # a stale row and a stale shape alike
+  bus "DROP TABLE IF EXISTS viz_focus"
+  rm -f "$shot"
+  [ "$(focus_rows)" = 0 ] || { echo "::error::the home holds a focus row before the window starts"; exit 1; }
+  [ ! -e "$shot" ] || { echo "::error::$shot exists before the window starts"; exit 1; }
   deadline=$((SECONDS + start_timeout))
   HOME="$fake" "$launcher" > "$fake/window.log" 2>&1 &
   pid=$!
@@ -861,16 +881,21 @@ start_window() {
   await_bus "the window's first bus poll" "SELECT 1 FROM sqlite_master WHERE name = 'viz_directives'"
   await_bus "its boot load to land" "SELECT 1 FROM viz_focus WHERE COALESCE(curve_family, '') <> ''"
   check_seeded "$fake"
+  # the mark is written a second before the directive, so a shell or file
+  # system that compares whole seconds still orders the capture after it
+  : > "$mark"
+  sleep 1
   id="$(bus "INSERT INTO viz_directives (view, capture) VALUES (0, 'png'); SELECT last_insert_rowid();")" ||
     start_failed "the capture directive to be written" "sqlite3 could not write it"
   await_bus "its capture of the form board" "SELECT status || '|' || COALESCE(result, '') || '|' || COALESCE(error, '') FROM viz_directives WHERE id = $id AND status <> 'pending'"
   IFS='|' read -r status result err <<<"$answer"
   [ "$status" = applied ] && [ -z "$err" ] || start_failed "its capture of the form board" "the directive closed $status: ${err:-no error given}"
-  [ "$result" -ef "$fake/captures/form-board.png" ] ||
-    start_failed "its capture of the form board" "the directive names '$result', not $fake/captures/form-board.png"
+  [ -e "$result" ] || start_failed "its capture of the form board" "no file at $result, the file the directive names"
+  [ "$result" -ef "$shot" ] || start_failed "its capture of the form board" "the directive names '$result', not $shot"
+  [ "$result" -nt "$mark" ] || start_failed "its capture of the form board" "$result was not written after the directive"
   check_capture "$result"
   grep -qF "$result" <<<"$(HOME="$fake" "$cli" viz --json)" ||
-    start_failed "the package's command to report the capture" "stride viz --json does not name $result"
+    start_failed "the package's command to list the capture" "stride viz --json does not name $result"
   stop "$pid"
   trap - EXIT
   echo "package-viz: the window came up, landed its boot load and captured the form board"
@@ -998,18 +1023,6 @@ case "$os $step" in
     [ -n "${DISPLAY:-}" ] || { echo "::error::package-viz: linux start needs a display; run it under xvfb-run"; exit 1; }
     start_window ./stage/stride-app/stride-app ./stage/stride-app/bin/stride
     ;;
-  "macos start")
-    # the bundle's own launcher, which is its CFBundleExecutable. A window
-    # needs the logged-in Aqua session; a runner outside one says so here
-    # and proves the bundle's packaging alone
-    app="${3:?the Stride.app to start}"
-    session="$(launchctl managername 2>/dev/null || true)"
-    if [ "$session" != Aqua ]; then
-      echo "::warning::package-viz: this runner's session is '${session:-unknown}', not Aqua, so it cannot show a window; the window's start is not proven here"
-      exit 0
-    fi
-    start_window "$app/Contents/MacOS/launcher" "$app/Contents/MacOS/stride"
-    ;;
   "linux prove")
     # the launcher finds the package's own command before another stride
     fake="$(mktemp -d)"
@@ -1076,7 +1089,6 @@ case "$os $step" in
     rm -rf "$fake"
     ;;
   "windows prove")
-    # the GitHub windows runner has no OpenGL context, so whether the window starts there is not deterministic; that is verified on a real machine
     # the install step writes the user's PATH in the registry, which no fake
     # profile covers, so it is restored when this step ends
     saved_path="$(powershell -NoProfile -Command "(Get-Item -LiteralPath 'HKCU:\\Environment').GetValue('Path', '', 'DoNotExpandEnvironmentNames')" | tr -d '\r')"
@@ -1163,7 +1175,7 @@ case "$os $step" in
     [ ! -e "$quiet/.stride" ] || { echo "::error::install.cmd with STRIDE_APP_START=0 started the app"; exit 1; }
     ;;
   *)
-    echo "usage: package-viz.sh linux|windows package <window binary> <stride binary> | linux|windows prove | macos verify <Stride.app> <stride binary> | macos prove <Stride.app> | linux start | macos start <Stride.app>" >&2
+    echo "usage: package-viz.sh linux|windows package <window binary> <stride binary> | linux|windows prove | macos verify <Stride.app> <stride binary> | macos prove <Stride.app> | linux start" >&2
     exit 2
     ;;
 esac

@@ -295,10 +295,10 @@ jobs:
 
   # The macOS app as the release builds it, on every pull request: the
   # bundle with the command built beside it, verified and proved by the
-  # release's own checks, started from its launcher, where the window must
-  # come up, land its boot load and capture the form board through its own
-  # bus, then zipped as the release zips it and installed by install.sh over
-  # the latest release. Nothing is uploaded.
+  # release's own checks, then zipped as the release zips it and installed
+  # by install.sh over the latest release. The hosted macOS runner has no
+  # OpenGL context, so the window is not started here; that is verified on
+  # a real machine. Nothing is uploaded.
   viz-app-macos:
     runs-on: macos-latest
     timeout-minutes: 25
@@ -319,11 +319,6 @@ jobs:
           set -euo pipefail
           bash tools/package-viz.sh macos verify stage/Stride.app stride-cli-macos-arm64
           bash tools/package-viz.sh macos prove stage/Stride.app
-
-      # a window needs a logged-in Aqua session; outside one the step warns
-      # that the start went unproven, and passes
-      - name: Start the bundle's window
-        run: bash tools/package-viz.sh macos start stage/Stride.app
 
       - name: Install this checkout's command and app over the latest release with install.sh
         run: |
