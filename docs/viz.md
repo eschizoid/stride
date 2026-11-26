@@ -135,74 +135,89 @@ with view 5 opens it.
 
 One nav pill, `weeks`, holds the two twelve-week charts, picked by chips at
 the left of the header: `zones` (the easy, moderate and hard split, the
-default) and `load` (weekly load and the fitness it gained). Both chart the
-same Monday weeks on the same x-axis. Each mode keeps its own view id on the
-bus, 6 for zones and 7 for load, so a directive for either lands on this tab
-in that mode, and a capture is named for its mode (`zones.png`, `ramp.png`).
-Clicking the pill from another view opens `zones`; clicking it from inside
-the tab keeps the mode on screen.
+default) and `load` (weekly load against the load that holds fitness). Both
+chart the same Monday weeks in the same slots, with the scale's labels in a
+gutter at the plot's left, so no label shares a slot with a bar. Under every
+bar two rows read the week the same way in both modes: its date, then its
+figure (hours in zones, load in load). Each mode keeps its own view id on
+the bus, 6 for zones and 7 for load, so a directive for either lands on this
+tab in that mode, and a capture is named for its mode (`zones.png`,
+`ramp.png`). Clicking the pill from another view opens `zones`; clicking it
+from inside the tab keeps the mode on screen.
 
 One week is in focus across both modes: the bar under the pointer, else the
 one last clicked (clicking it again drops it). The header line under the
 chips reads that week the same way in either mode: the hours of its split
 and their easy share, its load beside its hold level, and the fitness it
-gained. With no week in focus, the line shows the mode's key.
+gained. With no week in focus the line is empty.
+
+The current week, until the series covers all seven of its days, is drawn
+faded in both modes, with "so far" over it: over its bar in zones, over its
+chip in load.
 
 ### Zones mode
 
-Twelve Monday weeks of the polarized split as stacked bars: easy at the
-base, then moderate, then hard. The split comes from the
-`activity_intensity` view, which classifies a session by power or pace when
-it has them and by heart rate otherwise, and which carries the same
-per-activity split `stride summary` computes, so the window and the CLI
-share one definition of easy and hard. The bar counts only the sessions the
-view marks `polarized`, the same population and measure as its cap: a
-lifting session adds to neither. The cap's percentage is therefore the easy
-segment's share of its bar. A white mark across each bar at 80% of its
-height is the 80/20 line, so the bar alone gives the verdict: an easy
-segment that reaches the mark holds the line and its cap is teal; one that
-falls short breaks it and its cap is alarm red. A week with no polarized
-time draws no segments and no cap, only the empty stub. The current week,
-until the series covers all seven of its days, is judged by neither: its bar
-and cap are muted, the cap says "so far", and the card reads "easy so far".
-The card names the latest week that carried polarized time. The key row
-names the three classes; with a week in focus it reads that week's
-heart-rate zone hours, z1 to z5, which the bar does not draw. A directive
-with view 6 opens it.
+Twelve Monday weeks of the polarized split as share bars: every week with
+polarized time stands the plot's full height, its whole being 100% of that
+week's split, stacked easy at the base, then moderate, then hard. The split
+comes from the `activity_intensity` view, which classifies a session by
+power or pace when it has them and by heart rate otherwise, and which
+carries the same per-activity split `stride summary` computes, so the window
+and the CLI share one definition of easy and hard. The bar counts only the
+sessions the view marks `polarized`: a lifting session adds nothing. One
+white line crosses the plot at 80%, labelled in the gutter, so the picture
+gives the verdict: an easy segment that reaches the line holds 80/20, one
+that falls short breaks it. The figure under each bar is the week's hours
+of polarized time; a week with none keeps an empty stub and reads 0.0 h.
+
+The card reads the latest week that carried polarized time as easy against
+everything else, `81/19`, the two summing to 100, in teal when it holds
+80/20 and alarm red when it breaks it; the running week reads muted, since
+a partial week is not a finished one. Beside it, the hours in the split.
+The key row names the three classes; with a week in focus it reads that
+week's heart-rate zone hours, z1 to z5, which the bar does not draw. A
+directive with view 6 opens it.
 
 ![The zones view](img/zones.png)
 
 ### Load mode
 
-The overtraining early warning, also one chart: weekly load as gradient
-bars, each wearing a chip with the CTL that week gained. The ramp is
-encoded as the chip's COLOR on the bars' own axis - teal builds, red past
-+6/wk, grey sheds - rather than as a second y-axis, because two scales
-sharing a plot is a lie no legend repairs. Each bar carries a white hold
-tick at the load that would have left CTL where the week started: CTL at
-the week's start times the days the week counts (`core.Load.hold`), since a
-day whose load equals CTL is the fixed point of the recurrence the engine
-builds `daily_load` with, and that recurrence lives in the same module. A
-bar over its tick gained fitness and one under it lost fitness, whatever
-its height beside the other weeks, except within a narrow band around the
-tick: the recurrence weighs a late day above an early one and the tick
-weighs every day alike, so a week whose load lands on its first day can top
-its tick and still lose up to 1.07% of its starting CTL, and one whose load
-lands on its last day can fall short of its tick and still gain up to
-1.12%. `core.Load` derives both bounds from the recurrence and pins them.
-The scale tops out at the heavier of the biggest week and the highest tick,
-so a rest week after a block keeps its tick on the plot, and a chip rides
-above its bar or its tick, whichever stands higher. The card carries where
-fitness stands and how fast it is moving; a week with no load keeps a base
-stub, so the current partial week never vanishes from the row. That week,
-until the series covers all seven of its days, is judged by neither: its
-bar, tick and chip are muted, the chip says "so far", the card reads "ctl
-per week so far", and its tick is held to the days it has had, since a
-partial week's load is not a low one. The weeks come from the `weekly_ramp`
-view - the one definition of weekly ramp; a week's start is its
-end-of-week CTL less its ramp, except a week that begins on or before the
-first day of history, which started from zero CTL (the engine walks
-`daily_load` from zero) and so holds at zero and draws no tick. A directive
+The overtraining early warning, also one chart on one scale: each bar is
+the week's load as a share of its hold level, the load that would have left
+CTL where the week started: CTL at the week's start times the days the week
+counts (`core.Load.hold`), since a day whose load equals CTL is the fixed
+point of the recurrence the engine builds `daily_load` with, and that
+recurrence lives in the same module. So one white line at 100%, labelled
+"holds fitness" just above it in the gutter, serves every week: a bar over
+it gained fitness and one under it lost fitness, except within a narrow
+band around the line: the recurrence weighs a late day above an early one
+and the hold weighs every day alike, so a week whose load lands on its
+first day can top its hold and still lose up to 1.07% of its starting CTL,
+and one whose load lands on its last day can fall short of it and still
+gain up to 1.12%. `core.Load` derives both bounds from the recurrence and
+pins them.
+
+Each bar wears a chip with the CTL the week gained, and bar and chip share
+the verdict's color: muted for a week that held or lost fitness, blue for
+one that gained, red for one that gained more than 6 CTL in the week
+(`Ramp.ramp_limit`, the one constant the colors and the key read). A chip
+sits above its bar, and one that would touch the line rises to sit clear
+above it. The figure under each bar is the week's load. The card carries
+where fitness stands and how fast it is moving, "ctl per week so far" for
+the running week.
+
+The finished weeks set the scale: its top is the highest finished share
+rounded up to a ten, at least 120% and at most 300%. The running week does
+not set it: its hold counts only the days it has had, so one long ride on a
+Monday reads as a share far over the line, and scaling to it would squeeze
+every finished bar to a sliver. A bar past the top, the running week's or
+a finished week's past 300% (a new athlete's second week, over a tiny
+hold), is clipped there and drawn broken just under its top; its chip
+still carries the week's real CTL change. The weeks come from the
+`weekly_ramp` view - the one definition of weekly ramp; a week's start is
+its end-of-week CTL less its ramp, except a week that begins on or before
+the first day of history, which started from zero CTL (the engine walks
+`daily_load` from zero), has no hold to share and keeps a stub. A directive
 with view 7 opens it.
 
 ![The ramp view](img/ramp.png)
@@ -739,16 +754,14 @@ footers) keeps one spot and never drops. Essential text with somewhere else
 to go keeps, trying its spots in order: the power view's threshold value;
 the career view's milestone values, the all-time-high cheer, test kinds and
 withheld dot values; the form board's line-end values, its event warning,
-the zero rule's "fresh above" caption and the projection's key; the session trace's unit label
-and zoom note; and the zones mode's key-row note, which names the sports
-with their own heart-rate zones or reads the focused week's zone hours. Text that another surface also shows may drop: the power
+the zero rule's "fresh above" caption and the projection's key; and the session trace's unit label
+and zoom note. Text that another surface also shows may drop: the power
 view's deltas, `pr` and `new record` marks, unpushed caption and zone names
 (the rung's hover card carries its values, record and push), its
 planned-ring labels (the ring's card), the career view's year names and
 strip names (the strip's tooltip), the form board's event marker name (the
-event tile) and its key hint when the stale note needs the footer row (the controls section lists the keys), the trace footer's shared keys (every other view's footer
-carries them), and the top value of the weeks tab's scale (the focus line
-reads any week). The map's place and street names may drop too, being the
+event tile) and its key hint when the stale note needs the footer row (the controls section lists the keys), and the trace footer's shared keys (every other view's footer
+carries them). The map's place and street names may drop too, being the
 street map's own detail rather than anything the engine measured. The view's
 own placement rules are the candidate lists: a
 delta tries between its dots on the right, then the left, then above and
@@ -814,10 +827,12 @@ sport no family holds. The fixtures per view:
 - year: more weeks than the widest window holds, with and without event days,
   and with no history;
 - zones and load: twelve weeks with the biggest first, a lifting week with
-  no polarized time, a rest week whose hold tops the heaviest week for
-  every other athlete, and the newest still running, with no week picked,
-  on a picked week with per-sport zones, and with no history, in the brand
-  faces and in the built-in face;
+  no polarized time, a rest week that started from a high CTL for every
+  other athlete, and the newest still running, with no week picked, on a
+  picked week, with no history, and at the load
+  mode's edges (a first week with no hold, a week just under its hold, and
+  a running week two days in past the scale's top), in the brand faces and
+  in the built-in face;
 - lifts: more lifts than the widest window holds and the latest session's
   sets, in kilograms and scrolled in pounds, for every athlete who lifts,
   and the empty tab for every athlete who does not;

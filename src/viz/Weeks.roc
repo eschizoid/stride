@@ -61,8 +61,18 @@ Weeks :: [].{
 	title_x = chip_x(List.len(modes)) + 12.0
 
 	# ── the bar band both modes draw: twelve slots across the panel ──────
+	# A gutter at the band's left holds the scale's labels, so a label never
+	# shares a slot with a bar. Under the band two rows read every week the
+	# same way: its date, then its figure.
 	pad : F32
 	pad = 36.0
+
+	gutter : F32
+	gutter = 68.0
+
+	# where the slots start, right of the gutter
+	plot_left : F32
+	plot_left = pad + gutter
 
 	bars_top : F32
 	bars_top = 168.0
@@ -70,26 +80,37 @@ Weeks :: [].{
 	bars_bot : F32 -> F32
 	bars_bot = |win_h| win_h - 96.0
 
+	# the two rows under the band: each week's date, then its figure
+	date_row : F32 -> F32
+	date_row = |win_h| bars_bot(win_h) + 10.0
+
+	figure_row : F32 -> F32
+	figure_row = |win_h| bars_bot(win_h) + 26.0
+
 	slot_w : F32, U64 -> F32
-	slot_w = |win_w, n| if (n == 0) (win_w - pad * 2.0) else (win_w - pad * 2.0) / U64.to_f32(n)
+	slot_w = |win_w, n| if (n == 0) (win_w - pad - plot_left) else (win_w - pad - plot_left) / U64.to_f32(n)
 
 	slot_cx : F32, U64, U64 -> F32
-	slot_cx = |win_w, n, i| pad + (U64.to_f32(i) + 0.5) * slot_w(win_w, n)
+	slot_cx = |win_w, n, i| plot_left + (U64.to_f32(i) + 0.5) * slot_w(win_w, n)
 
-	# the slot under (x, y), counted over the band a bar and its cap occupy,
-	# or -1 outside it
+	# a bar's width in its slot
+	bar_w : F32, U64 -> F32
+	bar_w = |win_w, n| F32.min(74.0, slot_w(win_w, n) * 0.60)
+
+	# the slot under (x, y), counted over the band a bar and its chip
+	# occupy and the two rows under it, or -1 outside them
 	slot_at : F32, F32, U64, F32, F32 -> I64
 	slot_at = |win_w, win_h, n, x, y|
-		if n == 0 or y < bars_top - 44.0 or y > bars_bot(win_h) or x < pad or x >= win_w - pad {
+		if n == 0 or y < bars_top - 44.0 or y > figure_row(win_h) + 10.0 or x < plot_left or x >= win_w - pad {
 			-1
 		} else {
-			raw = F32.div_floor_by(x - pad, slot_w(win_w, n))
+			raw = F32.div_floor_by(x - plot_left, slot_w(win_w, n))
 			i = F32.round_to_i64_try(raw) ?? -1
 			if (i >= 0 and i < (U64.to_i64_try(n) ?? 0)) i else -1
 		}
 
-	# a week the series covers fewer than all seven days of is still running,
-	# and both modes draw it muted rather than judge it
+	# a week the series covers fewer than all seven days of is still running:
+	# both modes draw it faded and mark it "so far"
 	partial : I64 -> Bool
 	partial = |days| days < 7
 
@@ -173,12 +194,12 @@ Weeks :: [].{
 	chip_marks : List(Labels.Mark)
 	chip_marks = List.map_with_index(modes, |m, i| { key: "the ${m.label} chip", box: chip_box(i) })
 
-	# the header row under the chips: the focused week, else the mode's key
-	focus_text : Ui.Model, Scene.Measure, Str -> Labels.Label(Scene.Item)
-	focus_text = |model, measure, key| {
+	# the header row under the chips: the week in focus, read from both
+	# modes, or nothing with no week in focus
+	focus_texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
+	focus_texts = |model, measure| {
 		wk = focus_week(model)
-		it = if (wk == "") Scene.data(key, 11.0, Theme.ink_faint) else Scene.data(week_line(wk, model.zone_weeks, model.ramp_weeks), 12.0, Color.white)
-		Scene.fixed(measure, it, { x: pad, y: 96.0, align: Left }, Labels.panel(model.win))
+		if (wk == "") [] else [Scene.fixed(measure, Scene.data(week_line(wk, model.zone_weeks, model.ramp_weeks), 12.0, Color.white), { x: pad, y: 96.0, align: Left }, Labels.panel(model.win))]
 	}
 
 	# the headline card at the header's right: where the newest week stands,
@@ -186,11 +207,7 @@ Weeks :: [].{
 	card_box : F32 -> Labels.Rect
 	card_box = |win_w| { x: win_w - pad - 260.0, y: 60.0, w: 260.0, h: 64.0 }
 
-	# a bar's cap or chip, 54 wide over its slot's centre, never above the band
-	cap_box : F32, F32 -> Labels.Rect
-	cap_box = |cx, top| { x: cx - 27.0, y: F32.max(bars_top - 30.0, top - 30.0), w: 54.0, h: 20.0 }
-
-	# the week a slot's date label names, every other slot
+	# the date a week's slot names under its bar, month and day
 	week_label : Str -> Str
 	week_label = |wk| Str.from_utf8_lossy(List.drop_first(Str.to_utf8(wk), 5))
 }
@@ -202,10 +219,13 @@ expect Weeks.mode_at(40.0, 70.0) == 6 and Weeks.mode_at(100.0, 70.0) == 7
 expect Weeks.mode_at(40.0, 100.0) == -1 and Weeks.mode_at(84.0, 70.0) == -1 and Weeks.mode_at(150.0, 70.0) == -1
 # the titles clear the second chip
 expect Weeks.title_x > Weeks.chip_x(1) + Weeks.chip_w
-# twelve slots over a 980-wide panel: the first and last slot, and outside
-expect Weeks.slot_at(980.0, 600.0, 12, 40.0, 300.0) == 0
-expect Weeks.slot_at(980.0, 600.0, 12, 943.0, 300.0) == 11
-expect Weeks.slot_at(980.0, 600.0, 12, 20.0, 300.0) == -1 and Weeks.slot_at(980.0, 600.0, 12, 400.0, 100.0) == -1 and Weeks.slot_at(980.0, 600.0, 0, 400.0, 300.0) == -1
+# twelve slots right of the gutter over a 980-wide panel, 70 wide: the
+# first and last slot, the gutter, the header, the rows under the band,
+# below them, and no weeks
+expect Weeks.slot_at(980.0, 600.0, 12, 105.0, 300.0) == 0 and Weeks.slot_at(980.0, 600.0, 12, 173.0, 300.0) == 0 and Weeks.slot_at(980.0, 600.0, 12, 175.0, 300.0) == 1
+expect Weeks.slot_at(980.0, 600.0, 12, 943.0, 300.0) == 11 and Weeks.slot_at(980.0, 600.0, 12, 945.0, 300.0) == -1
+expect Weeks.slot_at(980.0, 600.0, 12, 102.0, 300.0) == -1 and Weeks.slot_at(980.0, 600.0, 12, 400.0, 100.0) == -1 and Weeks.slot_at(980.0, 600.0, 0, 400.0, 300.0) == -1
+expect Weeks.slot_at(980.0, 600.0, 12, 400.0, 534.0) == 4 and Weeks.slot_at(980.0, 600.0, 12, 400.0, 541.0) == -1
 # picking a week, picking another, and clicking the picked one again
 expect Weeks.pick("", "2026-11-02") == "2026-11-02" and Weeks.pick("2026-11-02", "2026-10-26") == "2026-10-26" and Weeks.pick("2026-11-02", "2026-11-02") == "" and Weeks.pick("2026-11-02", "") == ""
 # one line reads the week from both modes; a week only one mode has gets

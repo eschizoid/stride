@@ -1001,23 +1001,6 @@ Db :: [].{
 	# `days` is how many of the week's seven days the series covers, through
 	# series_clock's today: 7 for every finished week, fewer for the current one.
 	ZoneWeek : { wk : Str, days : I64, z1 : I64, z2 : I64, z3 : I64, z4 : I64, z5 : I64, easy : I64, moderate : I64, hard : I64 }
-	# the sport suffixes of the per-sport HR zone keys in config
-	# (hr_z2_max_ride names "ride"), each once, sorted; empty when every sport
-	# shares the global zones
-	load_zone_overrides! : Sqlite.Db => List(Str)
-	load_zone_overrides! = |db|
-		match db.query!("SELECT DISTINCT CAST(substr(key, 11) AS TEXT) AS s FROM config WHERE key GLOB 'hr_z[1-4]_max_?*' ORDER BY s", []) {
-			Err(_) => []
-			Ok(rows) =>
-				List.keep_oks(
-					rows,
-					|r| {
-						v = r.str("s") ? |_| "bad"
-						Ok(v)
-					},
-				)
-		}
-
 	load_zone_weeks! : Sqlite.Db => List(ZoneWeek)
 	load_zone_weeks! = |db|
 		match db.query!("WITH mondays(wk) AS (SELECT date(mon, '-77 days') FROM week_bounds UNION ALL SELECT date(wk, '+7 days') FROM mondays WHERE wk < (SELECT mon FROM week_bounds)), agg AS (SELECT date(day, '-6 days', 'weekday 1') AS awk, SUM(z1_s) AS z1, SUM(z2_s) AS z2, SUM(z3_s) AS z3, SUM(z4_s) AS z4, SUM(z5_s) AS z5, SUM(CASE WHEN polarized = 1 THEN easy_s ELSE 0 END) AS easy, SUM(CASE WHEN polarized = 1 THEN moderate_s ELSE 0 END) AS moderate, SUM(CASE WHEN polarized = 1 THEN hard_s ELSE 0 END) AS hard FROM activity_intensity WHERE day >= (SELECT date(mon, '-77 days') FROM week_bounds) GROUP BY awk) SELECT CAST(m.wk AS TEXT) AS wk, CAST(MIN(7, MAX(0, julianday((SELECT today FROM series_clock)) - julianday(m.wk) + 1)) AS INTEGER) AS dys, CAST(COALESCE(a.z1, 0) AS INTEGER) AS z1, CAST(COALESCE(a.z2, 0) AS INTEGER) AS z2, CAST(COALESCE(a.z3, 0) AS INTEGER) AS z3, CAST(COALESCE(a.z4, 0) AS INTEGER) AS z4, CAST(COALESCE(a.z5, 0) AS INTEGER) AS z5, CAST(COALESCE(a.easy, 0) AS INTEGER) AS easy, CAST(COALESCE(a.moderate, 0) AS INTEGER) AS moderate, CAST(COALESCE(a.hard, 0) AS INTEGER) AS hard FROM mondays m LEFT JOIN agg a ON a.awk = m.wk ORDER BY m.wk ASC", []) {
