@@ -16,12 +16,31 @@ stride is a training engine for your own Strava history, for every sport: riding
 
 ## Install
 
+On macOS or Linux, in a terminal:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/eschizoid/stride/main/install.sh | sh
 stride setup
 ```
 
-The installer picks the build for your OS and CPU (macOS arm64 and x86_64, Linux x86_64 and arm64), checks it against the release's `SHA256SUMS.txt`, and puts `stride` in `~/.local/bin`. If that directory is not on your `PATH` (a fresh macOS install leaves it off), the installer says so and prints the full path to run instead, for example `~/.local/bin/stride setup`. On macOS it also offers to install the desktop window into `~/Applications`. `STRIDE_VERSION` pins a release and `STRIDE_INSTALL_DIR` picks another directory. On Windows, download `stride-cli-windows-x86_64` and `stride-app-windows-x86_64.zip` from the [latest release](https://github.com/eschizoid/stride/releases/latest). Unzip the app anywhere and double-click `install.cmd` in it once: that puts Stride in the Start menu, and on the Desktop when you have one, with its icon. On Linux, the same release carries `stride-app-linux-x86_64.tar.gz`; unpack it and run `stride-app/install.sh` once to put Stride in the application menu. [docs/viz.md](docs/viz.md#installing-the-released-app) has the details.
+On Windows, in PowerShell (no administrator rights needed):
+
+```powershell
+irm https://raw.githubusercontent.com/eschizoid/stride/main/install.ps1 | iex
+stride setup
+```
+
+Each installer picks the build for your OS and CPU (macOS arm64 and x86_64, Linux x86_64 and arm64, Windows x86_64), checks it against the release's `SHA256SUMS.txt`, installs the command and offers to install the desktop app too. On macOS and Linux the command goes to `~/.local/bin`; if that directory is not on your `PATH` (a fresh macOS install leaves it off), the installer says so and prints the full path to run instead, for example `~/.local/bin/stride setup`. The app goes to `~/Applications/Stride.app` on macOS and to `~/.local/share/stride-app` on Linux x86_64, where it is added to the application menu. On Windows the command goes to `%LOCALAPPDATA%\Programs\stride\bin`, which the installer adds to your user `PATH`: the window you ran it in can use it at once, and other terminals once reopened. The app goes to `%LOCALAPPDATA%\Programs\stride\stride-app`, with a shortcut in the Start menu and on the Desktop. `STRIDE_VERSION` pins a release, `STRIDE_INSTALL_DIR` picks another directory for the command, and `STRIDE_INSTALL_APP` set to `1` or `0` answers the app question in advance (in PowerShell, `$env:STRIDE_INSTALL_APP = '1'` before the line).
+
+To update, run the same line again. It replaces the command and the app with the newer release in place and keeps `~/.stride` (your database, fonts and images) and the menu entry or shortcuts. Every app package carries its own copy of the command from the same build, and the window runs that copy, so the window and its numbers always come from one release.
+
+No download is code-signed. macOS Gatekeeper and Windows SmartScreen warn only about files a browser downloaded, which carry the quarantine attribute on macOS and the Mark of the Web on Windows; `curl` and PowerShell add neither, so the app installed by the one-line installers opens with no warning, and CI checks that the installed files carry neither mark. If you download from the [release page](https://github.com/eschizoid/stride/releases/latest) in a browser instead:
+
+- **macOS**: unzip `stride-app-macos-arm64.zip` (or `-x86_64`), move `Stride.app` to Applications and open it. When macOS refuses, open System Settings, Privacy & Security, and click Open Anyway (on macOS 14 and earlier, Control-click the app and choose Open). A downloaded command (`stride-cli-macos-arm64`) needs `xattr -d com.apple.quarantine` on the file before it runs. The app runs the copy of the command inside it and changes nothing outside itself, so for the command in a terminal, run the one-line installer (it installs the same release's command into `~/.local/bin`) or link it yourself: `ln -s /Applications/Stride.app/Contents/MacOS/stride ~/.local/bin/stride`.
+- **Windows**: unzip `stride-app-windows-x86_64.zip` anywhere and double-click `install.cmd` in it once. It puts Stride in the Start menu, and on the Desktop when you have one, and its `bin` folder on your `PATH`. When SmartScreen says "Windows protected your PC", click More info, then Run anyway; when Windows asks whether to run a file whose publisher could not be verified, click Run.
+- **Linux**: unpack `stride-app-linux-x86_64.tar.gz` and run `stride-app/install.sh` once. It adds Stride to the application menu and links `~/.local/bin/stride` to the app's own copy of the command, unless another one is already there.
+
+[docs/viz.md](docs/viz.md#installing-the-released-app) has the details.
 
 `stride setup` walks the first run and resumes wherever it stopped:
 
@@ -87,7 +106,7 @@ Everything lives in `~/.stride/db.sqlite`. Query it with `sqlite3`, back it up w
 
 ## The desktop app
 
-`Stride.app` reads the same database in a window: the form board, power and pace curves, a session trace with detected intervals, one day-by-day tab (the week's plan with each session's result, a day table, and a year heat map), a lifts tab with each lift's heaviest weight over time, a weeks tab (the easy, moderate and hard split, and weekly load), and a career view. `TAB` cycles the views. Releases ship it for macOS, Linux and Windows, the installer offers it on macOS, and `just viz-app` builds it from source. A coach can steer the window through the database and capture what it shows; [docs/viz.md](docs/viz.md) has the details.
+`Stride.app` reads the same database in a window: the form board, power and pace curves, a session trace with detected intervals, one day-by-day tab (the week's plan with each session's result, a day table, and a year heat map), a lifts tab with each lift's heaviest weight over time, a weeks tab (the easy, moderate and hard split, and weekly load), and a career view. `TAB` cycles the views. Releases ship it for macOS, Linux and Windows, the one-line installers offer it on all three (Linux x86_64 only), and `just viz-app` builds it from source. A coach can steer the window through the database and capture what it shows; [docs/viz.md](docs/viz.md) has the details.
 
 <table>
   <tr>

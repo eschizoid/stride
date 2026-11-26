@@ -462,35 +462,68 @@ just viz-app      # installs ~/Applications/Stride.app
 
 ## Installing the released app
 
+The one-line installers in the README install the app as well as the
+command: `install.sh` on macOS and linux x86_64, `install.ps1` on windows.
+Each asks first, or takes `STRIDE_INSTALL_APP=1` (or `0`) in advance, checks
+the package against the release's `SHA256SUMS.txt`, and puts it in a
+per-user folder: `~/Applications/Stride.app`, `~/.local/share/stride-app`
+(under `$XDG_DATA_HOME` when it is set) or
+`%LOCALAPPDATA%\Programs\stride\stride-app`. On linux and windows it then
+runs the package's install step, described below, without starting the
+window. Running the installer again replaces the app with the newer
+release's in place: `install.sh` unpacks the new app beside the old one and
+renames it over it, and `install.ps1` replaces it file by file, renaming a
+file in use aside first, since Windows refuses to overwrite a running
+program but lets it be renamed, and removing what it renamed once nothing
+holds it. The folder the shortcuts and the menu entry name stays where it
+is, and `~/.stride` is never touched. `curl` and PowerShell mark nothing
+they download as coming from the internet, so neither Gatekeeper nor
+SmartScreen stops the first start; CI checks that no installed file carries
+macOS's quarantine attribute or Windows' Mark of the Web.
+
 Releases attach `stride-app-macos-arm64.zip`, `stride-app-macos-x86_64.zip`,
 `stride-app-linux-x86_64.tar.gz` and `stride-app-windows-x86_64.zip`, each
 built from the tagged commit. Every package carries the window's binary, the
-brand fonts, the splash's mark and the streak flame (`img/stride-icon.png`
-and `img/flame.png`), and a launcher that seeds those files into
-`~/.stride/fonts` and `~/.stride/img` before it starts the window. On macOS
-the package is the whole `.app`, verified for architecture, signature, fonts
-and images before it is packaged. An archive missing from a release means
-its build job failed; `just viz-app` builds the same bundle locally. Unzip
-anywhere and launch.
+`stride` command from the same release build, byte for byte the CLI asset
+the release attaches beside it, the brand fonts, the splash's mark and the
+streak flame (`img/stride-icon.png` and `img/flame.png`), and a launcher
+that puts the package's own command first on the PATH the window inherits,
+so the window runs the command from its own release before any other
+install of it, and seeds those files into `~/.stride/fonts` and
+`~/.stride/img` before it starts the window. The window's grant names the
+program `stride`, which the platform looks up on that PATH, so the grant
+needs no path of its own. On macOS the package is the whole `.app`, with
+the command at `Contents/MacOS/stride`, verified for architecture,
+signature, command, fonts and images before it is packaged. An archive
+missing from a release means its build job failed; `just viz-app` builds
+the same bundle locally, with a command built beside it. Unzip anywhere and
+launch.
 
-A downloaded copy carries macOS's quarantine flag, and only its binary is ad-hoc
-signed — no Developer ID, no notarization — so Gatekeeper refuses the
-first launch. Clear the flag once, pointing at wherever you put it:
+A copy a browser downloaded carries macOS's quarantine flag, and only its
+binaries are ad-hoc signed — no Developer ID, no notarization — so
+Gatekeeper refuses the first launch. System Settings, Privacy & Security,
+Open Anyway lets it start (on macOS 14 and earlier, Control-click the app
+and choose Open), or the flag can be cleared once, pointing at wherever
+you put it:
 
 ```
 xattr -dr com.apple.quarantine "/Applications/Stride.app"
 ```
 
-A bundle built locally was never downloaded, so it carries no such flag.
+A bundle built locally or installed by `install.sh` was never marked, so it
+carries no such flag.
 
 Linux and windows have no bundle format, so each package carries an install
 step beside its launcher. Run it once from the unpacked folder: it puts
-Stride in the system's menu with its icon, then starts the app. The menu
-entry names that folder, so run it again after moving the folder.
+Stride in the system's menu with its icon and the package's command on the
+PATH, then starts the app; with `STRIDE_APP_START=0` it starts nothing,
+which is how the one-line installers run it. The menu entry and the PATH
+name that folder, so run it again after moving the folder.
 
-The linux tarball holds `stride-viz`, the fonts, the images, a `stride-app`
-launcher that widens PATH and seeds the fonts and images, a desktop entry
-(`stride.desktop`), the menu icon (`stride.png`, 256 px) and `install.sh`.
+The linux tarball holds `stride-viz`, the command as `bin/stride`, the
+fonts, the images, a `stride-app` launcher that widens PATH and seeds the
+fonts and images, a desktop entry (`stride.desktop`), the menu icon
+(`stride.png`, 256 px) and `install.sh`.
 
 ```
 tar xzf stride-app-linux-x86_64.tar.gz
@@ -500,30 +533,36 @@ tar xzf stride-app-linux-x86_64.tar.gz
 `install.sh` writes the desktop entry to
 `~/.local/share/applications/stride.desktop` (under `$XDG_DATA_HOME` when it
 is set), pointing at the launcher by its absolute path, and copies the icon
-to `~/.local/share/icons/hicolor/256x256/apps/stride.png`. The entry's
-`StartupWMClass` is the window's title, which X11 reports as the window's
-class, so a dock or taskbar shows the menu icon on the running window as
-well. `./stride-app/stride-app` still starts the app without touching the
-menu. The tarball is built on the current ubuntu runner, so it needs that
-runner's glibc or newer. roc-ray ships an x64glibc host only, so there is no
-linux-arm64 app.
+to `~/.local/share/icons/hicolor/256x256/apps/stride.png`. It links
+`~/.local/bin/stride` (or `$STRIDE_INSTALL_DIR/stride`) to the package's
+command when that name is free or already links into a `stride-app`
+package, and keeps any other file or link there, since that is another
+install of the command; it says when that folder is not on the PATH. The
+entry's `StartupWMClass` is the window's title, which X11 reports as the
+window's class, so a dock or taskbar shows the menu icon on the running
+window as well. `./stride-app/stride-app` still starts the app without
+touching the menu. The tarball is built on the current ubuntu runner, so it
+needs that runner's glibc or newer. roc-ray ships an x64glibc host only, so
+there is no linux-arm64 app.
 
-The windows zip holds `stride-viz.exe`, the fonts, the images, a
-`stride-app.bat` launcher that seeds `%USERPROFILE%\.stride\fonts` and
-`%USERPROFILE%\.stride\img` and starts the window, `shortcut.ps1`, the
-icon (`stride.ico`: 16, 24, 32, 48 and 256 px) and `install.cmd`.
-Double-click `install.cmd`: through `shortcut.ps1` it writes a `Stride`
-shortcut to the Start menu, creating that folder when it is absent, and to
-the Desktop when that folder exists, then runs the launcher. Each shortcut
-runs `stride-app.bat` through cmd with its window minimized, from the home
-directory, and shows `stride.ico`. A Desktop that cannot take a shortcut
-is named and skipped; only a failed Start-menu shortcut stops the install,
-and its message waits for a key only when the install runs in a console.
-The shortcuts name the app's folder, so run `install.cmd` again after
-moving it. `stride-viz.exe` is a console program, so its own console
-opens beside the window. The running window's title bar and taskbar
-button show the generic program icon: roc-ray has no call that sets a
-window's icon, and the exe carries no icon resource.
+The windows zip holds `stride-viz.exe`, the command as `bin\stride.exe`,
+the fonts, the images, a `stride-app.bat` launcher that seeds
+`%USERPROFILE%\.stride\fonts` and `%USERPROFILE%\.stride\img` and starts the
+window, `shortcut.ps1`, the icon (`stride.ico`: 16, 24, 32, 48 and 256 px)
+and `install.cmd`. Double-click `install.cmd`: through `shortcut.ps1` it
+writes a `Stride` shortcut to the Start menu, creating that folder when it
+is absent, and to the Desktop when that folder exists, adds the package's
+`bin` folder to the user's PATH once, keeping every `%VARIABLE%` in the
+stored value as it is, then runs the launcher. A terminal opened afterwards
+runs the command by name; one already open does not see the change. Each
+shortcut runs `stride-app.bat` through cmd with its window minimized, from
+the home directory, and shows `stride.ico`. A Desktop that cannot take a
+shortcut is named and skipped; only a failed Start-menu shortcut stops the
+install, and its message waits for a key only when the install runs in a
+console. `stride-viz.exe` is a console program, so its own console opens
+beside the window. The running window's title bar and taskbar button show
+the generic program icon: roc-ray has no call that sets a window's icon,
+and the exe carries no icon resource.
 
 All three packages show one icon and run one launcher. Every icon comes
 from `img/stride-icon.png`, the master: a 512 px opaque square, the
@@ -548,46 +587,78 @@ committed image's pixels differ from its rendering or when an icon from
 macOS job runs it on every pull request, so an icon edited by hand or
 moved by 4 px fails. At 16 px the frame outweighs the S, which reads as a
 faint line; from 24 px up the mark is clear. The three launchers carry the
-same steps, in
-order, each marked `step:` in the launcher: `path` (widen PATH, which the
-linux and macOS launchers do and windows needs not, since a program
-started from Explorer inherits the user's whole PATH), `locate`, `log`
+same steps, in order, each marked `step:` in the launcher: `locate`,
+`path` (the package's own command first; the linux and macOS launchers
+also add the folders a desktop launch leaves off a minimal PATH, which a
+program started from Explorer on windows already has), `log`
 (`~/.stride/seed.log`), `seed-fonts`, `seed-img`, `home` (change to the
 athlete's home) and `start` (the athlete's directory first, the home
 second). The linux and macOS launchers match line for line in every step
-but `path` and `locate`; the windows launcher does each step in cmd. Every
+but `locate` and `path`; the windows launcher does each step in cmd. Every
 package ships exactly the files in `assets/fonts`.
 
 `tools/package-viz.sh` builds the linux and windows packages and proves each
 one; at release it also verifies and proves the macOS bundle. Each package
-must hold exactly the files in `assets/fonts`, byte for byte (none missing,
-cut short, stale or extra), and every hash in `img/stride-icons.sha256`
-must match its file. The launchers must carry the macOS launcher's steps as
-above, so a step added to the macOS launcher fails the build until the
-others carry it. The archive must list the binary, the launcher, every
-font file, both images, the install step and the icon, the windows archive
-`shortcut.ps1` and the linux archive the desktop entry. The icon must be a
-well-formed icon file whose 256 px image is the linux icon byte for byte,
-and the desktop entry must carry the keys the menu reads, with
-`StartupWMClass` equal to the title `src/viz/main.roc` sets. The launcher
-must seed every face and image into an empty home and repair a truncated
-copy. On linux, `install.sh` runs from a folder whose path needs every
-escape the entry's `Exec` line has (a space, a double quote, a backtick, a
-dollar sign, a percent sign and a backslash); the entry must hold the
-expected line, that line must read back, through the key file's string
-layer and then the quoting layer, as exactly the launcher's path, and the
-icon must be placed and the launcher started. On windows, the launcher
-must start only the window, and `install.cmd` runs from a folder whose
-path cmd splits when unquoted (`R&D (x) y`), once into a fake profile that
-has a Desktop folder and once into one that does not. The first must get
-both shortcuts, the second the Start-menu one and a skipped-Desktop note;
-every shortcut must run the launcher through cmd, minimized, from the
-home, and show the icon, and each install must seed the profile through
-the launcher. The GitHub windows runner has no OpenGL context, so whether
-the window starts there is not deterministic, and nothing requires it;
-that the window starts is verified on a real machine. The prove step
-prints where each profile's folders resolve. CI runs it on every pull
-request as well as at release.
+must carry the command it was given, byte for byte, reporting the version
+`src/cli/main.roc` carries (and on macOS the bundle's own version), so a
+package that lacks the command or carries one from another build fails.
+Each package must hold exactly the files in `assets/fonts`, byte for byte
+(none missing, cut short, stale or extra), and every hash in
+`img/stride-icons.sha256` must match its file. The launchers must carry the
+macOS launcher's steps as above, so a step added to the macOS launcher fails
+the build until the others carry it. The archive must list the binary, the
+command, the launcher, every font file, both images, the install step and
+the icon, the windows archive `shortcut.ps1` and the linux archive the
+desktop entry. The icon must be a well-formed icon file whose 256 px image
+is the linux icon byte for byte, and the desktop entry must carry the keys
+the menu reads, with `StartupWMClass` equal to the title `src/viz/main.roc`
+sets. Each launcher, run with its start line replaced by a lookup of
+`stride` and with another `stride` earlier on its PATH, must find the
+package's own command. The launcher must seed every face and image into an
+empty home and repair a truncated copy. On linux, `install.sh` runs from a
+folder whose path needs every escape the entry's `Exec` line has (a space,
+a double quote, a backtick, a dollar sign, a percent sign and a backslash);
+the entry must hold the expected line, that line must read back, through
+the key file's string layer and then the quoting layer, as exactly the
+launcher's path, the icon must be placed, `~/.local/bin/stride` must link to
+the package's command, and the launcher must be started; with
+`STRIDE_APP_START=0` it must write the entry, start nothing and keep a
+`stride` already in `~/.local/bin`. On windows, the launcher must start
+only the window, and `install.cmd` runs from a folder whose path cmd splits
+when unquoted (`R&D (x) y`), once into a fake profile that has a Desktop
+folder and once into one that does not. The first must get both shortcuts,
+the second the Start-menu one and a skipped-Desktop note; every shortcut
+must run the launcher through cmd, minimized, from the home, and show the
+icon, and each install must seed the profile through the launcher. After
+both, the user's PATH must name the package's `bin` once, and a shell that
+reads its PATH from the registry, as a new terminal does, must run the
+package's command by name; with `STRIDE_APP_START=0` the install writes the
+shortcut and starts nothing. The user's PATH is restored when the step
+ends. The GitHub windows runner has no OpenGL context, so whether the window
+starts there is not deterministic, and nothing requires it; that the window
+starts is verified on a real machine. The prove step prints where each
+profile's folders resolve. CI runs it on every pull request as well as at
+release.
+
+`tools/install-check.sh` (macOS and linux) and `tools/install-check.ps1`
+(windows, under Windows PowerShell and PowerShell 7) prove the one-line
+installers in fake homes. Against the published releases they cut the
+installer off at every line and check that nothing installs while the
+whole file does, install the latest release and check the command starts
+and no app arrives unasked, then install an older release with the app and
+the latest over it and check that the command and the app are the
+latest's, replaced in place, that the athlete's directory is kept and that
+nothing installed carries the quarantine attribute or the Mark of the Web.
+On windows they also check that a new terminal runs the command by name,
+that the update replaces the command and the window while both are
+running, and that the next install removes what it renamed aside. Against
+this checkout's own packages, built in the viz jobs, they install the
+latest release and then the packages over it, twice, and check that the
+command and the app's command are the ones built, that the menu entry or
+shortcut is written and kept and each PATH entry is there once. The
+script's `static` mode, which needs only PowerShell, parses `install.ps1`
+cut off after every byte and checks that no cut parses to a statement, and
+runs its download and file-replacing functions on local files.
 
 On every launch the launcher copies a font or image when the athlete's
 directory lacks it or holds a copy of a different size, so an interrupted
