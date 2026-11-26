@@ -10,18 +10,20 @@ import Weeks
 
 Zones :: [].{
 	# The weeks tab's zones mode: twelve Monday weeks of the polarized split
-	# as stacked bars, easy at the base, then moderate, then hard. The bar is
-	# drawn from the population and measure its cap reads (the sessions the
-	# activity_intensity view marks `polarized`, classified by power or pace
-	# when a session has it and by heart rate otherwise), so the cap's easy
-	# share is the easy segment's share of its bar. A mark at 80% of each
-	# bar's height is the 80/20 line: an easy segment that reaches it holds
-	# the line, and the cap says so in teal; one that falls short breaks it,
-	# in alarm. A week with no polarized time draws no segments and no cap.
-	# The current week, until the series covers all seven of its days, is
-	# judged by neither: its bar and cap are muted and the cap says "so far",
-	# since a partial week is not a finished one. Heart-rate zone time stays
-	# in the week's focus line.
+	# as share bars. Every bar with polarized time stands the full height of
+	# the plot, its whole being 100% of that week's polarized time, stacked
+	# easy at the base, then moderate, then hard. The split counts the
+	# sessions the activity_intensity view marks `polarized`, classified by
+	# power or pace when a session has it and by heart rate otherwise, so a
+	# lifting session adds nothing. One white line crosses the plot at 80%:
+	# an easy segment that reaches it holds the 80/20 split. Under each bar
+	# its date, then its hours of polarized time; a week with none keeps an
+	# empty stub. The card reads the newest week with polarized time as easy
+	# against everything else, 81/19, in the verdict's color. The current
+	# week, until the series covers all seven of its days, is judged by
+	# neither: its bar is faded, "so far" sits over it, and the card reads it
+	# muted. Heart-rate zone time stays in the key row's note for the week in
+	# focus.
 
 	pad : F32
 	pad = 36.0
@@ -38,16 +40,26 @@ Zones :: [].{
 		else if (easy * 100 // itot >= easy_floor) (Theme.tsb_c)
 		else Theme.alarm_c
 
+	# the card's reading of a week: its easy share against the rest of its
+	# split, whole percents with the easy share floored as the verdict
+	# floors it, so the two sum to 100; a dash for a week with no polarized
+	# time
+	tile : Db.ZoneWeek -> { value : Str, label : Str, color : Color.Rgba }
+	tile = |w| {
+		itot = split_s(w)
+		if itot <= 0 {
+			{ value: "-", label: "no polarized time", color: Theme.ink_muted }
+		} else {
+			e = w.easy * 100 // itot
+			{ value: "${I64.to_str(e)}/${I64.to_str(100 - e)}", label: "easy / harder, wk of ${Weeks.week_label(w.wk)}", color: verdict(w.easy, itot, w.days) }
+		}
+	}
+
 	hours : I64 -> Str
 	hours = |secs| {
 		h10 = secs * 10 // 3600
 		"${Db.grouped(h10 // 10)}.${I64.to_str(h10 % 10)} h"
 	}
-
-	zones_note : List(Str) -> Str
-	zones_note = |overrides|
-		if (List.is_empty(overrides)) "one set of HR zones for every sport"
-		else "own HR zones: ${Str.join_with(overrides, ", ")}; every other sport uses the global zones"
 
 	# a week's heart-rate zone hours, z1 to z5: the detail the bar leaves out
 	hr_line : Db.ZoneWeek -> Str
@@ -55,14 +67,12 @@ Zones :: [].{
 		if (w.z1 + w.z2 + w.z3 + w.z4 + w.z5 <= 0) "no heart-rate zone time"
 		else "hr zones z1-z5: ${Str.join_with(List.map([w.z1, w.z2, w.z3, w.z4, w.z5], Weeks.tenths_of_hour), "  ")} h"
 
-	# the key row's note: the focused week's zone hours, else the zones note
-	row_note : Ui.Model -> Str
+	# the key row's note: the focused week's zone hours, or nothing with no
+	# week in focus
+	row_note : Ui.Model -> List(Str)
 	row_note = |model| {
 		wk = Weeks.focus_week(model)
-		match List.first(List.keep_if(model.zone_weeks, |w| w.wk == wk)) {
-			Ok(w) => hr_line(w)
-			Err(_) => zones_note(model.zone_overrides)
-		}
+		List.map(List.keep_if(model.zone_weeks, |w| w.wk == wk and wk != ""), hr_line)
 	}
 
 	title_text : Str
@@ -70,9 +80,6 @@ Zones :: [].{
 
 	hint_text : Str
 	hint_text = "zones / load  modes      hover or click a week      TAB  career      R  reload      S  screenshot      V  record      ESC quit"
-
-	key_text : Str
-	key_text = "caps: easy share     teal holds 80/20     red breaks it     tick: 80% of the bar     muted: still running"
 
 	# the three classes the bar stacks, base first, each with its color
 	classes : List({ name : Str, color : Color.Rgba })
@@ -82,7 +89,7 @@ Zones :: [].{
 		{ name: "hard", color: (List.get(Theme.zone_ramp, 4)) ?? Theme.alarm_c },
 	]
 
-	# the seconds a week's bar and cap both count
+	# the seconds a week's bar and card both count
 	split_s : Db.ZoneWeek -> I64
 	split_s = |w| w.easy + w.moderate + w.hard
 
@@ -90,32 +97,51 @@ Zones :: [].{
 	charted : Ui.Model -> Bool
 	charted = |model| List.any(model.zone_weeks, |w| split_s(w) > 0)
 
-	# each class's height on a bar `h` tall at the tallest week's `peak`
-	# seconds: easy, moderate and hard, base first
-	segments : Db.ZoneWeek, I64, F32 -> List(F32)
-	segments = |w, peak, h| List.map([w.easy, w.moderate, w.hard], |s| I64.to_f32(s) / I64.to_f32(peak) * h)
+	# each class's height on a share bar `h` tall: easy, moderate and hard,
+	# base first, together the whole bar; nothing for a week with no
+	# polarized time
+	segments : Db.ZoneWeek, F32 -> List(F32)
+	segments = |w, h| {
+		t = split_s(w)
+		if t <= 0 {
+			[0.0, 0.0, 0.0]
+		} else {
+			easy = I64.to_f32(w.easy) / I64.to_f32(t) * h
+			moderate = I64.to_f32(w.moderate) / I64.to_f32(t) * h
+			[easy, moderate, h - easy - moderate]
+		}
+	}
 
-	# the 80/20 mark's height above the base on a bar `bh` tall
+	# the plot's height at a window height
+	plot_h : F32 -> F32
+	plot_h = |win_h| Weeks.bars_bot(win_h) - Weeks.bars_top
+
+	# the 80/20 line's height above the base on a bar `bh` tall
 	mark_h : F32 -> F32
 	mark_h = |bh| bh * I64.to_f32(easy_floor) / 100.0
 
-	Bar : { w : Db.ZoneWeek, i : U64, cx : F32, top : F32, bh : F32, box : Labels.Rect }
+	# the 80/20 line: one white line across every slot at 80% of the plot
+	line_y : F32 -> F32
+	line_y = |win_h| Weeks.bars_bot(win_h) - mark_h(plot_h(win_h))
 
-	# each week's bar on screen: its slot's centre, its top-left corner and
-	# size, scaled to the week with the most polarized time
+	line_box : { w : F32, h : F32 } -> Labels.Rect
+	line_box = |win| { x: Weeks.plot_left - 2.0, y: line_y(win.h) - 1.0, w: win.w - pad - Weeks.plot_left + 2.0, h: 2.0 }
+
+	Bar : { w : Db.ZoneWeek, i : U64, cx : F32, box : Labels.Rect }
+
+	# each week's bar on screen: its slot's centre and its body, the full
+	# plot for a week with polarized time and a 3px stub for one without
 	bars_of : List(Db.ZoneWeek), { w : F32, h : F32 } -> List(Bar)
 	bars_of = |weeks, win| {
 		n = List.len(weeks)
-		slot = (win.w - pad * 2.0) / U64.to_f32(n)
-		bw = F32.min(74.0, slot * 0.60)
+		bw = Weeks.bar_w(win.w, n)
 		bot = Weeks.bars_bot(win.h)
-		peak = peak_of(weeks)
 		List.map_with_index(
 			weeks,
 			|w, i| {
-				cx = pad + (U64.to_f32(i) + 0.5) * slot
-				bh = I64.to_f32(split_s(w)) / I64.to_f32(peak) * (bot - Weeks.bars_top)
-				{ w, i, cx, top: bot - bh, bh, box: { x: cx - bw / 2.0, y: bot - F32.max(bh, 3.0), w: bw, h: F32.max(bh, 3.0) } }
+				cx = Weeks.slot_cx(win.w, n, i)
+				box = if (split_s(w) > 0) { x: cx - bw / 2.0, y: Weeks.bars_top, w: bw, h: plot_h(win.h) } else { x: cx - bw / 2.0, y: bot - 3.0, w: bw, h: 3.0 }
+				{ w, i, cx, box }
 			},
 		)
 	}
@@ -123,19 +149,12 @@ Zones :: [].{
 	bars : Ui.Model -> List(Bar)
 	bars = |model| bars_of(model.zone_weeks, model.win)
 
-	peak_of : List(Db.ZoneWeek) -> I64
-	peak_of = |weeks| List.fold(weeks, 1.I64, |a, w| if (split_s(w) > a) split_s(w) else a)
-
-	# the 80/20 mark across a bar, a little wider than the bar
-	mark_box : Bar -> Labels.Rect
-	mark_box = |b| { x: b.box.x - 5.0, y: b.top + b.bh - mark_h(b.bh) - 1.0, w: b.box.w + 10.0, h: 2.0 }
-
-	# the week the verdict card reads: the newest with polarized time
+	# the week the card reads: the newest with polarized time
 	newest : Ui.Model -> Db.ZoneWeek
 	newest = |model| List.fold(model.zone_weeks, { wk: "", days: 7, z1: 0, z2: 0, z3: 0, z4: 0, z5: 0, easy: 0, moderate: 0, hard: 0 }, |acc, w| if (split_s(w) > 0) (w) else acc)
 
-	# the class key on its own row clear of every cap: each swatch, and its
-	# name 13px right of it, the next swatch 14px past the name's end
+	# the class key on its own row over the plot: each swatch, and its name
+	# 13px right of it, the next swatch 14px past the name's end
 	key_row : Scene.Measure -> List({ name : Str, color : Color.Rgba, swatch : Labels.Rect, text_x : F32 })
 	key_row = |measure|
 		List.fold(
@@ -147,13 +166,11 @@ Zones :: [].{
 			},
 		).row
 
-	# where the key row's text ends, for the zones note that follows it
+	# where the key row's text ends, for the focused week's note that follows it
 	key_end : Scene.Measure -> F32
 	key_end = |measure| List.fold(key_row(measure), pad, |_, k| k.text_x + measure(k.name, 10.0, Data))
 
 	# ── every string the view writes, placed ───────────────────────────────
-	# Fixed text but the scale's top value, which a tall first week's cap
-	# may cover: it drops then, and the focus line reads any week's hours.
 	scene : Ui.Model, Scene.Measure -> List(Labels.Placed(Scene.Item))
 	scene = |model, measure| Labels.place(texts(model, measure), obstacles(model, measure))
 
@@ -174,51 +191,41 @@ Zones :: [].{
 			if !(charted(model)) {
 				[fix(Scene.data("no polarized time yet", 14.0, ink_muted), pad, 130.0, Left, panel)]
 			} else {
-				# this week's verdict, in the form board's KPI card style
 				last = newest(model)
-				li = split_s(last)
-				lc = verdict(last.easy, li, last.days)
+				t = tile(last)
 				card = Weeks.card_box(win_w)
-				wk_lbl = if (last.wk == "") ("no training yet") else if (Weeks.partial(last.days)) "easy so far, wk of ${Weeks.week_label(last.wk)}" else "easy, wk of ${Weeks.week_label(last.wk)}"
-				peak = peak_of(model.zone_weeks)
 				bot = Weeks.bars_bot(win_h)
+				axis = Weeks.plot_left - 6.0
+				# under every bar its date, then its hours; over the running
+				# week's bar, "so far"
 				per_bar = List.join(
 					List.map(
 						bars(model),
-						|b| {
-							bt = split_s(b.w)
-							cap =
-								if bt > 0 {
-									cb = Weeks.cap_box(b.cx, b.top)
-									vc = verdict(b.w.easy, bt, b.w.days)
-									List.concat(
-										[fix(Scene.data("${I64.to_str(b.w.easy * 100 // bt)}%", 11.0, vc), b.cx, cb.y + 4.0, Center, cb)],
-										if (Weeks.partial(b.w.days)) [fix(Scene.data("so far", 10.0, ink_faint), b.cx, cb.y - 14.0, Center, panel)] else [],
-									)
-								} else {
-									[]
-								}
-							List.concat(cap, if (b.i % 2 == 0) [fix(Scene.data(Weeks.week_label(b.w.wk), 10.0, ink_faint), b.cx, bot + 10.0, Center, panel)] else [])
-						},
+						|b| List.join([
+							[
+								fix(Scene.data(Weeks.week_label(b.w.wk), 10.0, ink_faint), b.cx, Weeks.date_row(win_h), Center, panel),
+								fix(Scene.data(hours(split_s(b.w)), 10.0, ink_faint), b.cx, Weeks.figure_row(win_h), Center, panel),
+							],
+							if (Weeks.partial(b.w.days)) [fix(Scene.data("so far", 10.0, ink_faint), b.cx, b.box.y - 14.0, Center, panel)] else [],
+						]),
 					),
 				)
 				List.join([
 					[
-						fix(Scene.data(if (li > 0) ("${I64.to_str(last.easy * 100 // li)}%") else "-", 28.0, lc), card.x + 16.0, 68.0, Left, card),
-						fix(Scene.data(wk_lbl, 11.0, ink_faint), card.x + 16.0, 102.0, Left, card),
-						fix(Scene.data(hours(li), 28.0, Theme.ctl_c), win_w - pad - 16.0, 68.0, Right, card),
+						fix(Scene.data(t.value, 28.0, t.color), card.x + 16.0, 68.0, Left, card),
+						fix(Scene.data(t.label, 11.0, ink_faint), card.x + 16.0, 102.0, Left, card),
+						fix(Scene.data(hours(split_s(last)), 28.0, Theme.ctl_c), win_w - pad - 16.0, 68.0, Right, card),
 						fix(Scene.data("in the split", 11.0, ink_faint), win_w - pad - 16.0, 102.0, Right, card),
-						Scene.free(measure, Scene.data(hours(peak), 10.0, ink_faint), [{ x: pad, y: Weeks.bars_top - 14.0, align: Left }], 1, panel),
-						fix(Scene.data("0", 10.0, ink_faint), pad, bot - 12.0, Left, panel),
-						Weeks.focus_text(model, measure, key_text),
-						# the focused week's heart-rate zone hours, else which
-						# zones classify a session with no power or pace: beside
-						# the class key, or under the week labels when a long list
-						# of sports would run under the card. A sport without its
-						# own bounds is classified by the global ones, so a
-						# swimmer's lower heart rate can read as easier than it is
-						Scene.kept(measure, Scene.data(row_note(model), 10.0, ink_faint), [{ x: key_end(measure) + 16.0, y: 118.0, align: Left }, { x: pad, y: bot + 28.0, align: Left }], 2, panel),
+						# the scale, in the gutter: the bar's top is the
+						# week's whole split, and the line is labelled
+						# where it crosses
+						fix(Scene.data("100 %", 10.0, ink_faint), axis, Weeks.bars_top - 5.0, Right, panel),
+						fix(Scene.data("${I64.to_str(easy_floor)} %", 10.0, Color.white), axis, line_y(win_h) - 5.0, Right, panel),
+						fix(Scene.data("0", 10.0, ink_faint), axis, bot - 10.0, Right, panel),
 					],
+					# the focused week's heart-rate zone hours, beside the key
+					List.map(row_note(model), |note| fix(Scene.data(note, 10.0, ink_faint), key_end(measure) + 16.0, 118.0, Left, panel)),
+					Weeks.focus_texts(model, measure),
 					List.map(key_row(measure), |k| fix(Scene.data(k.name, 10.0, ink_faint), k.text_x, 118.0, Left, panel)),
 					per_bar,
 				])
@@ -227,30 +234,22 @@ Zones :: [].{
 		List.join([head, chart, foot, Weeks.chip_texts(model, measure)])
 	}
 
-	# what the scale's top value keeps off: the chrome, the card, the bars
-	# and their caps
+	# what the placer keeps text off: the chrome, the card, the swatches,
+	# the bars and the line
 	obstacles : Ui.Model, Scene.Measure -> Labels.Obstacles
 	obstacles = |model, measure| { boxes: List.concat(Chrome.boxes(model, measure), List.map(marks(model, measure), |m| m.box)), segs: [] }
 
 	# the shapes no text may cover but its own: the pills, the mode chips,
-	# the card, the class key's swatches, and every bar, 80/20 mark and cap
+	# the card, the class key's swatches, every bar, and the 80/20 line
 	marks : Ui.Model, Scene.Measure -> List(Labels.Mark)
 	marks = |model, measure|
 		if charted(model) {
 			List.join([
 				Chrome.marks(model),
 				Weeks.chip_marks,
-				[{ key: "the verdict card", box: Weeks.card_box(model.win.w) }],
+				[{ key: "the verdict card", box: Weeks.card_box(model.win.w) }, { key: "the 80/20 line", box: line_box(model.win) }],
 				List.map(key_row(measure), |k| { key: "the ${k.name} swatch", box: k.swatch }),
-				List.join(
-					List.map(
-						bars(model),
-						|b| List.concat(
-							[{ key: "the ${b.w.wk} bar", box: b.box }],
-							if (split_s(b.w) > 0) [{ key: "the ${b.w.wk} cap", box: Weeks.cap_box(b.cx, b.top) }, { key: "the ${b.w.wk} 80/20 mark", box: mark_box(b) }] else [],
-						),
-					),
-				),
+				List.map(bars(model), |b| { key: "the ${b.w.wk} bar", box: b.box }),
 			])
 		} else {
 			List.concat(Chrome.marks(model), Weeks.chip_marks)
@@ -263,12 +262,9 @@ Zones :: [].{
 		if charted(model) {
 			win_w = model.win.w
 			bot = Weeks.bars_bot(model.win.h)
-			bars_h = bot - Weeks.bars_top
-			peak = peak_of(model.zone_weeks)
 			card = Weeks.card_box(win_w)
 			frame.rounded_rectangle!({ x: card.x, y: card.y, width: card.w, height: card.h, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })
-			frame.line!({ start: { x: pad, y: bot }, end: { x: win_w - pad, y: bot }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 70), 1) })
-			# the class key rides its own row, clear of every cap
+			frame.line!({ start: { x: Weeks.plot_left, y: bot }, end: { x: win_w - pad, y: bot }, stroke: Draw.stroke(Color.with_alpha(ink_faint, 70), 1) })
 			List.for_each!(key_row(measure), |k| frame.rounded_rectangle!({ x: k.swatch.x, y: k.swatch.y, width: k.swatch.w, height: k.swatch.h, radius: 2.0, segments: 3, style: Draw.filled(k.color) }))
 			focus = Weeks.focus_week(model)
 			List.for_each!(
@@ -276,37 +272,29 @@ Zones :: [].{
 				|b| {
 					x0 = b.box.x
 					bw = b.box.w
-					bt = split_s(b.w)
 					hovered = b.w.wk == focus
-					# easy at the base, hard on top, a hairline of ground between each
-					_ = List.fold_try!(
-						List.map2(segments(b.w, peak, bars_h), classes, |seg, c| { seg, c }),
-						0.0,
-						|yacc, s| {
-							if s.seg > 1.5 {
-								frame.rectangle!({ x: x0, y: bot - yacc - s.seg, width: bw, height: s.seg - 1.0, style: Draw.filled(Color.with_alpha(s.c.color, if (hovered) (255.U8) else if (Weeks.partial(b.w.days)) 120 else 235)) })
-							}
-							Ok(yacc + s.seg)
-						},
-					)
-					# depth over the whole stack, so the bars sit in the panel
-					if b.bh > 8.0 {
-						frame.rectangle_gradient_v!({ x: x0, y: b.top, width: bw, height: b.bh, color_top: Color.with_alpha(Theme.bg, 0), color_bottom: Color.with_alpha(Theme.bg, 90) })
-					}
-					if (b.bh > 3.0) {} else {
-						frame.rounded_rectangle!({ x: x0, y: bot - 3.0, width: bw, height: 3.0, radius: 1.5, segments: 3, style: Draw.filled(Color.with_alpha(ink_faint, 90)) })
-					}
-					if bt > 0 {
-						# the 80/20 mark, then the cap: this week's easy share,
-						# in its verdict color
-						m = mark_box(b)
-						frame.rectangle!({ x: m.x, y: m.y, width: m.w, height: m.h, style: Draw.filled(Color.with_alpha(Color.white, if (Weeks.partial(b.w.days)) (150.U8) else 220)) })
-						cb = Weeks.cap_box(b.cx, b.top)
-						vc = verdict(b.w.easy, bt, b.w.days)
-						frame.rounded_rectangle!({ x: cb.x, y: cb.y, width: cb.w, height: cb.h, radius: 6.0, segments: 5, style: Draw.filled(Color.with_alpha(vc, if (hovered) (70.U8) else 42)) })
+					if split_s(b.w) > 0 {
+						# easy at the base, hard on top, a hairline of ground between each
+						_ = List.fold_try!(
+							List.map2(segments(b.w, b.box.h), classes, |seg, c| { seg, c }),
+							0.0,
+							|yacc, s| {
+								if s.seg > 1.5 {
+									frame.rectangle!({ x: x0, y: bot - yacc - s.seg, width: bw, height: s.seg - 1.0, style: Draw.filled(Color.with_alpha(s.c.color, if (hovered) (255.U8) else if (Weeks.partial(b.w.days)) 120 else 235)) })
+								}
+								Ok(yacc + s.seg)
+							},
+						)
+						# depth over the whole stack, so the bars sit in the panel
+						frame.rectangle_gradient_v!({ x: x0, y: b.box.y, width: bw, height: b.box.h, color_top: Color.with_alpha(Theme.bg, 0), color_bottom: Color.with_alpha(Theme.bg, 90) })
+					} else {
+						frame.rounded_rectangle!({ x: x0, y: b.box.y, width: bw, height: b.box.h, radius: 1.5, segments: 3, style: Draw.filled(Color.with_alpha(ink_faint, 90)) })
 					}
 				},
 			)
+			# the 80/20 line over every bar
+			l = line_box(model.win)
+			frame.rectangle!({ x: l.x, y: l.y, width: l.w, height: l.h, style: Draw.filled(Color.with_alpha(Color.white, 220)) })
 		}
 		Scene.draw!(frame, model, scene(model, measure))
 		Ok({})
@@ -342,66 +330,84 @@ expect Zones.verdict(39, 100, 3) == Theme.ink_muted
 expect Zones.verdict(95, 100, 6) == Theme.ink_muted
 expect Zones.verdict(0, 0, 7) == Theme.ink_muted
 
-# every sport on the global zones says so; per-sport bounds are named
-expect Zones.zones_note([]) == "one set of HR zones for every sport"
-expect Zones.zones_note(["ride", "swim"]) == "own HR zones: ride, swim; every other sport uses the global zones"
+# the card reads easy against everything else, the two summing to 100: an
+# 80/0/20 week holds at 80/20, an 81/18/1 week holds at 81/19, a 70/10/20
+# week breaks at 70/30, a week still running reads muted, and a week with
+# no polarized time reads a dash
+expect {
+	wk = |e, m, h, d| { wk: "2026-11-23", days: d, z1: 0, z2: 0, z3: 0, z4: 0, z5: 0, easy: e, moderate: m, hard: h }
+	Zones.tile(wk(8000, 0, 2000, 7)) == { value: "80/20", label: "easy / harder, wk of 11-23", color: Theme.tsb_c }
+		and Zones.tile(wk(8100, 1800, 100, 7)) == { value: "81/19", label: "easy / harder, wk of 11-23", color: Theme.tsb_c }
+		and Zones.tile(wk(7000, 1000, 2000, 7)) == { value: "70/30", label: "easy / harder, wk of 11-23", color: Theme.alarm_c }
+		and Zones.tile(wk(9000, 900, 100, 3)) == { value: "90/10", label: "easy / harder, wk of 11-23", color: Theme.ink_muted }
+		and Zones.tile(wk(0, 0, 0, 7)) == { value: "-", label: "no polarized time", color: Theme.ink_muted }
+		and Zones.tile(wk(7999, 1, 2000, 7)) == { value: "79/21", label: "easy / harder, wk of 11-23", color: Theme.alarm_c }
+}
 
-# on every real week the cap's percentage is the easy segment's share of
-# its bar, and the segments stack to the bar's height
+# every real week is a share bar: it stands the whole plot, from the band's
+# top to its base, its three segments stack to exactly its height, and its
+# easy segment's share of the bar floors to the card's easy share
 expect {
 	bs = Zones.bars_of(Zones.real_weeks, { w: 980.0, h: 600.0 })
-	peak = Zones.peak_of(Zones.real_weeks)
+	h = Zones.plot_h(600.0)
 	List.len(bs) == 12
 		and List.all(
 			bs,
 			|b| {
-				segs = Zones.segments(b.w, peak, Weeks.bars_bot(600.0) - Weeks.bars_top)
+				segs = Zones.segments(b.w, b.box.h)
 				easy_h = (List.first(segs)) ?? 0.0
 				stack = List.fold(segs, 0.0, |a, s| a + s)
-				cap = b.w.easy * 100 // Zones.split_s(b.w)
-				share = easy_h / b.bh * 100.0
-				(stack - b.bh).abs() < 0.01 and share >= I64.to_f32(cap) and share < I64.to_f32(cap + 1)
+				e = b.w.easy * 100 // Zones.split_s(b.w)
+				share = easy_h / b.box.h * 100.0
+				(b.box.h - h).abs() < 0.01
+					and (b.box.y - Weeks.bars_top).abs() < 0.01
+					and (stack - b.box.h).abs() < 0.01
+					and share >= I64.to_f32(e) and share < I64.to_f32(e + 1)
+					and Str.starts_with((Zones.tile(b.w)).value, "${I64.to_str(e)}/")
 			},
 		)
 }
 
 # the first real week reads about 82% easy by heart rate and 64% by the
-# split; the bar and its cap now both read the split
+# split; the bar and its card both read the split
 expect {
 	w = (List.first(Zones.real_weeks)) ?? { wk: "", days: 7, z1: 0, z2: 0, z3: 0, z4: 0, z5: 0, easy: 0, moderate: 0, hard: 0 }
 	by_hr = (w.z1 + w.z2) * 100 // (w.z1 + w.z2 + w.z3 + w.z4 + w.z5)
-	b = (List.first(Zones.bars_of(Zones.real_weeks, { w: 980.0, h: 600.0 }))) ?? { w, i: 0, cx: 0.0, top: 0.0, bh: 0.0, box: { x: 0.0, y: 0.0, w: 0.0, h: 0.0 } }
-	easy_h = (List.first(Zones.segments(w, Zones.peak_of(Zones.real_weeks), Weeks.bars_bot(600.0) - Weeks.bars_top))) ?? 0.0
-	by_hr == 81 and w.easy * 100 // Zones.split_s(w) == 64 and (easy_h / b.bh * 100.0 - 64.77).abs() < 0.05
+	easy_h = (List.first(Zones.segments(w, 300.0))) ?? 0.0
+	by_hr == 81 and (Zones.tile(w)).value == "64/36" and (easy_h / 300.0 * 100.0 - 64.77).abs() < 0.05
 }
 
-# the 80/20 mark is the verdict drawn: on every real finished week, none of
-# which holds the line, and on a week that does, the easy segment reaches
-# the mark exactly when the cap is teal
+# the 80/20 line is the verdict drawn: it crosses every size's plot at 80%
+# of its height, and on every real finished week, none of which holds the
+# split, and on a week that does, the easy segment reaches the line exactly
+# when the card would read teal
 expect {
 	held = { wk: "2026-11-30", days: 7, z1: 3600, z2: 28800, z3: 1800, z4: 1800, z5: 0, easy: 29000, moderate: 3500, hard: 3500 }
 	weeks = List.append(Zones.real_weeks, held)
-	peak = Zones.peak_of(weeks)
-	h = Weeks.bars_bot(600.0) - Weeks.bars_top
 	bs = Zones.bars_of(weeks, { w: 980.0, h: 600.0 })
 	finished = List.keep_if(bs, |b| !(Weeks.partial(b.w.days)))
-	reaches = |b| ((List.first(Zones.segments(b.w, peak, h))) ?? 0.0) >= Zones.mark_h(b.bh)
-	teal = |b| Zones.verdict(b.w.easy, Zones.split_s(b.w), 7) == Theme.tsb_c
+	reaches = |b| Weeks.bars_bot(600.0) - ((List.first(Zones.segments(b.w, b.box.h))) ?? 0.0) <= Zones.line_y(600.0)
+	teal = |b| (Zones.tile(b.w)).color == Theme.tsb_c
+	on_line = |win_h| ((Weeks.bars_bot(win_h) - Zones.line_y(win_h)) / Zones.plot_h(win_h) - 0.8).abs() < 0.0001
 	List.len(finished) == 12
 		and List.any(finished, teal)
 		and List.any(finished, |b| !(teal(b)))
 		and List.all(finished, |b| reaches(b) == teal(b))
-		and List.all(bs, |b| ((Zones.mark_box(b)).y + 1.0 - (Weeks.bars_bot(600.0) - Zones.mark_h(b.bh))).abs() < 0.01)
+		and on_line(600.0) and on_line(900.0) and on_line(1440.0)
+		and ((Zones.line_box({ w: 980.0, h: 600.0 })).y + 1.0 - Zones.line_y(600.0)).abs() < 0.01
 }
 
-# a week with zone time but no polarized time, a lifting week, draws no
-# segment and earns no verdict
+# a week with zone time but no polarized time, a lifting week, keeps a 3px
+# stub at the base, draws no segment and earns no verdict
 expect {
 	lift = { wk: "2026-11-16", days: 7, z1: 1800, z2: 1200, z3: 0, z4: 0, z5: 0, easy: 0, moderate: 0, hard: 0 }
 	ride = { wk: "2026-11-23", days: 7, z1: 600, z2: 3000, z3: 0, z4: 0, z5: 0, easy: 3600, moderate: 0, hard: 0 }
 	bs = Zones.bars_of([lift, ride], { w: 980.0, h: 600.0 })
-	segs = Zones.segments(lift, Zones.peak_of([lift, ride]), 300.0)
-	List.all(segs, |s| s.abs() < 0.001) and ((List.first(bs)) ?? { w: lift, i: 0, cx: 0.0, top: 0.0, bh: 1.0, box: { x: 0.0, y: 0.0, w: 0.0, h: 0.0 } }).bh.abs() < 0.001 and Zones.verdict(lift.easy, Zones.split_s(lift), 7) == Theme.ink_muted
+	stub = ((List.first(bs)) ?? { w: lift, i: 0, cx: 0.0, box: { x: 0.0, y: 0.0, w: 0.0, h: 0.0 } }).box
+	List.all(Zones.segments(lift, 300.0), |s| s.abs() < 0.001)
+		and (stub.h - 3.0).abs() < 0.001
+		and (stub.y + stub.h - Weeks.bars_bot(600.0)).abs() < 0.001
+		and Zones.verdict(lift.easy, Zones.split_s(lift), 7) == Theme.ink_muted
 }
 
 # the focus row reads a week's heart-rate zone hours, and says so when a
