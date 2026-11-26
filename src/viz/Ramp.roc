@@ -99,6 +99,11 @@ Ramp :: [].{
 		).row
 
 	# the chart draws once any week holds load
+	# the chart's line while its twelve weeks hold no load: the first run
+	# while no activity exists, else the session that puts load on them
+	empty_text : Ui.Model -> Str
+	empty_text = |model| if (Chrome.first_run(model)) Chrome.first_run_text else "no load in the last 12 weeks - a session stride analyze scores fills it, then press R"
+
 	charted : Ui.Model -> Bool
 	charted = |model| !(List.is_empty(model.ramp_weeks)) and List.fold(model.ramp_weeks, 0.I64, |a, w| a + w.tss) != 0
 
@@ -205,7 +210,7 @@ Ramp :: [].{
 		head = [fix(Scene.prepared(model.ramp_title, title_text, 15.0, Prose, ink_muted), Weeks.title_x, 70.0, Left, panel)]
 		chart =
 			if !(charted(model)) {
-				[fix(Scene.data("no load history yet", 14.0, ink_muted), pad, 130.0, Left, panel)]
+				[fix(Scene.data(empty_text(model), 14.0, ink_muted), pad, 130.0, Left, panel)]
 			} else {
 				# where fitness stands and how fast it is moving
 				last = newest(model)

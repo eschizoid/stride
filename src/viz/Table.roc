@@ -225,6 +225,11 @@ Table :: [].{
 	hint_text : Str
 	hint_text = "arrows  scroll days      TAB  lifts      R  reload      S  screenshot      V  record      ESC quit"
 
+	# the table's line while the series holds no day: the first run while no
+	# activity exists, else the analyze that scores the ones on record
+	empty_text : Ui.Model -> Str
+	empty_text = |model| if (Chrome.first_run(model)) Chrome.first_run_text else Chrome.no_scored_text
+
 	# the column headers, one per entry of col_x
 	head_texts : List(Str)
 	head_texts = ["day", "fitness", "fatigue", "form", "load", "session"]
@@ -290,7 +295,9 @@ Table :: [].{
 		edge = table_edge(win_w, model.detail_day)
 		head = List.join([
 			[fix(Scene.prepared(model.table_title, title_text, 15.0, Prose, ink_muted), Days.title_x, 70.0, Left, panel)],
-			List.keep_oks(
+			# the column headers head the rows, so with no row there are none and
+			# one line says what fills the table
+			if (List.is_empty(model.data)) [fix(Scene.data(empty_text(model), 13.0, ink_muted), 36.0, 108.0, Left, panel)] else List.keep_oks(
 				List.map3(model.table_head, head_texts, col_x, |p, t, hx| { p, t, hx }),
 				|h| if (h.hx < edge - 60.0) Ok(fix(Scene.prepared(h.p, h.t, 13.0, Prose, ink_faint), h.hx, 108.0, Left, panel)) else Err(Hidden),
 			),

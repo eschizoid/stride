@@ -495,7 +495,7 @@ Curve :: [].{
 			List.map(range_chips(model), |c| fix(Scene.prepared(c.p, c.label, 12.0, Data, if (c.on) Color.white else Theme.ink_muted), c.box.x + c.box.w / 2.0, 68.0, Center, c.box)),
 			List.map(curve_chip_boxes(model), |c| fix(Scene.data(c.label, 12.0, if (c.on) Color.white else Theme.ink_muted), c.box.x + c.box.w / 2.0, 68.0, Center, c.box)),
 		)
-		body = if (has_records(model)) story_texts(model, measure) else [fix(Scene.data(empty_note(model.curve_family), 14.0, Theme.ink_muted), 36.0, 110.0, Left, panel)]
+		body = if (has_records(model)) story_texts(model, measure) else [fix(Scene.data(none_text(model), 14.0, Theme.ink_muted), 36.0, 110.0, Left, panel)]
 		# a chip click re-fetches the curve in the background; while that is
 		# in flight a note at the legend row's right says so, so a click that
 		# takes a beat reads as working
@@ -766,6 +766,19 @@ Curve :: [].{
 		match Bus.curve_key(curve) {
 			Pace(sp) => "no ${Career.sport_word(sp)} pace on record yet"
 			Power(fam) => "no ${Career.sport_word(fam)} power on record yet"
+		}
+
+	# the line the view writes for an empty curve: the first run while no
+	# activity exists, else the missing kind of effort and what records it
+	none_text : Ui.Model -> Str
+	none_text = |model|
+		if Chrome.first_run(model) {
+			Chrome.first_run_text
+		} else {
+			match Bus.curve_key(model.curve_family) {
+				Pace(_) => "${empty_note(model.curve_family)} - a session recorded with its distance fills it"
+				Power(_) => "${empty_note(model.curve_family)} - a session recorded with a power meter fills it"
+			}
 		}
 
 	# a scale label: plain watts, or the pace without its unit

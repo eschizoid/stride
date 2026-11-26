@@ -219,6 +219,10 @@ Trace :: [].{
 	keys_text : Str
 	keys_text = "R  reload      S  screenshot      V  record      ESC quit"
 
+	# the footer while the picker holds no session: the keys that still act
+	bare_hint_text : Str
+	bare_hint_text = "TAB  plan      R  reload      S  screenshot      V  record      ESC quit"
+
 	# the plot on screen and the ceiling both traces are judged against: one
 	# scale, or the comparison lies
 	Geom : { left : F32, top : F32, pw : F32, ph : F32, hi : F32 }
@@ -237,11 +241,20 @@ Trace :: [].{
 	cam : Ui.Model, Geom, F32 -> F32
 	cam = |model, g, frac| g.left + g.pw * (frac - model.trace_pan) * model.trace_zoom
 
+	# the plot's line while the picker holds no session: the first run
+	# while the database holds no activity, else the stream that fills it
+	empty_text : Ui.Model -> Str
+	empty_text = |model| if (Chrome.first_run(model)) Chrome.first_run_text else no_stream_text
+
+	no_stream_text : Str
+	no_stream_text = "no session with a recorded stream yet - a ride, run or swim synced with its power, pace or heart rate fills it"
+
 	# The heading is built per frame rather than prepared once, because it
 	# describes THIS session: both the channel it plots and whether the
 	# detector found any blocks in it vary from one session to the next. A
 	# lifting session has no power or pace for the detector to read, so its
-	# heading names the channel only and the sets panel speaks for it.
+	# heading names the channel only and the sets panel speaks for it. With
+	# no session in the picker there is no channel to name.
 	heading : Ui.Model -> Str
 	heading = |model| {
 		nsegs = List.len(List.keep_if(model.segs, |sg| sg.kind == "work"))
@@ -250,7 +263,7 @@ Trace :: [].{
 			if (List.is_empty(model.trace) or lifting_shown(model)) ("")
 			else if (nsegs == 0) (" - no intervals detected")
 			else if (nsegs == 1) (" - 1 detected block shaded behind it") else " - ${U64.to_str(nsegs)} detected blocks shaded behind it"
-		"${what} trace${blocks}"
+		if (List.is_empty(model.trace_ids)) "session trace" else "${what} trace${blocks}"
 	}
 
 	# The y grid: a value at each step under the ceiling, so a level can be
@@ -388,7 +401,8 @@ Trace :: [].{
 		# array passes that, and the CASE prefers watts, so an empty watts
 		# array blanks the plot while a full heart-rate array sits beside it;
 		# a failed query blanks the same way. That blank says why. An empty
-		# picker stays quiet - there is no session for either message.
+		# picker says what fills it: the first run while no activity exists,
+		# else a session synced with its stream.
 		plot =
 			if List.is_empty(model.trace) {
 				if model.trace_loading {
@@ -396,7 +410,7 @@ Trace :: [].{
 				} else if !(List.is_empty(model.trace_ids)) {
 					[fix(Scene.data("this session's stream holds no plottable samples", 13.0, ink_muted), win_w / 2.0, win_h / 2.0, Center)]
 				} else {
-					[]
+					[fix(Scene.prose(empty_text(model), 15.0, ink_muted), 36.0, 110.0, Left)]
 				}
 			} else {
 				g = geom(model)
@@ -420,11 +434,18 @@ Trace :: [].{
 			}
 		# the footer: the trace's own keys, then the keys every view shares
 		# after one gap, dropped when the row has no room left for them; every
-		# other view's footer carries them
-		hint = [
-			fix(Scene.prepared(model.trace_hint, hint_text, 13.0, Prose, ink_faint), 36.0, win_h - 30.0, Left),
-			Scene.free(measure, Scene.prose(keys_text, 13.0, ink_faint), [{ x: 36.0 + measure("${hint_text}      ", 13.0, Prose), y: win_h - 30.0, align: Left }], 1, panel),
-		]
+		# other view's footer carries them. With no session in the picker the
+		# session keys move nothing, so the footer holds the tab key and the
+		# shared keys alone.
+		hint =
+			if List.is_empty(model.trace_ids) {
+				[fix(Scene.prose(bare_hint_text, 13.0, ink_faint), 36.0, win_h - 30.0, Left)]
+			} else {
+				[
+					fix(Scene.prepared(model.trace_hint, hint_text, 13.0, Prose, ink_faint), 36.0, win_h - 30.0, Left),
+					Scene.free(measure, Scene.prose(keys_text, 13.0, ink_faint), [{ x: 36.0 + measure("${hint_text}      ", 13.0, Prose), y: win_h - 30.0, align: Left }], 1, panel),
+				]
+			}
 		List.join([head, picker, splits, sets, plot, hint])
 	}
 

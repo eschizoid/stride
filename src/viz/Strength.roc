@@ -322,6 +322,19 @@ Strength :: [].{
 	owned : Ui.Model, Scene.Measure -> List(Labels.Owned)
 	owned = |model, measure| List.concat(Scene.owned(Chrome.placed(model, measure)), Scene.owned(scene(model, measure)))
 
+	# With no strength session on record the tab is one line saying what
+	# fills it: no weeks chart of empty weeks, no tonnage heading over no
+	# tonnage, no lifts column. The line is the first run while no activity
+	# exists at all.
+	bare : Ui.Model -> Bool
+	bare = |model| model.strength.last.id < 0
+
+	empty_text : Ui.Model -> Str
+	empty_text = |model| if (Chrome.first_run(model)) Chrome.first_run_text else no_lifts_text
+
+	no_lifts_text : Str
+	no_lifts_text = "no strength session yet - a weight training session synced from Strava fills this tab, then press R"
+
 	texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
 	texts = |model, measure| {
 		win_w = model.win.w
@@ -372,7 +385,9 @@ Strength :: [].{
 				]
 			}
 		ton_bottom = win_h - 84.0
-		List.join([
+		if bare(model) {
+			[txt(title_text, 15.0, 36.0, 70.0, ink_muted), txt(empty_text(model), 13.0, 36.0, lift_top, ink_muted), txt(hint_text, 13.0, 36.0, win_h - 30.0, ink_faint)]
+		} else List.join([
 			[txt(title_text, 15.0, 36.0, 70.0, ink_muted)],
 			lifts,
 			last,
@@ -395,7 +410,7 @@ Strength :: [].{
 		rx = right_x(model.win.w)
 		rw = right_w(model.win.w)
 		ton = ton_span(model.win.h, sl.weeks_top)
-		List.join([
+		if (bare(model)) Chrome.marks(model) else List.join([
 			Chrome.marks(model),
 			List.join(List.map(s.rows, |r| [{ key: "the ${r.l.exercise} sparkline", box: spark_box(r.y) }, { key: "the ${r.l.exercise} direction", box: arrow_box(r.y) }])),
 			if (h.above == 0 and h.below == 0) [] else [{ key: "the scrollbar", box: { x: s.at.x, y: s.at.top, w: 3.0, h: s.at.bottom - s.at.top } }],
@@ -456,7 +471,7 @@ Strength :: [].{
 		sl = shown_last(model)
 		Scroll.draw!(frame, sl.at, sl.off, sl.n_shown, sl.total)
 		n_w = List.len(sv.weeks)
-		if n_w > 0 {
+		if n_w > 0 and !(bare(model)) {
 			gap = 4.0
 			bw = (rw - gap * U64.to_f32(n_w - 1)) / U64.to_f32(n_w)
 			top_n = List.fold(sv.weeks, 3, |a, w| I64.max(a, w.total))
@@ -480,7 +495,7 @@ Strength :: [].{
 		ms = sv.tonnage
 		n_m = List.len(ms)
 		ton = ton_span(model.win.h, sl.weeks_top)
-		if n_m > 0 and ton.drawn {
+		if n_m > 0 and ton.drawn and !(bare(model)) {
 			hi = List.fold(ms, 1.0, |a, m| F64.max(a, m.kg))
 			mx = |i| rx + (if (n_m <= 1) (rw / 2.0) else U64.to_f32(i) * rw / U64.to_f32(n_m - 1))
 			my = |kg| ton.bottom - f32(kg / hi) * (ton.bottom - ton.top)

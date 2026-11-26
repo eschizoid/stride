@@ -103,7 +103,10 @@ whole Monday-to-Sunday week and the six days after today, each row with its
 type chip, its prescription and its status: `done` (with the day of the
 linked activity when it differs), `skipped`, `rested` (a rest day past its
 date with under 1.0 load, the rule `stride week` applies), `open`, or `>>`
-for today. Under the prescription a second line says what happened: the
+for today. An activity of the week that no session claims lists on its day
+after that day's session, with its name, minutes and load and the status
+`unlinked`, as `stride week` lists it; it colours no pip and is never
+today's card. Under the prescription a second line says what happened: the
 linked activity's name, minutes and load, and for a session with a
 structured target its result on the target's own signal: for a power
 target, the detected power work reps with their share of the target watts;
@@ -113,7 +116,8 @@ stated for it (stored on the session by `complete` and refreshed by
 instead. The quest strip carries the week's done count and one pip per
 weekday colored by that day's status, with a substitute day distinct from a
 plain skip; the bottom strip states this week's load beside last week's,
-and the coach corner shows the newest bus directive: no line until a coach
+over the same calendar week the ladder lists, and is absent while no
+activity is on record, when the card names the first run instead; the coach corner shows the newest bus directive: no line until a coach
 has written one, and "directives unreadable" when the bus cannot be read.
 The strip, the table's day detail and the heat card all say load, never
 TSS: a session scores in TSS or session-RPE load by its model, and a
@@ -236,6 +240,8 @@ hollow point joined dashed and muted. One fixed caption row names the last
 complete month and the month in progress, each with its `covered/total`
 coverage. The strength family is Sports' own, so Workout and WeightTraining
 read as one, and the career view leaves the tonnage spine to this tab.
+With no strength session on record the tab is one line saying what fills
+it, and none of the charts above.
 
 ## The career view
 
@@ -858,6 +864,11 @@ sport no family holds. The fixtures per view:
 - lifts: more lifts than the widest window holds and the latest session's
   sets, in kilograms and scrolled in pounds, for every athlete who lifts,
   and the empty tab for every athlete who does not;
+- every view that can have nothing to draw (form, power, trace, week, log,
+  year, zones, load and lifts) on a database with no activity and on one
+  holding a single ride no plan claims, in the brand faces and in the
+  built-in face; each says in one line what fills it, the first run where
+  there is no activity at all, and the week tab lists the ride on its day;
 - map: routes with their tiles on the way, drawn and offline, a route an
   ocean from the rest, heat, playback with and without routes and with a
   cache it cannot write, no routes, loading and a failed read; and a tile

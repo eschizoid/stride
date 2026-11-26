@@ -301,8 +301,8 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 				Err(_) => 1.0
 			}
 			st = Db.load_stale!(db)
-			pl = Db.load_plan_at!(db, tm)
-			wk = Db.load_week_tss!(db)
+			pl = Plan.with_unlinked(Db.load_plan_at!(db, tm), Db.load_unlinked_at!(db, tm))
+			wk = Db.load_week_tss!(db, tm)
 			pw = Db.load_plan_week_at!(db, tm)
 			bn = Db.load_bus_note!(db)
 			rd = Db.load_ridden!(db)
@@ -3356,7 +3356,7 @@ scene! = |model, frame| {
 	)
 	# the legend belongs to the form board only: it sits on the row the
 	# other views put their titles in. A 14x3 rounded swatch before each name.
-	if model.view == 0 {
+	if Chrome.legend_shown(model) {
 		List.for_each!(Chrome.legend, |sw| frame.rounded_rectangle!({ x: sw.x, y: 77.0, width: 14.0, height: 3.0, radius: 1.5, segments: 4, style: Draw.filled(sw.c) }))
 	}
 	# the chrome's text, over the shapes above, from the same definitions

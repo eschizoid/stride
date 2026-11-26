@@ -1504,6 +1504,70 @@ Gate :: [].{
 			),
 		)
 
+	# ── the empty views ─────────────────────────────────────────────────────
+	# Every view that can have nothing to draw, in the two states a new
+	# athlete passes through: a database with no activity, and one holding a
+	# single ride that no plan claims, scored but with no stream, power, pace
+	# or lift on record. The lifts tab carries the twelve empty weeks the
+	# database answers with.
+	empty_views : List(U8)
+	empty_views = [0, 1, 2, 3, 4, 5, 6, 7, 9]
+
+	one_ride_row : Db.PlanRow
+	one_ride_row = { ..Plan.blank_row, day: "2026-11-24", wi: 1, typ: "ride", detail: Db.unlinked_detail("Morning Ride", 16440, 235), status: "unlinked", past: Bool.True, act_name: "Morning Ride", act_secs: 16440, act_load: 235, day_load_known: Bool.False }
+
+	empty_models : List({ name : Str, model : Ui.Model })
+	empty_models = {
+		weeks = List.map(seq(12), |_d| { mon: "2026-11-23", total: 0, with_sets: 0 })
+		List.join(
+			List.map(
+				sizes,
+				|sz| {
+					p = Text.Prepared.stub
+					base = { ..empty_model(sz), subs: [{ p, r: 30, chip: p }, { p, r: 60, chip: p }, { p, r: 90, chip: p }], strength: { ..Db.empty_strength_view, weeks } }
+					one = { ..base, career_sports: [{ sport: "Ride", sessions: 1, hours10: 46, dist_m: 101700.0 }], plan: [one_ride_row], week_tss: { this: 235, last: 0 } }
+					List.join(
+						List.map(
+							empty_views,
+							|v| [
+								{ name: "view ${U8.to_str(v)} with no activity at ${size_name(sz)}", model: { ..base, view: v } },
+								{ name: "view ${U8.to_str(v)} with one ride at ${size_name(sz)}", model: { ..one, view: v } },
+							],
+						),
+					)
+				},
+			),
+		)
+	}
+
+	# an empty view's text and shapes, by the view it draws
+	view_owned : Ui.Model, Scene.Measure -> List(Labels.Owned)
+	view_owned = |m, face|
+		if (m.view == 0) Board.owned(m, face)
+		else if (m.view == 1) Curve.owned(m, face)
+		else if (m.view == 2) Trace.owned(m, face)
+		else if (m.view == 3) Table.owned(m, face)
+		else if (m.view == 4) Plan.owned(m, face)
+		else if (m.view == 5) Heat.owned(m, face)
+		else if (m.view == 6) Zones.owned(m, face)
+		else if (m.view == 7) Ramp.owned(m, face)
+		else Strength.owned(m, face)
+
+	view_marks : Ui.Model, Scene.Measure -> List(Labels.Mark)
+	view_marks = |m, face|
+		if (m.view == 0) Board.marks(m)
+		else if (m.view == 1) Curve.marks(m, face)
+		else if (m.view == 2) Trace.marks(m)
+		else if (m.view == 3) Table.marks(m)
+		else if (m.view == 4) Plan.marks(m)
+		else if (m.view == 5) Heat.marks(m)
+		else if (m.view == 6) Zones.marks(m, face)
+		else if (m.view == 7) Ramp.marks(m, face)
+		else Strength.marks(m)
+
+	empty_judge : Scene.Measure -> (Ui.Model -> List(Str))
+	empty_judge = |face| |m| judge(view_owned(m, face), view_marks(m, face))
+
 	# the default window at the default scale, in logical units
 	default_size : { w : F32, h : F32 }
 	default_size = {
@@ -2276,4 +2340,49 @@ expect {
 			[Gate.measure, Gate.builtin_measure],
 			|measure| List.all(long, |e| List.all(Career.owned(e.model, measure), |o| !(List.any(raw, |r| Str.contains(o.key, r))))),
 		)
+}
+
+# the empty views' gate: every view that can have nothing to draw, with no
+# activity on record and with one unclaimed ride, at every size, in the
+# brand faces and in the built-in face
+expect Gate.failures(Gate.empty_judge(Gate.measure), Gate.empty_models) == []
+expect Gate.failures(Gate.empty_judge(Gate.builtin_measure), Gate.empty_models) == []
+
+# Each empty view says what fills it in one line: the first run while no
+# activity exists, and with one ride on record the view's own kind of
+# session, never the first run. No empty view writes a zero tile, an as-of
+# with no day, a legend or column headers over nothing, a tonnage or weeks
+# heading with no lift, a channel heading with no session, or a load strip
+# with no activity.
+expect {
+	keys = |e| List.map(Gate.view_owned(e.model, Gate.measure), |o| o.key)
+	says = |e, t| List.contains(keys(e), "'${t}'")
+	at = |v, state| List.keep_if(Gate.empty_models, |e| e.model.view == v and Str.contains(e.name, state))
+	firsts = List.keep_if(Gate.empty_models, |e| e.model.view != 0 and Str.contains(e.name, "no activity"))
+	ones = List.keep_if(Gate.empty_models, |e| Str.contains(e.name, "one ride"))
+	banned = |k| k == "'0.0'" or Str.contains(k, "as of") or k == "'Fitness'" or k == "'fitness'" or Str.contains(k, "tonnage") or Str.starts_with(k, "'sessions a week") or k == "'power trace'"
+	List.len(firsts) == 8 * List.len(Gate.sizes)
+		and List.all(firsts, |e| says(e, Chrome.first_run_text))
+		and List.all(ones, |e| !(says(e, Chrome.first_run_text)))
+		and List.all(Gate.empty_models, |e| !(List.any(keys(e), banned)))
+		and List.all(at(4, "no activity"), |e| !(List.any(keys(e), |k| Str.contains(k, "load this week"))))
+		and List.all(at(2, "one ride"), |e| says(e, Trace.no_stream_text) and says(e, "session trace"))
+		and List.all(at(3, "one ride"), |e| says(e, Chrome.no_scored_text))
+		and List.all(at(5, "one ride"), |e| says(e, Chrome.no_scored_text))
+		and List.all(at(9, "one ride"), |e| says(e, Strength.no_lifts_text) and List.len(Strength.marks(e.model)) == List.len(Chrome.marks(e.model)))
+		and List.all(at(1, "one ride"), |e| says(e, "no cycling power on record yet - a session recorded with a power meter fills it"))
+		and List.all(at(0, "no activity"), |e| !(List.any(Board.marks(e.model), |mk| Str.starts_with(mk.key, "tile 1"))))
+}
+
+# the week tab lists the week's unclaimed ride on its day, as `week` lists
+# it, beside a today card that is not that ride, and the load strip states
+# the calendar week's load
+expect {
+	e = (List.first(List.keep_if(Gate.empty_models, |f| f.model.view == 4 and Str.contains(f.name, "one ride")))) ?? { name: "", model: Gate.empty_model(Gate.default_size) }
+	keys = List.map(Plan.owned(e.model, Gate.measure), |o| o.key)
+	List.contains(keys, "'unlinked'")
+		and List.contains(keys, "'Morning Ride - 274 min - load 235'")
+		and List.contains(keys, "'today'")
+		and List.contains(keys, "'no plan for today - ask the coach'")
+		and List.contains(keys, "'235 load this week (last 0)'")
 }

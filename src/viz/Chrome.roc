@@ -71,6 +71,26 @@ Chrome :: [].{
 	legend : List({ x : F32, c : Color.Rgba, name : Str })
 	legend = [{ x: 36.0, c: Theme.ctl_c, name: "Fitness" }, { x: 128.0, c: Theme.atl_c, name: "Fatigue" }, { x: 226.0, c: Theme.tsb_c, name: "Form" }]
 
+	# the legend names the lines a board draws, so a board with no day to draw
+	# carries none
+	legend_shown : Ui.Model -> Bool
+	legend_shown = |model| model.view == 0 and !(List.is_empty(model.data))
+
+	# The line a view writes where it would draw while the database holds no
+	# activity at all: the first run is what fills every view, and R loads
+	# what it wrote. A view whose own kind of session is missing names that
+	# session instead.
+	first_run_text : Str
+	first_run_text = "no activities yet - run stride setup in a terminal to connect Strava, then press R"
+
+	first_run : Ui.Model -> Bool
+	first_run = |model| List.is_empty(model.career_sports)
+
+	# the line of a view drawn from scored days while activities exist but
+	# none is scored yet
+	no_scored_text : Str
+	no_scored_text = "no scored day yet - run stride analyze in a terminal to score your activities, then press R"
+
 	# the recording badge's dot and the text beside it, by status
 	rec_text : Ui.Model -> Try({ text : Str, at : Scene.Anchor, color : Color.Rgba, dot : Bool }, [Idle])
 	rec_text = |model| {
@@ -126,7 +146,7 @@ Chrome :: [].{
 			Err(_) => []
 		}
 		leg =
-			if model.view == 0 {
+			if legend_shown(model) {
 				List.map2(legend, [model.leg_fit, model.leg_fat, model.leg_form], |l, p| Scene.fixed(measure, Scene.prepared(p, l.name, 15.0, Prose, l.c), { x: l.x + 20.0, y: 70.0, align: Left }, panel))
 			} else {
 				[]
