@@ -415,7 +415,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1486)?
+	checks_ran_exactly!(1495)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -438,6 +438,7 @@ run_scenarios! = |ctx| {
 	b_stream_retry!(ctx)?
 	b_period_ftp!(ctx)?
 	b_period_pace!(ctx)?
+	b_pool_swim!(ctx)?
 	b_progress_a!(ctx)?
 	b_progress_b!(ctx)?
 	b_progress_structure!(ctx)?
@@ -7383,6 +7384,50 @@ b_period_pace! = |ctx| {
 	Ok({})
 }
 
+# ── a pool swim sets a threshold pace, as the career page promises ──
+#
+# Strava streams a pool swim one sample per length: the time stream steps by
+# a length's duration (about half a minute), the distance stream by the pool
+# length. Every interval is longer than the 1 Hz resampler's fill bound, so a
+# pace path that treats each as an unrecorded gap sees no swimming at all,
+# and no pool swim ever derives the threshold pace the career page says two
+# 20-minute swims set. A recorded wall rest is a sample at the same distance,
+# and a swim's continuous stretch survives up to 5 s without distance gained
+# (a turn) and ends at 6 s (a rest), so a set of fast lengths with rests
+# between them never reads as 20 sustained minutes at the lengths' speed.
+b_pool_swim! : Ctx => Try({}, _)
+b_pool_swim! = |ctx| {
+	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (8201,'Pool Swim','Swim','2019-05-06T07:00:00Z',2520,2250),(8202,'Pool Swim','Swim','2019-05-13T07:00:00Z',2520,2250),(8203,'Pool Sets','Swim','2019-05-20T07:00:00Z',2520,2250),(8204,'Pool Turns','Swim','2019-05-27T07:00:00Z',2520,2250),(8205,'Sprint Set','Swim','2019-05-29T07:00:00Z',1600,2000);")
+	_ = seed_pool_swim_stream!(ctx.db, 8201, 90, 28, 0, 0)
+	_ = seed_pool_swim_stream!(ctx.db, 8202, 90, 28, 0, 0)
+	_ = seed_pool_swim_stream!(ctx.db, 8203, 90, 28, 16, 45)
+	_ = seed_pool_swim_stream!(ctx.db, 8204, 90, 28, 1, 5)
+	_ = seed_pool_swim_stream!(ctx.db, 8205, 80, 20, 1, 29)
+	_ = stride!(ctx.bin, ctx.home, ["analyze"])
+	cm_s! = |id, col| Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(COALESCE(${col}, 0) * 100) AS INTEGER) FROM activity_metrics WHERE activity_id=${id};"))
+	# 25 m every 28 s is 0.89 m/s, and the threshold is 0.95 of that best
+	check!("a pool swim streamed length by length yields its 20-minute pace best (${cm_s!("8201", "best_20min_speed")})", cm_s!("8201", "best_20min_speed") == "89" and cm_s!("8202", "best_20min_speed") == "89")?
+	check!("...two of them within 60 days derive a threshold pace (${cm_s!("8202", "threshold_pace_used")})", cm_s!("8201", "threshold_pace_used") == "85" and cm_s!("8202", "threshold_pace_used") == "85")?
+	models = Str.trim(sql!(ctx.db, "SELECT group_concat(load_model, ',') FROM (SELECT load_model FROM activity_metrics WHERE activity_id BETWEEN 8201 AND 8205 ORDER BY activity_id);"))
+	check!("...and every pool swim scores on pace (${models})", models == "rtss,rtss,rtss,rtss,rtss")?
+	tss = sfloat(Str.trim(sql!(ctx.db, "SELECT COALESCE(tss, 0) FROM activity_metrics WHERE activity_id=8202;")))
+	check!("...at a sane magnitude for 42 minutes just over threshold (${Str.trim(sql!(ctx.db, "SELECT ROUND(tss, 1) FROM activity_metrics WHERE activity_id=8202;"))})", tss > 60.0 and tss < 100.0)?
+	check!("a wall rest breaks the 20 minutes, leaving the 5-minute best between rests", cm_s!("8203", "best_20min_speed") == "0" and cm_s!("8203", "best_300s_speed") == "89")?
+	check!("...while a turn's few seconds without distance do not", cm_s!("8204", "best_20min_speed") == "89")?
+	# 25 m in 20 s is 1.25 m/s; stitched across its rests it would set the threshold
+	check!("a sprint set with a rest after every length is no 20-minute swim, and sets no threshold (${cm_s!("8205", "best_20min_speed")}/${cm_s!("8205", "threshold_pace_used")})", cm_s!("8205", "best_20min_speed") == "0" and cm_s!("8205", "threshold_pace_used") == "85")?
+	spine = Str.trim(sql!(ctx.db, "SELECT fam || '/' || kind || '/' || CAST(ROUND(value * 100) AS INTEGER) FROM monthly_threshold WHERE month = '2019-05' AND fam = 'Swim';"))
+	check!("the month's swimming threshold reaches the career spine (${spine})", spine == "Swim/pace/85")?
+	# the career page's other way to a swimming threshold: a 400 m and 200 m
+	# test, timed on the same length-by-length stream
+	css = strjq!(ctx, ["test", "8203", "css"], "[.data.signal, .data.unit, (.data.value * 100 | round)] | map(tostring) | join(\",\")")
+	check!("a 400 m and 200 m swim test marks from a length-by-length stream (${css})", css == "pace,m/s,89")?
+	_ = sql!(ctx.db, "DELETE FROM threshold_tests WHERE activity_id = 8203;")
+	_ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (8201,8202,8203,8204,8205); DELETE FROM activity_metrics WHERE activity_id IN (8201,8202,8203,8204,8205); DELETE FROM streams WHERE activity_id IN (8201,8202,8203,8204,8205);")
+	_ = stride!(ctx.bin, ctx.home, ["analyze"])
+	Ok({})
+}
+
 # ── progress A: EF lens, date -> workout, chronological, no-workout ──
 b_progress_a! : Ctx => Try({}, _)
 b_progress_a! = |ctx| {
@@ -9457,6 +9502,33 @@ seed_stalled_pace_stream! = |db, id, n, mps| {
 	times = Str.join_with(List.map(int_seq(n), |i| U64.to_str(i)), ",")
 	dist = Str.join_with(List.map(int_seq(n), |i| U64.to_str((i - (i // 5)) * mps)), ",")
 	raw = "{\"time\":{\"data\":[${times}]},\"distance\":{\"data\":[${dist}]}}"
+	_ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
+	{}
+}
+
+# seed a pool swim the way Strava streams one: a sample at the end of each
+# 25 m length, `secs` apart, so the time stream steps by a length's duration
+# and the distance stream by 25. With `rest_every` above zero, a wall rest of
+# `rest_s` seconds follows every `rest_every`-th length as one more sample at
+# the same distance, which is how a recorded stop at the wall reads.
+seed_pool_swim_stream! : Str, I64, U64, U64, U64, U64 => {}
+seed_pool_swim_stream! = |db, id, lengths, secs, rest_every, rest_s| {
+	pts = List.fold(
+		int_seq(lengths),
+		{ t: 0.U64, d: 0.U64, out: ["0:0"] },
+		|acc, i| {
+			t = acc.t + secs
+			d = acc.d + 25
+			swum = List.append(acc.out, "${U64.to_str(t)}:${U64.to_str(d)}")
+			if rest_every > 0 and (i + 1) % rest_every == 0 and i + 1 < lengths {
+				{ t: t + rest_s, d, out: List.append(swum, "${U64.to_str(t + rest_s)}:${U64.to_str(d)}") }
+			} else {
+				{ t, d, out: swum }
+			}
+		},
+	).out
+	field = |k| Str.join_with(List.map(pts, |p| List.get(Str.split_on(p, ":"), k).ok_or("0")), ",")
+	raw = "{\"time\":{\"data\":[${field(0)}]},\"distance\":{\"data\":[${field(1)}]}}"
 	_ = sql!(db, "INSERT OR REPLACE INTO streams (activity_id, raw_json) VALUES (${I64.to_str(id)}, '${raw}');")
 	{}
 }
