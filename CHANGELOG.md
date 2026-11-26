@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.25.0](https://github.com/eschizoid/stride/compare/v0.24.0...v0.25.0) (2026-11-26)
+
+
+### Features
+
+* **viz:** Career offers every sport with sessions, with an empty state when it has no threshold yet ([#755](https://github.com/eschizoid/stride/issues/755)) ([0400e82](https://github.com/eschizoid/stride/commit/0400e8238d3cddea2b8a131ea82ad490a3ff70ee))
+* **viz:** the day cursor and a coach's directive reach the plan's projected days, and captures wait for the board ([#757](https://github.com/eschizoid/stride/issues/757)) ([ddf7346](https://github.com/eschizoid/stride/commit/ddf73464bc2ac7fd0c20fab786697789e5bf34ee))
+* **viz:** the power tab reads at a glance, with plain words and fewer layers ([#756](https://github.com/eschizoid/stride/issues/756)) ([23b0a0d](https://github.com/eschizoid/stride/commit/23b0a0d848f805d093bb8e62ecf92fad59fa4afc))
+* **viz:** weeks bars show the 80/20 split and the fitness each week gained or lost ([#753](https://github.com/eschizoid/stride/issues/753)) ([9240f49](https://github.com/eschizoid/stride/commit/9240f49ab46457cba104cdf2cbfa1f08b2fd0f97))
+
+
+### Bug Fixes
+
+* **analyze:** pool swims set a threshold, and Career draws a swimming trend at its true pace ([#758](https://github.com/eschizoid/stride/issues/758)) ([176184c](https://github.com/eschizoid/stride/commit/176184cd3f3d157659ee184bcae4b291422e2512))
+* **cli:** say load, not TSS, wherever the number is not a TSS ([#764](https://github.com/eschizoid/stride/issues/764)) ([3794671](https://github.com/eschizoid/stride/commit/37946712d75b55a5decf8e1645b1728f68e21feb))
+* **sync:** a period that ends while its last read is in flight no longer adds a quarter-hour wait ([#752](https://github.com/eschizoid/stride/issues/752)) ([1888d87](https://github.com/eschizoid/stride/commit/1888d870e6e12baeed1a06f729befb2827b14491))
+* **sync:** hold a huge stored read limit to the ceiling and read a negative stored count as spent ([#749](https://github.com/eschizoid/stride/issues/749)) ([9d5cc07](https://github.com/eschizoid/stride/commit/9d5cc078ca302ef834a9ac7db8ff443a5a2d5f16))
+* **viz:** hide the coach line until a coach steers the window, and say load, not tss ([#748](https://github.com/eschizoid/stride/issues/748)) ([7c7dbac](https://github.com/eschizoid/stride/commit/7c7dbacb5562425f65f299e1d4116376cf49ae84))
+
 ## [0.24.0](https://github.com/eschizoid/stride/compare/v0.23.0...v0.24.0) (2026-11-26)
 
 
