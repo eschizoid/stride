@@ -1645,6 +1645,8 @@ run_stops! = || {
 # E2E_STRENGTH_BASE lists three strength Workouts with descriptions;
 # E2E_HIGH_LIMIT_BASE reports a limit of 300,3000 and E2E_LOW_LIMIT_BASE one of
 # 100,10; E2E_SLOW_BASE is the main mock's fixture, every read answered 1.1
+# seconds late; E2E_DAY_429_BASE reports a limit of 100,10 and 429s one stream
+# read with the day spent; E2E_SLOW_LIST_BASE 429s every list read, 1.1
 # seconds late.
 run_pace! : () => Try({}, _)
 run_pace! = || {
@@ -1658,6 +1660,8 @@ run_pace! = || {
 	hibase = env_or!("E2E_HIGH_LIMIT_BASE", "")
 	lobase = env_or!("E2E_LOW_LIMIT_BASE", "")
 	slowbase = env_or!("E2E_SLOW_BASE", "")
+	day429base = env_or!("E2E_DAY_429_BASE", "")
+	slowlistbase = env_or!("E2E_SLOW_LIST_BASE", "")
 	_ = wait_ready!(base, 50)
 	check!("the two-second-window mock came up on ${base}", mock_up!(base))?
 	_ = wait_ready!(hbase, 50)
@@ -1867,6 +1871,40 @@ run_pace! = || {
 	check!("...never as the read window's next mark", !(Str.contains(sd_err, "waiting for Strava")))?
 	_ = sh!("rm -rf '${sd}'")
 
+	# ── a 429 whose header reports the day spent waits for the day: a mock
+	# reporting a day of 10, so a cap of 5, and another app's two reads on each
+	# per-activity read, so its second stream read is a 429 counting the day's
+	# fifth. Real periods, so the wait is for midnight UTC; the run is ended by
+	# a 4-second alarm once its first frame has named that wait, or ends on its
+	# own when midnight falls inside that alarm and the day is still spent.
+	_ = wait_ready!(day429base, 50)
+	check!("the day-spending 429 mock came up on ${day429base}", mock_up!(day429base))?
+	dq = Str.trim(sh!("mktemp -d"))
+	_ = sh!("HOME='${dq}' '${bin}' init >/dev/null 2>&1")
+	_ = sql!("${dq}/.stride/db.sqlite", token_rows)
+	dq_rc = exit_status!("HOME='${dq}' STRIDE_API_BASE='${day429base}' perl -e 'alarm 4; exec @ARGV' '${bin}' sync >'${dq}/out' 2>'${dq}/err'")
+	dq_err = sh!("cat '${dq}/err'")
+	check!("a 429 reporting the day spent waits for the daily allowance (exit ${dq_rc})", (dq_rc == "0" or Str.starts_with(dq_rc, "142:")) and Str.contains(dq_err, "daily allowance     ") and Str.contains(dq_err, " left"))?
+	check!("...never for the read window", !(Str.contains(dq_err, "waiting for Strava")))?
+	_ = sh!("rm -rf '${dq}'")
+
+	# ── a refused list waits for the period the refusal was counted in: a mock
+	# answering every list read 1.1 seconds late with a 429, against a test day
+	# of one second allowing one read, so the day the refused read spent ends
+	# while it is in flight. The wait is for that day, which has already ended,
+	# and the run ends when the list is refused again; bounded at 25 seconds,
+	# so a run that waits for the read window's next mark fails here or names
+	# that wait.
+	_ = wait_ready!(slowlistbase, 50)
+	check!("the slow list-refusing mock came up on ${slowlistbase}", mock_up!(slowlistbase))?
+	sl = seeded!({})
+	sl_rc = exit_status!("HOME='${sl}' STRIDE_API_BASE='${slowlistbase}' STRIDE_DAY_SECONDS=1 STRIDE_READS_PER_DAY=1 perl -e 'alarm 25; exec @ARGV' '${bin}' sync >'${sl}/out' 2>'${sl}/err'")
+	sl_err = sh!("cat '${sl}/err'")
+	check!("a list refused on a day ending in flight waits for that day, and the run ends (exit ${sl_rc})", sl_rc == "0" and Str.contains(sl_err, "daily allowance     returned "))?
+	check!("...naming the day it was counted in as the limit that refused it", Str.contains(sh!("cat '${sl}/out'"), "Strava refused the activity list with today's read allowance used up"))?
+	check!("...never for the read window", !(Str.contains(sl_err, "waiting for Strava")))?
+	_ = sh!("rm -rf '${sl}'")
+
 	# ── ...and a day that is still spent once its reset has passed (here Strava
 	# reporting the day's reads spent, as another app on the token would) ends the
 	# run naming that, rather than waiting day after day. Bounded at 25 seconds,
@@ -1988,7 +2026,7 @@ run_pace! = || {
 	check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(59)?
+	checks_ran_exactly!(66)?
 	Stdout.line!("PACE E2E CHECKS PASS")
 }
 
@@ -9272,13 +9310,15 @@ sh! = |script|
 # it. A status past 128 is the shell reporting a child killed by a signal, and
 # names the signal. When the shell reports no status, the reason is named
 # instead: the platform's command deadline ended the shell (Cmd's default, as
-# sh! sets none), its own exit code was lost, or it died before printing.
+# sh! sets none), the platform refused to spawn it, its own exit code was
+# lost, its output was too large or not UTF-8, or it died before printing.
 exit_status! : Str => Str
 exit_status! = |script|
 	match Cmd.new(OsStr.from_str("sh")).args(List.map(["-c", "${script}; echo $?"], OsStr.from_str)).exec_output!() {
 		Ok(o) => status_named(Str.trim(o.stdout_utf8), "0")
 		Err(NonZeroExitCode(e)) => status_named(Str.trim(e.stdout_utf8_lossy), e.exit_code.to_str())
 		Err(CommandTimedOut(t)) => "none: the harness's ${(t.timeout_ms // 1000).to_str()} s command deadline ended the shell"
+		Err(CommandSaturated(_)) => "none: the platform refused to spawn the shell, every command slot taken"
 		Err(FailedToGetExitCode(_)) => "none: the shell's exit code was lost"
 		Err(_) => "none: the shell's output could not be read"
 	}

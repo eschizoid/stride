@@ -31,6 +31,10 @@ pace_hi_port := env("PACE_HI_PORT", "8786")
 pace_lo_port := env("PACE_LO_PORT", "8785")
 # ...and one answering every read 1.1 seconds late, so a read outlives a test day
 slow_port := env("SLOW_PORT", "8784")
+# ...one 429ing a stream read whose header reports the day spent, and one 429ing every
+# list read late
+day429_port := env("DAY429_PORT", "8783")
+slow_list_port := env("SLOW_LIST_PORT", "8782")
 
 default: test
 
@@ -424,13 +428,15 @@ e2e-sync: build
     STRMOCK=$!
     trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK $P5MOCK $L429MOCK $L429P $STRMOCK 2>/dev/null' EXIT
     E2E_MODE=notes STRIDE_API_BASE=http://127.0.0.1:{{strength_port}} ./e2e || exit 1
-    # the waiting first sync (ADR 0021), against four mocks that send Strava's
-    # read-limit headers (two of them reporting limits other than the documented
-    # one), the main one, which sends none, the strength one, whose descriptions
-    # `sync --all` re-reads, and a slow one, answering every read late. The header
-    # mocks' read counts live in files keyed by port, cleared first so a previous
-    # run's reads do not count against this one.
-    rm -f .e2e-mock-reads.{{pace_port}} .e2e-mock-reads.{{paced_port}} .e2e-mock-reads.{{pace_hi_port}} .e2e-mock-reads.{{pace_lo_port}}
+    # the waiting first sync (ADR 0021), against five mocks that send Strava's
+    # read-limit headers (three of them reporting limits other than the documented
+    # one, one of those 429ing a stream read with the day spent), the main one,
+    # which sends none, the strength one, whose descriptions `sync --all`
+    # re-reads, and two slow ones, answering every read late, one of them
+    # refusing every list read. The header mocks' read counts live in files keyed
+    # by port, cleared first so a previous run's reads do not count against this
+    # one.
+    rm -f .e2e-mock-reads.{{pace_port}} .e2e-mock-reads.{{paced_port}} .e2e-mock-reads.{{pace_hi_port}} .e2e-mock-reads.{{pace_lo_port}} .e2e-mock-reads.{{day429_port}}
     E2E_MODE=mock E2E_RATE_HEADERS=1 E2E_WINDOW_SECONDS=2 MOCK_PORT={{pace_port}} ./e2e &
     PACEMOCK=$!
     E2E_MODE=mock E2E_RATE_HEADERS=1 E2E_WINDOW_SECONDS=86400 E2E_EXTERNAL_READS=90 E2E_EXTERNAL_LIST_DAY=500 E2E_ODD_MAX_HR=1 MOCK_PORT={{paced_port}} ./e2e &
@@ -441,8 +447,12 @@ e2e-sync: build
     PACELOMOCK=$!
     E2E_MODE=mock E2E_SLOW_READ_MS=1100 MOCK_PORT={{slow_port}} ./e2e &
     SLOWMOCK=$!
-    trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK $P5MOCK $L429MOCK $L429P $STRMOCK $PACEMOCK $PACEDMOCK $PACEHIMOCK $PACELOMOCK $SLOWMOCK 2>/dev/null; rm -f .e2e-mock-reads.{{pace_port}} .e2e-mock-reads.{{paced_port}} .e2e-mock-reads.{{pace_hi_port}} .e2e-mock-reads.{{pace_lo_port}}' EXIT
-    E2E_MODE=pace STRIDE_API_BASE=http://127.0.0.1:{{pace_port}} E2E_HEADER_BASE=http://127.0.0.1:{{paced_port}} E2E_PLAIN_BASE=http://127.0.0.1:{{mock_port}} E2E_STRENGTH_BASE=http://127.0.0.1:{{strength_port}} E2E_HIGH_LIMIT_BASE=http://127.0.0.1:{{pace_hi_port}} E2E_LOW_LIMIT_BASE=http://127.0.0.1:{{pace_lo_port}} E2E_SLOW_BASE=http://127.0.0.1:{{slow_port}} ./e2e || exit 1
+    E2E_MODE=mock E2E_RATE_LIMIT=1 E2E_RATE_HEADERS=1 E2E_WINDOW_SECONDS=86400 E2E_LIMIT_HEADER=100,10 E2E_EXTERNAL_READS=2 MOCK_PORT={{day429_port}} ./e2e &
+    DAY429MOCK=$!
+    E2E_MODE=mock E2E_LIST_RATE_LIMIT=1 E2E_SLOW_READ_MS=1100 MOCK_PORT={{slow_list_port}} ./e2e &
+    SLOWLISTMOCK=$!
+    trap 'kill $MOCK $BADMOCK $RLMOCK $A401MOCK $P5MOCK $L429MOCK $L429P $STRMOCK $PACEMOCK $PACEDMOCK $PACEHIMOCK $PACELOMOCK $SLOWMOCK $DAY429MOCK $SLOWLISTMOCK 2>/dev/null; rm -f .e2e-mock-reads.{{pace_port}} .e2e-mock-reads.{{paced_port}} .e2e-mock-reads.{{pace_hi_port}} .e2e-mock-reads.{{pace_lo_port}} .e2e-mock-reads.{{day429_port}}' EXIT
+    E2E_MODE=pace STRIDE_API_BASE=http://127.0.0.1:{{pace_port}} E2E_HEADER_BASE=http://127.0.0.1:{{paced_port}} E2E_PLAIN_BASE=http://127.0.0.1:{{mock_port}} E2E_STRENGTH_BASE=http://127.0.0.1:{{strength_port}} E2E_HIGH_LIMIT_BASE=http://127.0.0.1:{{pace_hi_port}} E2E_LOW_LIMIT_BASE=http://127.0.0.1:{{pace_lo_port}} E2E_SLOW_BASE=http://127.0.0.1:{{slow_port}} E2E_DAY_429_BASE=http://127.0.0.1:{{day429_port}} E2E_SLOW_LIST_BASE=http://127.0.0.1:{{slow_list_port}} ./e2e || exit 1
 
 # build + refresh the ~/.local/bin symlink
 install: build
