@@ -1588,6 +1588,31 @@ Metrics :: [].{
 	# that lens is lower-is-better. Chosen by what data the group actually carries.
 	Lens : [Ef, SpeedHr, Rpe]
 
+	# The load_model names the ladder writes, grouped two ways from one set of
+	# lists. By confidence: high is measured power, or pace against a threshold
+	# derived from measured speed (rtss); medium is heart rate or a session
+	# rating; low is relative effort, Strava's opaque estimate. By unit: the
+	# power, pace and heart-rate rungs score in TSS, and a rating or relative
+	# effort scores load that is only TSS-commensurate.
+	high_load_models : List(Str)
+	high_load_models = ["power_stream", "weighted_watts", "avg_watts", "rtss"]
+
+	hr_load_models : List(Str)
+	hr_load_models = ["hr_zones", "hr_avg"]
+
+	medium_load_models : List(Str)
+	medium_load_models = List.concat(hr_load_models, ["session_rpe"])
+
+	low_load_models : List(Str)
+	low_load_models = ["relative_effort"]
+
+	tss_load_models : List(Str)
+	tss_load_models = List.concat(high_load_models, hr_load_models)
+
+	# a list of names as the body of a SQL `IN (...)`, each single-quoted
+	sql_names : List(Str) -> Str
+	sql_names = |names| Str.join_with(List.map(names, |n| "'${n}'"), ",")
+
 	# Which load models put a NORMALIZED power number in the np_w column. Our own
 	# power_stream NP and Strava's weighted_avg_watts are the same quantity computed the
 	# same way, so they are comparable. Plain avg_watts is NOT — it is a different metric
@@ -6680,3 +6705,8 @@ expect Metrics.converge_step({ pass: 64, total: 64, cap: 100 }) == Again
 expect Metrics.converge_step({ pass: 64, total: 128, cap: 100 }) == Runaway
 expect Metrics.converge_step({ pass: 1, total: 100, cap: 100 }) == Runaway
 expect Metrics.rescore_cap(0) == 64 and Metrics.rescore_cap(1000) == 8064
+
+# the SQL IN-lists the coverage and doctor queries splice, as text
+expect Metrics.sql_names(Metrics.high_load_models) == "'power_stream','weighted_watts','avg_watts','rtss'"
+expect Metrics.sql_names(Metrics.medium_load_models) == "'hr_zones','hr_avg','session_rpe'"
+expect Metrics.sql_names(Metrics.low_load_models) == "'relative_effort'"

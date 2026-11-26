@@ -1818,10 +1818,9 @@ Render :: [].{
 	# not, so those read as load. A load under 1 means no usable data.
 	session_load_text : F64, Str -> Str
 	session_load_text = |load, load_model| {
-		tss_models = ["power_stream", "weighted_watts", "avg_watts", "rtss", "hr_zones", "hr_avg"]
 		if load < 1.0 {
 			"no usable data"
-		} else if List.contains(tss_models, load_model) {
+		} else if List.contains(Metrics.tss_load_models, load_model) {
 			"${fmt0(load)} TSS"
 		} else {
 			"${fmt0(load)} load"
@@ -2438,14 +2437,15 @@ expect {
 
 # a session scored in TSS says TSS; a rated or relative-effort session says
 # load; nothing scored says so
-expect {
-	Render.session_load_text(110.4, "power_stream") == "110 TSS"
-		and Render.session_load_text(55.0, "hr_zones") == "55 TSS"
-		and Render.session_load_text(72.0, "rtss") == "72 TSS"
-		and Render.session_load_text(52.5, "session_rpe") == "53 load"
-		and Render.session_load_text(30.0, "relative_effort") == "30 load"
-		and Render.session_load_text(0.0, "none") == "no usable data"
-}
+expect Render.session_load_text(110.4, "power_stream") == "110 TSS"
+expect Render.session_load_text(98.0, "weighted_watts") == "98 TSS"
+expect Render.session_load_text(80.0, "avg_watts") == "80 TSS"
+expect Render.session_load_text(72.0, "rtss") == "72 TSS"
+expect Render.session_load_text(55.0, "hr_zones") == "55 TSS"
+expect Render.session_load_text(48.0, "hr_avg") == "48 TSS"
+expect Render.session_load_text(52.5, "session_rpe") == "53 load"
+expect Render.session_load_text(30.0, "relative_effort") == "30 load"
+expect Render.session_load_text(0.0, "none") == "no usable data"
 
 # zero prior load must NOT read as "steady 0%" — it's a resumption. The
 # window total blends TSS with session-RPE load, so the screen names it load.
