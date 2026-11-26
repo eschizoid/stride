@@ -262,6 +262,12 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 	loaded = if boot {
 		skeleton("")
 	} else match open_db!(acc) {
+		Ok(db) if Db.unwritten((Db.table_names!(db)) ?? ["daily_load"]) => {
+			# before the first setup: the empty state, which names it, and the
+			# bus, so steering and captures work from the first launch
+			Db.publish_caps!(db, caps_views, caps_fields)
+			skeleton("")
+		}
 		Ok(db) => {
 			Db.publish_caps!(db, caps_views, caps_fields)
 			s = Db.load_series!(db)
