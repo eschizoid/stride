@@ -1898,22 +1898,64 @@ run_pace! = || {
 	check!("a negative quarter-hour count refuses the run before any request and is repaired to the held limit (${hl_q!("strava_reads_quarter")} this quarter-hour, ${hl_q!("strava_reads_today")} today)", Str.trim(hl_neg) == "0" and Str.trim(sh!("jq -r '.data.stopped' '${hl}/out'")) == "list_rate_limited" and hl_q!("strava_reads_today") == "1" and hl_q!("strava_reads_quarter") == "1000" and hl_q!("strava_reads_quarter_mark") == hl_mark)?
 	_ = sh!("rm -rf '${hl}'")
 
-	# ── a negative count for the UTC day reads as the day spent, under the
-	# documented limits: the run asks for nothing, names the repair, and the row
-	# is rewritten as the day's 1,000
+	# ── the two day rows: each counts every read of the UTC day and both are
+	# checked before each read. A count no run could reach reads as the day
+	# spent, names the row whose reset clears it while the other row still
+	# counts today's reads, and the reset clears it without a second allowance.
+	day_now = Str.trim(sh!("date -u +%s | awk '{ print int($1 / 86400) }'"))
+	day_mark = I64.to_str(str_to_i64(day_now) * 86400)
+	# each `key value` set through `stride config set`, one exit status per line
+	set_all! = |h, kvs| Str.split_on(Str.trim(sh!("for kv in ${Str.join_with(List.map(kvs, |kv| "'${kv}'"), " ")}; do HOME='${h}' '${bin}' config set $kv >/dev/null 2>&1; echo $?; done")), "\n")
+	row! = |h, key| Str.trim(sql!("${h}/.stride/db.sqlite", "SELECT COALESCE((SELECT value FROM config WHERE key = '${key}'), 'none');"))
+	json_sync! = |h| sh!("HOME='${h}' STRIDE_FORMAT=json STRIDE_API_BASE='${pbase}' '${bin}' sync >'${h}/out' 2>'${h}/err'")
+	stopped! = |h| Str.trim(sh!("jq -r '.data | [.stopped, .synced] | @tsv' '${h}/out'"))
+	err! = |h| sh!("cat '${h}/err'")
+
+	# a negative count for the UTC day, beside a paced-day count of today
 	nd = seeded!({})
-	nd_day = Str.trim(sh!("date -u +%s | awk '{ print int($1 / 86400) }'"))
-	nd_sets = [sh!("HOME='${nd}' '${bin}' config set strava_reads_day ${nd_day} >/dev/null 2>&1; echo $?"), sh!("HOME='${nd}' '${bin}' config set strava_reads_today -5 >/dev/null 2>&1; echo $?")]
-	_ = sh!("HOME='${nd}' STRIDE_FORMAT=json STRIDE_API_BASE='${pbase}' '${bin}' sync >'${nd}/out' 2>'${nd}/err'")
-	nd_today = Str.trim(sql!("${nd}/.stride/db.sqlite", "SELECT value FROM config WHERE key = 'strava_reads_today';"))
-	check!("a negative count for the day refuses the run before any request and is repaired as the day spent (${nd_today})", List.all(nd_sets, |rc| Str.trim(rc) == "0") and nd_today == "1000" and Str.trim(sh!("jq -r '.data | [.stopped, .synced] | @tsv' '${nd}/out'")) == "daily_cap_reached\t0")?
-	check!("...naming the repair it was read with", Str.contains(sh!("cat '${nd}/err'"), "cannot read today's Strava read count, so it now reads 1000 reads spent until midnight UTC"))?
+	nd_sets = set_all!(nd, ["strava_reads_day ${day_now}", "strava_reads_today -5", "strava_reads_daywin_mark ${day_mark}", "strava_reads_daywin 2"])
+	_ = json_sync!(nd)
+	check!("a negative count for the day refuses the run before any request and is repaired as the day spent (${row!(nd, "strava_reads_today")})", List.all(nd_sets, |rc| rc == "0") and row!(nd, "strava_reads_today") == "1000" and row!(nd, "strava_reads_daywin") == "2" and stopped!(nd) == "daily_cap_reached\t0")?
+	check!("...naming its row's reset and the row that still counts the day", Str.contains(err!(nd), "cannot read today's Strava read count (strava_reads_today), so the day's allowance is taken as spent until midnight UTC; `stride config set strava_reads_today 0` clears it and cannot spend a second allowance, because strava_reads_daywin still counts today's reads"))?
+	nd_hatch = set_all!(nd, ["strava_reads_today 0"])
+	_ = json_sync!(nd)
+	check!("...and the reset it names clears it (${row!(nd, "strava_reads_today")} today, ${row!(nd, "strava_reads_daywin")} paced)", nd_hatch == ["0"] and str_to_i64(row!(nd, "strava_reads_today")) > 0 and str_to_i64(row!(nd, "strava_reads_daywin")) > 2)?
 	_ = sh!("rm -rf '${nd}'")
+
+	# a negative paced-day count, with the UTC day's allowance truly spent: the
+	# run refuses saying why, and the reset it names cannot spend a second
+	# allowance, because the UTC day's count still stops the run
+	pd = seeded!({})
+	pd_sets = set_all!(pd, ["strava_reads_day ${day_now}", "strava_reads_today 1001", "strava_reads_daywin_mark ${day_mark}", "strava_reads_daywin -1"])
+	_ = json_sync!(pd)
+	check!("a negative paced-day count refuses the run before any request, saying why and naming its own row's reset", List.all(pd_sets, |rc| rc == "0") and stopped!(pd) == "daily_cap_reached\t0" and row!(pd, "strava_reads_today") == "1001" and Str.contains(err!(pd), "cannot read today's Strava read count (strava_reads_daywin), so the day's allowance is taken as spent until midnight UTC; `stride config set strava_reads_daywin 0` clears it and cannot spend a second allowance, because strava_reads_today still counts today's reads"))?
+	pd_hatch = set_all!(pd, ["strava_reads_daywin 0"])
+	_ = json_sync!(pd)
+	check!("...and that reset spends no second allowance: the UTC day's count still refuses the run (${row!(pd, "strava_reads_today")})", pd_hatch == ["0"] and stopped!(pd) == "daily_cap_reached\t0" and row!(pd, "strava_reads_today") == "1001" and row!(pd, "strava_reads_daywin") == "0")?
+	# ...an unreadable paced-day count is read the same way, and with the day
+	# not spent its reset lets the run read again
+	_ = sql!("${pd}/.stride/db.sqlite", "UPDATE config SET value = '4' WHERE key = 'strava_reads_today'; UPDATE config SET value = 'abc' WHERE key = 'strava_reads_daywin';")
+	_ = json_sync!(pd)
+	check!("an unreadable paced-day count refuses the run before any request, naming its own row's reset", stopped!(pd) == "daily_cap_reached\t0" and row!(pd, "strava_reads_today") == "4" and Str.contains(err!(pd), "`stride config set strava_reads_daywin 0` clears it"))?
+	_ = set_all!(pd, ["strava_reads_daywin 0"])
+	_ = json_sync!(pd)
+	check!("...and the reset it names clears it (${row!(pd, "strava_reads_today")} today)", str_to_i64(row!(pd, "strava_reads_today")) > 4)?
+	_ = sh!("rm -rf '${pd}'")
+
+	# an unreadable day stamp keeps its count as today's, says so, and the run
+	# goes on reading
+	ds = seeded!({})
+	_ = sql!("${ds}/.stride/db.sqlite", "INSERT OR REPLACE INTO config (key, value) VALUES ('strava_reads_day', 'abc'), ('strava_reads_today', '3');")
+	_ = json_sync!(ds)
+	ds_err = err!(ds)
+	check!("an unreadable day stamp keeps its count as today's, saying so, and the stamp is rewritten as today (${row!(ds, "strava_reads_day")})", Str.contains(ds_err, "cannot read the day stamp on Strava's read count (strava_reads_day), so its count of 3 is taken as today's and the stamp is rewritten as today") and !(Str.contains(ds_err, "taken as spent")) and row!(ds, "strava_reads_day") == day_now)?
+	check!("...and the run goes on reading (${row!(ds, "strava_reads_today")})", str_to_i64(row!(ds, "strava_reads_today")) > 3)?
+	_ = sh!("rm -rf '${ds}'")
 
 	check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(49)?
+	checks_ran_exactly!(56)?
 	Stdout.line!("PACE E2E CHECKS PASS")
 }
 

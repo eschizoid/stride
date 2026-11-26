@@ -1259,14 +1259,10 @@ Strava :: [].{
 		window = stamped_count!(path, "strava_reads_window_mark", "strava_reads_window", wmark, limit.window)?
 		quarter = stamped_count!(path, "strava_reads_quarter_mark", "strava_reads_quarter", qmark, limit.window)?
 		reads = { day, today: today.count, dmark, dtoday: dtoday.count, wmark, window: window.count, qmark, quarter: quarter.count }
-		# The UTC day's count is named when it is repaired, because a count read
-		# as spent refuses reads until midnight UTC and the athlete would
-		# otherwise get no signal of why.
-		_ = if today.repaired {
-			Output.say!("cannot read today's Strava read count, so it now reads ${I64.to_str(today.count)} reads spent until midnight UTC; `stride config set strava_reads_today 0` clears it")?
-		} else {
-			{}
-		}
+		# A day count read as spent refuses reads until midnight UTC, so a repair
+		# of either day's rows is said aloud (Drain.day_notes), or the athlete
+		# would get no signal of why the day is refused or which row to reset.
+		_ = say_all!(Drain.day_notes(today.damage, dtoday.damage, today.count))?
 		# a damaged row is written back as it now reads, so it is repaired once
 		# rather than read past on every run
 		_ = if today.repaired or dtoday.repaired or window.repaired or quarter.repaired {
@@ -1277,12 +1273,24 @@ Strava :: [].{
 		Ok(reads)
 	}
 
-	# a period's count from its two rows, the mark and the count (Drain.stamped)
-	stamped_count! : Str, Str, Str, I64, I64 => Try({ count : I64, repaired : Bool }, _)
+	say_all! : List(Str) => Try({}, _)
+	say_all! = |lines|
+		match lines {
+			[] => Ok({})
+			[line, .. as rest] => {
+				Output.say!(line)?
+				say_all!(rest)
+			}
+		}
+
+	# a period's count from its two rows, the mark and the count (Drain.stamped),
+	# and what reading them found (Drain.damage)
+	stamped_count! : Str, Str, Str, I64, I64 => Try({ count : I64, repaired : Bool, damage : Drain.Damage }, _)
 	stamped_count! = |path, mark_key, count_key, mark_now, limit| {
 		mark = known(config_reads!(path, mark_key)?)
 		count = known(config_reads!(path, count_key)?)
-		Ok(Drain.stamped(mark, count, mark_now, limit))
+		read = Drain.stamped(mark, count, mark_now, limit)
+		Ok({ count: read.count, repaired: read.repaired, damage: Drain.damage(mark, count, mark_now, limit) })
 	}
 
 	# a read count row as Drain judges it, the unreadable text dropped
