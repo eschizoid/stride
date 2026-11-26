@@ -28,6 +28,10 @@
 # menu entry names the installed app, and that the athlete's directory and
 # the menu entry survive each update.
 #
+# Every mode first runs the function install.sh reads the app question's
+# answer with, and checks that n and no in any case decline and anything
+# else accepts.
+#
 # Run from the repository root. The latest release and the older tag are
 # read from GitHub, so both modes need the network.
 set -euo pipefail
@@ -146,6 +150,21 @@ check_entry() {
   [ -s "$entry" ] || { echo "::error::no menu entry at $entry"; exit 1; }
   grep -qxF "Exec=\"$app/stride-app\"" "$entry" || { echo "::error::the menu entry does not run $app/stride-app: $(grep '^Exec=' "$entry")"; exit 1; }
 }
+
+# the app question's answer, read by install.sh's own answer_is_no, the
+# one-line function it defines: n and no in any case decline, as in
+# install.ps1, and anything else accepts, Enter included. Every mode runs
+# this, before anything is downloaded
+answer_fn="$(grep -E '^  answer_is_no\(\) \{.*\}$' install.sh || true)"
+[ -n "$answer_fn" ] || { echo "::error::install.sh defines no one-line answer_is_no"; exit 1; }
+eval "$answer_fn"
+for a in n N no No nO NO; do
+  answer_is_no "$a" || { echo "::error::install.sh reads the answer '$a' as yes"; exit 1; }
+done
+for a in "" y Y yes YES nope "n o" non; do
+  ! answer_is_no "$a" || { echo "::error::install.sh reads the answer '$a' as no"; exit 1; }
+done
+echo "install-check: install.sh reads n and no in any case as no, and any other answer as yes"
 
 case "$mode" in
   release)
