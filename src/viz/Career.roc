@@ -162,30 +162,31 @@ Career :: [].{
 		}
 	}
 
-	# a spine value in tenths, in its family's own units - and, for the
-	# kilometre family, the ATHLETE's units. Power reads as watts; pace
-	# converts the stored SPEED to time over the family's distance, which is
-	# what an athlete in that sport actually says. The km family goes through
-	# Units.pace_from_speed - the same body the CLI renders with, so the two
-	# surfaces cannot disagree on a label by a rounding mode or a constant -
-	# and the fixed-distance families round the same way beside it.
+	# a spine value at its kind's resolution (Db.spine_scale), in its
+	# family's own units - and, for the kilometre family, the ATHLETE's
+	# units. Power reads as watts; pace converts the stored SPEED to time
+	# over the family's distance, which is what an athlete in that sport
+	# actually says. The km family goes through Units.pace_from_speed - the
+	# same body the CLI renders with, so the two surfaces cannot disagree on
+	# a label by a rounding mode or a constant - and the fixed-distance
+	# families round the same way beside it.
 	# Tonnage is mass lifted in a month (kg, from strength_sets): under a
 	# tonne it reads as whole kg, above as tonnes to one decimal - integer
 	# arithmetic on the tenths-of-kg value, so no float rounding mode can
 	# disagree between the axis and the peak label.
 	spine_label : [Metric, Imperial], I64, Str, Str -> Str
-	spine_label = |units, v10, kind, fam|
-		if (kind == "power") "${I64.to_str(v10 // 10)}w"
+	spine_label = |units, v, kind, fam|
+		if (kind == "power") "${I64.to_str(v // Db.spine_scale(kind))}w"
 		else if kind == "tonnage" {
-			kg = v10 // 10
+			kg = v // Db.spine_scale(kind)
 			if (kg < 1000) "${I64.to_str(kg)}kg"
 			else {
-				tenths_t = (v10 + 500) // 1000
+				tenths_t = (v + 500) // 1000
 				"${I64.to_str(tenths_t // 10)}.${I64.to_str(tenths_t % 10)}t"
 			}
 		}
 		else {
-			spd = I64.to_f64(v10) / 10.0
+			spd = I64.to_f64(v) / I64.to_f64(Db.spine_scale(kind))
 			if fam == "Rowing" or fam == "Swim" {
 				u = Sports.pace_unit(fam)
 				if (spd <= 0.0) "-" else Fmt.mmss((I64.to_f64(u.dist_m) / spd).round_to_i64_try().ok_or(0))
@@ -423,9 +424,9 @@ Career :: [].{
 	geom : Ui.Model -> Geom
 	geom = |model| {
 		cur = spine_at(model.career_spines, model.spine_idx)
-		measured = List.len(List.keep_if(cur.rows, |m| m.ftp10 > 0))
+		measured = List.len(List.keep_if(cur.rows, |m| m.spine_v > 0))
 		ready = cur.kind != "tonnage" or measured >= 3
-		months = if (ready) cur.rows else List.map(cur.rows, |m| { ..m, ftp10: 0 })
+		months = if (ready) cur.rows else List.map(cur.rows, |m| { ..m, spine_v: 0 })
 		n = List.len(months)
 		nf = U64.to_f32(n)
 		p = progress(model)
@@ -440,7 +441,7 @@ Career :: [].{
 		shown = (nf * p).max(8.0).min(nf)
 		# spine scale from the measured points only; 0 means that family had
 		# no scored session that month
-		fmax = List.fold(months, 0.I64, |a, m| if (m.ftp10 > a) m.ftp10 else a)
+		fmax = List.fold(months, 0.I64, |a, m| if (m.spine_v > a) m.spine_v else a)
 		{
 			cur,
 			ready,
@@ -460,8 +461,8 @@ Career :: [].{
 			shown,
 			head_x: plot_l + (if (shown >= nf) (p) else 1.0) * plot_w,
 			fmax,
-			fmin: List.fold(months, fmax, |a, m| if (m.ftp10 > 0 and m.ftp10 < a) m.ftp10 else a),
-			frange: (I64.to_f32(fmax - List.fold(months, fmax, |a, m| if (m.ftp10 > 0 and m.ftp10 < a) m.ftp10 else a))).max(10.0),
+			fmin: List.fold(months, fmax, |a, m| if (m.spine_v > 0 and m.spine_v < a) m.spine_v else a),
+			frange: (I64.to_f32(fmax - List.fold(months, fmax, |a, m| if (m.spine_v > 0 and m.spine_v < a) m.spine_v else a))).max(10.0),
 			lmax: List.fold(months, 1.I64, |a, m| if (m.load > a) m.load else a),
 		}
 	}
@@ -470,7 +471,7 @@ Career :: [].{
 	xf = |g, i| g.plot_l + (U64.to_f32(i) + 0.5) / g.shown * g.plot_w
 
 	yf : Geom, I64 -> F32
-	yf = |g, f10| g.line_bot - (I64.to_f32(f10 - g.fmin) / g.frange) * (g.line_bot - g.line_top)
+	yf = |g, v| g.line_bot - (I64.to_f32(v - g.fmin) / g.frange) * (g.line_bot - g.line_top)
 
 	# the KPI cards' row: four cards of card_w, spread to the plot's edges
 	card_w : F32
@@ -535,9 +536,9 @@ Career :: [].{
 	milestones = |g| {
 		idx = List.map_with_index(g.months, |m, i| { m, i })
 		{
-			valley: List.fold(idx, { i: 0.U64, f: g.fmax }, |a, x| if (x.m.ftp10 > 0 and x.m.ftp10 <= a.f) { i: x.i, f: x.m.ftp10 } else a),
-			peak: List.fold(idx, { i: 0.U64, f: 0.I64 }, |a, x| if (x.m.ftp10 >= a.f and x.m.ftp10 > 0) { i: x.i, f: x.m.ftp10 } else a),
-			last: List.fold(idx, { i: 0.U64, f: 0.I64 }, |a, x| if (x.m.ftp10 > 0) { i: x.i, f: x.m.ftp10 } else a),
+			valley: List.fold(idx, { i: 0.U64, f: g.fmax }, |a, x| if (x.m.spine_v > 0 and x.m.spine_v <= a.f) { i: x.i, f: x.m.spine_v } else a),
+			peak: List.fold(idx, { i: 0.U64, f: 0.I64 }, |a, x| if (x.m.spine_v >= a.f and x.m.spine_v > 0) { i: x.i, f: x.m.spine_v } else a),
+			last: List.fold(idx, { i: 0.U64, f: 0.I64 }, |a, x| if (x.m.spine_v > 0) { i: x.i, f: x.m.spine_v } else a),
 		}
 	}
 
@@ -550,7 +551,7 @@ Career :: [].{
 	# of a monotone cubic (tangent); an unmeasured month ends one run and
 	# starts another
 	spine_pts : Geom -> List(Ui.SpinePt)
-	spine_pts = |g| List.map_with_index(g.months, |m, i| { x: xf(g, i), y: yf(g, m.ftp10), ok: m.ftp10 > 0 })
+	spine_pts = |g| List.map_with_index(g.months, |m, i| { x: xf(g, i), y: yf(g, m.spine_v), ok: m.spine_v > 0 })
 
 	spine_steps : U64
 	spine_steps = 10
@@ -812,7 +813,7 @@ Career :: [].{
 			# ── the comet: a bright head riding the spine, halo fading behind
 			# it. Gone when settled - the finished view is a chart, not a show.
 			if p < 1.0 {
-				head_f = List.fold(List.map_with_index(g.months, |m, i| { m, i }), 0.I64, |a, x| if (x.m.ftp10 > 0 and xf(g, x.i) <= g.head_x) x.m.ftp10 else a)
+				head_f = List.fold(List.map_with_index(g.months, |m, i| { m, i }), 0.I64, |a, x| if (x.m.spine_v > 0 and xf(g, x.i) <= g.head_x) x.m.spine_v else a)
 				if head_f > 0 {
 					hy = yf(g, head_f)
 					frame.circle!({ center: { x: g.head_x, y: hy }, radius: 10.0, style: Draw.filled(Color.with_alpha(Color.white, 26)) })
@@ -855,7 +856,7 @@ Career :: [].{
 	# a withheld spine's measured months as dots on a zero-based scale
 	withheld_dots : Geom -> List({ x : F32, y : F32, f : I64 })
 	withheld_dots = |g| {
-		rmax = List.fold(g.cur.rows, 0.I64, |a, m| if (m.ftp10 > a) m.ftp10 else a)
+		rmax = List.fold(g.cur.rows, 0.I64, |a, m| if (m.spine_v > a) m.spine_v else a)
 		dot_bot = g.line_bot - 24.0
 		dot_top = g.line_top + 72.0
 		if rmax <= 0 {
@@ -863,7 +864,7 @@ Career :: [].{
 		} else {
 			List.keep_oks(
 				List.map_with_index(g.cur.rows, |m, i| { m, i }),
-				|x| if (x.m.ftp10 > 0 and g.head_x >= xf(g, x.i)) Ok({ x: xf(g, x.i), y: dot_bot - (I64.to_f32(x.m.ftp10) / I64.to_f32(rmax)) * (dot_bot - dot_top), f: x.m.ftp10 }) else Err(Hidden),
+				|x| if (x.m.spine_v > 0 and g.head_x >= xf(g, x.i)) Ok({ x: xf(g, x.i), y: dot_bot - (I64.to_f32(x.m.spine_v) / I64.to_f32(rmax)) * (dot_bot - dot_top), f: x.m.spine_v }) else Err(Hidden),
 			)
 		}
 	}
@@ -950,7 +951,7 @@ Career :: [].{
 			|t|
 				if marks_spine(t, g.cur.fam, g.cur.kind) {
 					match List.first(List.keep_if(List.map_with_index(g.months, |m, i| { m, i }), |x| x.m.month == t.month)) {
-						Ok(x) if x.m.ftp10 > 0 and xf(g, x.i) <= g.head_x => Ok({ x: xf(g, x.i), y: yf(g, x.m.ftp10), kind: t.kind, valley: x.i == ms.valley.i })
+						Ok(x) if x.m.spine_v > 0 and xf(g, x.i) <= g.head_x => Ok({ x: xf(g, x.i), y: yf(g, x.m.spine_v), kind: t.kind, valley: x.i == ms.valley.i })
 						_ => Err(Off)
 					}
 				} else {
@@ -1287,6 +1288,14 @@ Career :: [].{
 # tenths-of-kg, so 1197 kg carries to 1.2t
 expect Career.spine_label(Metric, 11970, "tonnage", "WeightTraining") == "1.2t"
 expect Career.spine_label(Metric, 8500, "tonnage", "WeightTraining") == "850kg"
+
+# a month-close value read from the database labels as the threshold it is:
+# a swimming threshold of 0.88 m/s is 1:54/100m and 0.742 m/s is 2:15, and
+# two months a few seconds per 100 m apart label apart; power keeps its watts
+expect {
+	swim = |mps| Career.spine_label(Metric, Db.spine_value("pace", mps), "pace", "Swim")
+	swim(0.88) == "1:54" and swim(0.742) == "2:15" and swim(0.819) != swim(0.848) and Career.spine_label(Metric, Db.spine_value("power", 243.4), "power", "Ride") == "243w"
+}
 
 # the flame sits wholly inside the streak chip and ends before the streak
 # text starts

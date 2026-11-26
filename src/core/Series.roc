@@ -2,9 +2,11 @@
 #
 # Strava streams are (elapsed_second, value) samples with gaps. Everything
 # downstream - the engine's power/pace math, the window's trace channels -
-# wants an honest 1 Hz series: gaps up to max_fill_gap bridged, longer gaps
-# treated as pauses and never filled. One implementation, because two copies
-# of a resampler is how one surface stitches across a pause the other refuses.
+# wants an honest 1 Hz series: gaps up to a fill bound bridged, longer gaps
+# treated as pauses and never filled. The bound is max_fill_gap unless the
+# caller names its own for a stream recorded at a coarser rate. One
+# implementation, because two copies of a resampler is how one surface
+# stitches across a pause the other refuses.
 Series :: [].{
 	max_fill_gap : I64
 	max_fill_gap = 10
@@ -22,7 +24,13 @@ Series :: [].{
 	# REAL elapsed second, so a consumer can tell a genuine 1 Hz run from one that jumped -
 	# which is what keeps a rolling window from stitching across a pause.
 	resample_1s_pairs : List({ t : I64, v : F64 }), [Hold, Interpolate] -> List({ t : I64, v : F64 })
-	resample_1s_pairs = |samples, mode|
+	resample_1s_pairs = |samples, mode| resample_1s_pairs_within(samples, mode, max_fill_gap)
+
+	# the same resampler with the fill bound named by the caller: a stream whose
+	# device records at a coarser rate than seconds (a pool swim, one sample per
+	# length) has intervals that are recorded motion, not pauses, at that rate
+	resample_1s_pairs_within : List({ t : I64, v : F64 }), [Hold, Interpolate], I64 -> List({ t : I64, v : F64 })
+	resample_1s_pairs_within = |samples, mode, bound|
 		# The fold below assumes ascending timestamps: an out-of-order sample dropped
 		# WITHOUT advancing the anchor lets one spuriously large timestamp swallow
 		# every sample after it until the stream catches up. Ordering is enforced
@@ -30,7 +38,7 @@ Series :: [].{
 		List.fold(
 			sorted_by_t(samples),
 			{ out: [], prev_t: 0.I64, prev_v: 0.0.F64, started: False },
-			|acc, s| resample_step(acc, s, mode),
+			|acc, s| resample_step(acc, s, mode, bound),
 		).out
 
 	# Ascending order is the ONLY thing the resample fold needs, and Strava streams
@@ -62,14 +70,14 @@ Series :: [].{
 
 	# What to do with the next sample. Pure classification, kept flat and separate so the
 	# step below reads as a four-case table instead of a staircase of nested else-ifs.
-	resample_case : Bool, I64 -> [First, OutOfOrder, Fill, Pause]
-	resample_case = |started, gap|
-		if (!started) First else if (gap <= 0) OutOfOrder else if (gap <= max_fill_gap) Fill else Pause
+	resample_case : Bool, I64, I64 -> [First, OutOfOrder, Fill, Pause]
+	resample_case = |started, gap, bound|
+		if (!started) First else if (gap <= 0) OutOfOrder else if (gap <= bound) Fill else Pause
 
-	resample_step = |acc, s, mode| {
+	resample_step = |acc, s, mode, bound| {
 		emit = |out| { out: List.append(out, { t: s.t, v: s.v }), prev_t: s.t, prev_v: s.v, started: True }
 		gap = s.t - acc.prev_t
-		match resample_case(acc.started, gap) {
+		match resample_case(acc.started, gap, bound) {
 			# a duplicate or backwards timestamp: ignore it, keep the anchor
 			OutOfOrder => acc
 			First => emit(acc.out)
@@ -218,6 +226,8 @@ Series :: [].{
 	expect resample_1s_linear([{ t: 0.I64, v: 0.0 }, { t: 4.I64, v: 8.0 }]) == [{ t: 0.I64, v: 0.0 }, { t: 1.I64, v: 2.0 }, { t: 2.I64, v: 4.0 }, { t: 3.I64, v: 6.0 }, { t: 4.I64, v: 8.0 }]
 	# a pause is not filled: the gap stays a gap in the pairs
 	expect List.len(resample_1s_linear([{ t: 0.I64, v: 0.0 }, { t: 30.I64, v: 60.0 }])) == 2
+	# a caller naming a wider bound has that interval filled, second by second
+	expect List.len(resample_1s_pairs_within([{ t: 0.I64, v: 0.0 }, { t: 30.I64, v: 60.0 }], Interpolate, 120)) == 31
 
 	expect speed_1s([{ t: 0.I64, v: 0.0 }, { t: 4.I64, v: 8.0 }]) == [{ t: 1.I64, v: 2.0 }, { t: 2.I64, v: 2.0 }, { t: 3.I64, v: 2.0 }, { t: 4.I64, v: 2.0 }]
 	# across a pause no speed is emitted - motion during a 30 s hole is unknowable

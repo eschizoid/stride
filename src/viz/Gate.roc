@@ -319,12 +319,13 @@ Gate :: [].{
 	size_name = |sz| "${I64.to_str(round_i(sz.w))}x${I64.to_str(round_i(sz.h))}"
 
 	# ── the career view's fixtures ──────────────────────────────────────────
-	# a family's month-close threshold in tenths: a climb out of a valley to
-	# a peak, a two-month gap with no session, and a last month that is the
-	# peak again on every other family
+	# a family's month-close threshold at its kind's resolution (watts and kg
+	# in tenths, pace in mm/s): a climb out of a valley to a peak, a two-month
+	# gap with no session, and a last month that is the peak again on every
+	# other family
 	spine_rows : Str, Str, U64 -> List(Db.CareerMonth)
 	spine_rows = |fam, kind, k| {
-		base = if (kind == "power") 2500.0 else if (kind == "tonnage") 60000.0 else base_of("pace:${fam}") / 100.0
+		base = if (kind == "power") 2500.0 else if (kind == "tonnage") 60000.0 else base_of("pace:${fam}")
 		n = List.len(months)
 		List.map_with_index(
 			months,
@@ -332,7 +333,7 @@ Gate :: [].{
 				t = U64.to_f32(i) / U64.to_f32(n - 1)
 				shape = if (t < 0.3) 1.0 - t else if (t < 0.85) 0.7 + (t - 0.3) * 0.7 else 1.08 - (t - 0.85) * (if (k % 2 == 0) -0.4 else 0.6)
 				gap = i == 9 or i == 10
-				{ month: m, load: 900 + U64.to_i64_wrap((i * 37) % 600), ftp10: if (gap) 0 else round_i(base * shape), partial: i + 1 == n }
+				{ month: m, load: 900 + U64.to_i64_wrap((i * 37) % 600), spine_v: if (gap) 0 else round_i(base * shape), partial: i + 1 == n }
 			},
 		)
 	}
@@ -369,7 +370,7 @@ Gate :: [].{
 			Career.cycle_fams(List.map(spines, |s| { fam: s.fam, kind: s.kind, months: 0 }), sports),
 			|f| match List.find_first(spines, |s| s.fam == f.fam and s.kind == f.kind) {
 				Ok(s) => s
-				Err(_) => { fam: f.fam, kind: f.kind, rows: List.map(spine_rows(f.fam, "power", 0), |r| { ..r, ftp10: 0 }) }
+				Err(_) => { fam: f.fam, kind: f.kind, rows: List.map(spine_rows(f.fam, "power", 0), |r| { ..r, spine_v: 0 }) }
 			},
 		)
 
