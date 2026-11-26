@@ -1279,8 +1279,7 @@ Gate :: [].{
 	week_starts = ["2026-08-24", "2026-08-31", "2026-09-07", "2026-09-14", "2026-09-21", "2026-09-28", "2026-10-05", "2026-10-12", "2026-10-19", "2026-10-26", "2026-11-02", "2026-11-09"]
 
 	# a week's share of the athlete's usual volume: the first week the
-	# biggest, so its bar sets the load scale's top, a rest week in the
-	# middle and the running week partial
+	# biggest, a rest week in the middle and the running week partial
 	week_share : U64 -> I64
 	week_share = |i| (List.get([140, 90, 100, 110, 60, 0, 105, 115, 120, 95, 100, 40], i)) ?? 100
 
@@ -1301,8 +1300,8 @@ Gate :: [].{
 		)
 
 	# each week starts from the CTL its ramp left the week before, and for
-	# every other athlete the rest week starts high, so its share of its
-	# hold is the smallest bar on the plot
+	# every other athlete the rest week starts high, so it loses far more
+	# than any other week moves and stretches the load scale down
 	ramp_weeks_of : U64 -> List(Db.RampWeek)
 	ramp_weeks_of = |k|
 		List.map_with_index(
@@ -1316,16 +1315,36 @@ Gate :: [].{
 			},
 		)
 
-	# the load mode's edges at a window height: a first week that started
-	# from zero CTL and has no hold, a running week two days in at three
-	# times its hold, which sets the scale's top, and a week whose bar
-	# stands 15 px under the line, whose chip rises over it
-	edge_ramp : List(Db.RampWeek), F32 -> List(Db.RampWeek)
-	edge_ramp = |weeks, win_h| {
-		ends = List.map_with_index(weeks, |w, i| if (i == 0) { ..w, ctl_start: 0.0 } else if (i == 11) { ..w, days: 2, tss: F64.round_to_i64_try(w.ctl_start * 6.0) ?? 0 } else w)
-		r = 1.0 - 15.0 * I64.to_f64(Ramp.top_of(ends)) / (100.0 * F32.to_f64(Ramp.plot_h(win_h)))
-		List.map_with_index(ends, |w, i| if (i == 6) { ..w, tss: F64.round_to_i64_try(w.ctl_start * 7.0 * r) ?? 0, ramp10: -3 } else w)
-	}
+	# the load mode's edges: two weeks before the athlete's history, with no
+	# load and no CTL yet, a first week of history that counts its whole
+	# CTL as its change, and a running week two days in that has lost
+	# fitness so far
+	edge_ramp : List(Db.RampWeek) -> List(Db.RampWeek)
+	edge_ramp = |weeks|
+		List.map_with_index(
+			weeks,
+			|w, i|
+				if i < 2 {
+					{ ..w, tss: 0, ctl10: 0, ramp10: 0, ctl_start: 0.0 }
+				} else if i == 2 {
+					{ ..w, ctl10: 113, ramp10: 0, ctl_start: 0.0 }
+				} else if i == 11 {
+					{ ..w, days: 2, ramp10: -8, ctl_start: I64.to_f64(w.ctl10 + 8) / 10.0 }
+				} else {
+					w
+				},
+		)
+
+	# the load weeks with every change turned to a gain, or to a loss, each
+	# week's start read back from its end
+	signed_ramp : List(Db.RampWeek), I64 -> List(Db.RampWeek)
+	signed_ramp = |weeks, sign| List.map(
+		weeks,
+		|w| {
+			r = sign * (if (w.ramp10 < 0) 0 - w.ramp10 else w.ramp10)
+			{ ..w, ramp10: r, ctl_start: I64.to_f64(w.ctl10 - r) / 10.0 }
+		},
+	)
 
 	# the running week two days in, in the zones mode
 	edge_zones : List(Db.ZoneWeek) -> List(Db.ZoneWeek)
@@ -1450,7 +1469,9 @@ Gate :: [].{
 								{ name: "${a.name} ${mode} at ${size_name(sz)}", model: base },
 								{ name: "${a.name} ${mode} on a picked week at ${size_name(sz)}", model: { ..base, week_cursor: "2026-11-09" } },
 								{ name: "${a.name} ${mode} with no history at ${size_name(sz)}", model: { ..base, zone_weeks: [], ramp_weeks: [] } },
-								{ name: "${a.name} ${mode} at its edges at ${size_name(sz)}", model: { ..base, zone_weeks: edge_zones(base.zone_weeks), ramp_weeks: edge_ramp(base.ramp_weeks, sz.h) } },
+								{ name: "${a.name} ${mode} at its edges at ${size_name(sz)}", model: { ..base, zone_weeks: edge_zones(base.zone_weeks), ramp_weeks: edge_ramp(base.ramp_weeks) } },
+								{ name: "${a.name} ${mode} with gains alone at ${size_name(sz)}", model: { ..base, ramp_weeks: signed_ramp(base.ramp_weeks, 1) } },
+								{ name: "${a.name} ${mode} with losses alone at ${size_name(sz)}", model: { ..base, ramp_weeks: signed_ramp(base.ramp_weeks, -1) } },
 							]
 						},
 					),
@@ -1615,68 +1636,76 @@ expect List.all(
 
 # both modes read every week the same way under its bar, its date and
 # then its figure, and put "so far" over the running week alone: over its
-# bar in zones, over its chip in load
+# bar in zones; in load over its chip on a gain, and over the bar's top at
+# the line on a loss
 expect List.all(
 	List.keep_if(Gate.weeks_models(6), |e| !(List.is_empty(e.model.zone_weeks))),
 	|e| Gate.week_rows(Zones.scene(e.model, Gate.measure), List.map(Zones.bars(e.model), |b| { cx: b.cx, date: Weeks.week_label(b.w.wk), under: b.box.y, running: Weeks.partial(b.w.days) }), e.model.win.h),
 )
 expect List.all(
 	List.keep_if(Gate.weeks_models(7), |e| !(List.is_empty(e.model.ramp_weeks))),
-	|e| {
-		ly = Ramp.line_y(e.model.win.h, Ramp.top_of(e.model.ramp_weeks))
-		Gate.week_rows(Ramp.scene(e.model, Gate.measure), List.map(Ramp.bars(e.model), |b| { cx: b.cx, date: Weeks.week_label(b.w.wk), under: (Ramp.chip_box(b, ly)).y, running: Weeks.partial(b.w.days) }), e.model.win.h)
-	},
+	|e| Gate.week_rows(Ramp.scene(e.model, Gate.measure), List.map(Ramp.bars(e.model), |b| { cx: b.cx, date: Weeks.week_label(b.w.wk), under: if (Ramp.down(b)) b.box.y else (Ramp.chip_box(b)).y, running: b.drawn and b.outlined }), e.model.win.h),
 )
 
-# wherever the load chart draws, one line crosses it and no chip touches
-# it, and in both faces the line reads its value, "100 %", centred where
-# it crosses, under its one name, "holds fitness", both whole in the
-# gutter and clear of every bar; at the edges the running week, at three
-# times its hold, sets the scale's top and stands tallest, whole, the week
-# with no hold keeps its stub, and the week just under its hold lifts its
-# chip over the line
+# wherever the load chart draws, one zero line crosses it and no chip
+# touches it, and in both faces the line reads its 0 centred where it
+# crosses, its one name, "holds fitness", just over the 0 or, where the
+# scale's top crowds it, just under, both whole in the gutter and clear of
+# every bar
 expect List.all(
 	List.keep_if(Gate.weeks_models(7), |e| !(List.is_empty(e.model.ramp_weeks))),
 	|e| {
-		top = Ramp.top_of(e.model.ramp_weeks)
-		line = Ramp.line_box(e.model.win, top)
+		line = Ramp.line_box(e.model.win, Ramp.scale_of(e.model.ramp_weeks))
 		ly = line.y + 1.0
 		ks = List.map(Ramp.marks(e.model, Gate.measure), |m| m.key)
-		in_gutter = |p| p.box.x >= (Labels.panel(e.model.win)).x and p.box.x + p.box.w <= Weeks.plot_left - 2.0 and List.all(Ramp.bars(e.model), |b| !(Labels.intersects(p.box, b.box)))
+		in_gutter = |p| p.box.x >= (Labels.panel(e.model.win)).x and p.box.x + p.box.w <= Weeks.plot_left - 2.0 and List.all(Ramp.drawn_bars(e.model), |b| !(Labels.intersects(p.box, b.box)))
 		named = |measure| {
 			placed = Ramp.scene(e.model, measure)
 			names = List.keep_if(placed, |p| p.item.text == Ramp.line_label)
-			values = List.keep_if(placed, |p| p.item.text == Ramp.line_value)
+			zeros = List.keep_if(placed, |p| p.item.text == "0" and p.box.x + p.box.w <= Weeks.plot_left)
 			List.len(names) == 1
-				and List.len(values) == 1
-				and List.all(values, |v| in_gutter(v) and (v.box.y + v.box.h / 2.0 - ly).abs() < 1.0)
-				and List.all(names, |n| in_gutter(n) and List.all(values, |v| n.box.y + n.box.h <= v.box.y and n.box.y + n.box.h >= v.box.y - 6.0))
+				and List.len(zeros) == 1
+				and List.all(zeros, |v| in_gutter(v) and (v.box.y + v.box.h / 2.0 - ly).abs() < 1.0)
+				and List.all(names, |n| in_gutter(n) and List.all(zeros, |v| (n.box.y + n.box.h <= v.box.y and n.box.y + n.box.h >= v.box.y - 6.0) or (n.box.y >= v.box.y + v.box.h and n.box.y <= v.box.y + v.box.h + 6.0)))
 		}
 		List.count_if(ks, |k| k == "the holds-fitness line") == 1
-			and List.all(Ramp.bars(e.model), |b| !(Labels.intersects(Ramp.chip_box(b, ly), line)))
+			and List.all(Ramp.drawn_bars(e.model), |b| !(Labels.intersects(Ramp.chip_box(b), line)))
 			and named(Gate.measure)
 			and named(Gate.builtin_measure)
 	},
 )
+
+# at the edges the weeks before history draw no bar and no chip, the first
+# week of history stands as its whole CTL, and the running week, down so
+# far, is an outline under the line; with gains alone the line sits at the
+# plot's foot and with losses alone at its head, the scale's far end
+# labelled in the gutter and its near end not
 expect {
-	edges = List.keep_if(Gate.weeks_models(7), |e| Str.contains(e.name, "at its edges"))
-	!(List.is_empty(edges))
+	pick = |tag| List.keep_if(Gate.weeks_models(7), |e| Str.contains(e.name, tag))
+	# the plot's gutter reads the line's name, its 0 and the scale's far end alone
+	ends_read = |e, far| {
+		texts = List.map(List.keep_if(Ramp.scene(e.model, Gate.measure), |p| p.box.x + p.box.w <= Weeks.plot_left and p.box.y >= Ramp.plot_top - 12.0), |p| p.item.text)
+		List.len(texts) == 3 and List.contains(texts, far(Ramp.scale_of(e.model.ramp_weeks)))
+	}
+	List.len(pick("at its edges")) > 0
 		and List.all(
-			edges,
+			pick("at its edges"),
 			|e| {
+				ks = List.map(Ramp.marks(e.model, Gate.measure), |m| m.key)
+				placed = Ramp.scene(e.model, Gate.measure)
 				bs = Ramp.bars(e.model)
-				ly = Ramp.line_y(e.model.win.h, Ramp.top_of(e.model.ramp_weeks))
-				first = (List.first(bs)) ?? { w: Ramp.blank, i: 0, cx: 0.0, box: { x: 0.0, y: 0.0, w: 0.0, h: 0.0 } }
-				under = (List.get(bs, 6)) ?? first
-				run = (List.last(bs)) ?? first
-				Ramp.top_of(e.model.ramp_weeks) == Ramp.top_of(List.take_last(e.model.ramp_weeks, 1))
-					and Ramp.top_of(List.drop_last(e.model.ramp_weeks, 1)) < Ramp.top_of(e.model.ramp_weeks)
-					and run.box.y >= Ramp.plot_top - 0.01 and List.all(bs, |b| run.box.y <= b.box.y)
-					and (first.box.h - 3.0).abs() < 0.001
-					and under.box.y > ly + Ramp.line_gap + 2.0 and under.box.y < ly + 30.0
-					and (Ramp.chip_box(under, ly)).y + 20.0 <= ly - Ramp.line_gap + 0.001
+				ly = Ramp.line_y(e.model.win.h, Ramp.scale_of(e.model.ramp_weeks))
+				pre = List.take_first(bs, 2)
+				List.all(pre, |b| !(b.drawn) and !(List.contains(ks, "the ${b.w.wk} bar")) and !(List.contains(ks, "the ${b.w.wk} chip")))
+					and List.all(pre, |b| List.count_if(placed, |p| (p.box.x + p.box.w / 2.0 - b.cx).abs() < 0.5) == 2)
+					and List.any(bs, |b| b.w.wk == "2026-09-07" and b.drawn and (ly - b.box.y - Ramp.unit(e.model.win.h, Ramp.scale_of(e.model.ramp_weeks)) * 11.3).abs() < 0.01)
+					and List.all(List.take_last(bs, 1), |b| b.drawn and b.outlined and Ramp.down(b) and ((b.box.y - ly).abs() < 0.01 or (b.box.y + 1.5 - ly).abs() < 0.01))
 			},
 		)
+		and List.len(pick("gains alone")) > 0
+		and List.all(pick("gains alone"), |e| (Ramp.line_y(e.model.win.h, Ramp.scale_of(e.model.ramp_weeks)) - (Weeks.bars_bot(e.model.win.h) - Ramp.chip_room)).abs() < 0.01 and ends_read(e, |s| "+${I64.to_str(s.hi)}"))
+		and List.len(pick("losses alone")) > 0
+		and List.all(pick("losses alone"), |e| (Ramp.line_y(e.model.win.h, Ramp.scale_of(e.model.ramp_weeks)) - (Ramp.plot_top + Ramp.chip_room)).abs() < 0.01 and ends_read(e, |s| I64.to_str(s.lo)))
 }
 
 # the lifts tab's gate: every athlete who lifts, in kilograms, and in pounds

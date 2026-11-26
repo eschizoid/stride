@@ -135,15 +135,15 @@ with view 5 opens it.
 
 One nav pill, `weeks`, holds the two twelve-week charts, picked by chips at
 the left of the header: `zones` (the easy, moderate and hard split, the
-default) and `load` (weekly load against the load that holds fitness). Both
-chart the same Monday weeks in the same slots, with the scale's labels in a
-gutter at the plot's left, so no label shares a slot with a bar. Under every
-bar two rows read the week the same way in both modes: its date, then its
-figure (hours in zones, load in load). Each mode keeps its own view id on
-the bus, 6 for zones and 7 for load, so a directive for either lands on this
-tab in that mode, and a capture is named for its mode (`zones.png`,
-`ramp.png`). Clicking the pill from another view opens `zones`; clicking it
-from inside the tab keeps the mode on screen.
+default) and `load` (the fitness each week gained or lost, and its load).
+Both chart the same Monday weeks in the same slots, with the scale's labels
+in a gutter at the plot's left, so no label shares a slot with a bar. Under
+every bar two rows read the week the same way in both modes: its date,
+then its figure (hours in zones, load in load). Each mode keeps its own
+view id on the bus, 6 for zones and 7 for load, so a directive for either
+lands on this tab in that mode, and a capture is named for its mode
+(`zones.png`, `ramp.png`). Clicking the pill from another view opens
+`zones`; clicking it from inside the tab keeps the mode on screen.
 
 One week is in focus across both modes: the bar under the pointer, else the
 one last clicked (clicking it again drops it). The header line under the
@@ -151,9 +151,10 @@ chips reads that week the same way in either mode: the hours of its split
 and their easy share, its load beside its hold level, and the fitness it
 gained. With no week in focus the line is empty.
 
-The current week, until the series covers all seven of its days, is drawn
-faded in both modes, with "so far" over it: over its bar in zones, over its
-chip in load.
+The current week, until the series covers all seven of its days, is marked
+in both modes, with "so far" over it: in zones its bar is faded and the
+label sits over it; in load its bar is an outline and the label sits over
+its chip on a gain, or over the bar's top at the line on a loss.
 
 ### Zones mode
 
@@ -183,41 +184,33 @@ directive with view 6 opens it.
 ### Load mode
 
 The overtraining early warning, also one chart on one scale: each bar is
-the week's load as a share of its hold level, the load that would have left
-CTL where the week started: CTL at the week's start times the days the week
-counts (`core.Load.hold`), since a day whose load equals CTL is the fixed
-point of the recurrence the engine builds `daily_load` with, and that
-recurrence lives in the same module. So one white line at 100% serves every
-week, read in the gutter where it crosses as "100 %" under its name, "holds
-fitness": a bar over it gained fitness and one under it lost fitness,
-except within a narrow band around the line: the recurrence weighs a late
-day above an early one and the hold weighs every day alike, so a week whose
-load lands on its first day can top its hold and still lose up to 1.07% of
-its starting CTL, and one whose load lands on its last day can fall short
-of it and still gain up to 1.12%. `core.Load` derives both bounds from the
-recurrence and pins them.
+the CTL that week gained, its end-of-week CTL (now, for the running week)
+less the CTL it started from, drawn from a white zero line named "holds
+fitness" in the gutter. A gain grows up and a loss grows down, every bar on
+one scale in CTL points, so two weeks that moved fitness alike stand alike
+whatever their load or how many days they have had. Bar and chip share the
+verdict's color: muted for a week that held or lost fitness, blue for one
+that gained, red for one that gained more than 6 CTL in the week
+(`Ramp.ramp_limit`, the one constant the colors and the key read). The chip
+sits at the bar's end, over a gain and under a loss, and reads the change.
+The figure under each bar is the week's load. The card carries where
+fitness stands and how fast it is moving, "ctl per week so far" for the
+running week.
 
-Each bar wears a chip with the CTL the week gained, and bar and chip share
-the verdict's color: muted for a week that held or lost fitness, blue for
-one that gained, red for one that gained more than 6 CTL in the week
-(`Ramp.ramp_limit`, the one constant the colors and the key read). A chip
-sits above its bar, and one that would touch the line rises to sit clear
-above it. The figure under each bar is the week's load. The card carries
-where fitness stands and how fast it is moving, "ctl per week so far" for
-the running week.
-
-The scale fits the tallest bar, the running week's included: its top is
-the largest share of any week shown, rounded up to a ten, and at least
-120%, so no bar is ever cut short. The running week's hold counts only the
-days it has had, so one long ride early in the week can make it the
-tallest bar and lift the top. A new athlete's early weeks sit over tiny
-holds and can set a tall scale, the line low on the plot and the later
-weeks short beside them; the chips still read each week's CTL change. The
-weeks come from the `weekly_ramp` view - the one definition of weekly
+The scale runs from the lowest change of any week shown to the highest,
+rounded outward to whole points and always holding zero, so gains alone
+put the line at the plot's foot and losses alone at its head; a span under
+four points grows on the side of the larger change, so a flat history does
+not stretch a tenth of a point across the plot. The gutter labels the
+scale's ends in CTL points where they differ from zero, and the line's 0.
+The running week is an outline, still filling in, with "so far" over it.
+The weeks come from the `weekly_ramp` view - the one definition of weekly
 ramp; a week's start is its end-of-week CTL less its ramp, except a week
-that begins on or before the first day of history, which started from
-zero CTL (the engine walks `daily_load` from zero), has no hold to share
-and keeps a stub. A directive with view 7 opens it.
+that begins on or before the first day of history, which started from zero
+CTL (the engine walks `daily_load` from zero), so the first week of history
+counts its whole CTL as its change. A week before the athlete's history,
+with no load and no CTL yet, draws no bar and no chip. A directive with
+view 7 opens it.
 
 ![The ramp view](img/ramp.png)
 
@@ -828,10 +821,10 @@ sport no family holds. The fixtures per view:
 - zones and load: twelve weeks with the biggest first, a lifting week with
   no polarized time, a rest week that started from a high CTL for every
   other athlete, and the newest still running, with no week picked, on a
-  picked week, with no history, and at the load
-  mode's edges (a first week with no hold, a week just under its hold, and
-  a running week two days in that sets the scale's top), in the brand
-  faces and in the built-in face;
+  picked week, with no history, at the load mode's edges (two weeks before
+  history, a first week of history, and a running week two days in that
+  has lost fitness so far), and with every week's change a gain, and a
+  loss, in the brand faces and in the built-in face;
 - lifts: more lifts than the widest window holds and the latest session's
   sets, in kilograms and scrolled in pounds, for every athlete who lifts,
   and the empty tab for every athlete who does not;

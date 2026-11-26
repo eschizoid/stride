@@ -1027,8 +1027,9 @@ Db :: [].{
 	# twelve Monday weeks off the weekly_ramp view - the ONE definition of
 	# weekly ramp - in tenths (F64 has no narrowing; SQL rounds to integers).
 	# `days` counts the week's days the series covers, the way ZoneWeek does.
-	# `ctl_start` is the CTL the week started from, unrounded: the hold level
-	# the load mode draws (core.Load.hold) is read off it.
+	# `ctl_start` is the CTL the week started from, unrounded: the load mode
+	# draws each week's change from it, and the focus line reads the hold
+	# level (core.Load.hold) off it.
 	RampWeek : { wk : Str, days : I64, tss : I64, ctl10 : I64, ramp10 : I64, ctl_start : F64 }
 
 	# The CTL a week started from. The view's ramp is its end-of-week CTL less
