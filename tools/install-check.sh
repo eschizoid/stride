@@ -9,7 +9,8 @@
 # cut off at every line and short of its last bytes, and checks that no cut
 # installs anything while the whole file, run the same way, installs;
 # installs the latest release under each shell with STRIDE_INSTALL_APP
-# unset and no terminal, and checks that the install reaches its last line,
+# unset and no terminal, and checks that the install prints the line that
+# puts the command's folder on the PATH and ends by naming `stride setup`,
 # that the command starts and that no app arrives; checks that a folder
 # where the command goes stops the install untouched, and that a TERM
 # during a download ends it with status 143 and leaves nothing; then
@@ -179,7 +180,14 @@ case "$mode" in
     for s in $shells; do
       home="$work/fresh-$s"; mkdir -p "$home"
       out="$(inst_sh="$s" run_install "$home" 2>&1)" || { printf '%s\n' "$out"; echo "::error::install.sh under $s failed with no terminal"; exit 1; }
-      grep -q '^next: run' <<<"$out" || { printf '%s\n' "$out"; echo "::error::install.sh under $s stopped before its last line"; exit 1; }
+      # its last line names `stride setup` by the path that runs it, since
+      # the fake home's bin is not on this PATH, and it prints the line that
+      # puts that folder there
+      case "$(tail -n 1 <<<"$out")" in
+        "next: run \`$home/bin/stride setup\`"*) ;;
+        *) printf '%s\n' "$out"; echo "::error::install.sh under $s did not end by naming $home/bin/stride setup"; exit 1 ;;
+      esac
+      grep -qxF "  export PATH=\"$home/bin:\$PATH\"" <<<"$out" || { printf '%s\n' "$out"; echo "::error::install.sh under $s did not print the export line for $home/bin"; exit 1; }
       out="$("$home/bin/stride" --version)"
       [ "$out" = "stride ${latest#v}" ] || { echo "::error::the installed command says '$out', not stride ${latest#v}"; exit 1; }
       [ ! -e "$(app_home "$home")" ] || { echo "::error::the app arrived without being asked for"; exit 1; }

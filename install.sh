@@ -100,15 +100,16 @@ main() {
 
   # `curl | sh` feeds this script on stdin, so the question is asked on the
   # terminal itself. The probe opens it in a subshell: a redirect that fails
-  # on a builtin ends a POSIX shell such as dash, and only the subshell ends
+  # on a builtin ends a POSIX shell such as dash, and only the subshell ends.
+  # Enter answers yes, as in install.ps1; an input that ends answers no
   want_app="${STRIDE_INSTALL_APP:-}"
   if [ -z "$app" ]; then
     [ "$want_app" = 1 ] && say "note: there is no desktop app for $os $arch; the command is installed"
     want_app=0
   elif [ -z "$want_app" ] && ( : >/dev/tty ) 2>/dev/null; then
-    printf 'Also install the desktop app into %s? [y/N] ' "$app_home" > /dev/tty
-    read -r answer < /dev/tty || answer=""
-    case "$answer" in y | Y | yes | YES) want_app=1 ;; *) want_app=0 ;; esac
+    printf 'Also install the desktop app into %s? [Y/n] ' "$app_home" > /dev/tty
+    read -r answer < /dev/tty || answer=n
+    case "$answer" in n | N | no | NO) want_app=0 ;; *) want_app=1 ;; esac
   fi
 
   fetch "$base/SHA256SUMS.txt" "$tmp/SHA256SUMS.txt" || fail "could not download $base/SHA256SUMS.txt"
