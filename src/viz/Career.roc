@@ -938,7 +938,7 @@ Career :: [].{
 			fix(Scene.data(hint_text, 13.0, ink_faint), 36.0, win_h - 30.0, Left, panel),
 		]
 		g = geom(model)
-		body = if (g.n < 2) [fix(Scene.data("no history yet - sync, analyze, and come back", 14.0, ink_muted), 36.0, 130.0, Left, panel)] else chart_texts(model, g, measure)
+		body = if (g.n < 2) [fix(Scene.data("no history yet - stride sync fills it", 14.0, ink_muted), 36.0, 130.0, Left, panel)] else chart_texts(model, g, measure)
 		List.join([head, chips, sheet_texts, body])
 	}
 

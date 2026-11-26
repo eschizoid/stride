@@ -166,20 +166,24 @@ to it and refuses a per-job override.
   failure and exits 0 — humans get the help screen, machines get the command list —
   and an unknown command is an error). New commands are born on this
   pattern; older ones migrate as touched.
-- `tests/e2e.roc` is ONE binary in FIVE roles, picked by `E2E_MODE`: the offline suite
-  (default, no mode set), a mock Strava server (`mock`), and three drivers that run
-  against it — `sync` (real sync + token refresh), `skips` (the undecodable-body skip
-  path), and `stops` (the `budget_reached` / `rate_limited` / `daily_cap_reached` / `list_rate_limited` outcomes). `just e2e-sync`
+- `tests/e2e.roc` is ONE binary in several roles, picked by `E2E_MODE`: the offline suite
+  (default, no mode set), a mock Strava server (`mock`), and drivers that run against it
+  — among them `sync` (real sync + token refresh), `skips` (the undecodable-body skip
+  path), `stops` (the stop reasons and their remedies) and `pace` (the waiting first
+  sync, Ctrl-C and resume, and the rate-limit headers setting the pace). `just e2e-sync`
   starts several mock instances, each on its own port — one serves the happy path and the
-  budget/daily-cap arms, the rest each stand for a failure shape — and runs every driver
-  arm; behaviour is varied by `E2E_*` flags, some shapes taking more than one. Read the
-  recipe for the current set rather than trusting a count here — enumerations in
-  prose rot. `STRIDE_API_BASE` points stride at the mock, and
-  `STRIDE_READS_PER_WINDOW / STRIDE_READS_PER_DAY` shrinks the rate-limit pacing so a terminal arm that would
-  otherwise cost a full 95-read window is reachable in milliseconds. Same species of seam as
-  `STRIDE_API_BASE`; humans never set any of them. They can only LOWER a limit — an
-  override able to RAISE one would let a typo or a copied command line hammer Strava and
-  get the athlete's own API app suspended, and lowering is all a test needs. This recipe DOES run in CI — it needs
+  budget/daily-cap arms, the rest each stand for a failure shape or send Strava's
+  `X-ReadRateLimit-Usage` header — and runs every driver arm; behaviour is varied by
+  `E2E_*` flags, some shapes taking more than one. Read the recipe for the current set
+  rather than trusting a count here — enumerations in prose rot. `STRIDE_API_BASE` points
+  stride at the mock, `STRIDE_READS_PER_WINDOW / STRIDE_READS_PER_DAY` shrink the
+  rate-limit pacing so a terminal arm that would otherwise cost a full 95-read window is
+  reachable in milliseconds, and `STRIDE_WINDOW_SECONDS` shortens the read window, and
+  with it the wait a human sync makes for the next one, so a sync across several windows
+  takes seconds. Same species of seam as `STRIDE_API_BASE`; humans never set any of them.
+  They can only LOWER a limit or SHORTEN the window — an override able to RAISE one would
+  let a typo or a copied command line hammer Strava and get the athlete's own API app
+  suspended, and lowering is all a test needs. This recipe DOES run in CI — it needs
   no network and no credential (loopback mocks, a fake token row in a sandboxed HOME).
   It runs single-shot, no retries — a flake here deserves an
   investigation, not absorption. Standing caveat: every string in the mock fixture is

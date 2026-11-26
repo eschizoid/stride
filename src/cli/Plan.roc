@@ -1623,7 +1623,7 @@ Plan :: [].{
 			Err(other) => Err(other)
 			Ok(zb) =>
 				match Report.summary_payload!(path, zb) {
-					Err(NoDataYet) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
+					Err(NoDataYet) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync`, or after a `stride import`, `stride analyze`")
 					Err(e) => Err(e)
 					Ok(s) => {
 						anchor = (Metrics.date_str_to_days(s.as_of)).ok_or(0)

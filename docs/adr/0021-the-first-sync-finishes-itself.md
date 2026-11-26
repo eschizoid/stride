@@ -40,24 +40,53 @@ what the athlete wants and re-running is busywork.
    already there.
 
 2. **A human sync waits instead of stopping, narrated as every other command is.** When
-   the read window is spent and work is still owed, `stride sync` waits until the next
-   quarter-hour mark (plus a short margin) and continues. Its progress goes through the
-   narration ADR 0007 set up, on stderr: the fetches draw the same redrawn bar the
+   the read window is spent and fetches are still owed, `stride sync` waits until the
+   next quarter-hour mark (plus a short margin) and continues. Its progress goes through
+   the narration ADR 0007 set up, on stderr: the fetches draw the same redrawn bar the
    other long steps draw (`Output.narrate!`, `[██████████] 11/11`), and the wait, which
    has no count, draws a spinner on that same line beside the local time the next
    batch starts and the time left. Machine mode gets plain lines, as narration already
    does. Ctrl-C stops it cleanly, and the next run resumes where it stopped, since
-   every fetch is already stored as it lands. A routine sync owes less than a window
-   and never waits.
+   every fetch is already stored as it lands. A sync waits, for a window or for the
+   day, only while the activities it already holds owe streams, descriptions or
+   routes. A run that owes nothing but the activity list (a routine sync's fresh look
+   at the last 30 days, or a sync whose database holds no activity yet) ends at once
+   when the period is spent, naming the local time it opens, so a routine sync, which
+   owes less than a window, never waits.
 
-3. **The headers set the pace.** Where Strava sends `X-ReadRateLimit-Usage`, it is the
-   usage the engine paces by; its own count remains the fallback when the header is
-   absent and the floor when the header reports less than the engine has spent. The test
-   seams that can only lower a limit keep that property.
+3. **The headers set the pace.** Strava reports on every response both its count of
+   the app's reads (`X-ReadRateLimit-Usage`) and the app's limits
+   (`X-ReadRateLimit-Limit`), "<15min>,<daily>"; it sets the limits per app and raises
+   them on request. The engine paces to the reported limits less a margin (five
+   percent, never fewer than five reads, leaving at least one), raised or lowered from
+   the documented 100 and 1,000, and to those (95 a quarter-hour, 1,000 a day) until a
+   limit has been reported. A reported limit is taken as at most ten times the
+   documented one, 1,000 a quarter-hour and 10,000 a day: a header is text, and a
+   garbled one must not lift the caps without bound, while a real grant above the
+   ceiling only paces slower than Strava allows. A reported limit is kept beside the
+   read counts, for the app it was reported to, so a run's first read is paced by it
+   too, and it is taken only from a response that also reports its usage. The engine
+   counts every read it makes, in the database across runs, raises its counts to the
+   reported usage, which also sees other apps' reads on the token, and checks them
+   before each read, so no run passes either limit. A count row it cannot read is read
+   in the direction that cannot pass a limit: an unreadable period stamp as the
+   current period's, its count kept, and an unreadable count as the period spent;
+   either is rewritten with the current stamp, so it refuses reads no longer than the
+   period. The test seams that lower a limit or shorten a period lower and shorten
+   only what a run paces by and waits for; Strava's own quarter-hour and day keep their
+   caps.
 
-4. **The daily limit ends a run with an exact time.** When the day's reads are spent,
-   sync stops and names the local time the allowance returns (midnight UTC), never
-   "tomorrow" or "~15 minutes".
+4. **A human sync waits out the day too; machine callers get an exact time.** When the
+   day's reads are spent while the activities it holds still owe fetches, a human sync
+   waits for the daily allowance to return (midnight UTC) on the same line a window's
+   wait takes, with the local time and the hours and minutes left, and continues; a
+   run that starts with the day spent and fetches owed waits the same way, and one
+   that owes nothing but the list ends at once with that time, as decision 2 has it.
+   A period that is still spent when its wait ends, as when another app on the token
+   keeps spending it, ends the run after that one wait, naming the situation and the
+   local time the allowance returns, rather than waiting again. `--json` never waits,
+   and a daily stop answers with that time; no surface says "tomorrow" or "~15
+   minutes".
 
 5. **Sync analyzes as data lands, to the end.** After each window's batch, sync runs
    analyze to its fixed point, so a partial history is always fully analyzed and no
@@ -97,20 +126,46 @@ what the athlete wants and re-running is busywork.
    → today: form -1, down 4 from a week ago — balanced
    ```
 
-   A first sync across a window, while it waits:
+   A routine sync on a day whose reads are spent, owing nothing but the list, as
+   decision 2 has it: no request, no wait, and the local time the allowance returns:
+
+   ```terminaloutput
+   $ stride sync
+   nothing synced: this run made no request; everything analyzed — today's Strava read allowance is used up, so nothing was fetched; it returns at 18:00, midnight UTC
+   → today: form -1, down 4 from a week ago — balanced
+   ```
+
+   A first sync across a window, while it waits. The list's five pages are five reads of
+   the first window, so the streams get the other 90; the bar pads its count to the
+   width of the total, so a redrawn frame never leaves the tail of a longer one behind;
+   and the batch is scored before the wait, as decision 5 has it:
 
    ```terminaloutput
    $ stride sync
    activity list       412 checked, 412 new
    scoring             [██████████] 412/412
-   streams             [██░░░░░░░░] 95/412
+   streams             [██░░░░░░░░]  90/412
+   scoring             [██████████] 90/90
    waiting for Strava  / next batch at 10:45, 4:12 left
+   ```
+
+   A first sync longer than a day, once the day's reads are spent, at the documented
+   1,000 a day:
+
+   ```terminaloutput
+   $ stride sync
+   activity list       1412 checked, 1412 new
+   scoring             [██████████] 1412/1412
+   streams             [██████░░░░]  939/1412
+   scoring             [██████████] 85/85
+   daily allowance     \ returns 18:00, 7 h 42 min left
    ```
 
 ## Consequences
 
-- The first-run experience is one command that ends with everything analyzed, or with
-  an exact time the daily allowance returns.
+- The first-run experience is one command that ends with everything analyzed: a human
+  run waits out windows and days, and only a period still spent when its wait ends
+  stops it, with an exact time.
 - `drain_note` and the setup copy lose their "run again" instructions; the e2e
   `stops` driver's expectations change with them, and the mock server needs to send
   the rate-limit headers for decision 3 to be exercised.

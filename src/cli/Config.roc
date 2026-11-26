@@ -57,6 +57,15 @@ Config :: [].{
 		"strava_expires_at",
 		"strava_reads_today",
 		"strava_reads_day",
+		"strava_reads_window",
+		"strava_reads_window_mark",
+		"strava_reads_quarter",
+		"strava_reads_quarter_mark",
+		"strava_reads_daywin",
+		"strava_reads_daywin_mark",
+		"strava_limit_window",
+		"strava_limit_day",
+		"strava_limit_app",
 	]
 
 	known_key : Str -> Bool
@@ -86,7 +95,7 @@ Config :: [].{
 	# Pinned against `known_key` below: every literal that predicate accepts has an expect
 	# asserting it appears here, so the two cannot drift.
 	known_key_summary : Str
-	known_key_summary = "Settable: timezone, units (metric|imperial), strength_log_weight (per_hand|total), utc_offset_minutes, hr_z1_max..hr_z4_max (optionally per sport, e.g. hr_z2_max_ride). Written by stride and rarely set by hand: last_sync_epoch, strava_client_id, strava_expires_at, strava_reads_today, strava_reads_day, strava_access_token, strava_refresh_token, strava_client_secret. FTP is derived, never set."
+	known_key_summary = "Settable: timezone, units (metric|imperial), strength_log_weight (per_hand|total), utc_offset_minutes, hr_z1_max..hr_z4_max (optionally per sport, e.g. hr_z2_max_ride). Written by stride and rarely set by hand: last_sync_epoch, strava_client_id, strava_expires_at, strava_reads_today, strava_reads_day, strava_reads_window(_mark), strava_reads_quarter(_mark), strava_reads_daywin(_mark), strava_limit_window, strava_limit_day, strava_limit_app, strava_access_token, strava_refresh_token, strava_client_secret. FTP is derived, never set."
 
 	# The one key whose value is an ENUM rather than a number or free text. Validated at
 	# the WRITE for the same reason numeric_key is: a value nothing recognises would fall
@@ -157,7 +166,7 @@ Config :: [].{
 	# false sentence in three consecutive rounds, every time because a hand-typed list of
 	# `known_key`'s members was one short.
 	is_bookkeeping : Str -> Bool
-	is_bookkeeping = |k| List.contains(["last_sync_epoch", "strava_reads_today", "strava_reads_day"], k)
+	is_bookkeeping = |k| List.contains(["last_sync_epoch", "strava_reads_today", "strava_reads_day", "strava_reads_window", "strava_reads_window_mark", "strava_reads_quarter", "strava_reads_quarter_mark", "strava_reads_daywin", "strava_reads_daywin_mark", "strava_limit_window", "strava_limit_day", "strava_limit_app"], k)
 
 	# bytes: h r _ z <digit> _ m a x, then either end-of-key or `_` and a non-empty suffix
 	zone_shape : List(U8) -> Bool
@@ -200,7 +209,7 @@ Config :: [].{
 	# refusal loud and keeps the read sites honest.
 	numeric_key : Str -> [Int, Decimal, Free]
 	numeric_key = |k|
-		if (k == "utc_offset_minutes" or k == "last_sync_epoch" or k == "strava_reads_today" or k == "strava_reads_day" or Str.ends_with(k, "_expires_at"))
+		if (k == "utc_offset_minutes" or k == "last_sync_epoch" or Str.starts_with(k, "strava_reads_") or k == "strava_limit_window" or k == "strava_limit_day" or Str.ends_with(k, "_expires_at"))
 			Int
 		else if (Str.starts_with(k, "hr_z"))
 			Decimal
@@ -280,12 +289,16 @@ Config :: [].{
 	#   strava_app  a client id and secret are stored (or set in the environment)
 	#   authorize   a refresh token is stored
 	#   timezone    `timezone` is set
+	#   activities  the activity list has been fetched (last_sync_epoch is set)
 	#   zones       hr_z1_max..hr_z4_max are all set
-	#   sync        a sync has completed (last_sync_epoch is set)
+	#   sync        the activity list is fetched and no stream, description or
+	#               route is still owed
+	# Zones come after the activity list because the list carries each
+	# session's maximum heart rate, which is what setup proposes zones from.
 	setup_steps : List(Str)
-	setup_steps = ["init", "strava_app", "authorize", "timezone", "zones", "sync"]
+	setup_steps = ["init", "strava_app", "authorize", "timezone", "activities", "zones", "sync"]
 
-	SetupState : { db : Bool, client : Bool, token : Bool, timezone : Bool, zones : Bool, synced : Bool }
+	SetupState : { db : Bool, client : Bool, token : Bool, timezone : Bool, listed : Bool, zones : Bool, synced : Bool }
 
 	setup_done : SetupState, Str -> Bool
 	setup_done = |s, step|
@@ -294,6 +307,7 @@ Config :: [].{
 			"strava_app" => s.client
 			"authorize" => s.token
 			"timezone" => s.timezone
+			"activities" => s.listed
 			"zones" => s.zones
 			"sync" => s.synced
 			_ => True
@@ -433,14 +447,87 @@ Config :: [].{
 		# zone system rather than two incompatible ones
 		thr = match basis {
 			Threshold(t) => t
-			Max(m) => (m * 90 + 50) // 100
+			Max(m) => threshold_from_max(m)
 		}
 		List.map([85, 89, 94, 99], |p| (thr * p + 50) // 100)
 	}
 
+	# the threshold heart rate a maximum one stands for: 90 % of it, to the beat
+	threshold_from_max : I64 -> I64
+	threshold_from_max = |m| (m * 90 + 50) // 100
+
 	# a heart rate a person can hold, the plausible band analyze also filters to
 	plausible_hr : I64 -> Bool
 	plausible_hr = |bpm| bpm >= 35 and bpm <= 220
+
+	# A maximum heart rate estimated from the activity list's per-session
+	# maxima: the second-highest of them. A chest strap that spikes does so in
+	# one session, and that session's value is the one set aside; when two
+	# sessions share the top value, that value is the estimate and nothing is set
+	# aside. `set_aside` is the value dropped, 0 when none was. Maxima outside the
+	# plausible band are dropped first. Fewer than two plausible sessions give no
+	# estimate, and setup then asks for a number instead.
+	max_hr_estimate : List(F64) -> [Estimate({ max : I64, set_aside : I64 }), NoEstimate]
+	max_hr_estimate = |maxima| {
+		top_two = List.fold(
+			maxima,
+			{ first: 0, second: 0, n: 0 },
+			|acc, raw| {
+				bpm = (raw).round_to_i64_try().ok_or(0)
+				if !(plausible_hr(bpm)) {
+					acc
+				} else if bpm >= acc.first {
+					{ first: bpm, second: acc.first, n: acc.n + 1 }
+				} else if bpm > acc.second {
+					{ ..acc, second: bpm, n: acc.n + 1 }
+				} else {
+					{ ..acc, n: acc.n + 1 }
+				}
+			},
+		)
+		if top_two.n >= 2 {
+			Estimate({ max: top_two.second, set_aside: if (top_two.first > top_two.second) top_two.first else 0 })
+		} else {
+			NoEstimate
+		}
+	}
+
+	# what setup says about where the estimate came from
+	estimate_basis : { max : I64, set_aside : I64 } -> Str
+	estimate_basis = |e|
+		if e.set_aside == 0 {
+			"the highest your sessions reached, in two of them"
+		} else {
+			"the second-highest session maximum; ${e.set_aside.to_str()} bpm, in one session only, is set aside as a likely strap spike"
+		}
+
+	# What the athlete typed at setup's zone proposal: Enter or y uses the
+	# proposed zones, n asks for a number as setup does without data, a bare
+	# number is a threshold heart rate, and `max <bpm>` a maximum one.
+	zone_answer : Str -> [Accept, Decline, Threshold(I64), Max(I64), Unreadable]
+	zone_answer = |raw| {
+		t = Str.with_ascii_lowercased(Str.trim(raw))
+		bpm_of = |s|
+			match I64.from_str(Str.trim(s)) {
+				Ok(b) if plausible_hr(b) => Ok(b)
+				_ => Err(Implausible)
+			}
+		if t == "" or t == "y" or t == "yes" {
+			Accept
+		} else if t == "n" or t == "no" {
+			Decline
+		} else if Str.starts_with(t, "max") {
+			match bpm_of(Str.drop_prefix(t, "max")) {
+				Ok(b) => Max(b)
+				Err(_) => Unreadable
+			}
+		} else {
+			match bpm_of(t) {
+				Ok(b) => Threshold(b)
+				Err(_) => Unreadable
+			}
+		}
+	}
 
 }
 
@@ -650,17 +737,45 @@ expect Config.api_base_allowed("https://www.strava.com:443") == True
 
 # setup walks its steps in order and resumes at the first unmet one
 expect {
-	none = { db: Bool.False, client: Bool.False, token: Bool.False, timezone: Bool.False, zones: Bool.False, synced: Bool.False }
+	none = { db: Bool.False, client: Bool.False, token: Bool.False, timezone: Bool.False, listed: Bool.False, zones: Bool.False, synced: Bool.False }
+	tz = { ..none, db: Bool.True, client: Bool.True, token: Bool.True, timezone: Bool.True }
 	Config.setup_next(none) == "init"
 		and Config.setup_next({ ..none, db: Bool.True }) == "strava_app"
 		and Config.setup_next({ ..none, db: Bool.True, client: Bool.True }) == "authorize"
 		and Config.setup_next({ ..none, db: Bool.True, client: Bool.True, token: Bool.True }) == "timezone"
-		and Config.setup_next({ ..none, db: Bool.True, client: Bool.True, token: Bool.True, timezone: Bool.True }) == "zones"
-		and Config.setup_next({ db: Bool.True, client: Bool.True, token: Bool.True, timezone: Bool.True, zones: Bool.True, synced: Bool.False }) == "sync"
-		and Config.setup_next({ db: Bool.True, client: Bool.True, token: Bool.True, timezone: Bool.True, zones: Bool.True, synced: Bool.True }) == "done"
+		and Config.setup_next(tz) == "activities"
+		and Config.setup_next({ ..tz, listed: Bool.True }) == "zones"
+		and Config.setup_next({ ..tz, listed: Bool.True, zones: Bool.True }) == "sync"
+		and Config.setup_next({ ..tz, listed: Bool.True, zones: Bool.True, synced: Bool.True }) == "done"
 }
+# the zones step comes after the activity list, whose heart rates it proposes from
+expect Config.setup_next({ db: Bool.True, client: Bool.True, token: Bool.True, timezone: Bool.True, listed: Bool.False, zones: Bool.True, synced: Bool.False }) == "activities"
 # a step already satisfied is skipped even when an earlier one is not
-expect Config.setup_next({ db: Bool.True, client: Bool.False, token: Bool.False, timezone: Bool.True, zones: Bool.True, synced: Bool.False }) == "strava_app"
+expect Config.setup_next({ db: Bool.True, client: Bool.False, token: Bool.False, timezone: Bool.True, listed: Bool.True, zones: Bool.True, synced: Bool.False }) == "strava_app"
+
+# the max HR estimate: a strap spike in one session is the value dropped
+expect Config.max_hr_estimate([150.0, 209.0, 187.0, 186.0]) == Estimate({ max: 187, set_aside: 209 })
+# a maximum reached in two sessions stands, the spike notwithstanding
+expect Config.max_hr_estimate([187.0, 209.0, 187.0]) == Estimate({ max: 187, set_aside: 209 })
+# two sessions at the top: that value, nothing set aside
+expect Config.max_hr_estimate([187.0, 150.0, 187.0]) == Estimate({ max: 187, set_aside: 0 })
+expect Config.estimate_basis({ max: 187, set_aside: 0 }) == "the highest your sessions reached, in two of them"
+expect Config.estimate_basis({ max: 186, set_aside: 209 }) == "the second-highest session maximum; 209 bpm, in one session only, is set aside as a likely strap spike"
+# an implausible value is dropped before counting, and fractions round
+expect Config.max_hr_estimate([250.0, 175.4, 168.6]) == Estimate({ max: 169, set_aside: 175 })
+# one session, or none, is not corroborated: no estimate
+expect Config.max_hr_estimate([187.0]) == NoEstimate
+expect Config.max_hr_estimate([]) == NoEstimate
+expect Config.max_hr_estimate([300.0, 20.0, 181.0]) == NoEstimate
+# ...and the zones it gives go through the max-HR rule, 90 % of max as threshold
+expect Config.zone_bounds(Max(175)) == [134, 141, 149, 156]
+
+# the answer at the zone proposal
+expect Config.zone_answer("") == Accept and Config.zone_answer(" Y ") == Accept and Config.zone_answer("yes") == Accept
+expect Config.zone_answer("n") == Decline
+expect Config.zone_answer("165") == Threshold(165)
+expect Config.zone_answer("max 190") == Max(190) and Config.zone_answer("MAX190") == Max(190)
+expect Config.zone_answer("500") == Unreadable and Config.zone_answer("max") == Unreadable and Config.zone_answer("soon") == Unreadable
 
 # the code from a bare paste, or from the whole redirected URL
 expect Config.oauth_code("  abc123 ") == Ok("abc123")

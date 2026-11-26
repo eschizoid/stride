@@ -57,21 +57,28 @@ reason `--json` and still answers in JSON).
 ## Coaching workflow
 
 1. **Sync** with `stride sync --json`, the only command that talks to Strava. It
-   re-lists a rolling 30-day window (so recent edits heal), then drains every activity
-   still missing streams, then strength descriptions, then GPS routes, paced against Strava's read
-   limits. Progress narrates on stderr; stdout is the envelope
-   `{synced, new_activities, updated_activities, pruned, streams_fetched, streams_skipped, pending_streams, notes_fetched, notes_skipped, pending_notes, routes_fetched, routes_skipped, pending_routes, stopped, resumable}`.
-   - `resumable: true` means work is still owed: a queue is pending, a `list_*` stop cut
-     the listing short, or a pre-flight refusal on a spent day made no request at all
-     (`daily_cap_reached` with empty queues).
-   - `stopped` and its remedy: `complete` (every queue walked); `budget_reached`,
-     `rate_limited`, `list_rate_limited` clear when Strava's 15-minute window rolls
-     over, so tell the athlete ~15 minutes; `daily_cap_reached`, `list_daily_cap_reached`
-     clear at UTC midnight, so tell them tomorrow. The two `list_*` values mean the
-     activity listing is incomplete and nothing was pruned: `synced`/`pruned` describe
-     a partial run.
-   - **Never re-run sync in a loop.** Any `stopped` other than `complete` is a limit and
-     the command returns at once, so wait out the remedy above before running again. A
+   lists the activity list (every page on a first sync, a rolling 30-day window after,
+   so recent edits heal), then fetches every activity still missing streams, then
+   strength descriptions, then GPS routes, paced against Strava's read limits, and
+   runs analyze to its fixed point after each batch. Progress narrates on stderr;
+   stdout is the envelope
+   `{synced, new_activities, updated_activities, pruned, streams_fetched, streams_skipped, pending_streams, notes_fetched, notes_skipped, pending_notes, routes_fetched, routes_skipped, pending_routes, stopped, resumable, resume_at, analyzed, computed}`.
+   - `--json` never waits: each call does what Strava's read window allows. `resumable:
+     true` means work is still owed: a queue is pending, a `list_*` stop cut the listing
+     short, or a pre-flight refusal on a spent day made no request at all
+     (`daily_cap_reached` with empty queues). `resume_at` (ISO-8601 UTC) is when the next
+     call can continue: just past the next quarter-hour mark (`budget_reached`,
+     `rate_limited`, `list_rate_limited`; Strava's window resets at :00, :15, :30 and :45)
+     or the next midnight UTC (`daily_cap_reached`, `list_daily_cap_reached`). Tell the
+     athlete that time in their timezone, never a vague while. The two `list_*` values
+     mean the listing is incomplete and nothing was pruned: `synced`/`pruned` describe a
+     partial run.
+   - `analyzed: true` means every activity synced so far is scored, `computed` how many
+     the last analyze scored: no separate analyze is needed. `analyzed: false` means no
+     heart-rate zones are set (`stride setup` sets them) or scoring did not settle.
+   - **Never re-run sync in a loop.** Call again at `resume_at`, not before: Stride counts
+     every read it makes in the database, so a call inside a spent window asks Strava for
+     nothing and answers `list_rate_limited` with `synced: 0`. A
      run that fetched nothing (`streams_fetched`, `notes_fetched` and `routes_fetched`
      all 0) while `streams_skipped`, `notes_skipped` or `routes_skipped` is above 0
      read only bodies that would not decode: stop and report it. The next scheduled
@@ -81,6 +88,12 @@ reason `--json` and still answers in JSON).
      again, so stop and report rather than re-running now. Do not count
      `notes_fetched` as progress: it includes the routine re-reads of descriptions
      inside the window.
+   - A person running bare `stride sync` at a terminal gets the same work without the
+     calls: while fetches are owed it waits for each next window and for the daily reset
+     alike (with nothing owed but the list it ends at once with the time), shows when the
+     next batch starts, and ends with everything fetched and analyzed; only a period
+     still spent after its wait (another app on the token) ends it, with the time the
+     allowance returns. Ctrl-C stops it, and the next sync resumes there.
    - A stream body that does not decode (not UTF-8, or not stream JSON) is never
      stored. Each failed fetch is counted, and nothing but a stored body resets the
      count; the next sync asks again, up to 3 failed fetches. Then a plain sync stops
@@ -88,10 +101,10 @@ reason `--json` and still answers in JSON).
      so, and `stride doctor` counts it in `streams_retry_capped`. `stride sync --all`
      asks again. A 404 (Strava has no streams) stores an empty marker and retires the
      activity. A stream that decodes is stored for good, so a large first sync spans
-     several runs and possibly days.
+     several read windows and possibly days.
    - A GPS route (the `latlng` and `time` streams) is asked for once per activity with
      moving time and distance, outside the Virtual* sports, after the streams and
-     descriptions, on what those left of the same 15-minute read window. An activity
+     descriptions, on what those left of the same read window. An activity
      with no GPS (an indoor row, a trainer ride) stores an empty marker and is never
      asked again; the first backfill spends one read on each such activity. A route
      body that does not decode follows the stream rule: counted, asked again up to 3
@@ -99,10 +112,11 @@ reason `--json` and still answers in JSON).
      `routes_retry_capped`. Routes are stored for the window's map tab, which
      fetches its own street map; no command uses their coordinates, and nothing
      scored ever will.
-   - Stride counts its own daily reads in config rows `strava_reads_today` and
-     `strava_reads_day` (a UTC day number; a stale stamp is the reset). Do not touch
-     them unless Stride itself names `stride config set strava_reads_today 0` as the
-     repair.
+   - Stride paces to the limits Strava reports (`X-ReadRateLimit-Limit`, documented as
+     100 a quarter-hour and 1,000 a day) less a margin, and keeps its read counts and the
+     last reported limits in config rows (`strava_reads_*`, `strava_limit_*`; a stale
+     stamp is the reset). Do not touch them unless Stride itself names
+     `stride config set strava_reads_today 0` as the repair.
    - `stride sync --all` drops the window, re-lists everything and replaces each
      activity row Strava still lists with Strava's copy. It is the only way a deletion
      in old history propagates, the repair Stride names for an activity with an
@@ -113,7 +127,7 @@ reason `--json` and still answers in JSON).
    - No API credentials: `stride import <export.zip|dir> --json` loads a Strava account
      export (English column headers), summary-level only (no streams), idempotent;
      returns `{imported, skipped}` counts of archive rows.
-2. **Analyze** with `stride analyze --json`: computes metrics for new or invalidated
+2. **Analyze** runs inside sync; `stride analyze --json` on its own computes metrics for new or invalidated
    activities, idempotent, and returns
    `{computed, stream_errors, stream_errors_capped, form_tsb, form_tsb_known, form_state, form_delta_7d, form_delta_known, converged}`.
    `stream_errors` counts activities (each once) whose STORED stream does not decode.
@@ -122,7 +136,9 @@ reason `--json` and still answers in JSON).
    above); a rescore never resets that count. `stream_errors_capped` is how many of
    them have already failed 3 or more fetches, which only `stride sync --all` asks
    for again. An activity with no stored stream is not an error: sync fetches it if
-   it has moving time. Run analyze after every sync.
+   it has moving time. Sync runs it after every batch; run it on its own for a
+   recompute without a sync (a zone or rating change). Scoring runs to its fixed point;
+   `converged: false` means it did not settle, a bug in Stride to report, not to re-run.
 3. **Read the bundle** with `stride plan --json` before proposing anything: its
    `plan_history_28d` and `adherence_28d` record what was targeted and what happened, so
    a plan is never a fresh guess. Check `data_freshness.last_sync` against today first.
@@ -387,7 +403,7 @@ Pick by question: `season` for the shape of a year, `compare` for this week or m
 | `stride tte pace <pace> <sport>` | the critical-speed twin for one exact sport, at a pace like `4:10/km`, `6:45/mi`, `1:40/100m` or `1:55/500m`: `{pace_s, pace_unit, speed, seconds, known, status, cs, d_prime, cs_pace_s, fit_points, fit_r2, window_days, sport, demonstrated_s, demonstrated_speed, demonstrated_known, contradicts_model}`. The fit is the one `stride pace-curve 90 <sport>` prints (today included); `cs_pace_s` is CS as seconds per `pace_unit`, `speed`/`cs`/`demonstrated_speed` are m/s, `d_prime` metres. `status` and `contradicts_model` read as on the power form, with `below_cs` for a pace at or slower than CS. Errors: `bad_pace`, `no_cs_fit` |
 | `stride reps [date]` | the anchor session's work reps beside same-shaped reps of earlier sessions: `{anchor_date, anchor_activity_id, shape, sport_family, matched_total, sessions}`. `shape` `{rep_count, mean_dur_s, band_lo_s, band_hi_s, signal}` is the comparability rule: same sport family, same rep count, mean rep duration inside the band, same signal (watts never beside m/s), never later than the anchor. Sessions (at most 12; `matched_total` counts every match) carry per-rep `avg_signal`/`avg_hr`, `mean_signal`, `fade_signal` (last minus first), `hr_rise_bpm` + `hr_rise_known`, and `min_dur_s`/`max_dur_s`/`uniformity` so you can judge uneven sessions. Errors: `no_detected_intervals`, `no_intervals_on_date`, `irregular_anchor` (the anchor's own reps vary too much in duration to be one repeated shape) |
 | `stride progress [date] [asc\|desc]` | `{anchor_date, anchor_scored, groups}`, each group `{name, grouped_by, lens, sessions, hidden, hidden_lens, hidden_scope}`. `lens` is `ef`, `speed_hr` or `rpe`; each session has a `score`. `grouped_by: structure` (same detected workout shape, names ignored) beats `name` when both could answer. `anchor_scored: false` = the asked-about session is not in the trend. `sessions` is the whole history only when `hidden` is 0. `hidden_scope` rows belong to another distance bucket (more than 10% away) and are not fixable. `hidden_lens` rows lacked what the lens needs (EF: normalized power and HR; speed/HR: distance and HR; RPE: a rating), usually fixable with a power meter, a strap or a rating, except when the stored reading itself is broken (see the heart-rate rule below). The counts carry no ids: find the rows with `stride activities --json`. Errors: `no_workout_on_date`, `unscorable`, `no_scorable_workouts` |
-| `stride doctor` | dataset health: coverage counts, `timezone_known` (as in `summary`), `scored_by` per load model, `strength_unrated`, `strength_without_sets` and its `strength_without_sets_ids` (strength sessions of the last 30 days with no stored sets), `strength_unread_lines` and its `strength_unread_ids` (pieces of recent strength sessions' text that stride could not read, so their sets are missing from tonnage; a fixed pasted line comes in after `stride sync` and `stride analyze`, a logged set after `stride strength import` runs again with a corrected log), the time anchor in use, `undateable_activities` (`date_known: false` rows) and `unrankable_activities` (`rankable: false`, a superset), each repaired by `stride sync --all` when Strava still lists the activity; `pending_streams` and `pending_routes` (what a plain sync still owes) and `streams_retry_capped` and `routes_retry_capped` (streams and routes that failed 3 or more fetches, which only `stride sync --all` asks for again). `unanalyzed` = never scored; `awaiting_metrics` = what `analyze` would recompute now (the one to act on); `awaiting_metrics_known: false` means it could not be computed and `config_error` says why |
+| `stride doctor` | dataset health: coverage counts, `timezone_known` (as in `summary`), `scored_by` per load model, `strength_unrated`, `strength_without_sets` and its `strength_without_sets_ids` (strength sessions of the last 30 days with no stored sets), `strength_unread_lines` and its `strength_unread_ids` (pieces of recent strength sessions' text that stride could not read, so their sets are missing from tonnage; a fixed pasted line comes in with the next `stride sync`, a logged set after `stride strength import` runs again with a corrected log), the time anchor in use, `undateable_activities` (`date_known: false` rows) and `unrankable_activities` (`rankable: false`, a superset), each repaired by `stride sync --all` when Strava still lists the activity; `pending_streams` and `pending_routes` (what a plain sync still owes) and `streams_retry_capped` and `routes_retry_capped` (streams and routes that failed 3 or more fetches, which only `stride sync --all` asks for again). `unanalyzed` = never scored; `awaiting_metrics` = what `analyze` would recompute now (the one to act on); `awaiting_metrics_known: false` means it could not be computed and `config_error` says why |
 | `stride viz` | the desktop window's published capabilities and focus: `{ protocol, published_at, staleness_seconds, focus_staleness_seconds, focus, views, fields, history, captures }`; see the next section |
 
 ## Reading the numbers
@@ -407,8 +423,8 @@ Pick by question: `season` for the shape of a year, `compare` for this week or m
 - **Zones are HR-based**. Power feeds TSS/NP; pace feeds the intensity split for distance
   sports without power, a pool swim included.
 - **Metrics recompute** when the derived FTP or threshold pace moves, HR zones change, a
-  stream arrives, a rating changes, or an activity's inputs are edited. So always
-  `analyze` after `sync`.
+  stream arrives, a rating changes, or an activity's inputs are edited. Sync analyzes
+  after every batch; after a change of your own, run `analyze`.
 - **CTL/ATL/TSB are as of today** (rest days filled with zero), so `form_tsb` needs no
   decay adjustment. "Today" is the local day from config `timezone` (IANA, DST-aware,
   preferred) or `utc_offset_minutes`, else UTC; without either, athletes west of UTC see
@@ -518,10 +534,10 @@ the environment override the stored values). A locked or corrupt database surfac
 its own error, not as `not_authenticated`.
 
 New machine: walk the athlete through `stride setup --json`. Each call returns
-`{complete, next_step, interactive, needs, instruction, authorize_url, timezone_detected, ran, steps}`
-and never reads stdin; supply one value per call with `stride setup <key>=<value> --json`.
-The steps run in order and a rerun resumes at the first one not done (`steps` rows are
-`{step, done}`):
+`{complete, next_step, interactive, needs, instruction, authorize_url, timezone_detected, max_hr_proposed, zone_bounds_proposed, owed, resume_at, ran, steps}`
+and never reads stdin or waits; supply one value per call with `stride setup <key>=<value> --json`,
+and call it with no value to run a step whose `needs` is empty. The steps run in order
+and a rerun resumes at the first one not done (`steps` rows are `{step, done}`):
 
 - `strava_app` (`interactive: true`): the athlete creates an API app at
   strava.com/settings/api with callback domain `localhost`; relay `instruction`, then
@@ -531,17 +547,26 @@ The steps run in order and a rerun resumes at the first one not done (`steps` ro
   address as `code=` (quote it for the shell); setup extracts the code and stores the
   tokens.
 - `timezone`: confirm `timezone_detected` with the athlete, then pass `timezone=<Area/City>`.
-- `zones`: pass `threshold_hr=<bpm>` (the average of an all-out 30 to 60 minute effort), or
-  `max_hr=<bpm>` when that is unknown. Setup derives `hr_z1_max`..`hr_z4_max` (85, 89, 94,
-  99 % of threshold; a max HR becomes an estimated threshold of 90 % of max first); tune them or add per-sport overrides like
-  `hr_z2_max_ride` with `stride config set`.
-- `sync`: run `stride sync --json`, then `stride analyze --json`. The next
-  `stride setup --json` answers `complete: true`.
+- `activities`: call `stride setup --json` with no value; it fetches the activity list,
+  a few reads, so the zones can be proposed from it.
+- `zones`: `max_hr_proposed` is the maximum heart rate the list supports, the second-highest
+  of the sessions' maxima so a strap spike in one session is set aside (`instruction` names it), and
+  `zone_bounds_proposed` the four bounds it gives; show them to the athlete and accept with
+  `max_hr=<max_hr_proposed>`. Otherwise, or when it is 0 (no heart-rate data), pass
+  `threshold_hr=<bpm>` (the average of an all-out 30 to 60 minute effort), or `max_hr=<bpm>`
+  when that is unknown. Setup derives `hr_z1_max`..`hr_z4_max` (85, 89, 94, 99 % of
+  threshold; a max HR becomes an estimated threshold of 90 % of max first); tune them or add
+  per-sport overrides like `hr_z2_max_ride` with `stride config set`.
+- `sync`: call `stride setup --json` with no value. Each call fetches what Strava's read
+  window allows and analyzes it; `owed` is the fetches still owed, and `resume_at` the
+  time the next call can continue: do not call again before it, since a call sooner finds
+  the window spent and makes no progress. When `owed` reaches 0 the answer is `complete: true`.
 
 Refusals are envelopes: `bad_value` (an empty or implausible value, a zone the system does
 not know, an address with no code), `unknown_key`, `missing_client_creds` (a `code=` before
 the app's credentials). Bare `stride setup` without `--json` is the same walk for a person at
-a terminal: it prompts, receives the code on a local port, and runs the first sync itself.
+a terminal: it prompts, receives the code on a local port, proposes the zones, and runs the
+first sync to its end, waiting for each read window.
 `summary` and `doctor` carry `timezone_known`; false means "today" is not the athlete's
 local day, so fix it with `stride setup timezone=...` or `stride config set timezone`. The
 database migrates itself on any command, so upgrading the binary is safe.

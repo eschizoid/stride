@@ -150,6 +150,22 @@ Output :: [].{
 	narrate_done! = |{}|
 		if (json_mode!({})) Ok({}) else Stderr.line!("")
 
+	# A step with no count (ADR 0021): human mode redraws its spinner once per unit
+	# of work; machine mode prints nothing until the step's result, since a frame
+	# per unit is noise in a log.
+	spin! : Str, U64 => Try({}, _)
+	spin! = |label, tick|
+		if (json_mode!({})) Ok({}) else Stderr.write!("\r${Render.spin_frame(label, tick)}")
+
+	# ...and its result, which replaces the spinner on the same line
+	step_done! : Str, Str => Try({}, _)
+	step_done! = |label, text|
+		if (json_mode!({})) Stderr.line!(Render.step_line(label, text)) else Stderr.line!("\r${Render.step_result(label, text)}")
+
+	# the wait's frame, redrawn in place; only a human run ever waits
+	wait_frame! : { daily : Bool, tick : U64, at : Str, left : I64 } => Try({}, _)
+	wait_frame! = |w| Stderr.write!("\r${Render.wait_frame(w)}")
+
 	# a step with no countable total ("rebuilding daily load…"). Always its own line in
 	# both modes — call narrate_done! first if a bar is mid-flight.
 	say! : Str => Try({}, _)

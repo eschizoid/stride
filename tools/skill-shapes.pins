@@ -75,7 +75,7 @@ review.json	end,start	end,start	doc	properties.fitness
 season.json	blocks,gap_weeks,months	blocks,gap_weeks,months	doc	$
 season.json	closed,easy_pct,end_date,fitted_end_load,fitted_start_load,ftp_end,ftp_family,ftp_family_pct,ftp_hi,ftp_known,ftp_lo,ftp_start,hard_pct,mean_weekly_load,moderate_pct,polarization_known,sessions,slope_tss_per_week,span_weeks,start_date,total_load,trend_known,trend_r2,weeks	closed,easy_pct,end_date,fitted_end_load,fitted_start_load,ftp_end,ftp_family,ftp_family_pct,ftp_hi,ftp_known,ftp_lo,ftp_start,hard_pct,mean_weekly_load,moderate_pct,polarization_known,sessions,slope_tss_per_week,span_weeks,start_date,total_load,trend_known,trend_r2,weeks	doc	properties.blocks.items
 season.json	ftp_end,ftp_family,ftp_family_pct,ftp_hi,ftp_known,ftp_lo,ftp_start,load,month,partial,sessions	ftp_end,ftp_family,ftp_family_pct,ftp_hi,ftp_known,ftp_lo,ftp_start,load,month,partial,sessions	doc	properties.months.items
-setup.json	authorize_url,complete,instruction,interactive,needs,next_step,ran,steps,timezone_detected	authorize_url,complete,instruction,interactive,needs,next_step,ran,steps,timezone_detected	doc	$
+setup.json	authorize_url,complete,instruction,interactive,max_hr_proposed,needs,next_step,owed,ran,resume_at,steps,timezone_detected,zone_bounds_proposed	authorize_url,complete,instruction,interactive,max_hr_proposed,needs,next_step,owed,ran,resume_at,steps,timezone_detected,zone_bounds_proposed	doc	$
 setup.json	done,step	done,step	doc	properties.steps.items
 skip.json	kept_substitute,reason,released_substitute,released_substitute_of,skipped_session,substitute_activity_id	reason,skipped_session	-	$
 stats.json	all_time,ytd,ytd_year	all_time,ytd,ytd_year	-	$
@@ -103,7 +103,7 @@ summary.json	high_pct,known,low_pct,medium_pct	high_pct,known,low_pct,medium_pct
 summary.json	high_pct,known,low_pct,medium_pct	high_pct,known,low_pct,medium_pct	doc	properties.last_28d.properties.load_coverage
 summary.json	high_pct,known,low_pct,medium_pct	high_pct,known,low_pct,medium_pct	doc	properties.last_7d.properties.load_coverage
 summary.json	z1_max,z2_max,z3_max,z4_max	z1_max,z2_max,z3_max,z4_max	-	properties.hr_zones
-sync.json	new_activities,notes_fetched,notes_skipped,pending_notes,pending_routes,pending_streams,pruned,resumable,routes_fetched,routes_skipped,stopped,streams_fetched,streams_skipped,synced,updated_activities	new_activities,notes_fetched,notes_skipped,pending_notes,pending_routes,pending_streams,pruned,resumable,routes_fetched,routes_skipped,stopped,streams_fetched,streams_skipped,synced,updated_activities	doc	$
+sync.json	analyzed,computed,new_activities,notes_fetched,notes_skipped,pending_notes,pending_routes,pending_streams,pruned,resumable,resume_at,routes_fetched,routes_skipped,stopped,streams_fetched,streams_skipped,synced,updated_activities	analyzed,computed,new_activities,notes_fetched,notes_skipped,pending_notes,pending_routes,pending_streams,pruned,resumable,resume_at,routes_fetched,routes_skipped,stopped,streams_fetched,streams_skipped,synced,updated_activities	doc	$
 test.json	activity_id,date,in_force_until,kind,signal,sport,unit,value,zone_sports,zones,zones_applied	activity_id,date,in_force_until,kind,signal,sport,unit,value,zone_sports,zones,zones_applied	doc	$
 test.json	z1_max,z2_max,z3_max,z4_max	z1_max,z2_max,z3_max,z4_max	-	properties.zones
 test_remove.json	activity_id,removed	activity_id,removed	doc	$

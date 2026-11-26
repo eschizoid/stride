@@ -166,7 +166,7 @@ Report :: [].{
 			days = if (period == "month") 28 else 7
 			label = if (period == "month") "28d" else "7d"
 			match Sql.query!({ path: Path.utf8(path), query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day FROM daily_load ORDER BY day DESC LIMIT 1", bindings: [], row: Sql.str("day") }) {
-				Err(NoRowsReturned) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
+				Err(NoRowsReturned) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync`, or after a `stride import`, `stride analyze`")
 				Err(e) => Err(e)
 				Ok(latest_day) => {
 					# PROPAGATE, through the same helper summary_payload! uses on the same anchor
@@ -439,7 +439,7 @@ Report :: [].{
 			Err(other) => Err(other)
 			Ok(zb) =>
 				match summary_payload!(path, zb) {
-					Err(NoDataYet) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync` (or `stride import`) then `stride analyze`")
+					Err(NoDataYet) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync`, or after a `stride import`, `stride analyze`")
 					Err(e) => Err(e)
 					Ok(payload) => Output.out!(payload, |p| Render.summary_screen(units, p))
 				}

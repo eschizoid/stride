@@ -14,6 +14,7 @@
 # scoped per process and removed by the guard that reads it (#266); a run that FAILS before
 # its guard still leaves one, which is why the glob stays broad
 /.e2e-checks*
+/.e2e-mock-reads*
 
 # scratch build binaries from build/debug cycles (only /stride is kept)
 /stride-*
