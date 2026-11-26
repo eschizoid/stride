@@ -337,6 +337,16 @@ Drain :: [].{
 				}
 		}
 
+	# When counts a round stopped on can read again, timed from the periods
+	# they were counted in. Every mark in counts rolled to one clock lies in
+	# the same window, day and quarter-hour as that clock, so the latest mark
+	# stands for it. A clock read after the round does not: a period that turns
+	# between the round's last read and that reading counts as unspent there,
+	# and the wait would run on to the next mark of the read window instead of
+	# ending at the mark that already passed.
+	reopens_at : Reads, Limits, Periods -> I64
+	reopens_at = |r, lim, p| next_read_at(r, lim, ((r.dmark).max(r.wmark)).max((r.qmark).max(r.day * 86400)), p)
+
 	# When a spent day's allowance returns, as a caller is told it: Strava's next
 	# midnight UTC when its own day is spent, which no shortened test day brings
 	# sooner, else the next mark of the paced day
@@ -657,6 +667,40 @@ expect Drain.next_read_at(Drain.at({ window: 3, quarter: 3, today: 3 }), Drain.t
 # of the two days is spent: the shortened wait ends where Strava's count still applies
 expect Drain.next_read_at(Drain.at({ window: 1, quarter: 1, today: 100 }), Drain.test_lim, 1795601640, Drain.real) == 1795651210
 expect Drain.next_read_at(Drain.at({ window: 1, quarter: 1, today: 100 }), Drain.test_lim, 1795601640, { ..Drain.real, day: 3 }) == 1795601643
+
+# A three-second day filled by a read counted at 1795601640, the day it was
+# counted in ending at 1795601643: the counts reopen at that mark, whenever
+# the wait for them is worked out
+expect {
+	p = { ..Drain.real, day: 3 }
+	lim = { ..Drain.test_lim, reads_per_day: 6 }
+	filled = Drain.charge({ ..Drain.roll_reads(Drain.at({ window: 0, quarter: 0, today: 0 }), 1795601640, p), dtoday: 5 }, Unreported)
+	Drain.may_read(filled, lim) == DayFull and Drain.reopens_at(filled, lim, p) == 1795601643
+}
+# ...where the same counts rolled to a clock past that mark read as unspent,
+# and a wait timed from that clock runs to the read window's next mark
+expect {
+	p = { ..Drain.real, day: 3 }
+	lim = { ..Drain.test_lim, reads_per_day: 6 }
+	filled = Drain.charge({ ..Drain.roll_reads(Drain.at({ window: 0, quarter: 0, today: 0 }), 1795601640, p), dtoday: 5 }, Unreported)
+	later = Drain.roll_reads(filled, 1795601643, p)
+	Drain.may_read(later, lim) == Go and Drain.next_read_at(later, lim, 1795601643, p) == 1795601700 + 10
+}
+# a window filled at real periods reopens at its quarter-hour mark plus the
+# margin, as next_read_at times it from inside the window
+expect Drain.reopens_at(Drain.at({ window: 3, quarter: 3, today: 3 }), Drain.test_lim, Drain.real) == 1795601710
+# a run that starts on a day already spent, its counts loaded from rows written
+# earlier that day, waits for that day's midnight UTC plus the margin
+expect Drain.reopens_at(Drain.at({ window: 0, quarter: 0, today: 100 }), Drain.test_lim, Drain.real) == 1795651210
+# A 429 whose header reports the day spent: the counts with that read and the
+# header's usage in them reopen at midnight UTC, where the counts from before
+# the read show only a window to wait for
+expect {
+	lim = { ..Drain.test_lim, reads_per_window: 95, reads_per_day: 5, reads_per_utc_day: 5 }
+	before = Drain.at({ window: 2, quarter: 2, today: 2 })
+	spent = Drain.charge(before, Reported({ window: 3, day: 5 }))
+	Drain.may_read(spent, lim) == DayFull and Drain.reopens_at(spent, lim, Drain.real) == 1795651210 and Drain.may_read(before, lim) == Go and Drain.reopens_at(before, lim, Drain.real) == 1795601710
+}
 
 # ── the limits Strava reports ──
 expect Drain.limit_of(["Content-Type: application/json", "X-ReadRateLimit-Limit: 300,3000"]) == Reported({ window: 300, day: 3000 })
