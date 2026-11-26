@@ -180,8 +180,11 @@ jobs:
   # from being the first place a missing raylib link dependency shows up, and
   # packaging the linked binary with the release's own script keeps it from
   # being the first place the tarball or its launcher is exercised. The
-  # command is built beside it, packaged with it, and both are installed by
-  # install.sh over the latest release. Nothing is uploaded.
+  # packaged launcher then starts the window under Xvfb, rendered in software
+  # by Mesa's llvmpipe, and the window must come up, land its boot load and
+  # capture the form board through its own bus. The command is built beside
+  # it, packaged with it, and both are installed by install.sh over the
+  # latest release. Nothing is uploaded.
   viz-link-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -191,7 +194,9 @@ jobs:
       - name: Set up Roc
         uses: ./.github/actions/setup-roc
 
-      - name: raylib's link dependencies
+      # the X server, Mesa's software drivers and sqlite3 serve the start
+      # proof below
+      - name: raylib's link dependencies, and a virtual display
         run: |
           set -euo pipefail
           # apt-get update fails if any configured source serves bad metadata, and
@@ -200,7 +205,8 @@ jobs:
           sudo find /etc/apt/sources.list.d -type f ! -name 'ubuntu.sources' -delete
           sudo apt-get update -qq || sudo apt-get update -qq
           sudo apt-get install -y -qq libgl1-mesa-dev libx11-dev libxrandr-dev \
-            libxinerama-dev libxi-dev libxcursor-dev libasound2-dev
+            libxinerama-dev libxi-dev libxcursor-dev libasound2-dev \
+            xvfb xauth libgl1-mesa-dri sqlite3
 
       - name: Link the window
         run: |
@@ -217,6 +223,13 @@ jobs:
 
       - name: Prove the launcher seeds a fresh home
         run: bash tools/package-viz.sh linux prove
+
+      # LIBGL_ALWAYS_SOFTWARE keeps Mesa on llvmpipe; the screen is larger
+      # than the window's default size, so the capture is the whole board
+      - name: Start the packaged window under a virtual display
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s '-screen 0 1920x1080x24' bash tools/package-viz.sh linux start
 
       - name: Install this checkout's command and app over the latest release with install.sh
         run: |
@@ -282,8 +295,10 @@ jobs:
 
   # The macOS app as the release builds it, on every pull request: the
   # bundle with the command built beside it, verified and proved by the
-  # release's own checks, then zipped as the release zips it and installed by
-  # install.sh over the latest release. Nothing is uploaded.
+  # release's own checks, started from its launcher, where the window must
+  # come up, land its boot load and capture the form board through its own
+  # bus, then zipped as the release zips it and installed by install.sh over
+  # the latest release. Nothing is uploaded.
   viz-app-macos:
     runs-on: macos-latest
     timeout-minutes: 25
@@ -302,9 +317,13 @@ jobs:
       - name: Verify and prove the bundle as the release does
         run: |
           set -euo pipefail
-          codesign --verify --strict stage/Stride.app/Contents/MacOS/stride || { echo "::error::the bundled command's signature is missing or invalid"; exit 1; }
           bash tools/package-viz.sh macos verify stage/Stride.app stride-cli-macos-arm64
           bash tools/package-viz.sh macos prove stage/Stride.app
+
+      # a window needs a logged-in Aqua session; outside one the step warns
+      # that the start went unproven, and passes
+      - name: Start the bundle's window
+        run: bash tools/package-viz.sh macos start stage/Stride.app
 
       - name: Install this checkout's command and app over the latest release with install.sh
         run: |

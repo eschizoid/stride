@@ -258,10 +258,12 @@ discovery source for steering (view numbers, directive fields, staleness),
 never a doc's copy. `docs/viz.md` is the reference for all of it.
 
 The e2e suite cannot run the window (it is a GUI): its viz passes play the
-window's part by seeding exactly what the window would write, and CI proves
-the app still links per-OS and that the linux and windows packages carry and
-seed what it reads. A window-side behavior change needs a live
-`just viz` run before it is called working.
+window's part by seeding exactly what the window would write. CI links the
+window on every OS, proves the packages carry and seed what it reads, and
+starts the packaged window on linux (under Xvfb) and macOS, where it must
+land its boot load and capture the form board through its own bus. A
+window-side behavior change still needs a live `just viz` run before it is
+called working: the start proof reads an empty database.
 
 ## Idiomatic Roc (and the traps that actually bit us)
 
@@ -576,11 +578,29 @@ on `main`. You never tag or edit the version by hand.
   step drifts from the macOS app, when the desktop entry is malformed, when its
   launcher finds another `stride` before its own or does not seed a fake home, or
   when its install step does not register the app or put the command on the PATH.
-  The windows runner has no OpenGL context, so no job requires the window to
-  start there. `tools/package-viz.sh` builds and proves the linux and windows
-  packages, and `build.yml`'s `viz-link-linux`, `viz-link-windows` and
-  `viz-app-macos` jobs build and prove all three on every pull request, so a
-  packaging defect fails a PR rather than a release.
+  `tools/package-viz.sh` builds and proves the linux and windows packages
+  and proves the macOS bundle, and on every pull request `build.yml`'s viz
+  jobs run it on the package or bundle they just built. `viz-link-linux`
+  packages, seeds and installs the linux app, then starts its launcher
+  under Xvfb, rendered in software by Mesa's llvmpipe, and fails unless the
+  window comes up, lands its boot load and writes a capture of the form
+  board through a `viz_directives` row, printing what it ran, why the wait
+  ended and what the window logged. `viz-app-macos` runs the release's own
+  bundle checks (`macos verify`: the launcher, the window and its
+  signature, the command and, on arm64, its signature, the
+  graphics-switching key, fonts, images and launcher steps; the release
+  adds only the arch and the tag's version) and seeding proof, then starts
+  the bundle's launcher with the same proof; a runner outside an Aqua
+  session cannot show a window, and there the step warns that the start
+  went unproven. `viz-link-windows` packages, seeds and installs the
+  windows app; the windows runner has no OpenGL context, so no job
+  requires the window to start there. So a packaging defect, or a window
+  that does not start on linux or macOS, fails a PR rather than a release.
+  Linux arm64 ships the command alone: the roc-ray release the window names lists
+  hosts for x64mac, arm64mac, x64v1glibc and x64win, so a build of the
+  window for arm64musl or arm64glibc stops at roc's "unsupported target"
+  before it compiles anything, and install.sh offers the app on linux
+  x86_64 only.
   `fail-fast: false` plus a `!cancelled()` upload means one bad target still lets the
   others attach.
 - **Never cut a release without Mariano's explicit go-ahead** — landing feats on main is
