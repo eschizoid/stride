@@ -488,7 +488,8 @@ polls about once a second and every row reaches a status you can read back.
    it alone. Name a session exactly by activity id (`trace_id`, `ghost_id`) or by day
    (`trace_day`, `ghost_day`, which pick that day's newest session; never use a day when
    it holds two sessions). The id wins when both are given. `ghost_day = 'none'`
-   dismisses the ghost. `capture = 'png'` writes the landed view to
+   dismisses the ghost. `cursor_day` parks the cursor on a measured day, or on the form
+   board (view 0) on a projected day it draws; a refusal says why. `capture = 'png'` writes the landed view to
    `captures/<view>.png` under the window's launch directory; `'webm_start'` and
    `'webm_stop'` record. One capture runs at a time. `family` picks the power view's
    curve: a family head (`'Rowing'`, `'Run'`) for its power curve, record book and CP
@@ -499,7 +500,8 @@ polls about once a second and every row reaches a status you can read back.
 3. **Verify by id.** `stride viz --json` lists the last ten directives newest first in
    `history` and capture rows in `captures`, each
    `{id, created_at, status, error, applied_at, view, range, cursor_day, trace_day, trace_id, ghost_day, ghost_id, capture, result}`
-   (`result` = the capture's absolute path); `SELECT status, error FROM viz_directives
+   (`result` = the absolute path of a file the capture wrote, empty until one exists;
+   a `webm_start` closes with none and its `webm_stop` names the file); `SELECT status, error FROM viz_directives
    WHERE id = <id>` reads one row directly. `applied` = every field honoured;
    `applied_partial` = `error` names each refused field and why; `superseded` = a newer
    row won; `stale` = nothing read it within the freshness window. A refused field is a

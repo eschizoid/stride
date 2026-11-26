@@ -61,16 +61,21 @@ The plot draws the same projection. The window reads the `series` of that
 one `stride project` call, the engine's walk day by day, so the board and
 the command cannot disagree about a day. After the last measured day the
 fitness, fatigue and form lines continue dashed to the plan's last day and
-stop there, and each projected day the plan prices a load onto gets a hollow
+stop there, each line's dashes spaced evenly along its whole projected
+length, and each projected day the plan prices a load onto gets a hollow
 bar on the load rug's scale; a day it priced nothing onto draws no bar. The
 range chips still count measured days, and the projected days follow them.
 The line-end values read the projection's last day, an event the plan
 reaches is marked where it falls, and a key along the plot's top says the
 dashed part is projected and how many of the window's sessions are priced,
-the count the tile shows. The pointer reads projected days too: the day
-card says "projected" and reads the planned load, or "unpriced" for a
-session the engine could not price. The arrow cursor still counts back from
-the last measured day.
+the count the tile shows. The pointer and the arrow cursor read projected
+days too: → walks on past the last measured day into them, one day a
+press, and past the last one turns the cursor off; the table, which shows
+measured days only, holds the latest of them instead. On a board drawing a
+projection the day card opens below the key, and over a projected day it
+says "projected" and reads the planned load, or "unpriced"
+for a session the engine could not price, and carries no line of what was
+done.
 
 The subtitle always carries the as-of day, and the TSB zero rule is
 captioned "fresh above" just over the rule: at its right end, else its left,
@@ -448,7 +453,7 @@ and resumes, and the clock starts over each time the mode opens.
 | `Ctrl` + `+` / `-` | increase / decrease UI size in 25% steps, from 100% to 200%; the scale fits the window so navigation remains visible |
 | `Ctrl` + `0` | reset UI size to the 150% default; reloads preserve the chosen size until the app closes |
 | `1` / `2` / `3` | range 30 / 60 / 90 days (form board) |
-| `←` / `→` | walk the day cursor (form board; ← older, → newer, past newest turns it off) |
+| `←` / `→` | walk the day cursor (form board; ← older, → newer and on into the projected days, past the last day drawn turns it off) |
 | `R` | reload everything from the database without reopening |
 | `G` | toggle the glow pass - the scene renders offscreen and its bright parts come back blurred and added on top; if the GPU refuses any of it, the app draws exactly as before the pass existed |
 | `V` | toggle a WebM recording of the screen into `captures/` under the window's working directory, named for the view it started on; FixedStep timing, so the same data replays to the same file |
@@ -863,6 +868,9 @@ sport no family holds. The fixtures per view:
   its name as long as the cap lets one be, with a measured power and without,
   ready, waiting on its trace and with none, at the map's middle and at each
   corner, and in heat and play;
+- the form board's day card the arrow cursor opens over each projected day of
+  every board that draws a projection, in the brand faces and in the built-in
+  face;
 - the boot splash at every dot count, slow and not, and the XP rail's sheet.
 
 For each scene the gate asserts that no two text boxes overlap, the
@@ -871,8 +879,8 @@ covers a shape other than the one it is written inside. Each view lists the
 shapes it draws in its `marks`: the nav pills and the XP rail on every view,
 the bars, chips, ticks, tiles and cards of the views that draw them, the power
 view's test card, dots and legend dots, and the career view's spine
-dots, load bars, legend swatches and composition strip. The boot splash, the XP rail's sheet and the map's card run
-the first two checks alone, and the map's card must also lie inside the map. `roc test` reports only that the expect failed;
+dots, load bars, legend swatches and composition strip. The boot splash, the XP rail's sheet, the form board's day card and the map's card run
+the first two checks alone; the day card must also lie inside the plot and say its day is projected, and the map's card must lie inside the map. `roc test` reports only that the expect failed;
 `Gate.failures` names each failure by fixture, size and the texts and
 shapes involved, so `dbg` it inside the expect to read them.
 
@@ -892,10 +900,12 @@ CREATE TABLE IF NOT EXISTS viz_directives (
   capture TEXT,                            -- png | webm_start | webm_stop
   consumed INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending',  -- applied | applied_partial | superseded | stale
-  error TEXT, result TEXT, applied_at TEXT); -- result: the file a capture wrote
+  error TEXT, result TEXT, applied_at TEXT); -- result: the file a capture wrote, once it exists
 
 -- steer: the window polls ~1/s, applies the newest unconsumed row, and
--- consumes everything up to it. NULL fields mean "leave that alone".
+-- consumes everything up to it. NULL fields mean "leave that alone". No
+-- poll runs until the boot load has landed, so a row written at launch
+-- waits for it and every field is judged against the loaded window.
 INSERT INTO viz_directives (view, range, cursor_day, trace_day, ghost_day)
 VALUES (0, 30, '2026-09-02', NULL, NULL);
 -- a session is named exactly by its activity id, or loosely by its day:
@@ -909,15 +919,21 @@ INSERT INTO viz_directives (trace_id, ghost_id) VALUES (20355183143, 20342052869
 -- half a second elsewhere - and no trace fetch in flight), to
 -- captures/<view>.png under the window's working directory
 -- (your home folder for the app bundle, the repo for `just viz`);
--- 'webm_start' / 'webm_stop' begin and end a WebM recording of it. The row
--- stays pending until the host answers - a PNG written, a recording
--- running, a recording finished - then `result` names the file by its
--- absolute path and the status closes; a refused start (one already
--- running), a refused stop (none running), a start the recorder rejected
--- or a failed write lands in `error` with no result. Captures run one at a
--- time: the bus is not polled while one waits, so a row written meanwhile
--- is applied once the first has closed (of several, the newest wins and
--- the older close superseded).
+-- 'webm_start' / 'webm_stop' begin and end a WebM recording of it. A row
+-- written at launch waits for the boot load, so its capture shows the
+-- loaded view and never the splash. The row stays pending until the host
+-- answers - a PNG written, a recording running, a recording finished -
+-- then the status closes, and `result` names a file by its absolute path
+-- only once that file exists: a PNG the window found written by its shot,
+-- a recording a stop finished with bytes in it. A started recording's
+-- file is not written until the stop, so the start closes with no result
+-- and the stop names the file. A refused start (one already running), a
+-- refused stop (none running), a start the recorder rejected, a failed
+-- write and a shot the host answered without writing a file land in
+-- `error` with no result. Captures run one at a time: the bus is not
+-- polled while one waits, so a row written meanwhile is applied once the
+-- first has closed (of several, the newest wins and the older close
+-- superseded).
 -- `stride viz --json` lists them under `captures`.
 INSERT INTO viz_directives (view, capture) VALUES (1, 'png');
 -- the power view's curve: a sport family's head ('Ride', 'Rowing', 'Run',
@@ -943,7 +959,15 @@ INSERT INTO viz_directives (view, family) VALUES (1, 'pace:Run');
 -- directive lands on: named view if set, else the visible one — on the power
 -- view it re-windows the ladder+fit, on every other view it sets the form board's
 -- range.
--- cursor_day parks the crosshair, trace_day picks the session - and resets
+-- cursor_day parks the crosshair on a measured day of the series, or, on
+-- the form board alone, on one of the projected days it draws past the
+-- last measured day; a projected day for any other view is refused, and
+-- every refused day says why: before the series, past the projection's
+-- last day, after the series with no plan projected, a projected day on a
+-- view that draws no projection, or not a date. A view that draws no
+-- projection holds the latest measured day in place of a projected one,
+-- so the table never stands on, or reports, a day it does not show.
+-- trace_day picks the session - and resets
 -- the window's sport filter when the landed session sits outside it, so the
 -- header never claims a filter the trace violates.
 -- ghost_day overlays a second session on the trace view at reduced alpha
@@ -1024,7 +1048,8 @@ Every directive reaches a terminal state, readable back by id:
 
 - `applied` — every field honoured; `applied_at` says when.
 - `applied_partial` — the window took what it could; `error` names each
-  refused field ("cursor_day 1999-01-01 not in the series").
+  refused field and why ("cursor_day 1999-01-01 not in the series:
+  before the series, which starts 2025-10-12").
 - `superseded` — a newer directive arrived before this one was applied;
   newest wins.
 - `stale` — older than 600 seconds when read. A directive written while no

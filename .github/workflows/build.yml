@@ -218,6 +218,10 @@ jobs:
       - name: Build the command the package carries
         run: roc build src/cli/main.roc --output=stride-cli-linux-x86_64 --opt=dev
 
+      # headless: the host draws nothing and needs no display
+      - name: Drive the window through its bus, headless
+        run: sh tools/viz-bus.sh ./stride-cli-linux-x86_64 ./stride-viz-linux
+
       - name: Package it as the release does
         run: bash tools/package-viz.sh linux package stride-viz-linux stride-cli-linux-x86_64
 
