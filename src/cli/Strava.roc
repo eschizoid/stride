@@ -305,7 +305,7 @@ Strava :: [].{
 			|{}|
 				match get_valid_token!(path) {
 					Err(NotAuthed) =>
-						Output.err_out!("not_authenticated", "not authenticated — run `stride auth` first")
+						Output.err_out!("not_authenticated", "not connected to Strava yet — run `stride setup`: it connects your Strava account, then syncs your history")
 
 					Err(other) => Err(other)
 					Ok(token) => {

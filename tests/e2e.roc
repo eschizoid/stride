@@ -415,7 +415,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1498)?
+	checks_ran_exactly!(1516)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -423,6 +423,7 @@ run_all! = || {
 run_scenarios! : Ctx => Try({}, _)
 run_scenarios! = |ctx| {
 	b_auth!(ctx)?
+	b_first_run!(ctx)?
 	b_config_ftp!(ctx)?
 	b_cred_safety!(ctx)?
 	b_seed_analyze!(ctx)?
@@ -2097,21 +2098,21 @@ b_init_config! = |ctx| {
 	check!("summary envelope is versioned", strjq!(ctx, ["summary"], ".schema_version") == "3")?
 	check!("missing-config error code", Str.contains(stride!(ctx.bin, ctx.home, ["summary"]), "missing_config"))?
 	# the MACHINE message must carry the same onboarding content the human help
-	# does: an agent-driven install sees only this string, and a bare "see
-	# `stride config`" leaves it one hop short of the four keys
+	# does: an agent-driven install sees only this string. It points to setup,
+	# which proposes the zones, and names the two keys that store them from one
+	# number, as placeholders: a number here reads as advice
 	mc_out = stride!(ctx.bin, ctx.home, ["summary"])
-	check!("missing-config envelope names the four keys and where to find them", Str.contains(mc_out, "hr_z1_max") and Str.contains(mc_out, "hr_z4_max") and Str.contains(mc_out, "strava.com/settings/heartrate"))?
-	# ...and the HUMAN help stays gated too: every key name it offers must be one
-	# `config set` accepts (a bare "z4_max" sat in this screen and was refused
-	# when copied), so pin the accepted spelling and the URL in human mode
+	check!("missing-config envelope points to setup and names the keys that store the zones", Str.contains(mc_out, "run `stride setup`") and Str.contains(mc_out, "stride setup threshold_hr=<bpm>") and Str.contains(mc_out, "stride setup max_hr=<bpm>"))?
+	# ...and the HUMAN help says the same, offering no number to copy
 	mc_human = stride_human!(ctx.bin, ctx.home, ["summary"])
-	check!("human zone help names an accepted key spelling and where to find the values", Str.contains(mc_human, "hr_z4_max 183") and Str.contains(mc_human, "above hr_z4_max") and Str.contains(mc_human, "strava.com/settings/heartrate"))?
+	check!("human zone help points to setup and names the keys with placeholders", Str.contains(mc_human, "Run `stride setup`") and Str.contains(mc_human, "stride setup threshold_hr=<bpm>") and Str.contains(mc_human, "stride setup max_hr=<bpm>"))?
+	check!("...and offers no example value", no_example_value(mc_human) and no_example_value(mc_out))?
 	# doctor's MissingConfig arm, reached here because the harness is already in exactly
 	# that state — no zones set. This is the first screen a new user sees, and this check
 	# is the only thing holding its wording. Pinned at the FIELD, not the
 	# bare phrase: the missing_config envelope opens with the same words, so a phrase-level
 	# match could be satisfied by the wrong surface.
-	check!("doctor names the absent zone bounds rather than reporting a count", Str.contains(stride!(ctx.bin, ctx.home, ["doctor"]), "\"config_error\":\"hr zone bounds are not set"))?
+	check!("doctor names the absent zone bounds rather than reporting a count, and the command that sets them", Str.contains(stride!(ctx.bin, ctx.home, ["doctor"]), "\"config_error\":\"hr zone bounds are not set — run `stride setup`"))?
 	# ── platform failures reach the caller as the contract ────────
 	#
 	# A query before `stride init` must answer with an envelope and a code, not
@@ -2123,7 +2124,7 @@ b_init_config! = |ctx| {
 	check!("a missing database is an envelope, not a banner", Str.contains(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>/dev/null"), "\"code\":\"no_database\""))?
 	check!("...and says nothing on stderr", Str.trim(sh!("HOME='${nodb}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>&1 >/dev/null")) == "")?
 	check!("...and exits 1", stride_status!(ctx.bin, nodb, ["summary"]) == 1)?
-	check!("...and humans get the same guidance in prose", Str.contains(sh!("HOME='${nodb}' '${ctx.bin}' summary 2>/dev/null"), "stride init"))?
+	check!("...and humans get the same guidance in prose", Str.contains(sh!("HOME='${nodb}' '${ctx.bin}' summary 2>/dev/null"), "run `stride setup`"))?
 	corrupt = "${ctx.home}/corrupt-probe"
 	_ = sh!("rm -rf '${corrupt}' && mkdir -p '${corrupt}/.stride' && printf 'definitely not sqlite' > '${corrupt}/.stride/db.sqlite'")
 	check!("a corrupt database is an envelope too", Str.contains(sh!("HOME='${corrupt}' STRIDE_FORMAT=json '${ctx.bin}' summary 2>/dev/null"), "\"code\":\"corrupt_database\""))?
@@ -2441,11 +2442,11 @@ b_auth! : Ctx => Try({}, _)
 b_auth! = |ctx| {
 	# mirror the bash: unset any real creds (env -u) and feed EOF on stdin
 	out = sh!("env -u STRAVA_CLIENT_ID -u STRAVA_CLIENT_SECRET HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' auth < /dev/null")
-	check!("credless auth gives setup guidance", Str.contains(out, "missing_client_creds"))?
+	check!("credless auth gives setup guidance, naming `stride setup`", Str.contains(out, "missing_client_creds") and Str.contains(out, "run `stride setup`"))?
 	# ...and SYNC does too: `MissingEnv` surfaces from `get_valid_token!`'s
 	# refresh branch, and credless sync must answer with the same remedy as
 	# `auth!`, not `internal_error … please open an issue` for a state one
-	# `stride auth` fixes. (`internal_error` is universal, so that envelope
+	# `stride setup` fixes. (`internal_error` is universal, so that envelope
 	# would validate.) Asserted on the CODE explicitly — the remedy text
 	# is shared with the auth arm, so wording alone would pass if the catch-all
 	# quoted it. Staged, because the path needs tokens PRESENT and creds ABSENT:
@@ -2456,9 +2457,8 @@ b_auth! = |ctx| {
 	sync_out = sh!("env -u STRAVA_CLIENT_ID -u STRAVA_CLIENT_SECRET STRIDE_API_BASE=http://127.0.0.1:1 HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' sync")
 	check!("credless sync gives the same setup guidance, not internal_error", Str.contains(sync_out, "\"code\":\"missing_client_creds\"") and !(Str.contains(sync_out, "internal_error")))?
 	# ...and names WHICH credential — the property the boundary arm depends on.
-	# `"STRAVA_CLIENT_ID not set"`, not the bare name: the remedy's static tail
-	# contains every variable name, so a bare-name check could not fail; the space
-	# before `not set` discriminates the interpolated name from boilerplate.
+	# `"STRAVA_CLIENT_ID not set"`, not the bare name: the space before `not set`
+	# ties the match to the interpolated name rather than to any mention of it.
 	# Independent of the code check above: under arm-removal the message carries no
 	# `... not set`, so this fails on its own. (`check!` is ?-chained — the first
 	# failure aborts, so the two mutations each report exactly one FAIL.)
@@ -2558,6 +2558,67 @@ b_auth! = |ctx| {
 
 # ── power zones: watt ranges from the DERIVED ride FTP (190, from b_seed_analyze!'s
 # 200W stream). Runs after seed+analyze so a derived FTP exists. ──────────────────────
+# ── the first run: every message a new athlete meets before setup has run
+# points to `stride setup`. Each state lives in a throwaway HOME: no database
+# at all, a database with nothing in it, and one holding a single ride. No
+# Strava client credential is in the environment, and the API base is a port
+# nothing listens on, so no check can reach the network.
+b_first_run! : Ctx => Try({}, _)
+b_first_run! = |ctx| {
+	run = |home, args| "env -u STRAVA_CLIENT_ID -u STRAVA_CLIENT_SECRET HOME='${home}' STRIDE_API_BASE=http://127.0.0.1:1 STRIDE_FORMAT=human '${ctx.bin}' ${args}"
+	none = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+	nodb = sh!("${run(none, "summary")} 2>/dev/null")
+	check!("no database: the message points to `stride setup`, which creates it", Str.contains(nodb, "run `stride setup`: it creates the database"))?
+	check!("...and the envelope keeps its code", Str.contains(sh!("${run(none, "summary --json")} 2>/dev/null"), "\"code\":\"no_database\""))?
+	help = sh!("${run(none, "--help")} 2>/dev/null")
+	check!("the help's first-run stanza names `stride setup`, not a hand-run auth", Str.contains(help, "Run `stride setup` in a terminal") and !(Str.contains(help, "STRAVA_CLIENT_ID=")))?
+	_ = sh!("rm -rf '${none}'")
+	empty = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+	_ = stride!(ctx.bin, empty, ["init"])
+	one = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+	_ = stride!(ctx.bin, one, ["init"])
+	_ = sql!("${one}/.stride/db.sqlite", "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr,max_hr) VALUES (7590,'first ride','Ride','${ctx.d1}T07:00:00Z',3600,30000.0,140,176);")
+	state! = |label, home| {
+		sync = sh!("${run(home, "sync")} 2>/dev/null")
+		check!("${label}: sync before Strava is connected points to `stride setup`", Str.contains(sync, "run `stride setup`") and !(Str.contains(sync, "`stride auth`")))?
+		check!("${label}: ...and keeps the code not_authenticated", Str.contains(sh!("${run(home, "sync --json")} 2>/dev/null"), "\"code\":\"not_authenticated\""))?
+		summary = sh!("${run(home, "summary")} 2>/dev/null")
+		check!("${label}: summary with no zones points to `stride setup`, offering no example value", Str.contains(summary, "Run `stride setup`") and no_example_value(summary))?
+		plan = sh!("${run(home, "plan")} 2>/dev/null")
+		check!("${label}: plan with no zones says the same", Str.contains(plan, "Run `stride setup`") and no_example_value(plan))?
+		said = sh!("${run(home, "setup")} </dev/null 2>&1")
+		rc = exit_status!("${run(home, "setup")} </dev/null >/dev/null 2>&1")
+		check!("${label}: setup with no terminal exits non-zero (${rc}) and says how to run it", rc != "0" and Str.contains(said, "Run it in a terminal window") and Str.contains(said, "`stride setup --json`") and !(Str.contains(said, "`stride auth`")))?
+		closed = sh!("${run(home, "setup")} <&- 2>&1")
+		closed_rc = exit_status!("${run(home, "setup")} <&- >/dev/null 2>&1")
+		check!("${label}: ...and with stdin closed outright, the same rather than internal_error (${closed_rc})", closed_rc != "0" and Str.contains(closed, "Run it in a terminal window") and !(Str.contains(closed, "unhandled failure")))?
+		Ok({})
+	}
+	state!("empty database", empty)?
+	state!("one ride", one)?
+	# the help's one-number form stores the zones with no Strava connection
+	# at all, which is the state an athlete who loaded an export is in
+	keyed = sh!("${run(empty, "setup max_hr=180 --json")} 2>/dev/null | jq -r '.data.next_step'")
+	check!("the zone help's own command stores the zones before any Strava step", Str.trim(keyed) == "strava_app" and Str.trim(sql!("${empty}/.stride/db.sqlite", "SELECT value FROM config WHERE key='hr_z4_max';")) != "")?
+	# the walk stopped mid-way, at the zones it proposes from the ride, meets
+	# the same end of input
+	_ = sql!("${one}/.stride/db.sqlite", "INSERT OR REPLACE INTO config (key,value) VALUES ('strava_client_id','1'),('strava_client_secret','shh'),('strava_access_token','a'),('strava_refresh_token','r'),('strava_expires_at','9999999999'),('timezone','America/Chicago'),('last_sync_epoch','1');")
+	mid = sh!("${run(one, "setup")} </dev/null 2>&1")
+	mid_rc = exit_status!("${run(one, "setup")} </dev/null >/dev/null 2>&1")
+	check!("one ride: setup at the zones step with no terminal exits non-zero (${mid_rc}) and says how to run it", mid_rc != "0" and Str.contains(mid, "heart rate") and Str.contains(mid, "Run it in a terminal window") and !(Str.contains(mid, "`stride auth`")))?
+	_ = sh!("rm -rf '${empty}' '${one}'")
+	Ok({})
+}
+
+# true when no zone key or setup key in `s` is followed by a number: a value
+# printed beside a key reads as advice
+no_example_value : Str -> Bool
+no_example_value = |s| {
+	keys = ["threshold_hr=", "max_hr=", "hr_z1_max ", "hr_z2_max ", "hr_z3_max ", "hr_z4_max "]
+	digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+	!(List.any(keys, |k| List.any(digits, |d| Str.contains(s, "${k}${d}"))))
+}
+
 b_pz! : Ctx => Try({}, _)
 b_pz! = |ctx| {
 	check!("pz has 7 power zones", strjq!(ctx, ["pz"], ".data.zones | length") == "7")?

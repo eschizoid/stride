@@ -324,7 +324,7 @@ ReportHealth :: [].{
 		awaiting : { count : U64, known : Bool, problem : Str }
 		awaiting =
 			match Analyze.load_zone_config!(path) {
-				Err(MissingConfig) => { count: 0, known: False, problem: "hr zone bounds are not set — run `stride config set hr_z1_max <bpm>` through hr_z4_max" }
+				Err(MissingConfig) => { count: 0, known: False, problem: "hr zone bounds are not set — run `stride setup`, which proposes them from your activities' heart rates" }
 				Err(UnreadableConfig(key, raw)) => { count: 0, known: False, problem: Output.unreadable_config_msg(key, raw) }
 				Err(SqliteErr(code, msg)) => { count: 0, known: False, problem: "the database refused the zone-config read (${Str.inspect(code)}): ${msg}" }
 				Err(_) => { count: 0, known: False, problem: "the zone config could not be read" }

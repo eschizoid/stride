@@ -66,8 +66,15 @@ Setup :: [].{
 				}
 				if human and when_bare {
 					# Ctrl-C anywhere in the walk names `stride setup`, which resumes it
-					Strava.interruptible!(True, "stride setup", |{}| walk!(path))?
-					report!(path, ran, 0)
+					match Strava.interruptible!(True, "stride setup", |{}| walk!(path)) {
+						Err(NoTerminal) => {
+							# the prompt was written without a newline; end its row first
+							Output.human_line!("")?
+							Output.err_out!("stdin_closed", no_terminal_msg)
+						}
+						Err(e) => Err(e)
+						Ok(_) => report!(path, ran, 0)
+					}
 				} else if when_bare {
 					# a step with nothing to supply runs in this call, without waiting
 					next = Config.setup_next(state!(path)?)
@@ -375,12 +382,21 @@ Setup :: [].{
 
 	# ── the human walk ─────────────────────────────────────────────────
 	# One prompt reader: stdin is read here and nowhere else in this module.
+	# Input that has ended (or a stream that was never opened) is NoTerminal:
+	# nobody is there to answer, so the walk stops with a way to run it.
 	ask! : Str => Try(Str, _)
 	ask! = |prompt| {
 		Output.human_write!(prompt)?
-		line = Stdin.line!()?
-		Ok(Str.trim(line))
+		match Stdin.line!() {
+			Ok(line) => Ok(Str.trim(line))
+			Err(EndOfInput) => Err(NoTerminal)
+			Err(StdinErr(_)) => Err(NoTerminal)
+			Err(other) => Err(other)
+		}
 	}
+
+	no_terminal_msg : Str
+	no_terminal_msg = "`stride setup` asks its questions in a terminal, and there is none here to answer them. Run it in a terminal window, or answer one step at a time with `stride setup --json` and `stride setup key=value`, the way an agent drives it."
 
 	# a secret read with terminal echo off, restored afterwards; with no
 	# terminal to switch, it is read as typed
