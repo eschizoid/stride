@@ -542,8 +542,11 @@ entry's `StartupWMClass` is the window's title, which X11 reports as the
 window's class, so a dock or taskbar shows the menu icon on the running
 window as well. `./stride-app/stride-app` still starts the app without
 touching the menu. The tarball is built on the current ubuntu runner, so it
-needs that runner's glibc or newer. roc-ray ships an x64glibc host only, so
-there is no linux-arm64 app.
+needs that runner's glibc or newer. The roc-ray release the window names
+declares no arm64 linux host (its platform header lists x64mac, arm64mac,
+x64v1glibc and x64win), so a build of the window for arm64musl or
+arm64glibc stops at roc's "unsupported target" and there is no linux-arm64
+app; `install.sh` offers the app on linux x86_64 only.
 
 The windows zip holds `stride-viz.exe`, the command as `bin\stride.exe`,
 the fonts, the images, a `stride-app.bat` launcher that seeds
@@ -598,8 +601,9 @@ but `locate` and `path`; the windows launcher does each step in cmd. Every
 package ships exactly the files in `assets/fonts`.
 
 `tools/package-viz.sh` builds the linux and windows packages and proves each
-one; at release it also verifies and proves the macOS bundle. Each package
-must carry the command it was given, byte for byte, reporting the version
+one, and verifies and proves the macOS bundle, at release and on every pull
+request. Each package must carry the command it was given, byte for byte,
+reporting the version
 `src/cli/main.roc` carries (and on macOS the bundle's own version), so a
 package that lacks the command or carries one from another build fails.
 Each package must hold exactly the files in `assets/fonts`, byte for byte
@@ -634,11 +638,33 @@ both, the user's PATH must name the package's `bin` once, and a shell that
 reads its PATH from the registry, as a new terminal does, must run the
 package's command by name; with `STRIDE_APP_START=0` the install writes the
 shortcut and starts nothing. The user's PATH is restored when the step
-ends. The GitHub windows runner has no OpenGL context, so whether the window
-starts there is not deterministic, and nothing requires it; that the window
-starts is verified on a real machine. The prove step prints where each
-profile's folders resolve. CI runs it on every pull request as well as at
-release.
+ends. The prove step prints where each profile's folders resolve. CI runs
+it on every pull request as well as at release.
+
+`package-viz.sh linux start` proves the window starts. It initialises a
+database in a fresh home with the package's own command, clears any focus
+row and any file at the capture's path, runs the launcher there, and reads
+the window's own bus. The window has come up once its first poll has
+created `viz_directives`; its boot load has landed once a focus row names
+a curve family, which the boot skeleton leaves unchosen; and it draws once
+a directive `(view 0, capture 'png')` closes `applied` with a `result`
+naming `captures/form-board.png` under that home, a file written after the
+directive, at least the window's minimum size and heavier than a frame of
+one colour. Because the home held no focus row and no capture before the
+launch, only this run of the window can satisfy those checks.
+`stride viz --json` from the same package must list the capture too; it
+reads the same `result` column, so it checks the command against the bus
+rather than adding evidence. The waits share one deadline,
+`STRIDE_START_TIMEOUT` seconds. A window that ends, a capture refused, or a
+wait that runs out fails the step, which prints what it ran, why the wait
+ended, the window's output and the launcher's `seed.log`. The step needs
+`sqlite3`; `viz-link-linux` runs it on every pull request under
+`xvfb-run`, with Mesa's llvmpipe rendering in software. The hosted macOS
+and windows runners have no OpenGL context, so no step starts the window
+there; that the window starts on either is verified on a real machine. So
+every pull request proves, on linux, the package, its install and the
+window's start; on macOS, the bundle's checks, its seeding and its
+install; and on windows, the package, its seeding and its install.
 
 `tools/install-check.sh` (macOS and linux, under `sh` and under `dash`
 where it is installed) and `tools/install-check.ps1` (windows, under

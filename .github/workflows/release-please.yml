@@ -136,37 +136,24 @@ jobs:
         run: |
           set -euo pipefail
           app="stage/Stride.app"
-          bin="$app/Contents/MacOS/stride-viz"
-          # launcher is CFBundleExecutable
-          test -x "$app/Contents/MacOS/launcher"
-          test -s "$bin" && test -x "$bin"
           # the zip's name is all a downloader has to go on
           case "${{ matrix.target }}" in
             macos-arm64)  want=arm64 ;;
             macos-x86_64) want=x86_64 ;;
           esac
-          got=$(lipo -archs "$bin")
+          got=$(lipo -archs "$app/Contents/MacOS/stride-viz")
           [ "$got" = "$want" ] || { echo "::error::${{ matrix.target }} bundle is $got, not $want"; exit 1; }
-          # --verify, not -dv: -dv only displays, and exits 0 on a signature
-          # that has been modified - the case Apple Silicon kills at launch
-          codesign --verify --strict "$bin" || { echo "::error::${{ matrix.target }} signature is missing or invalid"; exit 1; }
-          # the bundled command keeps the signature its linker wrote; an arm64
-          # Mac refuses to run it without one
-          if [ "${{ matrix.target }}" = macos-arm64 ]; then
-            codesign --verify --strict "$app/Contents/MacOS/stride" || { echo "::error::the bundled command's signature is missing or invalid"; exit 1; }
-          fi
-          # the command from this release's build, exactly assets/fonts byte for
-          # byte, the splash's mark and the streak flame, and a launcher with the
-          # steps the linux and windows ones share
+          # the checks build.yml's viz-app-macos runs on every pull request:
+          # the launcher, the window and its signature, the command from this
+          # release's build with its signature on arm64, the graphics-switching
+          # key, exactly assets/fonts byte for byte, the splash's mark and the
+          # streak flame, and a launcher with the steps the linux and windows
+          # ones share
           bash tools/package-viz.sh macos verify "$app" "cli/stride-cli-${{ matrix.target }}"
           # the script falls back to 0.0.0-dev if the version marker moves;
           # the CLI gates its --version against the tag, so the app gates too
           got_v=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app/Contents/Info.plist")
           [ "$got_v" = "${TAG#v}" ] || { echo "::error::bundle says $got_v, tag is $TAG"; exit 1; }
-          # without this key a dual-GPU Mac keeps the discrete GPU on while the window
-          # runs; PlistBuddy exits non-zero on a missing key, which reads as "absent"
-          got_g=$(/usr/libexec/PlistBuddy -c "Print :NSSupportsAutomaticGraphicsSwitching" "$app/Contents/Info.plist" 2>/dev/null || true)
-          [ "$got_g" = "true" ] || { echo "::error::bundle does not allow automatic graphics switching"; exit 1; }
 
       - name: Prove the launcher seeds a fresh machine
         run: bash tools/package-viz.sh macos prove stage/Stride.app
