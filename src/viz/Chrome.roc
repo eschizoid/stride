@@ -86,10 +86,20 @@ Chrome :: [].{
 	first_run : Ui.Model -> Bool
 	first_run = |model| List.is_empty(model.career_sports)
 
-	# the line of a view drawn from scored days while activities exist but
-	# none is scored yet
+	# The line of a view drawn from scored days while activities exist but
+	# none is scored yet: a database filled by `stride import`, which does not
+	# analyze, or synced before its first analyze. The series is empty exactly
+	# then, since analyze carries it through today.
 	no_scored_text : Str
 	no_scored_text = "no scored day yet - run stride analyze in a terminal to score your activities, then press R"
+
+	unscored : Ui.Model -> Bool
+	unscored = |model| !(first_run(model)) and List.is_empty(model.data)
+
+	# what a view that reads scored days writes when it has nothing to draw:
+	# the first run, the analyze still owed, or the view's own missing kind
+	empty_line : Ui.Model, Str -> Str
+	empty_line = |model, own| if (first_run(model)) first_run_text else if (unscored(model)) no_scored_text else own
 
 	# the recording badge's dot and the text beside it, by status
 	rec_text : Ui.Model -> Try({ text : Str, at : Scene.Anchor, color : Color.Rgba, dot : Bool }, [Idle])

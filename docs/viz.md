@@ -116,8 +116,10 @@ stated for it (stored on the session by `complete` and refreshed by
 instead. The quest strip carries the week's done count and one pip per
 weekday colored by that day's status, with a substitute day distinct from a
 plain skip; the bottom strip states this week's load beside last week's,
-over the same calendar week the ladder lists, and is absent while no
-activity is on record, when the card names the first run instead; the coach corner shows the newest bus directive: no line until a coach
+over the same calendar week the ladder lists. While an activity of the
+week is not yet scored it says so and names `stride analyze` instead of a
+number, and while no activity is on record it is absent and the card names
+the first run; the coach corner shows the newest bus directive: no line until a coach
 has written one, and "directives unreadable" when the bus cannot be read.
 The strip, the table's day detail and the heat card all say load, never
 TSS: a session scores in TSS or session-RPE load by its model, and a
@@ -865,10 +867,13 @@ sport no family holds. The fixtures per view:
   sets, in kilograms and scrolled in pounds, for every athlete who lifts,
   and the empty tab for every athlete who does not;
 - every view that can have nothing to draw (form, power, trace, week, log,
-  year, zones, load and lifts) on a database with no activity and on one
-  holding a single ride no plan claims, in the brand faces and in the
-  built-in face; each says in one line what fills it, the first run where
-  there is no activity at all, and the week tab lists the ride on its day;
+  year, zones, load and lifts) on a database with no activity, on one
+  holding a single ride no plan claims that analyze has not scored, and on
+  the same ride scored, in the brand faces and in the built-in face; each
+  says in one line what fills it: the first run where there is no activity
+  at all, `stride analyze` where a view reads scored days and none is
+  scored, else the session the view is missing; the week tab lists the
+  ride on its day;
 - map: routes with their tiles on the way, drawn and offline, a route an
   ocean from the rest, heat, playback with and without routes and with a
   cache it cannot write, no routes, loading and a failed read; and a tile

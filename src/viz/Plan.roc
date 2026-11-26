@@ -253,9 +253,14 @@ Plan :: [].{
 	}
 
 	# the load strip: this Monday-started week's load beside last week's. The
-	# total blends TSS with session-RPE load, so it is named load.
-	strip_text : { this : I64, last : I64 } -> Str
-	strip_text = |wk| "${Db.num_unit(wk.this, "load")} this week (last ${Db.grouped(wk.last)})"
+	# total blends TSS with session-RPE load, so it is named load. While an
+	# activity of the week is unscored the sum is not the week's load, so the
+	# strip says what is owed instead of a number.
+	strip_text : { this : I64, last : I64, scored : Bool } -> Str
+	strip_text = |wk| if (wk.scored) "${Db.num_unit(wk.this, "load")} this week (last ${Db.grouped(wk.last)})" else unscored_week_text
+
+	unscored_week_text : Str
+	unscored_week_text = "this week's load is not scored yet - run stride analyze in a terminal, then press R"
 
 	# the coach corner's lines: none until a directive exists, the newest
 	# directive once one does, and a failed read of the bus said as such
@@ -453,7 +458,8 @@ Plan :: [].{
 	expect result_text({ ..blank_row, status: "skipped" }) == "skipped"
 	expect result_text({ ..blank_row, past: Bool.False }) == ""
 	# the load strip names the week's blended total load, both weeks grouped
-	expect strip_text({ this: 74, last: 1702 }) == "74 load this week (last 1,702)"
+	expect strip_text({ this: 74, last: 1702, scored: Bool.True }) == "74 load this week (last 1,702)"
+	expect strip_text({ this: 0, last: 1702, scored: Bool.False }) == "this week's load is not scored yet - run stride analyze in a terminal, then press R"
 	# the coach corner: no line until a directive exists, the directive's
 	# line once one does, and a failed read said as such
 	expect coach_lines(NoDirective) == []

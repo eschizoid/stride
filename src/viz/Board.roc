@@ -166,8 +166,9 @@ Board :: [].{
 	hint_text = "1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   V record   G glow   ESC quit"
 
 	# a board with no day to draw names the command that fills it, and R
-	# loads what that command wrote; one day on record is a series too
-	# short for a line, not an empty database
+	# loads what that command wrote: setup while no activity exists, analyze
+	# while activities exist unscored (Chrome.no_scored_text). One day on
+	# record is a series too short for a line, not an empty database
 	empty_text : Str
 	empty_text = "no data yet - run stride setup in a terminal to connect Strava, then press R"
 
@@ -684,6 +685,8 @@ Board :: [].{
 		body =
 			if model.has_error {
 				[fix(Scene.txt(model.status, Prose, Theme.atl_c), 36.0, g.top + 20.0, Left, panel)]
+			} else if Chrome.unscored(model) {
+				[fix(Scene.prose(Chrome.no_scored_text, 16.0, ink_muted), 36.0, g.top + 20.0, Left, panel)]
 			} else if List.is_empty(model.data) {
 				[fix(Scene.prepared(model.empty, empty_text, 16.0, Prose, ink_muted), 36.0, g.top + 20.0, Left, panel)]
 			} else if List.len(model.data) < 2 {
@@ -706,11 +709,20 @@ Board :: [].{
 		# spans -30..100, which covers the common PMC window; a value outside
 		# it plots fine but gets no gridline
 		ylabels = List.keep_oks(model.ylabels, |yl| if (yl.v >= g.lo and yl.v <= g.hi) Ok(fix(Scene.prepared(yl.p, y_text(F32.round_to_i64_try(yl.v) ?? 0), 12.0, Data, ink_faint), 30.0, y_at(g, yl.v) - 8.0, Left)) else Err(Off))
-		# six date labels under the plot
-		dates = List.keep_oks(
+		# six date labels under the plot, spread evenly over its days; a series
+		# shorter than six days has fewer distinct days than labels, and each
+		# day is labelled once
+		date_idx = List.fold(
 			[0.U64, 1, 2, 3, 4, 5],
-			|k| {
+			[],
+			|acc, k| {
 				di = k * (g.n - 1) // 5
+				if (List.contains(acc, di)) acc else List.append(acc, di)
+			},
+		)
+		dates = List.keep_oks(
+			date_idx,
+			|di| {
 				match List.get(g.days, di) {
 					Ok(d) => Ok(fix(Scene.data(Str.drop_first_bytes(d, 5) ?? d, 11.0, ink_faint), x_at(g, di), g.top + g.ph + 8.0, Center))
 					Err(_) => Err(NoDay)

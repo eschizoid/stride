@@ -228,7 +228,7 @@ Table :: [].{
 	# the table's line while the series holds no day: the first run while no
 	# activity exists, else the analyze that scores the ones on record
 	empty_text : Ui.Model -> Str
-	empty_text = |model| if (Chrome.first_run(model)) Chrome.first_run_text else Chrome.no_scored_text
+	empty_text = |model| Chrome.empty_line(model, Chrome.no_scored_text)
 
 	# the column headers, one per entry of col_x
 	head_texts : List(Str)

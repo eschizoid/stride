@@ -769,17 +769,17 @@ Curve :: [].{
 		}
 
 	# the line the view writes for an empty curve: the first run while no
-	# activity exists, else the missing kind of effort and what records it
+	# activity exists, the analyze still owed while none is scored, else the
+	# missing kind of effort and what records it
 	none_text : Ui.Model -> Str
 	none_text = |model|
-		if Chrome.first_run(model) {
-			Chrome.first_run_text
-		} else {
+		Chrome.empty_line(
+			model,
 			match Bus.curve_key(model.curve_family) {
 				Pace(_) => "${empty_note(model.curve_family)} - a session recorded with its distance fills it"
 				Power(_) => "${empty_note(model.curve_family)} - a session recorded with a power meter fills it"
-			}
-		}
+			},
+		)
 
 	# a scale label: plain watts, or the pace without its unit
 	axis_text : Str, [Metric, Imperial], I64 -> Str

@@ -95,9 +95,10 @@ Zones :: [].{
 
 	# the chart draws once any week holds polarized time
 	# the chart's line while its twelve weeks hold no polarized time: the
-	# first run while no activity exists, else the session that fills it
+	# first run while no activity exists, the analyze still owed while none
+	# is scored, else the session that fills it
 	empty_text : Ui.Model -> Str
-	empty_text = |model| if (Chrome.first_run(model)) Chrome.first_run_text else "no polarized time in the last 12 weeks - an endurance session with heart rate, power or pace fills it"
+	empty_text = |model| Chrome.empty_line(model, "no polarized time in the last 12 weeks - an endurance session with heart rate, power or pace fills it")
 
 	charted : Ui.Model -> Bool
 	charted = |model| List.any(model.zone_weeks, |w| split_s(w) > 0)

@@ -100,9 +100,10 @@ Ramp :: [].{
 
 	# the chart draws once any week holds load
 	# the chart's line while its twelve weeks hold no load: the first run
-	# while no activity exists, else the session that puts load on them
+	# while no activity exists, the analyze still owed while none is scored,
+	# else the session that puts load on them
 	empty_text : Ui.Model -> Str
-	empty_text = |model| if (Chrome.first_run(model)) Chrome.first_run_text else "no load in the last 12 weeks - a session stride analyze scores fills it, then press R"
+	empty_text = |model| Chrome.empty_line(model, "no load in the last 12 weeks - a session stride analyze scores fills it, then press R")
 
 	charted : Ui.Model -> Bool
 	charted = |model| !(List.is_empty(model.ramp_weeks)) and List.fold(model.ramp_weeks, 0.I64, |a, w| a + w.tss) != 0

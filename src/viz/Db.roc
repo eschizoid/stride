@@ -797,13 +797,15 @@ Db :: [].{
 	# this week's load beside last week's - the progress strip's two numbers.
 	# The week is the civil Monday-to-Sunday the ladder above the strip lists
 	# and the engine's `week` and `review` read, so one tab never shows two
-	# weeks under the one name.
-	load_week_tss! : Sqlite.Db, Str => { this : I64, last : I64 }
+	# weeks under the one name. `scored` is false while an activity of the
+	# week has no metrics row or its day has no daily_load row:
+	# analyze has not yet counted it, so the week's sum is not its load.
+	load_week_tss! : Sqlite.Db, Str => { this : I64, last : I64, scored : Bool }
 	load_week_tss! = |db, today_mod|
-		match db.query!("WITH anchor AS (SELECT date(date('now', '${today_mod}'), '-6 days', 'weekday 1') AS mon) SELECT CAST(ROUND(SUM(CASE WHEN day >= mon AND day < date(mon, '+7 days') THEN tss ELSE 0 END)) AS INTEGER) AS tw, CAST(ROUND(SUM(CASE WHEN day >= date(mon, '-7 days') AND day < mon THEN tss ELSE 0 END)) AS INTEGER) AS lw FROM daily_load, anchor", []) {
-			Err(_) => { this: 0, last: 0 }
+		match db.query!("WITH anchor AS (SELECT date(date('now', '${today_mod}'), '-6 days', 'weekday 1') AS mon) SELECT CAST(ROUND(SUM(CASE WHEN day >= mon AND day < date(mon, '+7 days') THEN tss ELSE 0 END)) AS INTEGER) AS tw, CAST(ROUND(SUM(CASE WHEN day >= date(mon, '-7 days') AND day < mon THEN tss ELSE 0 END)) AS INTEGER) AS lw, (SELECT COUNT(*) FROM activities a WHERE a.start_local >= mon AND a.start_local < date(mon, '+7 days') AND (a.id NOT IN (SELECT activity_id FROM activity_metrics) OR NOT EXISTS (SELECT 1 FROM daily_load dl WHERE dl.day = substr(a.start_local, 1, 10)))) AS un FROM anchor LEFT JOIN daily_load ON 1 = 1", []) {
+			Err(_) => { this: 0, last: 0, scored: Bool.True }
 			Ok(rows) => match List.first(rows) {
-				Err(_) => { this: 0, last: 0 }
+				Err(_) => { this: 0, last: 0, scored: Bool.True }
 				Ok(r) => {
 					tw = match r.i64("tw") {
 						Ok(x) => x
@@ -813,7 +815,11 @@ Db :: [].{
 						Ok(x) => x
 						Err(_) => 0
 					}
-					{ this: tw, last: lw }
+					un = match r.i64("un") {
+						Ok(x) => x
+						Err(_) => 0
+					}
+					{ this: tw, last: lw, scored: un == 0 }
 				}
 			}
 		}

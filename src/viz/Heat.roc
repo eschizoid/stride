@@ -126,7 +126,7 @@ Heat :: [].{
 	# the grid's line while no day is scored: the first run while no activity
 	# exists, else the analyze that scores the ones on record
 	empty_text : Ui.Model -> Str
-	empty_text = |model| if (Chrome.first_run(model)) Chrome.first_run_text else Chrome.no_scored_text
+	empty_text = |model| Chrome.empty_line(model, Chrome.no_scored_text)
 
 	texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
 	texts = |model, measure| {
