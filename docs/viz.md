@@ -37,8 +37,8 @@ when every session is done); the career view
 turns the spine's peak gold with a breathing "all-time high" halo when the
 peak is the current month, which celebrates a threshold record for EVERY
 family the athlete trains, not only ride power; and the form board wears
-the form verdict as a status chip (cooked / building / steady / primed /
-coasting, from the same TSB the teal line ends on).
+the form verdict as a status chip in the words `stride summary` uses for the same value (high modeled fatigue / modeled fatigue building / balanced / fresh /
+very fresh, from the same TSB the teal line ends on).
 
 ## What the form board shows
 
@@ -54,7 +54,7 @@ pace, heart rate, session rating), and a session with no target or none its
 inputs can price adds nothing, so that count is how much of the projection is
 blind;
 past the plan's last day a projection is only decay, so the board names the
-day it stops ("plan to 11-08") and says "at event" only when the plan reaches
+day it stops ("12-15: fitness 54.9, form 1.3", the text `stride events` prints for the same day and numbers) and calls that day the "plan's last day", or the "event day" only when the plan reaches
 it.
 
 The plot draws the same projection. The window reads the `series` of that
@@ -198,8 +198,8 @@ that gained, red for one that gained more than 6 CTL in the week
 (`Ramp.ramp_limit`, the one constant the colors and the key read). The chip
 sits at the bar's end, over a gain and under a loss, and reads the change.
 The figure under each bar is the week's load. The card carries where
-fitness stands and how fast it is moving, "ctl per week so far" for the
-running week.
+fitness stands and how fast it is moving, captioned with the span the change
+covers ("ctl since Monday 11-23" for the running week, "ctl in the week of 11-16" for a finished one), since `stride summary`'s ramp counts a rolling seven days instead.
 
 The scale runs from the lowest change of any week shown to the highest,
 rounded outward to whole points and always holding zero, so gains alone
@@ -1177,7 +1177,7 @@ rowing families) take a pace curve: a ride's speed follows the terrain.
 The chips come from the data. Left of the range chips, right-aligned, sit the
 curves the athlete has on record in one fixed order on every page (bike, row,
 run, then any other sport), as many as fit beside the title, the one on
-screen always among them: in power mode every power family, then each pace
+screen always among them: in power mode every power family (a family whose only watts are Strava's estimate included: its page says "cycling: estimated power only (no power meter)", the words `stride doctor` and `stride power-curve` use), then each pace
 sport whose family has no power curve; in pace mode the reverse, so every
 curve is one click away. A family's chip carries its own short word (`bike`,
 `row`, `run`), and a sport outside every family its name in plain words, the

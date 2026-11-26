@@ -217,6 +217,46 @@ Sports :: [].{
 	pace_tss_exponent : Str -> F64
 	pace_tss_exponent = |sport|
 		if (Str.contains(Str.with_ascii_lowercased(sport), "swim")) 3.0 else 2.0
+
+	# A sport named in plain words, by its family: every ride spelling reads
+	# cycling and both strength spellings read strength, so one session has
+	# one name on every surface. A sport outside every family reads as its
+	# own words.
+	plain_name : Str -> Str
+	plain_name = |sport| {
+		fam = canonical(sport)
+		if (fam == "Run") "running"
+		else if (fam == "Ride") "cycling"
+		else if (fam == "Rowing") "rowing"
+		else if (fam == "Swim") "swimming"
+		else if (fam == "Walk") "walking"
+		else if (fam == "WeightTraining") "strength"
+		else words_of(fam)
+	}
+
+	# a Strava sport spelling split into lower-case words:
+	# HighIntensityIntervalTraining reads high intensity interval training
+	words_of : Str -> Str
+	words_of = |s| Str.from_utf8_lossy(List.join(List.map_with_index(Str.to_utf8(s), |b, i| if (b >= 65 and b <= 90) (if (i == 0) [b + 32] else [32, b + 32]) else [b])))
+
+	expect plain_name("WeightTraining") == "strength" and plain_name("Workout") == "strength"
+	expect plain_name("Ride") == "cycling" and plain_name("GravelRide") == "cycling" and plain_name("VirtualRow") == "rowing"
+	expect plain_name("StandUpPaddling") == "stand up paddling" and plain_name("other") == "other" and words_of("TrailRun") == "trail run"
+
+	# What a session whose only watts are Strava's estimate is said to have.
+	# Estimated watts are a model of speed and gradient, not a measurement,
+	# so they never count as power: no load, curve or count reads them as
+	# such, and every surface says this instead of "no power".
+	estimated_power_only : Str
+	estimated_power_only = "estimated power only (no power meter)"
+
+	# the SQL test for watts that were measured: Strava marks an estimate
+	# with device_watts 0, and an unmarked row (a CSV import, an older sync)
+	# is not evidence of estimation
+	measured_watts_sql : Str -> Str
+	measured_watts_sql = |col| "COALESCE(${col}, 1) <> 0"
+
+	expect measured_watts_sql("a.device_watts") == "COALESCE(a.device_watts, 1) <> 0"
 }
 
 # families widen, unknown words pass through, case folds

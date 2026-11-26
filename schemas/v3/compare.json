@@ -27,7 +27,8 @@
           "type": "number"
         },
         "easy_pct": {
-          "type": "number"
+          "type": "number",
+          "description": "Whole percent of the window's polarized time spent easy, floored (core Fmt.shares), as the window's weeks tile reads it."
         },
         "hard_min": {
           "type": "integer"
@@ -67,7 +68,8 @@
           "type": "number"
         },
         "easy_pct": {
-          "type": "number"
+          "type": "number",
+          "description": "Whole percent of the window's polarized time spent easy, floored (core Fmt.shares), as the window's weeks tile reads it."
         },
         "hard_min": {
           "type": "integer"

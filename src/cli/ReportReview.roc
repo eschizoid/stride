@@ -7,6 +7,7 @@ import pf.Path
 import Metrics
 import Render
 import core.Sports
+import core.Fmt
 
 # ── the weekly review (#640) ────────────────────────────────────────────
 #
@@ -256,9 +257,9 @@ ReportReview :: [].{
 				easy_s: easy,
 				moderate_s: moderate,
 				hard_s: hard,
-				easy_pct: Report.pct_num(easy, total),
-				moderate_pct: Report.pct_num(moderate, total),
-				hard_pct: Report.pct_num(hard, total),
+				easy_pct: (Fmt.shares(easy, moderate, hard)).easy,
+				moderate_pct: (Fmt.shares(easy, moderate, hard)).moderate,
+				hard_pct: (Fmt.shares(easy, moderate, hard)).hard,
 				polarization_known,
 				hard_days: hard_day_strs,
 				hard_spacing_median_days: match spacing {
@@ -289,7 +290,7 @@ ReportReview :: [].{
 			},
 		)
 		unplanned_lines = List.map(p.unplanned, |u| "  ${u.date} ${u.sport} — unlinked, ${Render.fmt0(u.load)} load")
-		sport_lines = List.map(p.sports, |s| "  ${s.family}: ${(s.sessions).to_str()} sessions, ${Render.mins(s.moving_time)}, ${Render.fmt0(s.load)} load")
+		sport_lines = List.map(Render.by_plain_name(p.sports, |s| s.family, |a, b| { ..a, sessions: a.sessions + b.sessions, moving_time: a.moving_time + b.moving_time, load: a.load + b.load }), |e| "  ${e.name}: ${(e.row.sessions).to_str()} sessions, ${Render.mins(e.row.moving_time)}, ${Render.fmt0(e.row.load)} load")
 		intensity =
 			if p.intensity.polarization_known {
 				"intensity  easy ${(p.intensity.easy_pct).to_str()}%  moderate ${(p.intensity.moderate_pct).to_str()}%  hard ${(p.intensity.hard_pct).to_str()}%"

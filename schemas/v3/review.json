@@ -439,7 +439,8 @@
           "type": "integer"
         },
         "easy_pct": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Whole percent of the polarized time spent easy, floored, so a share that has not reached a mark never reads as reaching it. easy_pct + moderate_pct + hard_pct = 100 when there is polarized time: the points the floor frees go to moderate and hard by largest remainder (core Fmt.shares, the rule the window's weeks tile reads)."
         },
         "moderate_pct": {
           "type": "integer"

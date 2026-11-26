@@ -267,7 +267,9 @@ Db :: [].{
 		}
 
 	# The curves the athlete has data for, most-used first: every family
-	# with power on record, then every pace sport with speed on record. A
+	# with measured power on record, then every family whose only watts are
+	# Strava's estimate (its page says so rather than leaving the athlete's
+	# sport out of the chips), then every pace sport with speed on record. A
 	# family's or sport's place in its list is its count of ladder rows, so
 	# the one trained most leads. Rides are absent from the pace list: a
 	# ride's speed follows the terrain, not the effort.
@@ -281,8 +283,19 @@ Db :: [].{
 			}
 		power = read!("SELECT CAST(sport_family AS TEXT) AS k FROM activity_power_ladder WHERE sport_family IS NOT NULL GROUP BY sport_family ORDER BY COUNT(*) DESC, sport_family")
 		pace = List.keep_if(read!("SELECT CAST(sport_type AS TEXT) AS k FROM activity_pace_ladder WHERE sport_type IS NOT NULL GROUP BY sport_type ORDER BY COUNT(*) DESC, sport_type"), |s| List.contains(Bus.pace_sport_types, s))
-		{ power, pace: List.map(pace, Bus.pace_key) }
+		estimated = List.keep_if(load_estimated_power!(db), |f| !(List.contains(power, f)))
+		{ power: List.concat(power, estimated), pace: List.map(pace, Bus.pace_key) }
 	}
+
+	# The power families whose sessions carry watts only Strava estimated:
+	# the curve's empty note names that state, in the words `doctor` and
+	# `power-curve` use, instead of saying the family has no power at all.
+	load_estimated_power! : Sqlite.Db => List(Str)
+	load_estimated_power! = |db|
+		match db.query!("SELECT CAST(COALESCE(sport_family, sport_type) AS TEXT) AS k FROM activities WHERE COALESCE(avg_watts, weighted_avg_watts, 0) > 0 AND NOT (${Sports.measured_watts_sql("device_watts")}) AND COALESCE(sport_family, sport_type) IS NOT NULL GROUP BY k", []) {
+			Err(_) => []
+			Ok(rows) => List.keep_oks(rows, |r| r.str("k"))
+		}
 
 	# the family the athlete trained most in the last 90 days, by moving
 	# time, among every activity; '' when there is none
@@ -1566,21 +1579,11 @@ Db :: [].{
 		{ shown, newer }
 	}
 
-	# The unit the strength view weighs in. A set `units` config decides it.
-	# Unset, the stored weights decide: an athlete who loads plates and
-	# dumbbells in pounds stores whole pounds (25 lb is 11.34 kg), one who
-	# loads in kilograms stores whole or half kilograms, and the larger group
-	# wins, pounds on a tie.
+	# The unit the strength view weighs in: core Units.mass_units, the rule
+	# `stride strength` reads its weights through, so a set reads one weight
+	# in one unit on both surfaces.
 	mass_units : Str, List(F64) -> [Metric, Imperial]
-	mass_units = |config, kgs|
-		if config != "" {
-			Units.units_of(config)
-		} else {
-			whole = |v| (v - I64.to_f64((F64.round_to_i64_try(v)) ?? 0)).abs() < 0.06
-			lb_n = List.len(List.keep_if(kgs, |k| k > 0.0 and whole(k / Units.lb_kg)))
-			kg_n = List.len(List.keep_if(kgs, |k| k > 0.0 and whole(k * 2.0)))
-			if (lb_n >= kg_n) Imperial else Metric
-		}
+	mass_units = Units.mass_units
 
 	strength_head : Str
 	strength_head = (List.first(Sports.family("strength"))).ok_or("WeightTraining")
@@ -1834,7 +1837,7 @@ Db :: [].{
 	# returns. `considered` is the open sessions in the window, `projected`
 	# the ones whose target the engine priced into a load, and `days` the
 	# payload's series, the walk day by day to the plan's last day.
-	Projection : { ok : Bool, ctl : F32, tsb : F32, considered : I64, projected : I64, days : List(ProjDay) }
+	Projection : { ok : Bool, ctl : F64, tsb : F64, considered : I64, projected : I64, days : List(ProjDay) }
 
 	# one projected day: its date, state and priced load, and whether every
 	# session on it was priced
@@ -1858,7 +1861,7 @@ Db :: [].{
 
 			_ => { top: out, rows: "" }
 		}
-		num = |key| F32.from_str(json_number(cut.top, key))
+		num = |key| F64.from_str(json_number(cut.top, key))
 		int = |key| I64.from_str(json_number(cut.top, key))
 		days = List.map_try(
 			List.keep_if(Str.split_on(cut.rows, "},{"), |r| r != ""),

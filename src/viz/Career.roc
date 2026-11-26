@@ -76,18 +76,14 @@ Career :: [].{
 		List.concat(fams, List.map(missing, |f| { fam: f.sport, kind: no_trend, months: 0 }))
 	}
 
-	# a family named in a sentence: the activity, in lower case, and a sport
-	# outside every family split into its words (HighIntensityIntervalTraining
-	# reads as high intensity interval training)
+	# a sport named in a sentence. A family head, and every strength
+	# spelling, reads in the plain words every CLI table uses for the same
+	# sessions (core.Sports.plain_name); any other spelling is a sport type
+	# a pace curve keeps apart from its family, so it reads as its own
+	# words (TrailRun is trail run, beside running)
 	sport_word : Str -> Str
-	sport_word = |fam|
-		if (fam == "Run") "running"
-		else if (fam == "Ride") "cycling"
-		else if (fam == "Rowing") "rowing"
-		else if (fam == "Swim") "swimming"
-		else if (fam == "Walk") "walking"
-		else if (List.contains(Sports.family("strength"), fam)) "strength"
-		else Str.from_utf8_lossy(List.join(List.map_with_index(Str.to_utf8(fam), |b, i| if (b >= 65 and b <= 90) (if (i == 0) [b + 32] else [32, b + 32]) else [b])))
+	sport_word = |s|
+		if (Sports.canonical(s) == s or Sports.canonical(s) == Db.strength_head) Sports.plain_name(s) else Sports.words_of(s)
 
 	# the sport a page is about, as its heading, cards and legend name it, in
 	# plain words on every page, with a trend or without

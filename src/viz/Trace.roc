@@ -503,7 +503,7 @@ Trace :: [].{
 expect Trace.strength_session("WeightTraining") and Trace.strength_session("Workout")
 expect !Trace.strength_session("Ride") and !Trace.strength_session("Yoga")
 expect Trace.set_line(Metric, { exercise: "Incline Barbell Bench Press", sets: 1, reps: 8, kg: 54.4, hold_s: 0 }) == "Incline Barbell Bench Press  1x8 @ 54.4 kg"
-expect Trace.set_line(Imperial, { exercise: "Curl", sets: 3, reps: 0, kg: 9.0718474, hold_s: 60 }) == "Curl  3x60s hold @ 20.0 lb"
+expect Trace.set_line(Imperial, { exercise: "Curl", sets: 3, reps: 0, kg: 9.0718474, hold_s: 60 }) == "Curl  3x60s hold @ 20 lb"
 expect Trace.set_line(Metric, { exercise: "Push Up", sets: 3, reps: 12, kg: 0.0, hold_s: 0 }) == "Push Up  3x12"
 expect Trace.no_sets_note(Bool.True) == "no sets read - the description holds text no adapter parsed"
 expect Trace.no_sets_note(Bool.False) == "no sets logged"
