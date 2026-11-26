@@ -67,19 +67,24 @@ ReportHealth :: [].{
 		if (Output.json_mode!({}))
 			Output.emit_ok!({ all_time, ytd, ytd_year: year })
 		else {
-			to_table = |rows|
+			# one row per sport as the athlete names it (Render.by_plain_name),
+			# busiest first; the JSON keeps Strava's own sport_type rows
+			to_table = |rows| {
+				folded = Render.by_plain_name(rows, |r| r.sport, |a, b| { sport: a.sport, sessions: a.sessions + b.sessions, hours: a.hours + b.hours, km: a.km + b.km })
+				ordered = List.sort_with(folded, |a, b| if (a.row.sessions > b.row.sessions) Before else if (a.row.sessions < b.row.sessions) After else Same)
 				Render.render_table(
 					["sport", "sessions", "time", "distance"],
 					List.map(
-						rows,
-						|r| [
-							r.sport,
-							(r.sessions).to_str(),
-							"${Render.fmt0(r.hours)}h",
-							(if (r.km >= 1.0) "${Render.fmt0(Render.dist_value(units, r.km * 1000.0))} ${Render.dist_unit(units)}" else "-"),
+						ordered,
+						|e| [
+							e.name,
+							(e.row.sessions).to_str(),
+							"${Render.fmt0(e.row.hours)}h",
+							(if (e.row.km >= 1.0) "${Render.fmt0(Render.dist_value(units, e.row.km * 1000.0))} ${Render.dist_unit(units)}" else "-"),
 						],
 					),
 				)
+			}
 			# an empty total is a sentence, never a header row over nothing: no
 			# activity at all is the unfinished first run, and a year with none
 			# yet waits for its first session
@@ -140,7 +145,10 @@ ReportHealth :: [].{
 				# decode from the stored NULL (AGENTS.md), so it says whether a heart rate
 				# was recorded, not whether one can be used.
 				\\       COALESCE(SUM(CASE WHEN ${Metrics.usable_hr_sql("a.avg_hr", "COALESCE(m.z1_s,0)+COALESCE(m.z2_s,0)+COALESCE(m.z3_s,0)+COALESCE(m.z4_s,0)+COALESCE(m.z5_s,0)")} THEN 1 ELSE 0 END), 0) AS with_hr,
-				\\       COALESCE(SUM(CASE WHEN COALESCE(a.avg_watts, a.weighted_avg_watts, 0) > 0 THEN 1 ELSE 0 END), 0) AS with_power,
+				\\       -- power counts when it was measured (core Sports.measured_watts_sql): an
+				\\       -- estimate is Strava's model of speed and grade, which no curve or load reads
+				\\       COALESCE(SUM(CASE WHEN COALESCE(a.avg_watts, a.weighted_avg_watts, 0) > 0 AND ${Sports.measured_watts_sql("a.device_watts")} THEN 1 ELSE 0 END), 0) AS with_power,
+				\\       COALESCE(SUM(CASE WHEN COALESCE(a.avg_watts, a.weighted_avg_watts, 0) > 0 AND NOT (${Sports.measured_watts_sql("a.device_watts")}) THEN 1 ELSE 0 END), 0) AS with_estimated_power,
 				\\       COALESCE(SUM(CASE WHEN s.activity_id IS NOT NULL AND s.raw_json <> '{}' THEN 1 ELSE 0 END), 0) AS with_streams,
 				\\       COALESCE(SUM(CASE WHEN m.activity_id IS NULL THEN 1 ELSE 0 END), 0) AS unanalyzed,
 				\\       COALESCE(SUM(CASE WHEN COALESCE(m.tss, 0) = 0 AND m.activity_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS zero_load,
@@ -160,12 +168,13 @@ ReportHealth :: [].{
 				total = Sql.i64("total")(cols)(stmt)?
 				with_hr = Sql.i64("with_hr")(cols)(stmt)?
 				with_power = Sql.i64("with_power")(cols)(stmt)?
+				with_estimated_power = Sql.i64("with_estimated_power")(cols)(stmt)?
 				with_streams = Sql.i64("with_streams")(cols)(stmt)?
 				unanalyzed = Sql.i64("unanalyzed")(cols)(stmt)?
 				zero_load = Sql.i64("zero_load")(cols)(stmt)?
 				undateable = Sql.i64("undateable")(cols)(stmt)?
 				unrankable = Sql.i64("unrankable")(cols)(stmt)?
-				Ok({ total, with_hr, with_power, with_streams, unanalyzed, zero_load, undateable, unrankable })
+				Ok({ total, with_hr, with_power, with_estimated_power, with_streams, unanalyzed, zero_load, undateable, unrankable })
 			},
 		})?
 		models = Sql.query_many!({
@@ -347,6 +356,7 @@ ReportHealth :: [].{
 			activities: cov.total,
 			with_hr: cov.with_hr,
 			with_power: cov.with_power,
+			with_estimated_power: cov.with_estimated_power,
 			with_streams: cov.with_streams,
 			unanalyzed: cov.unanalyzed,
 			zero_load: cov.zero_load,
@@ -453,7 +463,8 @@ ReportHealth :: [].{
 							"",
 							"  activities: ${(p.activities).to_str()}",
 							"    with heart rate: ${(p.with_hr).to_str()}",
-							"    with power: ${(p.with_power).to_str()}",
+							"    with power from a power meter: ${(p.with_power).to_str()}",
+							"    ${Sports.estimated_power_only}: ${(p.with_estimated_power).to_str()}",
 							"    with streams: ${(p.with_streams).to_str()}",
 							"    rated (session-RPE): ${(p.rated).to_str()}",
 							"",
@@ -1172,6 +1183,15 @@ ReportHealth :: [].{
 			bindings: List.concat([{ name: ":cutoff", value: String(cutoff) }], sf.binds),
 			row: |cols| |stmt| durability_cells(cols, stmt),
 		})?
+		# sessions in the same window and family whose only watts are Strava's
+		# estimate: no curve point comes from them, and the screen says so
+		# rather than "no power data" when they are all the window holds
+		estimated_sessions = Sql.query!({
+			path: Path.utf8(path),
+			query: "SELECT COUNT(*) AS n FROM activities a WHERE a.start_local >= :cutoff AND COALESCE(a.avg_watts, a.weighted_avg_watts, 0) > 0 AND NOT (${Sports.measured_watts_sql("a.device_watts")})${sf.frag}",
+			bindings: List.concat([{ name: ":cutoff", value: String(cutoff) }], sf.binds),
+			row: Sql.i64("n"),
+		})?
 		fresh_w = |dur_s| if (dur_s == 300) r.d300 else r.d1200
 		durability = List.map(
 			durability_cells_list(after, Metrics.durability_kj),
@@ -1181,8 +1201,8 @@ ReportHealth :: [].{
 			},
 		)
 		Output.out!(
-			{ window_days: days, sport, points, cp: cpfit.cp, w_prime: cpfit.w_prime, fit_r2: cpfit.r2, fit_points: cpfit.points, test_known, test_value: test.value, test_kind: if (test_known) test.kind else "", test_date: if (test_known) test.date else "", ftp_w: ftp, ftp_source, durability },
-			|p| Render.power_curve_screen({ window_days: p.window_days, sport: p.sport, points: p.points, cp: p.cp, w_prime: p.w_prime, fit_r2: p.fit_r2, fit_points: p.fit_points }),
+			{ window_days: days, sport, points, cp: cpfit.cp, w_prime: cpfit.w_prime, fit_r2: cpfit.r2, fit_points: cpfit.points, test_known, test_value: test.value, test_kind: if (test_known) test.kind else "", test_date: if (test_known) test.date else "", ftp_w: ftp, ftp_source, durability, estimated_sessions },
+			|p| Render.power_curve_screen({ window_days: p.window_days, sport: p.sport, points: p.points, cp: p.cp, w_prime: p.w_prime, fit_r2: p.fit_r2, fit_points: p.fit_points, estimated_sessions: p.estimated_sessions }),
 		)
 	}
 

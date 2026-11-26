@@ -3,6 +3,8 @@
 # The engine steps it once per day to build daily_load; the window reads the
 # weekly hold level off it. One definition, because a second copy of a time
 # constant is how two surfaces disagree about what a week of training did.
+import Fmt
+
 Load :: [].{
 	# One day's step of the fitness/fatigue/form model:
 	#   CTL (fitness) = 42-day EWMA of daily load; ATL (fatigue) = 7-day EWMA.
@@ -174,4 +176,73 @@ Load :: [].{
 			and gained > 0.0 and gained <= gain_bound and gained > gain_bound - 0.00001
 			and List.all(days7, |i| (walk(c, on_day(i, hold(c, 7))) - c) / c >= 0.0 - lose_bound - 0.000000001 and (walk(c, on_day(i, hold(c, 7))) - c) / c <= gain_bound + 0.000000001)
 	}
+
+	# ── reading form aloud ────────────────────────────────────────────────
+	# The bands a form (TSB) value falls in, inclusive at the fatigued edges:
+	# -15 is already high fatigue, -5 still building, 5 already fresh, 15
+	# already very fresh.
+	FormBand : [HighFatigue, FatigueBuilding, Balanced, Fresh, VeryFresh]
+
+	form_band : F64 -> FormBand
+	form_band = |tsb|
+		if tsb <= -15.0 {
+			HighFatigue
+		} else if tsb <= -5.0 {
+			FatigueBuilding
+		} else if tsb < 5.0 {
+			Balanced
+		} else if tsb < 15.0 {
+			Fresh
+		} else {
+			VeryFresh
+		}
+
+	# the band said in words: one set, read by the CLI's verdict line and
+	# the window's form chip alike
+	form_label : F64 -> Str
+	form_label = |tsb|
+		match form_band(tsb) {
+			HighFatigue => "high modeled fatigue"
+			FatigueBuilding => "modeled fatigue building"
+			Balanced => "balanced"
+			Fresh => "fresh"
+			VeryFresh => "very fresh"
+		}
+
+	# what a very fresh form also says: the load has been light, so fitness
+	# is the thing at risk. Empty for every other band.
+	form_caveat : F64 -> Str
+	form_caveat = |tsb|
+		match form_band(tsb) {
+			VeryFresh => " — load has been light lately"
+			_ => ""
+		}
+
+	expect form_band(-15.0) == HighFatigue and form_band(-14.9) == FatigueBuilding and form_band(-5.0) == FatigueBuilding
+	expect form_band(-4.9) == Balanced and form_band(4.9) == Balanced and form_band(5.0) == Fresh and form_band(14.9) == Fresh and form_band(15.0) == VeryFresh
+	expect form_label(-18.3) == "high modeled fatigue" and form_label(-14.2) == "modeled fatigue building" and form_label(20.0) == "very fresh"
+	expect form_caveat(20.0) == " — load has been light lately" and form_caveat(-18.3) == ""
+
+	# A projected day's fitness and form, named by the date they are for, so
+	# two surfaces showing the same date show the same text.
+	projected_on : Str, F64, F64 -> Str
+	projected_on = |date, ctl, tsb| "${date}: fitness ${Fmt.tenths((ctl * 10.0).round_to_i64_try().ok_or(0))}, form ${Fmt.tenths((tsb * 10.0).round_to_i64_try().ok_or(0))}"
+
+	expect projected_on("2026-12-15", 54.94, 1.26) == "2026-12-15: fitness 54.9, form 1.3"
+	expect projected_on("2027-06-26", 0.6, -0.04) == "2027-06-26: fitness 0.6, form 0.0"
+
+	# The span a fitness change is measured over, named: the CLI's rolling
+	# window counts back from today, the window's weekly bars run Monday to
+	# Sunday, and the two are different numbers.
+	last_days : I64 -> Str
+	last_days = |n| "in the last ${n.to_str()} days"
+
+	# a calendar week by its Monday's month and day, "so far" while it runs
+	week_span : Str, Bool -> Str
+	week_span = |monday, running| {
+		md = Str.from_utf8_lossy(List.drop_first(Str.to_utf8(monday), 5))
+		if (running) "since Monday ${md}" else "in the week of ${md}"
+	}
+
+	expect last_days(7) == "in the last 7 days" and week_span("2026-11-23", Bool.True) == "since Monday 11-23" and week_span("2026-11-16", Bool.False) == "in the week of 11-16"
 }

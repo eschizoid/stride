@@ -34,7 +34,7 @@ ReportStrength :: [].{
 	strength! : {} => Try({}, _)
 	strength! = |{}| {
 		path = Db.open_db!({})?
-		units = Db.units!(path)?
+		units = Db.mass_units!(path)?
 		# per (exercise, day): the heaviest weight one rep moved, and the
 		# day's summed kg·reps for that exercise. Two aggregates rather than
 		# "the top set", because when the weight drops and the reps rise the
@@ -259,7 +259,7 @@ ReportStrength :: [].{
 				p.monthly,
 				|m| [
 					m.month,
-					if (m.tonnage_known) Units.mass_label(units, m.kg) else "-",
+					if (m.tonnage_known) Units.tonnage_label(units, m.kg) else "-",
 					"${(m.covered).to_str()}/${(m.total).to_str()}",
 				],
 			)

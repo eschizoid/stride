@@ -16,10 +16,15 @@
     "test_date",
     "ftp_w",
     "ftp_source",
-    "durability"
+    "durability",
+    "estimated_sessions"
   ],
   "additionalKeys": false,
   "properties": {
+    "estimated_sessions": {
+      "type": "integer",
+      "description": "Sessions in the window and family whose only watts are Strava's estimate (device_watts 0). None of them gives a curve point; when points is empty and this is above 0, the window holds estimated power only (no power meter), not an absence of rides."
+    },
     "cp": {
       "type": "number"
     },

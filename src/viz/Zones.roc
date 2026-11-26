@@ -1,6 +1,7 @@
 import rr.Color
 import rr.Draw
 import Chrome
+import core.Fmt
 import Db
 import Labels
 import Scene
@@ -41,25 +42,24 @@ Zones :: [].{
 		else Theme.alarm_c
 
 	# the card's reading of a week: its easy share against the rest of its
-	# split, whole percents with the easy share floored as the verdict
-	# floors it, so the two sum to 100; a dash for a week with no polarized
-	# time
+	# split, whole percents through core Fmt.shares, the rule `stride
+	# review` and `stride summary` print the same split with: the easy share
+	# floored as the verdict floors it, so 79.9% never reads 80 in the color
+	# that means short of 80, and the two sum to 100; a dash for a week with
+	# no polarized time
 	tile : Db.ZoneWeek -> { value : Str, label : Str, color : Color.Rgba }
 	tile = |w| {
 		itot = split_s(w)
 		if itot <= 0 {
 			{ value: "-", label: "no polarized time", color: Theme.ink_muted }
 		} else {
-			e = w.easy * 100 // itot
+			e = (Fmt.shares(w.easy, w.moderate, w.hard)).easy
 			{ value: "${I64.to_str(e)}/${I64.to_str(100 - e)}", label: "easy / harder, wk of ${Weeks.week_label(w.wk)}", color: verdict(w.easy, itot, w.days) }
 		}
 	}
 
 	hours : I64 -> Str
-	hours = |secs| {
-		h10 = secs * 10 // 3600
-		"${Db.grouped(h10 // 10)}.${I64.to_str(h10 % 10)} h"
-	}
+	hours = Weeks.hours
 
 	# a week's heart-rate zone hours, z1 to z5: the detail the bar leaves out
 	hr_line : Db.ZoneWeek -> Str
@@ -420,5 +420,14 @@ expect {
 # week holds none
 expect {
 	w = (List.first(Zones.real_weeks)) ?? { wk: "", days: 7, z1: 0, z2: 0, z3: 0, z4: 0, z5: 0, easy: 0, moderate: 0, hard: 0 }
-	Zones.hr_line(w) == "hr zones z1-z5: 1.8  2.9  0.5  0.2  0.3 h" and Zones.hr_line({ ..w, z1: 0, z2: 0, z3: 0, z4: 0, z5: 0 }) == "no heart-rate zone time"
+	Zones.hr_line(w) == "hr zones z1-z5: 1.8  3.0  0.5  0.2  0.3 h" and Zones.hr_line({ ..w, z1: 0, z2: 0, z3: 0, z4: 0, z5: 0 }) == "no heart-rate zone time"
+}
+
+# a week 81.5% easy, 16.5% moderate and 2% hard reads 81/19 on the card and
+# easy 81% in the header line, the shares `stride review` prints for the
+# same week ("easy 81%  moderate 17%  hard 2%", pinned in the e2e suite);
+# its 17244 s read 4.8 h, the nearest tenth, as the CLI rounds hours
+expect {
+	w = { wk: "2026-11-16", days: 7, z1: 0, z2: 0, z3: 0, z4: 0, z5: 0, easy: 14054, moderate: 2845, hard: 345 }
+	(Zones.tile(w)).value == "81/19" and Weeks.week_line("2026-11-16", [w], []) == "wk of 2026-11-16   4.8 h, easy 81%"
 }

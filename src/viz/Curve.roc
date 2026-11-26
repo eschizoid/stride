@@ -760,12 +760,15 @@ Curve :: [].{
 		}
 
 	# what the view says when the chosen curve has no data on record: the
-	# choice is kept, and the note says which kind of effort is missing
-	empty_note : Str -> Str
-	empty_note = |curve|
+	# choice is kept, and the note says which kind of effort is missing. A
+	# power family whose sessions carry only Strava's estimated watts says
+	# that instead, in the words `doctor` and `power-curve` use (core
+	# Sports.estimated_power_only): it has rides, just no power meter.
+	empty_note : Str, List(Str) -> Str
+	empty_note = |curve, estimated|
 		match Bus.curve_key(curve) {
 			Pace(sp) => "no ${Career.sport_word(sp)} pace on record yet"
-			Power(fam) => "no ${Career.sport_word(fam)} power on record yet"
+			Power(fam) => if (List.contains(estimated, fam)) "${Career.sport_word(fam)}: ${Sports.estimated_power_only}" else "no ${Career.sport_word(fam)} power on record yet"
 		}
 
 	# the line the view writes for an empty curve: the first run while no
@@ -776,8 +779,8 @@ Curve :: [].{
 		Chrome.empty_line(
 			model,
 			match Bus.curve_key(model.curve_family) {
-				Pace(_) => "${empty_note(model.curve_family)} - a session recorded with its distance fills it"
-				Power(_) => "${empty_note(model.curve_family)} - a session recorded with a power meter fills it"
+				Pace(_) => "${empty_note(model.curve_family, model.est_power)} - a session recorded with its distance fills it"
+				Power(_) => "${empty_note(model.curve_family, model.est_power)} - a session recorded with a power meter fills it"
 			},
 		)
 
@@ -1122,8 +1125,12 @@ expect Curve.chip_bottom - Curve.chip_top == 22.0
 # every family split into its words, on the title, the empty note and an
 # empty row
 expect Curve.title_text("Ride") == "your best cycling power" and Curve.title_text("Rowing") == "your best rowing power" and Curve.title_text("pace:TrailRun") == "your best trail run pace" and Curve.title_text("StandUpPaddling") == "your best stand up paddling power"
-expect Curve.empty_note("Rowing") == "no rowing power on record yet" and Curve.empty_note("Ride") == "no cycling power on record yet" and Curve.empty_note("pace:Swim") == "no swimming pace on record yet" and Curve.empty_note("StandUpPaddling") == "no stand up paddling power on record yet"
-expect Curve.chip_label("StandUpPaddling") == "stand up paddling" and Curve.chip_label("pace:Hike") == "hike" and Curve.chip_label("pace:Rowing") == "row" and Curve.chip_label("pace:Run") == "run"
+expect Curve.empty_note("Rowing", []) == "no rowing power on record yet" and Curve.empty_note("Ride", []) == "no cycling power on record yet" and Curve.empty_note("pace:Swim", []) == "no swimming pace on record yet" and Curve.empty_note("StandUpPaddling", []) == "no stand up paddling power on record yet"
+# a ride family whose only watts are estimated reads the words `stride
+# doctor` and `stride power-curve` print for the same sessions (pinned in
+# the e2e suite), never "no power"
+expect Curve.empty_note("Ride", ["Ride"]) == "cycling: estimated power only (no power meter)" and Curve.empty_note("Rowing", ["Ride"]) == "no rowing power on record yet"
+expect Curve.chip_label("StandUpPaddling") == "stand up paddling" and Curve.chip_label("pace:Hike") == "hiking" and Curve.chip_label("pace:Rowing") == "row" and Curve.chip_label("pace:Run") == "run"
 expect Curve.empty_text("StandUpPaddling", 90, { secs: 3600, now: 0, prev: 0, ever: Bool.False, i: 3 }) == "no 60-minute session yet"
 # a chip widens to hold a long label and still ends 14 px short of the
 # range chips; a click anywhere on it names its curve

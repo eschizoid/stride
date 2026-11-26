@@ -2,6 +2,7 @@ import rr.Color
 import rr.Draw
 import rr.Text
 import Chrome
+import core.Load
 import Db
 import Hud
 import Labels
@@ -139,17 +140,18 @@ Board :: [].{
 		if (List.len(l14) <= 1) { lines: l14, size: 14.0 } else { lines: ev_lines(font, name, 12.0), size: 12.0 }
 	}
 
-	# the board's projection, as two tile lines: where it ends (the event
-	# when the written plan reaches it, else the plan's last day) with the
-	# projected fitness and form, then how many of the window's sessions
-	# carry a load the engine could price - the rest add none, so this count
-	# is how blind the projection is
+	# the board's projection, as two tile lines: the day it ends on and the
+	# projected fitness and form there, in the text `stride events` prints
+	# for the same day and numbers (core Load.projected_on), then whether
+	# that day is the event or the written plan's last day, with how many
+	# of the window's sessions carry a load the engine could price - the
+	# rest add none, so this count is how blind the projection is
 	proj_lines : Str, Str, Db.Projection -> List(Str)
 	proj_lines = |horizon, event_day, p| {
 		mmdd = Str.from_utf8_lossy(List.drop_first(Str.to_utf8(horizon), 5))
-		head = if (horizon == event_day) "at event" else "plan to ${mmdd}"
+		which = if (horizon == event_day) "event day" else "plan's last day"
 		if (!p.ok or horizon == "") []
-		else ["${head}: fit ${Db.fmt_f(p.ctl)}, form ${Db.fmt_f(p.tsb)}", "${I64.to_str(p.projected)} of ${I64.to_str(p.considered)} sessions carry load"]
+		else [Load.projected_on(mmdd, p.ctl, p.tsb), "${which}, ${I64.to_str(p.projected)} of ${I64.to_str(p.considered)} priced"]
 	}
 
 	clamp_idx : F32, U64 -> U64
@@ -482,10 +484,11 @@ Board :: [].{
 	range_chips = |model| List.map_with_index(model.subs, |s, i| { box: { x: model.win.w - 420.0 + U64.to_f32(i) * 54.0, y: 64.0, w: 46.0, h: 22.0 }, on: s.r == model.range, r: s.r, p: s.chip })
 
 	# the form verdict, worn as a status chip: the same TSB the teal line
-	# ends on, said in a word - cooked / building / steady / primed /
-	# coasting - so the board answers "how am I?" before any axis does
+	# ends on, said in the CLI summary's words (core.Load), so the board
+	# answers "how am I?" before any axis does. Wide enough for the longest
+	# of them, "modeled fatigue building", beside the color dot.
 	verdict_box : F32 -> Labels.Rect
-	verdict_box = |win_w| { x: win_w - 40.0 - 92.0, y: 64.0, w: 92.0, h: 22.0 }
+	verdict_box = |win_w| { x: win_w - 40.0 - 216.0, y: 64.0, w: 216.0, h: 22.0 }
 
 	# the zero rule's caption spots: along the rule just above it, at its
 	# right end, its left end, then stepping inward from the right; then
@@ -643,7 +646,7 @@ Board :: [].{
 		verdict = match List.last(model.data) {
 			Ok(lp) => {
 				band = Hud.form_band(lp.tsb)
-				[fix(Scene.data(band.label, 12.0, band.c), win_w - 106.0, 69.0, Left, verdict_box(win_w))]
+				[fix(Scene.data(band.label, 12.0, band.c), (verdict_box(win_w)).x + 26.0, 69.0, Left, verdict_box(win_w))]
 			}
 			Err(_) => []
 		}
@@ -957,10 +960,14 @@ expect Str.ends_with(Str.join_with(Board.ev_lines(Text.font_stub, "one two three
 
 # the projection names where it ends - the event only when the plan reaches
 # it - and how many of the window's sessions carry load
-expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.True, ctl: 46.0, tsb: 14.3, considered: 4, projected: 1, days: [] }) == ["plan to 11-08: fit 46.0, form 14.3", "1 of 4 sessions carry load"]
-expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 40, projected: 12, days: [] }) == ["at event: fit 52.5, form -3.2", "12 of 40 sessions carry load"]
+expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.True, ctl: 46.0, tsb: 14.3, considered: 4, projected: 1, days: [] }) == ["11-08: fitness 46.0, form 14.3", "plan's last day, 1 of 4 priced"]
+expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 40, projected: 12, days: [] }) == ["06-26: fitness 52.5, form -3.2", "event day, 12 of 40 priced"]
 expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0, days: [] }) == []
 expect Board.proj_lines("", "", { ok: Bool.True, ctl: 1.0, tsb: 1.0, considered: 1, projected: 1, days: [] }) == []
+# the plan ending 2026-12-15 short of a June event reads the numbers `stride
+# project 2026-12-15` returns, in the text `stride events` prints beside
+# "plan's last day 2026-12-15" for them (pinned in the e2e suite)
+expect Board.proj_lines("2026-12-15", "2027-06-26", { ok: Bool.True, ctl: 54.94, tsb: 1.26, considered: 20, projected: 16, days: [] }) == ["12-15: fitness 54.9, form 1.3", "plan's last day, 16 of 20 priced"]
 
 # the zero rule's caption keeps the right end of the rule unless a series
 # crosses it there and the left end is clear; a series along the whole rule

@@ -34,7 +34,8 @@
           "tsb",
           "planned_in_window",
           "sessions_projected",
-          "unprojected"
+          "unprojected",
+          "plan_end"
         ],
         "properties": {
           "id": {
@@ -66,6 +67,35 @@
           "sessions_projected": {
             "type": "integer",
             "description": "How many of those carried a target the projection could price — the sessions whose load the projection actually contains. The gap to planned_in_window is the projection's stated blindness, and unprojected names each unpriced session and why."
+          },
+          "plan_end": {
+            "type": "object",
+            "description": "The written plan's last day before the event, projected the same way, when the plan stops short of the event: past that day the event-day numbers above are decay alone. It is the horizon the window's event card projects to, and `stride project <date>` returns the same numbers for it. known false (date empty, numbers 0) when the plan reaches the event day or nothing is planned ahead.",
+            "additionalKeys": false,
+            "required": [
+              "known",
+              "date",
+              "ctl",
+              "atl",
+              "tsb"
+            ],
+            "properties": {
+              "known": {
+                "type": "boolean"
+              },
+              "date": {
+                "type": "string"
+              },
+              "ctl": {
+                "type": "number"
+              },
+              "atl": {
+                "type": "number"
+              },
+              "tsb": {
+                "type": "number"
+              }
+            }
           },
           "unprojected": {
             "type": "array",

@@ -145,6 +145,8 @@ Ui :: [].{
 		# the curves the athlete has data for: the power families and the pace
 		# keys the chips offer
 		curve_keys : Db.CurveKeys,
+		# the power families whose only watts are Strava's estimate
+		est_power : List(Str),
 		# what the power tab's top line reads: the window's fit, a marked test
 		# in force, and the engine's newest threshold for the curve
 		curve_info : Db.CurveInfo,
