@@ -1012,6 +1012,14 @@ Career :: [].{
 	hint_text : Str
 	hint_text = "click to settle   F  sport   TAB  form board   R  reload   S  screenshot   ESC  quit"
 
+	# a career with no month names the command that fills it, and R loads
+	# what that command wrote; one month is a history too short for a line
+	empty_text : Str
+	empty_text = "no history yet - run stride setup in a terminal to connect Strava, then press R"
+
+	one_month_text : Str
+	one_month_text = "one month on record so far - the chart draws from the second"
+
 	texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
 	texts = |model, measure| {
 		win_w = model.win.w
@@ -1042,7 +1050,14 @@ Career :: [].{
 			fix(Scene.data(hint_text, 13.0, ink_faint), 36.0, win_h - 30.0, Left, panel),
 		]
 		g = geom(model)
-		body = if (g.n < 2) [fix(Scene.data("no history yet - stride sync fills it", 14.0, ink_muted), 36.0, 130.0, Left, panel)] else chart_texts(model, g, measure)
+		body =
+			if g.n == 0 {
+				[fix(Scene.data(empty_text, 14.0, ink_muted), 36.0, 130.0, Left, panel)]
+			} else if g.n < 2 {
+				[fix(Scene.data(one_month_text, 14.0, ink_muted), 36.0, 130.0, Left, panel)]
+			} else {
+				chart_texts(model, g, measure)
+			}
 		List.join([head, chips, sheet_texts, body])
 	}
 
