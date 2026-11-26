@@ -551,7 +551,6 @@ Gate :: [].{
 			heat_title: p,
 			heat_hint: p,
 			zone_weeks: [],
-			zone_overrides: [],
 			career_spines: [],
 			career_tests: [],
 			career_sports: [],
@@ -1280,13 +1279,12 @@ Gate :: [].{
 	week_starts = ["2026-08-24", "2026-08-31", "2026-09-07", "2026-09-14", "2026-09-21", "2026-09-28", "2026-10-05", "2026-10-12", "2026-10-19", "2026-10-26", "2026-11-02", "2026-11-09"]
 
 	# a week's share of the athlete's usual volume: the first week the
-	# biggest, so its cap or chip rises to the scale's top value, a rest
-	# week in the middle and the running week partial
+	# biggest, a rest week in the middle and the running week partial
 	week_share : U64 -> I64
 	week_share = |i| (List.get([140, 90, 100, 110, 60, 0, 105, 115, 120, 95, 100, 40], i)) ?? 100
 
 	# a lifting week (zone time and no polarized time) sits beside the
-	# empty rest week, so one fixture draws a bar with no segments and no cap
+	# empty rest week, so one fixture draws a week with no segments
 	zone_weeks_of : U64 -> List(Db.ZoneWeek)
 	zone_weeks_of = |k|
 		List.map_with_index(
@@ -1301,9 +1299,11 @@ Gate :: [].{
 			},
 		)
 
-	# each week starts from the CTL its ramp left the week before, and for
-	# every other athlete the rest week starts high enough that its hold
-	# tops the heaviest week, so its tick sets the scale
+	# each week starts from the CTL its ramp left the week before, except
+	# that the running week starts unrounded, 0.06 under, so its end and
+	# start rounded apart read a tenth more than its ramp; and for every
+	# other athlete the rest week reads a start far above its end, which
+	# only the focus line's hold reads: a bar draws the ramp
 	ramp_weeks_of : U64 -> List(Db.RampWeek)
 	ramp_weeks_of = |k|
 		List.map_with_index(
@@ -1312,10 +1312,64 @@ Gate :: [].{
 				tss = week_share(i) * (4 + U64.to_i64_wrap(k % 4))
 				ctl10 = 480 + U64.to_i64_wrap(i) * 7
 				ramp10 = (List.get([75, -12, 18, 31, 0, -19, 42, 64, 25, 8, 12, -5], i)) ?? 0
-				ctl_start = if (i == 5 and k % 2 == 1) 150.0 else I64.to_f64(ctl10 - ramp10) / 10.0
+				ctl_start = if (i == 5 and k % 2 == 1) 150.0 else if (i == 11) I64.to_f64(ctl10 - ramp10) / 10.0 - 0.06 else I64.to_f64(ctl10 - ramp10) / 10.0
 				{ wk, days: if (i == 11) 4 else 7, tss, ctl10, ramp10, ctl_start }
 			},
 		)
+
+	# the load mode's edges: two weeks before the athlete's history, with no
+	# load and no CTL yet, a first week of history that counts its whole
+	# CTL as its change, and a running week two days in that has lost
+	# fitness so far
+	edge_ramp : List(Db.RampWeek) -> List(Db.RampWeek)
+	edge_ramp = |weeks|
+		List.map_with_index(
+			weeks,
+			|w, i|
+				if i < 2 {
+					{ ..w, tss: 0, ctl10: 0, ramp10: 0, ctl_start: 0.0 }
+				} else if i == 2 {
+					{ ..w, ctl10: 113, ramp10: 0, ctl_start: 0.0 }
+				} else if i == 11 {
+					{ ..w, days: 2, ramp10: -8, ctl_start: I64.to_f64(w.ctl10 + 8) / 10.0 }
+				} else {
+					w
+				},
+		)
+
+	# the load weeks with every change turned to a gain, or to a loss, each
+	# week's start read back from its end
+	signed_ramp : List(Db.RampWeek), I64 -> List(Db.RampWeek)
+	signed_ramp = |weeks, sign| List.map(
+		weeks,
+		|w| {
+			r = sign * (if (w.ramp10 < 0) 0 - w.ramp10 else w.ramp10)
+			{ ..w, ramp10: r, ctl_start: I64.to_f64(w.ctl10 - r) / 10.0 }
+		},
+	)
+
+	# the running week two days in, in the zones mode
+	edge_zones : List(Db.ZoneWeek) -> List(Db.ZoneWeek)
+	edge_zones = |weeks| List.map_with_index(weeks, |w, i| if (i == 11) { ..w, days: 2 } else w)
+
+	# Whether a weeks scene reads every week the same way under its bar:
+	# one date and one figure centred on each column, on the date and the
+	# figure rows, nothing else on the figure row, and "so far" over each
+	# running week's column alone, its foot within 8 px over `under`, the
+	# top of what the column draws highest.
+	week_rows : List(Labels.Placed(Scene.Item)), List({ cx : F32, date : Str, under : F32, running : Bool }), F32 -> Bool
+	week_rows = |placed, cols, win_h| {
+		centred = |p, cx| (p.box.x + p.box.w / 2.0 - cx).abs() < 0.5
+		on_row = |p, y| (p.box.y - y).abs() < 0.01
+		so_far = List.keep_if(placed, |p| p.item.text == "so far")
+		figures = List.keep_if(placed, |p| on_row(p, Weeks.figure_row(win_h)))
+		!(List.is_empty(cols))
+			and List.all(cols, |c| List.count_if(placed, |p| p.item.text == c.date and centred(p, c.cx) and on_row(p, Weeks.date_row(win_h))) == 1)
+			and List.len(figures) == List.len(cols)
+			and List.all(cols, |c| List.count_if(figures, |p| centred(p, c.cx)) == 1)
+			and List.len(so_far) == List.count_if(cols, |c| c.running)
+			and List.all(so_far, |p| List.any(cols, |c| c.running and centred(p, c.cx) and p.box.y + p.box.h <= c.under and p.box.y + p.box.h >= c.under - 8.0))
+	}
 
 	# ── the lifts tab's fixtures ────────────────────────────────────────────
 	# lifts, more rows than the widest window holds, each trained on several
@@ -1415,8 +1469,11 @@ Gate :: [].{
 							mode = if (view == 6) "zones" else "load"
 							[
 								{ name: "${a.name} ${mode} at ${size_name(sz)}", model: base },
-								{ name: "${a.name} ${mode} on a picked week with per-sport zones at ${size_name(sz)}", model: { ..base, week_cursor: "2026-11-09", zone_overrides: athlete_heads(a) } },
+								{ name: "${a.name} ${mode} on a picked week at ${size_name(sz)}", model: { ..base, week_cursor: "2026-11-09" } },
 								{ name: "${a.name} ${mode} with no history at ${size_name(sz)}", model: { ..base, zone_weeks: [], ramp_weeks: [] } },
+								{ name: "${a.name} ${mode} at its edges at ${size_name(sz)}", model: { ..base, zone_weeks: edge_zones(base.zone_weeks), ramp_weeks: edge_ramp(base.ramp_weeks) } },
+								{ name: "${a.name} ${mode} with gains alone at ${size_name(sz)}", model: { ..base, ramp_weeks: signed_ramp(base.ramp_weeks, 1) } },
+								{ name: "${a.name} ${mode} with losses alone at ${size_name(sz)}", model: { ..base, ramp_weeks: signed_ramp(base.ramp_weeks, -1) } },
 							]
 						},
 					),
@@ -1558,41 +1615,113 @@ expect Gate.wording([{ key: "'62 min  85 tss'", box: { x: 0.0, y: 0.0, w: 1.0, h
 expect Gate.failures(|m| Gate.judge(Map.owned(m, Gate.measure), Map.marks(m, Gate.measure)), Gate.map_models) == []
 
 # the weeks tab's gates: zones and load for every athlete at every size,
-# with no week picked, on a picked week with per-sport zones, and with no
-# history, in the brand faces and in the built-in face
+# with no week picked, on a picked week, with no history, and at the load
+# mode's edges, in the brand faces and in the built-in face
 expect Gate.failures(|m| Gate.judge(Zones.owned(m, Gate.measure), Zones.marks(m, Gate.measure)), Gate.weeks_models(6)) == []
 expect Gate.failures(|m| Gate.judge(Zones.owned(m, Gate.builtin_measure), Zones.marks(m, Gate.builtin_measure)), Gate.weeks_models(6)) == []
-expect Gate.failures(|m| Gate.judge(Ramp.owned(m, Gate.measure), Ramp.marks(m)), Gate.weeks_models(7)) == []
-expect Gate.failures(|m| Gate.judge(Ramp.owned(m, Gate.builtin_measure), Ramp.marks(m)), Gate.weeks_models(7)) == []
+expect Gate.failures(|m| Gate.judge(Ramp.owned(m, Gate.measure), Ramp.marks(m, Gate.measure)), Gate.weeks_models(7)) == []
+expect Gate.failures(|m| Gate.judge(Ramp.owned(m, Gate.builtin_measure), Ramp.marks(m, Gate.builtin_measure)), Gate.weeks_models(7)) == []
 
-# the lifting week draws its bar and neither a cap nor an 80/20 mark, while
-# a polarized week draws both, wherever the chart draws
+# wherever the zones chart draws, every week with polarized time is a share
+# bar the plot's full height, the lifting week keeps its stub, and one
+# 80/20 line crosses them
 expect List.all(
 	List.keep_if(Gate.weeks_models(6), |e| !(List.is_empty(e.model.zone_weeks))),
 	|e| {
+		bs = Zones.bars(e.model)
 		ks = List.map(Zones.marks(e.model, Gate.measure), |m| m.key)
-		List.contains(ks, "the 2026-09-21 bar")
-			and !(List.contains(ks, "the 2026-09-21 cap"))
-			and !(List.contains(ks, "the 2026-09-21 80/20 mark"))
-			and List.contains(ks, "the 2026-09-14 cap")
-			and List.contains(ks, "the 2026-09-14 80/20 mark")
+		List.all(bs, |b| if (Zones.split_s(b.w) > 0) ((b.box.h - Zones.plot_h(e.model.win.h)).abs() < 0.01) else (b.box.h - 3.0).abs() < 0.01)
+			and List.any(bs, |b| b.w.wk == "2026-09-21" and Zones.split_s(b.w) == 0)
+			and List.count_if(ks, |k| k == "the 80/20 line") == 1
 	},
 )
 
-# every week the load fixtures chart wears its hold tick, the rest week's
-# included, and on the athletes whose rest week's hold tops the heaviest
-# week that tick sits at the plot's top
+# both modes read every week the same way under its bar, its date and
+# then its figure, and put "so far" over the running week alone: over its
+# bar in zones; in load over its chip on a gain, and over the bar's top at
+# the line on a loss
+expect List.all(
+	List.keep_if(Gate.weeks_models(6), |e| !(List.is_empty(e.model.zone_weeks))),
+	|e| Gate.week_rows(Zones.scene(e.model, Gate.measure), List.map(Zones.bars(e.model), |b| { cx: b.cx, date: Weeks.week_label(b.w.wk), under: b.box.y, running: Weeks.partial(b.w.days) }), e.model.win.h),
+)
+expect List.all(
+	List.keep_if(Gate.weeks_models(7), |e| !(List.is_empty(e.model.ramp_weeks))),
+	|e| Gate.week_rows(Ramp.scene(e.model, Gate.measure), List.map(Ramp.bars(e.model), |b| { cx: b.cx, date: Weeks.week_label(b.w.wk), under: if (Ramp.down(b)) b.box.y else (Ramp.chip_box(b)).y, running: b.drawn and b.outlined }), e.model.win.h),
+)
+
+# wherever the load chart draws, one zero line crosses it and no chip
+# touches it, and in both faces the line reads its 0 centred where it
+# crosses, its one name, "holds fitness", just over the 0 or, where the
+# scale's top crowds it, just under, both whole in the gutter and clear of
+# every bar
 expect List.all(
 	List.keep_if(Gate.weeks_models(7), |e| !(List.is_empty(e.model.ramp_weeks))),
 	|e| {
-		ks = List.map(Ramp.marks(e.model), |m| m.key)
-		List.all(Gate.week_starts, |wk| List.contains(ks, "the ${wk} hold tick"))
+		line = Ramp.line_box(e.model.win, Ramp.scale_of(e.model.ramp_weeks))
+		ly = line.y + 1.0
+		ks = List.map(Ramp.marks(e.model, Gate.measure), |m| m.key)
+		in_gutter = |p| p.box.x >= (Labels.panel(e.model.win)).x and p.box.x + p.box.w <= Weeks.plot_left - 2.0 and List.all(Ramp.drawn_bars(e.model), |b| !(Labels.intersects(p.box, b.box)))
+		named = |measure| {
+			placed = Ramp.scene(e.model, measure)
+			names = List.keep_if(placed, |p| p.item.text == Ramp.line_label)
+			zeros = List.keep_if(placed, |p| p.item.text == "0" and p.box.x + p.box.w <= Weeks.plot_left)
+			List.len(names) == 1
+				and List.len(zeros) == 1
+				and List.all(zeros, |v| in_gutter(v) and (v.box.y + v.box.h / 2.0 - ly).abs() < 1.0)
+				and List.all(names, |n| in_gutter(n) and List.all(zeros, |v| (n.box.y + n.box.h <= v.box.y and n.box.y + n.box.h >= v.box.y - 6.0) or (n.box.y >= v.box.y + v.box.h and n.box.y <= v.box.y + v.box.h + 6.0)))
+		}
+		List.count_if(ks, |k| k == "the holds-fitness line") == 1
+			and List.all(Ramp.drawn_bars(e.model), |b| !(Labels.intersects(Ramp.chip_box(b), line)))
+			and named(Gate.measure)
+			and named(Gate.builtin_measure)
 	},
 )
-expect List.any(
-	Gate.weeks_models(7),
-	|e| List.any(Ramp.bars(e.model), |b| b.w.wk == "2026-09-28" and (b.tick - Weeks.bars_top).abs() < 0.5),
+
+# wherever the load chart draws, the card's change and the newest week's
+# chip read one number, in one color
+expect List.all(
+	List.keep_if(Gate.weeks_models(7), |e| !(List.is_empty(e.model.ramp_weeks)) and Ramp.charted(e.model)),
+	|e| {
+		placed = Ramp.scene(e.model, Gate.measure)
+		last = Ramp.newest(e.model)
+		card = List.keep_if(placed, |p| p.item.size == 28.0 and p.box.x > (Weeks.card_box(e.model.win.w)).x + 100.0)
+		chips = List.keep_if(placed, |p| p.item.size == 11.0 and List.any(List.take_last(Ramp.drawn_bars(e.model), 1), |b| b.w.wk == last.wk and (p.box.x + p.box.w / 2.0 - b.cx).abs() < 0.5))
+		List.len(card) == 1 and List.all(card, |c| List.all(chips, |k| k.item.text == c.item.text and k.item.color == c.item.color) and c.item.text == Ramp.change_text(last))
+	},
 )
+
+# at the edges the weeks before history draw no bar and no chip, the first
+# week of history stands as its whole CTL, and the running week, down so
+# far, is an outline under the line; with gains alone the line sits at the
+# plot's foot and with losses alone at its head, the scale's far end
+# labelled in the gutter and its near end not
+expect {
+	pick = |tag| List.keep_if(Gate.weeks_models(7), |e| Str.contains(e.name, tag))
+	# the plot's gutter reads the line's name, its 0 and the scale's far end alone
+	ends_read = |e, far| {
+		texts = List.map(List.keep_if(Ramp.scene(e.model, Gate.measure), |p| p.box.x + p.box.w <= Weeks.plot_left and p.box.y >= Ramp.plot_top - 12.0), |p| p.item.text)
+		List.len(texts) == 3 and List.contains(texts, far(Ramp.scale_of(e.model.ramp_weeks)))
+	}
+	List.len(pick("at its edges")) > 0
+		and List.all(
+			pick("at its edges"),
+			|e| {
+				ks = List.map(Ramp.marks(e.model, Gate.measure), |m| m.key)
+				placed = Ramp.scene(e.model, Gate.measure)
+				bs = Ramp.bars(e.model)
+				ly = Ramp.line_y(e.model.win.h, Ramp.scale_of(e.model.ramp_weeks))
+				pre = List.take_first(bs, 2)
+				List.all(pre, |b| !(b.drawn) and !(List.contains(ks, "the ${b.w.wk} bar")) and !(List.contains(ks, "the ${b.w.wk} chip")))
+					and List.all(pre, |b| List.count_if(placed, |p| (p.box.x + p.box.w / 2.0 - b.cx).abs() < 0.5) == 2)
+					and List.any(bs, |b| b.w.wk == "2026-09-07" and b.drawn and (ly - b.box.y - Ramp.unit(e.model.win.h, Ramp.scale_of(e.model.ramp_weeks)) * 11.3).abs() < 0.01)
+					and List.all(List.take_last(bs, 1), |b| b.drawn and b.outlined and Ramp.down(b) and ((b.box.y - ly).abs() < 0.01 or (b.box.y + 1.5 - ly).abs() < 0.01))
+			},
+		)
+		and List.len(pick("gains alone")) > 0
+		and List.all(pick("gains alone"), |e| (Ramp.line_y(e.model.win.h, Ramp.scale_of(e.model.ramp_weeks)) - (Weeks.bars_bot(e.model.win.h) - Ramp.chip_room)).abs() < 0.01 and ends_read(e, |s| "+${I64.to_str(s.hi)}"))
+		and List.len(pick("losses alone")) > 0
+		and List.all(pick("losses alone"), |e| (Ramp.line_y(e.model.win.h, Ramp.scale_of(e.model.ramp_weeks)) - (Ramp.plot_top + Ramp.chip_room)).abs() < 0.01 and ends_read(e, |s| I64.to_str(s.lo)))
+}
 
 # the lifts tab's gate: every athlete who lifts, in kilograms, and in pounds
 # with the lifts list and the session card both asked to scroll, each

@@ -38,7 +38,7 @@ Load :: [].{
 	# running counts only its elapsed days, so it is held to a partial level.
 	#
 	# The step weighs a late day above an early one and the hold weighs every
-	# day alike, so the tick can miss either way. With a = ctl_alpha and
+	# day alike, so the hold can miss either way. With a = ctl_alpha and
 	# r = 1 - a, a week's change in CTL is a times its loads weighted r^6 for
 	# the first day down to 1 for the last, less (1 - r^7) of its start. A
 	# week whose whole load lands on its first day can top its hold and still
@@ -151,7 +151,7 @@ Load :: [].{
 	# load tops its hold gained CTL and one under it lost CTL
 	expect List.all(real_weeks, |w| (w.ctl_end > w.ctl_start) == (w.total > hold(w.ctl_start, w.days)))
 
-	# the tick's miss, both ways, at its exact bound: a week's whole load on
+	# the hold's miss, both ways, at its exact bound: a week's whole load on
 	# its first day, a hair over its hold, loses close to (1 - r^7) - 7a*r^6
 	# of its starting CTL and no more; on its last day, a hair under, it gains
 	# close to 7a - (1 - r^7) and no more; and a week's load on any one day,
