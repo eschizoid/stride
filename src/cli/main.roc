@@ -93,7 +93,7 @@ help_text =
 	\\    import <zip|dir>            load a Strava account export — no API creds needed
 	\\    strength import <file|->    store strength sets from the JSON Strava's connector
 	\\                                returned (`-` reads stdin)
-	\\    analyze                     compute training metrics (TSS, zones, CTL/ATL/TSB)
+	\\    analyze                     compute training metrics (load, zones, CTL/ATL/TSB)
 	\\
 	\\WHERE DO I STAND?
 	\\    summary                     form, 7d/28d zones + polarization, derived FTP, per-sport
