@@ -1530,7 +1530,15 @@ Plan :: [].{
 			|ev| {
 				ev_days = (Metrics.date_str_to_days(ev.event_date)).ok_or(today)
 				proj = Metrics.project_plan({ ctl: base.ctl, atl: base.atl }, base_days, ev_days, opens, inp)
-				{ id: ev.id, event_date: ev.event_date, name: ev.name, days_away: ev_days - today, ctl: proj.ctl, atl: proj.atl, tsb: proj.tsb, planned_in_window: proj.considered, sessions_projected: proj.projected, unprojected: proj.unprojected }
+				# the written plan's last day before the event, the horizon the
+				# window's event card projects to: past it the event-day numbers
+				# are decay alone, so the plan's own end is reported beside them
+				last_d = List.fold(opens, today, |acc, o| if (o.d > acc and o.d < ev_days) o.d else acc)
+				ends_early : Bool
+				ends_early = last_d > today and !(List.any(opens, |o| o.d >= ev_days))
+				pe = if (ends_early) Metrics.project_plan({ ctl: base.ctl, atl: base.atl }, base_days, last_d, opens, inp) else proj
+				plan_end = { known: ends_early, date: if (ends_early) Metrics.days_to_date_str(last_d) else "", ctl: if (ends_early) pe.ctl else 0.0, atl: if (ends_early) pe.atl else 0.0, tsb: if (ends_early) pe.tsb else 0.0 }
+				{ id: ev.id, event_date: ev.event_date, name: ev.name, days_away: ev_days - today, ctl: proj.ctl, atl: proj.atl, tsb: proj.tsb, planned_in_window: proj.considered, sessions_projected: proj.projected, unprojected: proj.unprojected, plan_end }
 			},
 		)
 		Output.out!({ projected_from: base.day, baseline_known: base.known, ftp_known, events: projected }, |p| Render.events_screen(p))

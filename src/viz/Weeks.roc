@@ -147,7 +147,8 @@ Weeks :: [].{
 			match z {
 				Ok(zw) => {
 					itot = zw.easy + zw.moderate + zw.hard
-					share = if (itot <= 0) "no polarized time" else if (zw.days < 7) "${hours(itot)}, easy ${I64.to_str(zw.easy * 100 // itot)}% so far, ${I64.to_str(zw.days)} of 7 days" else "${hours(itot)}, easy ${I64.to_str(zw.easy * 100 // itot)}%"
+					easy_pct = (Fmt.shares(zw.easy, zw.moderate, zw.hard)).easy
+					share = if (itot <= 0) "no polarized time" else if (zw.days < 7) "${hours(itot)}, easy ${I64.to_str(easy_pct)}% so far, ${I64.to_str(zw.days)} of 7 days" else "${hours(itot)}, easy ${I64.to_str(easy_pct)}%"
 					[share]
 				}
 				Err(_) => []
@@ -163,12 +164,10 @@ Weeks :: [].{
 	hours : I64 -> Str
 	hours = |secs| "${tenths_of_hour(secs)} h"
 
-	# seconds as hours to a tenth, unitless
+	# seconds as hours to the nearest tenth, unitless: the rounding the CLI
+	# prints hours with (core Fmt.hours_tenths)
 	tenths_of_hour : I64 -> Str
-	tenths_of_hour = |secs| {
-		h10 = secs * 10 // 3600
-		"${Db.grouped(h10 // 10)}.${I64.to_str(h10 % 10)}"
-	}
+	tenths_of_hour = Fmt.hours_tenths
 
 	chip_box : U64 -> Labels.Rect
 	chip_box = |i| { x: chip_x(i), y: chip_top, w: chip_w, h: chip_bottom - chip_top }

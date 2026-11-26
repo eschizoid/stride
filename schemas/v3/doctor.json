@@ -37,6 +37,7 @@
     "unrankable_activities",
     "with_hr",
     "with_power",
+    "with_estimated_power",
     "with_streams",
     "zero_load",
     "zones_set",
@@ -158,7 +159,12 @@
       "description": "How many activities the engine can actually USE a heart rate from — NOT how many recorded one. The predicate is `Metrics.usable_hr_sql`, a UNION of the two ways the engine reads heart rate: the 35-220 bound over `avg_hr`, OR nonzero HR zone seconds. Reconcilable from one call — `stride activities 2000 --json | jq '[.data[] | select(((.avg_hr>=35) and (.avg_hr<=220)) or ((.z1_s+.z2_s+.z3_s+.z4_s+.z5_s)>0))] | length'` reproduces this number exactly. It moves on `analyze` alone with no new data, because analyze is what discovers the zone seconds — which is the same thing `unanalyzed` below is telling you to do. The zone arm is not a refinement — without it a session whose entire training load was computed FROM heart rate (`load_model: hr_zones`) is excluded here while appearing in this same payload's `medium (HR / RPE)` count, which is a contradiction rather than a nuance. Note the load ladder does NOT share the scalar bound: `tss_ladder` reads the stored summary average, and its `hr_zones` rung reads zone seconds with no coverage gate at all. On the reference database this count is 672, the same number the presence test it replaced produced — what changed is that it now means what this sentence says, and that `hr_missing_streak` cannot disagree with it. It was a bare presence test (`> 0`) until #312, so it counted readings every consumer refuses and the athlete read the gap as coverage they had. Deliberately NOT the same question as `hr_known` on an activity payload, which decodes from the stored NULL and answers 'was a heart rate recorded' — a session can be `hr_known: true` and absent from this count. `hr_missing_streak` uses the same predicate, so the two fields in this payload always agree about a given row. A COUNT and not a verdict, per ADR 0012."
     },
     "with_power": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Activities whose watts were MEASURED by a power meter: a positive average and a device_watts flag that is not 0 (an unflagged row counts as measured). Strava's estimated watts are a model of speed and grade, never read as power by the load ladder, the power curve or the window, so they are counted in with_estimated_power instead."
+    },
+    "with_estimated_power": {
+      "type": "integer",
+      "description": "Activities whose only watts are Strava's estimate (device_watts 0): what every surface calls estimated power only (no power meter). Disjoint from with_power."
     },
     "with_streams": {
       "type": "integer"

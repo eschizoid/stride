@@ -249,7 +249,7 @@ load_flame! = |acc, boot|
 # face, so a window that cannot reach the athlete's data says why.
 skeleton : Str -> _
 skeleton = |err|
-	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: NoDirective, ht: [], hev: [], zw: [], ph: "", rw: [], csp: [], ctm: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric, cf: "", keys: { power: [], pace: [] }, sv: Db.empty_strength_view }
+	{ s: { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err }, e: { day: "", name: "", ahead: 0, err: "" }, c: [], cpv: [], st: 0, tr: [], sg: [], du: 1.0, rd: { day: "", name: "", ago: -1, err: "" }, tids: [], nts: [], pl: [], wk: { this: 0, last: 0 }, pw: { done: 0, total: 0 }, bn: NoDirective, ht: [], hev: [], zw: [], ph: "", rw: [], csp: [], ctm: [], cs: [], cfm: [], prs: [], tcache: [], un: Metric, cf: "", keys: { power: [], pace: [] }, ep: [], sv: Db.empty_strength_view }
 
 # Everything the window knows, rebuilt from the local stride sources in one
 # call: the database for every series, plus the engine's power-curve
@@ -320,7 +320,8 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 			nts = Db.load_day_notes!(db)
 			cpv = Db.load_curve_prev!(db, curve_days, tm, cf)
 			sv = Db.load_strength_view!(db, tm)
-			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, ph, rw, csp, ctm, cs, cfm, prs, tcache, un, cf, keys, sv }
+			ep = Db.load_estimated_power!(db)
+			{ s, e, c, cpv, st, tr, sg, du, rd, tids, nts, pl, wk, pw, bn, ht, hev, zw, ph, rw, csp, ctm, cs, cfm, prs, tcache, un, cf, keys, ep, sv }
 		}
 		Err(NoStrideDir) => skeleton("no stride directory — the launcher passes it as the first argument")
 		Err(Unreachable) => skeleton("cannot open ${acc.dir}/db.sqlite")
@@ -412,6 +413,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		curve_days,
 		curve_family: cf,
 		curve_keys: loaded.keys,
+		est_power: loaded.ep,
 		trace_ids: loaded.tids,
 		trace_sel: 0.U64,
 		trace_gen: 0.U64,

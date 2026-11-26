@@ -49,25 +49,13 @@ Strength :: [].{
 		(List.get(names, i)).ok_or(ym)
 	}
 
-	# a weight in the view's unit: whole pounds, the way plates and dumbbells
-	# are labelled, or kilograms to one decimal
+	# a weight and a month's volume in the view's unit, by the rules `stride
+	# strength` prints the same numbers with (core Units)
 	weight_label : [Metric, Imperial], F64 -> Str
-	weight_label = |mass, kg|
-		match mass {
-			Imperial => "${I64.to_str(F64.round_to_i64_try(kg / Units.lb_kg) ?? 0)} lb"
-			Metric => Units.mass_label(Metric, kg)
-		}
+	weight_label = Units.mass_label
 
-	# monthly volume: tonnes in kilograms, thousands of pounds in pounds
 	ton_label : [Metric, Imperial], F64 -> Str
-	ton_label = |mass, kg|
-		match mass {
-			Imperial => {
-				hundreds = F64.round_to_i64_try(kg / Units.lb_kg / 100.0) ?? 0
-				"${I64.to_str(hundreds // 10)}.${I64.to_str(hundreds % 10)}k lb"
-			}
-			Metric => Career.spine_label(Metric, F64.round_to_i64_try(kg * 10.0) ?? 0, "tonnage", Db.strength_head)
-		}
+	ton_label = Units.tonnage_label
 
 	# one stored set run, the trace's set line in this view's unit
 	set_text : [Metric, Imperial], Db.SetRow -> Str
@@ -527,12 +515,12 @@ expect !(Strength.measured({ month: "2026-08", kg: 1.0, covered: 3, total: 7, pa
 expect Strength.month_name("2026-11") == "nov" and Strength.month_name("bad") == "bad"
 # the caption names the last complete month and the month in progress, each
 # with its coverage, on one fixed row
-expect Strength.tonnage_caption(Metric, [{ month: "2026-10", kg: 18400.0, covered: 6, total: 10, partial: Bool.False }, { month: "2026-11", kg: 3300.0, covered: 1, total: 3, partial: Bool.True }]) == ["oct 18.4t, 6/10 logged", "nov 3.3t so far, 1/3 logged"]
+expect Strength.tonnage_caption(Metric, [{ month: "2026-10", kg: 18400.0, covered: 6, total: 10, partial: Bool.False }, { month: "2026-11", kg: 3300.0, covered: 1, total: 3, partial: Bool.True }]) == ["oct 18.4 t, 6/10 logged", "nov 3.3 t so far, 1/3 logged"]
 expect Strength.tonnage_caption(Imperial, [{ month: "2026-10", kg: 8346.0, covered: 6, total: 10, partial: Bool.False }]) == ["oct 18.4k lb, 6/10 logged"]
 expect Strength.lift_values(Imperial, [{ day: "a", kg: 22.6796185 }, { day: "b", kg: 27.2155422 }]) == "50 lb > 60 lb"
 # pounds round to whole pounds; kilograms keep one decimal
 expect Strength.weight_label(Imperial, 11.3398) == "25 lb" and Strength.weight_label(Metric, 11.3398) == "11.3 kg"
-expect Strength.ton_label(Imperial, 8346.0) == "18.4k lb" and Strength.ton_label(Metric, 18400.0) == "18.4t"
+expect Strength.ton_label(Imperial, 8346.0) == "18.4k lb" and Strength.ton_label(Metric, 18400.0) == "18.4 t"
 expect Strength.set_text(Imperial, { exercise: "Curl", sets: 3, reps: 8, kg: 11.3398, hold_s: 0 }) == "Curl  3x8 @ 25 lb"
 expect Strength.set_text(Imperial, { exercise: "Curl", sets: 3, reps: 0, kg: 9.0718474, hold_s: 60 }) == "Curl  3x60s hold @ 20 lb"
 # the newer unlogged sessions are named on one muted line
@@ -576,3 +564,15 @@ expect {
 expect Strength.card_hint(0, 9, 12) == "3 more below" and Strength.card_hint(2, 9, 12) == "2 more above, 1 more below" and Strength.card_hint(3, 9, 12) == "3 more above" and Strength.card_hint(0, 8, 8) == ""
 # a rounding difference between sources draws flat; a real step keeps its size
 expect Strength.spark_span(11.3, 11.3398) > 1.6 and Strength.spark_span(9.0, 13.6) == 4.6
+
+# with `units` unset, weights logged in pounds read in pounds at the
+# precision they were entered at: the same days `stride strength` prints
+# "30 lb", "35 lb" and "12.5 lb" for (pinned in the e2e suite)
+expect {
+	kgs = [13.6077711, 15.8757329, 5.669904625, 5.669904625]
+	units = Db.mass_units("", kgs)
+	Strength.lift_values(units, [{ day: "a", kg: 13.6077711 }, { day: "b", kg: 15.8757329 }]) == "30 lb > 35 lb"
+		and Strength.lift_values(units, [{ day: "a", kg: 5.669904625 }, { day: "b", kg: 5.669904625 }]) == "12.5 lb > 12.5 lb"
+}
+# a kilogram lifter on 5 and 10 kg reads kilograms, never "22 lb"
+expect Strength.lift_values(Db.mass_units("", [5.0, 10.0]), [{ day: "a", kg: 5.0 }, { day: "b", kg: 10.0 }]) == "5 kg > 10 kg"

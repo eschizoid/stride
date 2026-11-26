@@ -82,4 +82,44 @@ Fmt :: [].{
 	expect hundredths(-42) == "-0.42"
 	expect hundredths(-150) == "-1.50"
 	expect hundredths(0) == "0.00"
+
+	# A week's easy, moderate and hard time as whole percents that sum to
+	# 100. The easy share is floored: the polarized verdict asks whether
+	# easy time REACHED a share, so 79.9% must read 79, never a rounded 80
+	# that the verdict would then call short. The points the floor frees go
+	# to moderate and hard by largest remainder, moderate on a tie. All three
+	# are 0 when there is no time to share.
+	shares : I64, I64, I64 -> { easy : I64, moderate : I64, hard : I64 }
+	shares = |easy, moderate, hard| {
+		tot = easy + moderate + hard
+		if tot <= 0 {
+			{ easy: 0, moderate: 0, hard: 0 }
+		} else {
+			e = easy * 100 // tot
+			m_floor = moderate * 100 // tot
+			h_floor = hard * 100 // tot
+			m_rem = moderate * 100 % tot
+			h_rem = hard * 100 % tot
+			spare = 100 - e - m_floor - h_floor
+			m_extra = if (spare >= 2) 1 else if (spare == 1 and m_rem >= h_rem) 1 else 0
+			{ easy: e, moderate: m_floor + m_extra, hard: h_floor + spare - m_extra }
+		}
+	}
+
+	expect shares(8299, 1640, 61) == { easy: 82, moderate: 17, hard: 1 }
+	expect shares(7999, 1, 2000) == { easy: 79, moderate: 1, hard: 20 }
+	expect shares(8000, 0, 2000) == { easy: 80, moderate: 0, hard: 20 }
+	expect shares(1, 1, 1) == { easy: 33, moderate: 34, hard: 33 }
+	expect shares(0, 0, 0) == { easy: 0, moderate: 0, hard: 0 }
+	expect {
+		s = shares(9871, 100, 29)
+		s.easy + s.moderate + s.hard == 100 and s.easy == 98
+	}
+
+	# seconds as hours to a tenth, rounded to the nearest tenth: 4.79 h
+	# reads 4.8, not a floored 4.7
+	hours_tenths : I64 -> Str
+	hours_tenths = |secs| tenths((secs * 10 + 1800) // 3600)
+
+	expect hours_tenths(17244) == "4.8" and hours_tenths(3600) == "1.0" and hours_tenths(0) == "0.0" and hours_tenths(179) == "0.0" and hours_tenths(180) == "0.1"
 }

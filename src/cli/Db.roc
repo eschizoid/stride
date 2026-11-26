@@ -7,6 +7,7 @@ import pf.Path
 import Schema
 import Metrics
 import core.Sports
+import core.Units
 import Config
 
 Db :: [].{
@@ -79,6 +80,25 @@ Db :: [].{
 	# Read once per command and threaded into the renderer, NOT consulted per row: the
 	# value cannot change mid-render, and a query per table row would be the same
 	# mistake as re-deriving a constant in a loop.
+	# The unit lifting weights display in: core Units.mass_units over the raw
+	# `units` row ("" when absent) and every stored weight, the rule the
+	# window's lifts tab reads too. Unset, the weights decide, so an athlete
+	# who loads in pounds reads pounds without configuring anything.
+	mass_units! : Str => Try([Metric, Imperial], _)
+	mass_units! = |path| {
+		cfg = match config_opt!(path, "units")? {
+			Found(v) => v
+			NotFound => ""
+		}
+		kgs = Sql.query_many!({
+			path: Path.utf8(path),
+			query: "SELECT CAST(weight_kg AS REAL) AS w FROM strength_sets WHERE weight_kg > 0",
+			bindings: [],
+			rows: |cols| |stmt| Sql.f64("w")(cols)(stmt),
+		})?
+		Ok(Units.mass_units(cfg, kgs))
+	}
+
 	units! : Str => Try([Metric, Imperial], _)
 	units! = |path|
 		match config_opt!(path, "units") {

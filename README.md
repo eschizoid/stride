@@ -76,7 +76,7 @@ $ stride summary
 
   fitness (CTL): 36   fatigue (ATL): 42   form (TSB): -6
   → form -6, up 6 from a week ago — modeled fatigue building, 3 days in this band
-  ramp: +0/wk · +2/wk over 28d
+  fitness ramp: +0.4 ctl in the last 7 days · +2.1 ctl/wk averaged in the last 28 days
 
   last 28 days:
     21 sessions · 19.1h · 324.9 km

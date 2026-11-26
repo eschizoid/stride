@@ -7,6 +7,7 @@
 # so the rule lives here: a second copy of a conversion constant is how two
 # surfaces drift apart while each looks right alone.
 import Fmt
+import Sports
 
 Units :: [].{
 	# The config row's value, resolved. Anything but the exact "imperial"
@@ -124,19 +125,130 @@ Units :: [].{
 	lb_kg : F64
 	lb_kg = 0.45359237
 
-	# A MASS for display, in the athlete's units: kilograms for Metric,
-	# pounds for Imperial - the unit strength work is prescribed in there.
-	# One decimal through Fmt.tenths, so every surface rounds the same way.
-	mass_label : [Metric, Imperial], F64 -> Str
-	mass_label = |units, kg|
-		match units {
-			Metric => "${Fmt.tenths((kg * 10.0).round_to_i64_try().ok_or(0))} kg"
-			Imperial => "${Fmt.tenths((kg / lb_kg * 10.0).round_to_i64_try().ok_or(0))} lb"
+	# Whether a value sits on the half-unit grid plates and dumbbells come
+	# in (12.5, 20, 22.5). Weights logged in pounds are stored as their exact
+	# kilogram conversion, so the grid holds to well within a hundredth.
+	on_half : F64 -> Bool
+	on_half = |v| {
+		d = v * 2.0
+		(d - (d.round_to_i64_try().ok_or(0)).to_f64()).abs() < 0.02
+	}
+
+	expect on_half(12.5) and on_half(30.0) and !(on_half(11.02)) and !(on_half(13.6))
+
+	# The unit a lifting weight reads in. A set `units` config decides it.
+	# Unset, the stored weights decide: a weight on the half-pound grid and
+	# off the half-kilogram one was entered in pounds (25 lb is 11.34 kg),
+	# and the reverse in kilograms. A weight on both grids, or on neither,
+	# says nothing. The unit with more weights wins; a tie, or no evidence,
+	# reads metric, the setting's own default. The config value arrives raw,
+	# "" when the row is absent, so "unset" and "metric" stay two states.
+	mass_units : Str, List(F64) -> [Metric, Imperial]
+	mass_units = |config, kgs|
+		if config != "" {
+			units_of(config)
+		} else {
+			in_lb = |k| on_half(k / lb_kg) and !(on_half(k))
+			in_kg = |k| on_half(k) and !(on_half(k / lb_kg))
+			lb_n = List.len(List.keep_if(kgs, |k| k > 0.0 and in_lb(k)))
+			kg_n = List.len(List.keep_if(kgs, |k| k > 0.0 and in_kg(k)))
+			if (lb_n > kg_n) Imperial else Metric
 		}
 
-	expect mass_label(Metric, 27.2155422) == "27.2 kg"
-	expect mass_label(Imperial, 27.2155422) == "60.0 lb"
-	expect mass_label(Metric, 0.0) == "0.0 kg"
+	expect mass_units("metric", [11.34, 22.68]) == Metric and mass_units("imperial", [10.0, 20.0]) == Imperial
+	# a kilogram lifter on 5 and 10 kg: each is near a whole pound (11.02,
+	# 22.05) but on the half-pound grid only by tolerance, never exactly
+	expect mass_units("", [5.0, 10.0, 10.0, 5.0]) == Metric
+	# a pound lifter on 25 and 45 lb plates, and 12.5 lb dumbbells
+	expect mass_units("", [11.33980925, 20.41165665, 5.669904625]) == Imperial
+	# mixed: the larger group wins, and a tie reads metric
+	expect mass_units("", [11.33980925, 13.6077711, 10.0]) == Imperial and mass_units("", [11.33980925, 10.0]) == Metric
+	# no evidence: no weights, or weights on neither grid
+	expect mass_units("", []) == Metric and mass_units("", [13.3, 7.7]) == Metric
+
+	# A lifting weight for display, with the precision it was entered at:
+	# whole when whole and a half when half, so a 12.5 lb dumbbell reads
+	# 12.5 lb and a 20 kg plate 20 kg; a weight off the unit's half grid
+	# (one entered in the other unit) reads to one decimal.
+	mass_label : [Metric, Imperial], F64 -> Str
+	mass_label = |units, kg| {
+		v = match units {
+			Metric => kg
+			Imperial => kg / lb_kg
+		}
+		unit = match units {
+			Metric => "kg"
+			Imperial => "lb"
+		}
+		halves = (v * 2.0).round_to_i64_try().ok_or(0)
+		shown = if (!(on_half(v))) Fmt.tenths((v * 10.0).round_to_i64_try().ok_or(0)) else if (halves % 2 == 0) (halves // 2).to_str() else "${(halves // 2).to_str()}.5"
+		"${shown} ${unit}"
+	}
+
+	expect mass_label(Imperial, 5.669904625) == "12.5 lb" and mass_label(Imperial, 13.6077711) == "30 lb"
+	expect mass_label(Metric, 2.5) == "2.5 kg" and mass_label(Metric, 22.5) == "22.5 kg" and mass_label(Metric, 20.0) == "20 kg"
+	expect mass_label(Metric, 27.2155422) == "27.2 kg" and mass_label(Imperial, 27.2155422) == "60 lb"
+	expect mass_label(Metric, 13.6077711) == "13.6 kg" and mass_label(Imperial, 10.0) == "22.0 lb"
+
+	# A month's lifted volume: kilograms under a tonne and tonnes to one
+	# decimal above it, or pounds under a thousand and thousands of pounds
+	# to one decimal above.
+	tonnage_label : [Metric, Imperial], F64 -> Str
+	tonnage_label = |units, kg| {
+		v = match units {
+			Metric => kg
+			Imperial => kg / lb_kg
+		}
+		big = match units {
+			Metric => " t"
+			Imperial => "k lb"
+		}
+		small = match units {
+			Metric => " kg"
+			Imperial => " lb"
+		}
+		whole = v.round_to_i64_try().ok_or(0)
+		if (whole < 1000) "${whole.to_str()}${small}" else "${Fmt.tenths((v / 100.0).round_to_i64_try().ok_or(0))}${big}"
+	}
+
+	expect tonnage_label(Metric, 18400.0) == "18.4 t" and tonnage_label(Imperial, 8346.0) == "18.4k lb"
+	expect tonnage_label(Metric, 950.4) == "950 kg" and tonnage_label(Imperial, 300.0) == "661 lb"
+
+	# Speed in km/h or mph from a distance and a duration, to one decimal;
+	# "-" when either is missing.
+	speed_per_hour : [Metric, Imperial], F64, I64 -> Str
+	speed_per_hour = |units, distance_m, secs|
+		if distance_m <= 0.0 or secs <= 0 {
+			"-"
+		} else {
+			Fmt.tenths((dist_value(units, distance_m) * 36000.0 / secs.to_f64()).round_to_i64_try().ok_or(0))
+		}
+
+	speed_unit : [Metric, Imperial] -> Str
+	speed_unit = |units|
+		match units {
+			Metric => "km/h"
+			Imperial => "mph"
+		}
+
+	expect speed_per_hour(Metric, 1000.0, 162) == "22.2" and speed_per_hour(Imperial, 1609.344, 180) == "20.0"
+	expect speed_per_hour(Metric, 0.0, 100) == "-" and speed_unit(Imperial) == "mph"
+
+	# A split's rate as the sport reads it: a ride's speed, since cycling
+	# speed follows the terrain and a rider never speaks of minutes per
+	# kilometre, and every other sport's pace per kilometre or mile. The
+	# column head names which one it is.
+	split_rate : [Metric, Imperial], Str, F64, I64 -> Str
+	split_rate = |units, sport, distance_m, secs|
+		if (Sports.reads_speed(sport)) speed_per_hour(units, distance_m, secs) else pace_per_dist(units, distance_m, secs)
+
+	split_rate_head : [Metric, Imperial], Str -> Str
+	split_rate_head = |units, sport|
+		if (Sports.reads_speed(sport)) "speed (${speed_unit(units)})" else "pace (${pace_unit(units)})"
+
+	expect split_rate(Metric, "GravelRide", 1000.0, 162) == "22.2" and split_rate_head(Metric, "Ride") == "speed (km/h)"
+	expect split_rate(Metric, "Run", 1000.0, 300) == "5:00" and split_rate_head(Imperial, "Run") == "pace (min/mi)"
+	expect split_rate(Metric, "EBikeRide", 1000.0, 162) == "22.2" and split_rate_head(Metric, "EBikeRide") == "speed (km/h)"
 
 	# Power zones, Coggan's 7-zone model, as watt ranges from an FTP. lo_w 0
 	# opens Z1 at 0 W and hi_w 0 leaves Z7 open above. `stride zones` reads

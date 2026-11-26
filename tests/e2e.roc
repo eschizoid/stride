@@ -415,7 +415,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1521)?
+	checks_ran_exactly!(1534)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -454,6 +454,7 @@ run_scenarios! = |ctx| {
 	b_viz_caps!(ctx)?
 	b_viz_tick!(ctx)?
 	b_cross_surface!(ctx)?
+	b_window_agrees!(ctx)?
 	b_human!(ctx)?
 	b_command_schemas!(ctx)?
 	# LAST of the substantive scenarios: the loop needs a rich, analyzed fixture — real
@@ -3245,12 +3246,13 @@ b_seed_analyze! = |ctx| {
 	# the filters for its sake), and `progress_section`'s distance cell — the last because
 	# it lives in the `SpeedHr` arm and no `progress_section` expect passes `SpeedHr`, so
 	# nothing reaches it. The
-	# legend and `top`'s header name a unit and render no number. The pace column renders
-	# one — a pace string — and DOES convert, via `pace_per_dist`, which the fmt filter does
-	# not match; it is exempt for that reason, not for rendering nothing. `pace-curve`
+	# legend and `top`'s header name a unit and render no number. The rate column renders
+	# one, a pace or a ride's speed, through core `Units.split_rate`, which converts inside
+	# and which the filters name: `split_rate_head(` is a unit-naming site, `split_rate(`
+	# formats, `split_rate(units` converts. `pace-curve`
 	# adds two more of the same kind: its table header names a unit and renders no
 	# number, and its Critical Speed line converts via `pace_from_speed`, which the fmt
-	# filter does not match either. Both are pinned by Render expects (metric AND imperial
+	# filter does not match. Both are pinned by Render expects (metric AND imperial
 	# arms) instead — and so is D′, whose line writes the literal "m"/"yd" rather than
 	# calling a unit helper, so this check cannot see it at all.
 	#
@@ -3265,7 +3267,7 @@ b_seed_analyze! = |ctx| {
 	# nothing wrong — the sites run to 204 characters, so it is a live risk. Rejoin the
 	# line; do not lower the number. A comment containing `dist_unit(` would also count
 	# toward `examined`. Both are loud false positives, which is the safe direction.
-	units_static = Str.trim(sh!("n=0; fmt=0; bad=0; for f in src/cli/*.roc; do while IFS= read -r l; do case \"$l\" in expect*) continue;; esac; case \"$l\" in *'dist_unit('*|*'pace_unit('*|*'seg_unit('*|*'elev_unit('*) ;; *) continue;; esac; n=$((n+1)); case \"$l\" in *'fmt0('*|*'fmt1('*|*'fmt2('*|*'seg_value('*|*'signed('*|*'pace_per_dist('*) fmt=$((fmt+1));; *) continue;; esac; case \"$l\" in *'dist_value(units'*|*'pace_per_dist(units'*|*'seg_value(units'*|*'elev_value(units'*) ;; *) bad=$((bad+1));; esac; done < $f; done; echo \"examined=$n formatted=$fmt unconverted=$bad\""))
+	units_static = Str.trim(sh!("n=0; fmt=0; bad=0; for f in src/cli/*.roc; do while IFS= read -r l; do case \"$l\" in expect*) continue;; esac; case \"$l\" in *'dist_unit('*|*'pace_unit('*|*'seg_unit('*|*'elev_unit('*|*'split_rate_head('*) ;; *) continue;; esac; n=$((n+1)); case \"$l\" in *'fmt0('*|*'fmt1('*|*'fmt2('*|*'seg_value('*|*'signed('*|*'pace_per_dist('*|*'split_rate('*) fmt=$((fmt+1));; *) continue;; esac; case \"$l\" in *'dist_value(units'*|*'pace_per_dist(units'*|*'seg_value(units'*|*'elev_value(units'*|*'split_rate(units'*) ;; *) bad=$((bad+1));; esac; done < $f; done; echo \"examined=$n formatted=$fmt unconverted=$bad\""))
 	check!("...and every site that names a unit converts the number beside it, checked in source", units_static == "examined=19 formatted=13 unconverted=0")?
 	# The window's own half of the same rule. `src/cli/*.roc` above is non-recursive
 	# on purpose, so src/viz never enters that sweep; since the window converts
@@ -8292,7 +8294,12 @@ b_strength_import! = |ctx| {
 	# together come from one hold.
 	_ = sh!("printf '%s' '{\"activity_id\":\"9726\",\"exercise_sets\":[{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"9.1 kg\"},\"duration\":{\"value\":\"1m 15s\"}},{\"exercise_name\":\"Curl\",\"weight\":{\"value\":\"15 kg\"},\"duration\":{\"value\":\"20s\"}}]}' | HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' strength import - >/dev/null")
 	check!("a hold day's top weight is its longest hold's, not a shorter heavier one's", strjq!(ctx, ["strength"], "[.data.exercises[] | select(.exercise == \"Curl\" and .measure == \"hold\") | .points[] | select(.date == \"2018-07-12\") | [.top_hold_s, .total_hold_s, (.top_kg * 10 | round)]] | tojson") == "[[75,95,91]]")?
+	# read in kilograms, whatever unit the stored weights would pick with
+	# `units` unset: this check is about the hold row, not the unit rule
+	units_before = Str.trim(sql!(ctx.db, "SELECT COALESCE((SELECT value FROM config WHERE key = 'units'), '');"))
+	_ = stride!(ctx.bin, ctx.home, ["config", "set", "units", "metric"])
 	held = stride_human!(ctx.bin, ctx.home, ["strength"])
+	_ = if (units_before == "") sql!(ctx.db, "DELETE FROM config WHERE key = 'units';") else stride!(ctx.bin, ctx.home, ["config", "set", "units", units_before])
 	check!("...and the human table names the hold with its first and latest time", Str.contains(held, "Curl (hold)") and Str.contains(held, "2018-07-10  60 s @ 9.1 kg") and Str.contains(held, "2018-07-12  75 s @ 9.1 kg"))?
 	# only a STORED workout claims its activity, in either order: an empty one
 	# before a valid one claims nothing, and a stored one makes a later one a
@@ -8488,6 +8495,70 @@ b_compare! = |ctx| {
 	_ = sql!(ctx.db, "DROP TABLE zsave;")
 	check!("polarization_known lights back up once the zone seconds return", strjq!(ctx, ["compare", "week"], ".data.current.polarization_known") == "true")?
 	_ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 9602; DELETE FROM activities WHERE id = 9602;")
+	Ok({})
+}
+
+# ── the window and the CLI agree: each value the window formats through a
+# core rule is fed here through the CLI, in a home of its own so no other
+# scenario's rows move the result, and the CLI's text is pinned to the very
+# string the window's own expect pins for the same value (Strength, Board,
+# Hud, Zones, Ramp and Curve each name their twin) ──────────────────────────
+b_window_agrees! : Ctx => Try({}, _)
+b_window_agrees! = |ctx| {
+	wh = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+	wctx = { ..ctx, home: wh, db: "${wh}/.stride/db.sqlite" }
+	_ = stride!(wctx.bin, wctx.home, ["init"])
+	_ = sql!(wctx.db, "INSERT OR REPLACE INTO config (key,value) VALUES ('hr_z1_max','120'),('hr_z2_max','140'),('hr_z3_max','160'),('hr_z4_max','175'),('timezone','${ctx.tz}');")
+	day! = |n| Str.trim(sh!("TZ='${ctx.tz}' date -v${n}d +%F 2>/dev/null || TZ='${ctx.tz}' date -d '${n} days' +%F"))
+	today = ctx.today
+	ago7 = day!("-7")
+	ago28 = day!("-28")
+	plan_last = day!("+10")
+	event_day = day!("+60")
+	human! = |args| stride_human!(wctx.bin, wctx.home, args)
+	# lift units: with `units` unset, two days logged in whole pounds read in
+	# pounds, whole pounds, as the window's lifts tab reads them
+	_ = sql!(wctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9901,'lift a','WeightTraining','${ago28}T07:00:00Z',2700,0),(9902,'lift b','Workout','${ago7}T07:00:00Z',2700,0); INSERT INTO strength_sets (activity_id, ordinal, exercise, sets, reps, weight_kg, source) VALUES (9901, 0, 'Floor Press', 3, 8, 13.6077711, 'strava'), (9902, 0, 'Floor Press', 3, 8, 15.8757329, 'strava'), (9901, 1, 'Hammer Curl', 3, 10, 5.669904625, 'strava'), (9902, 1, 'Hammer Curl', 3, 10, 5.669904625, 'strava');")
+	lifts = human!(["strength"])
+	check!("with units unset, strength reads pound logs in pounds at their entered precision, as the lifts tab does (\"30 lb > 35 lb\", \"12.5 lb\")", Str.contains(lifts, "${ago28}  30 lb") and Str.contains(lifts, "${ago7}  35 lb") and Str.contains(lifts, "${ago7}  12.5 lb") and !(Str.contains(lifts, "13.6 kg")))?
+	# one plain name per sport: Workout and WeightTraining are one strength row
+	stats = human!(["stats"])
+	check!("stats names each strength spelling in the window's plain words: a lift is strength, a generic Workout a workout", Str.contains(stats, "│ strength ") and Str.contains(stats, "│ workout ") and !(Str.contains(stats, "Workout")) and !(Str.contains(stats, "WeightTraining")))?
+	# shares: a week 81.5% easy reads 81, the window tile's 81/19
+	_ = sql!(wctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9903,'split week','Ride','2001-03-06T07:00:00Z',17244,100000); INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,pi_moderate_s,pi_hard_s,metrics_rev) VALUES (9903,200.0,200.0,14054,2845,345,1);")
+	week = human!(["review", "2001-03-05"])
+	check!("review floors the easy share and the three sum to 100, the split the weeks tile reads as 81/19", Str.contains(week, "intensity  easy 81%  moderate 17%  hard 2%"))?
+	check!("...and names the week's ride by its plain word", Str.contains(week, "  cycling: 1 sessions"))?
+	# form and ramp: today's form -18.3 and a 3.9 rise over the last 7 days
+	_ = sql!(wctx.db, "INSERT OR REPLACE INTO daily_load (day,tss,ctl,atl,tsb) VALUES ('${ago28}',0.0,30.0,30.0,0.0),('${ago7}',0.0,36.1,40.0,-3.9),('${today}',0.0,40.0,58.3,-18.3);")
+	sum = human!(["summary"])
+	check!("summary says \"high modeled fatigue\" at form -18.3, the window chip's words for it", Str.contains(sum, "— high modeled fatigue"))?
+	check!("summary's ramp reads to a tenth and names its span, as the ramp card names its own", Str.contains(sum, "fitness ramp: +3.9 ctl in the last 7 days · +2.5 ctl/wk averaged in the last 28 days"))?
+	# the event card: the plan stops 10 days out and the event is 60 days out
+	_ = sql!(wctx.db, "INSERT INTO planned_sessions (id,created_at,target_date,session_type,detail,rationale,status,skipped_reason,target_literal) VALUES (9911,'2099-01-01','${plan_last}','strength','lift','r','open','','1x45:00@RPE6'); INSERT INTO events (created_at,event_date,name) VALUES ('2099-01-01','${event_day}','Far Race');")
+	proj_line = Str.trim(sh!("HOME='${wctx.home}' STRIDE_FORMAT=human '${wctx.bin}' project ${plan_last} | sed -n 2p | sed 's/ (fatigue.*//'"))
+	evs = human!(["events"])
+	check!("events names the plan's last day with the numbers `project` returns for it, the text the event card reads (${proj_line})", Str.starts_with(proj_line, "${plan_last}: fitness ") and Str.contains(evs, "plan's last day ${proj_line} (fatigue"))?
+	check!("...and names the event day its own numbers are for", Str.contains(evs, "event day ${event_day}: fitness ") and !(Str.contains(evs, "ctl ")))?
+	check!("events' plan_end carries the plan's last day in JSON", strjq!(wctx, ["events"], ".data.events[0].plan_end | [.known, .date] | @tsv") == "true\t${plan_last}")?
+	# power: a ride whose only watts are Strava's estimate
+	_ = sql!(wctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_watts,weighted_avg_watts,device_watts) VALUES (9904,'estimated','Ride','${today}T06:00:00Z',3600,30000,150,150,0);")
+	doc = human!(["doctor"])
+	check!("doctor counts an estimated-only ride as estimated power, not power", Str.contains(doc, "with power from a power meter: 0") and Str.contains(doc, "estimated power only (no power meter): 1") and strjq!(wctx, ["doctor"], ".data | [.with_power, .with_estimated_power] | @tsv") == "0\t1")?
+	pc = human!(["power-curve", "3650", "Ride"])
+	check!("power-curve says estimated power only, in the words the power tab's empty note uses", Str.contains(pc, "estimated power only (no power meter) in this window: 1 session carries") and !(Str.contains(pc, "no power data")) and strjq!(wctx, ["power-curve", "3650", "Ride"], ".data.estimated_sessions") == "1")?
+	# ride splits: two rides at 6 m/s carrying time and distance streams
+	times = Str.join_with(List.map(int_seq(1300), |i| U64.to_str(i)), ",")
+	dists = Str.join_with(List.map(int_seq(1300), |i| U64.to_str(i * 6)), ",")
+	hrs = Str.join_with(List.map(int_seq(1300), |_| "130"), ",")
+	sj = "{\"time\":{\"data\":[${times}]},\"distance\":{\"data\":[${dists}]},\"heartrate\":{\"data\":[${hrs}]}}"
+	_ = sql!(wctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,avg_hr) VALUES (9905,'Lakefront spin','Ride','${ago7}T09:00:00Z',1300,7794,130),(9906,'Lakefront spin','Ride','${today}T09:00:00Z',1300,7794,130); INSERT INTO streams (activity_id, raw_json) VALUES (9905, '${sj}'), (9906, '${sj}');")
+	_ = stride!(wctx.bin, wctx.home, ["analyze"])
+	act = human!(["activity", "9906"])
+	check!("a ride's splits read as speed, not minutes per kilometre", Str.contains(act, "speed (km/h)") and Str.contains(act, "21.6") and !(Str.contains(act, "min/km")))?
+	prog = human!(["progress", today])
+	check!("progress reads a ride's sessions as speed too", Str.contains(prog, "speed (km/h)") and !(Str.contains(prog, "min/km")))?
+	_ = sh!("rm -rf '${wh}'")
 	Ok({})
 }
 

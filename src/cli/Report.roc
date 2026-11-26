@@ -9,6 +9,7 @@ import pf.Stdout
 import pf.Path
 import Metrics
 import core.Sports
+import core.Fmt
 import Render
 
 Report :: [].{
@@ -200,7 +201,7 @@ Report :: [].{
 						tss: w.tss,
 						sessions: w.sessions,
 						hard_min: w.p_hard // 60,
-						easy_pct: pct_num(w.p_easy, w.p_total),
+						easy_pct: (Fmt.shares(w.p_easy, w.p_total - w.p_easy - w.p_hard, w.p_hard)).easy,
 						polarization_known: w.p_total > 0,
 						ctl,
 						has_data: w.sessions > 0 or ctl > 0.0,
@@ -416,13 +417,6 @@ Report :: [].{
 		_ = List.map_try(act_days, |r| canonical_activity_day(r.d, r.example_id))?
 		Ok({})
 	}
-
-	pct_num : I64, I64 -> I64
-	pct_num = |part, total|
-		if (total == 0)
-			0
-		else
-			((part).to_f64() * 100.0 / (total).to_f64()).round_to_i64_try().ok_or(0)
 
 	# the whole-athlete report: form, 7d/28d zone split + polarization, derived FTP, per-sport 28d
 	summary! : {} => Try({}, _)
@@ -723,6 +717,10 @@ Report :: [].{
 		total7 = zsum7.easy + zsum7.moderate + zsum7.hard
 		easy7 = zsum7.easy
 		hard7 = zsum7.hard
+		# whole percents summing to 100, the easy share floored (Fmt.shares):
+		# the window's weeks tile reads the same split the same way
+		sh28 = Fmt.shares(easy, zsum.moderate, hard)
+		sh7 = Fmt.shares(easy7, zsum7.moderate, hard7)
 
 		# CTL/ATL seed at zero on the first day with any activity, so a short history reads
 		# LOW rather than unknown. One 42-day time constant only gets CTL to ~63% of its true
@@ -880,9 +878,9 @@ Report :: [].{
 				z3_s: zsum7.z3,
 				z4_s: zsum7.z4,
 				z5_s: zsum7.z5,
-				easy_pct: pct_num(easy7, total7),
-				moderate_pct: pct_num(zsum7.moderate, total7),
-				hard_pct: pct_num(hard7, total7),
+				easy_pct: sh7.easy,
+				moderate_pct: sh7.moderate,
+				hard_pct: sh7.hard,
 				sessions: zsum7.sessions,
 				moving_time: zsum7.moving_time,
 				distance_m: zsum7.distance_m,
@@ -898,9 +896,9 @@ Report :: [].{
 				z3_s: zsum.z3,
 				z4_s: zsum.z4,
 				z5_s: zsum.z5,
-				easy_pct: pct_num(easy, total),
-				moderate_pct: pct_num(zsum.moderate, total),
-				hard_pct: pct_num(hard, total),
+				easy_pct: sh28.easy,
+				moderate_pct: sh28.moderate,
+				hard_pct: sh28.hard,
 				measured_pct: measured_pct,
 				sessions: zsum.sessions,
 				moving_time: zsum.moving_time,

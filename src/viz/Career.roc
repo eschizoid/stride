@@ -76,18 +76,13 @@ Career :: [].{
 		List.concat(fams, List.map(missing, |f| { fam: f.sport, kind: no_trend, months: 0 }))
 	}
 
-	# a family named in a sentence: the activity, in lower case, and a sport
-	# outside every family split into its words (HighIntensityIntervalTraining
-	# reads as high intensity interval training)
+	# a sport named in a sentence. A spelling with a plain name, its own or
+	# its family's, reads in the words every CLI table uses for the same
+	# sessions (core.Sports.plain_name); any other spelling is a sport type
+	# a pace curve keeps apart from its family, so it reads as its own
+	# words (TrailRun is trail run, beside running)
 	sport_word : Str -> Str
-	sport_word = |fam|
-		if (fam == "Run") "running"
-		else if (fam == "Ride") "cycling"
-		else if (fam == "Rowing") "rowing"
-		else if (fam == "Swim") "swimming"
-		else if (fam == "Walk") "walking"
-		else if (List.contains(Sports.family("strength"), fam)) "strength"
-		else Str.from_utf8_lossy(List.join(List.map_with_index(Str.to_utf8(fam), |b, i| if (b >= 65 and b <= 90) (if (i == 0) [b + 32] else [32, b + 32]) else [b])))
+	sport_word = |s| if (Sports.has_plain_name(s)) Sports.plain_name(s) else Sports.words_of(s)
 
 	# the sport a page is about, as its heading, cards and legend name it, in
 	# plain words on every page, with a trend or without
@@ -1401,7 +1396,7 @@ expect Career.strip_widths([], 400.0) == []
 # a sport is named for what the athlete does, in plain words: the strength
 # family as one whichever spelling heads it, a family by its activity, and a
 # sport outside every family by its words
-expect Career.sport_word("WeightTraining") == "strength" and Career.sport_word("Workout") == "strength"
+expect Career.sport_word("WeightTraining") == "strength" and Career.sport_word("Workout") == "workout" and Career.sport_word("Hike") == "hiking" and Career.sport_word("EBikeRide") == "e-bike ride"
 expect Career.sport_word("Ride") == "cycling" and Career.sport_word("StandUpPaddling") == "stand up paddling" and Career.sport_word("other") == "other"
 
 # the legend takes the half of the plot the valley label is not on

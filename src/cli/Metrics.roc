@@ -1940,23 +1940,12 @@ Metrics :: [].{
 	#
 	# The band is an IDENTITY, separate from wording: `days_in_band` asks "same band?",
 	# and comparing rendered strings would let a wording change silently merge two
-	# bands into one streak. Still an if/else chain — these are FLOAT RANGE tests, and
-	# no match form expresses `-15.0 < tsb <= -5.0` more directly.
-	FormBand : [HighFatigue, FatigueBuilding, Balanced, Fresh, VeryFresh]
+	# bands into one streak. The bands and their words live in core.Load, which the
+	# window's form chip reads too, so both surfaces say one thing about one value.
+	FormBand : Load.FormBand
 
 	form_band : F64 -> FormBand
-	form_band = |tsb|
-		if tsb <= -15.0 {
-			HighFatigue
-		} else if tsb <= -5.0 {
-			FatigueBuilding
-		} else if tsb < 5.0 {
-			Balanced
-		} else if tsb < 15.0 {
-			Fresh
-		} else {
-			VeryFresh
-		}
+	form_band = Load.form_band
 
 	# ONE vocabulary shared by every boundary guard — a tripwire for coaching language
 	# reappearing in any label producer, without triplicating the list.
@@ -2143,14 +2132,7 @@ Metrics :: [].{
 		}
 
 	form_label : F64 -> Str
-	form_label = |tsb|
-		match form_band(tsb) {
-			HighFatigue => "high modeled fatigue"
-			FatigueBuilding => "modeled fatigue building"
-			Balanced => "balanced"
-			Fresh => "fresh"
-			VeryFresh => "very fresh — load has been light lately"
-		}
+	form_label = |tsb| "${Load.form_label(tsb)}${Load.form_caveat(tsb)}"
 
 	# How many consecutive days, counting back from `today`, the series has stayed in the
 	# same form band. THE thing a band label structurally cannot express: 16 days at -11 and
@@ -4884,6 +4866,9 @@ expect Metrics.form_label(-9.0) == "modeled fatigue building"
 expect Metrics.form_label(-1.0) == "balanced"
 expect Metrics.form_label(8.0) == "fresh"
 expect Metrics.form_label(20.0) == "very fresh — load has been light lately"
+# the summary verdict at form -18.3 reads the words the window chip reads for
+# the same value (Hud.form_band, in the window's own expects)
+expect Metrics.form_label(-18.3) == "high modeled fatigue"
 
 # epoch day 0 is 1970-01-01, and roundtrips
 expect Metrics.days_from_civil(1970, 1, 1) == 0

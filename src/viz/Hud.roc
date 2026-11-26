@@ -5,6 +5,7 @@ import Labels
 import Scene
 import Theme
 import Ui
+import core.Load
 
 # ── the athlete HUD: level, streak, form ────────────────────────────
 #
@@ -84,14 +85,20 @@ Hud :: [].{
 			Err(_) => 0
 		}
 
-	# the form verdict a TSB value earns, in the app's own voice
+	# the form verdict a TSB value earns, in the words the CLI's summary
+	# uses for the same value (core.Load), each band in its own color
 	form_band : F32 -> { label : Str, c : Color.Rgba }
-	form_band = |tsb|
-		if (tsb < -30.0) ({ label: "cooked", c: Theme.alarm_c })
-		else if (tsb < -10.0) ({ label: "building", c: Theme.atl_c })
-		else if (tsb < 5.0) ({ label: "steady", c: Theme.ink_muted })
-		else if (tsb < 25.0) ({ label: "primed", c: Theme.gold_c })
-		else { label: "coasting", c: Theme.tsb_c }
+	form_band = |tsb| {
+		v = F32.to_f64(tsb)
+		c = match Load.form_band(v) {
+			HighFatigue => Theme.alarm_c
+			FatigueBuilding => Theme.atl_c
+			Balanced => Theme.ink_muted
+			Fresh => Theme.gold_c
+			VeryFresh => Theme.tsb_c
+		}
+		{ label: Load.form_label(v), c }
+	}
 
 	# ── the XP rail: the panel's left edge, filled to level progress ──
 	# Fills bottom-up over the first seconds of a session (eased), carries a
@@ -158,3 +165,8 @@ Hud :: [].{
 		}
 	}
 }
+
+# the chip at form -18.3 reads the words `stride summary` prints for the
+# same value (Metrics.form_label, in the engine's expects), in the alarm color
+expect Hud.form_band(-18.3) == { label: "high modeled fatigue", c: Theme.alarm_c }
+expect (Hud.form_band(-14.2)).label == "modeled fatigue building" and (Hud.form_band(0.0)).label == "balanced" and (Hud.form_band(20.0)).label == "very fresh"

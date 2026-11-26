@@ -1,5 +1,7 @@
 import core.Fmt
 import core.Units
+import core.Sports
+import core.Load
 import Metrics
 import Drain
 
@@ -208,8 +210,7 @@ Render :: [].{
 		if (n >= w) s else Str.concat(s, Str.repeat(" ", w - n))
 	}
 
-	# A delta that keeps its sign: "+5" reads as a build, "-3" as an unload. Shared by the
-	# compare table and the summary ramp line so the two spell a delta the same way.
+	# A delta that keeps its sign: "+5" reads as a build, "-3" as an unload.
 	#
 	# The sign comes from x, NOT from the rounded string. fmt0 rounds -0.4 to "0", so
 	# deciding the sign afterwards silently turned every small unload into a flat zero —
@@ -488,6 +489,30 @@ Render :: [].{
 		n = (x * 10.0).round_to_i64_try().ok_or(0)
 		Fmt.tenths(n)
 	}
+
+	# Rows keyed by a Strava sport, folded under each sport's plain name
+	# (core.Sports.plain_name, the name the window's views use): Workout and
+	# WeightTraining are one "strength" row, every ride spelling one
+	# "cycling" row. A name keeps the place of its first row; `merge` adds a
+	# later row into it.
+	by_plain_name : List(a), (a -> Str), (a, a -> a) -> List({ name : Str, row : a })
+	by_plain_name = |rows, sport_of, merge|
+		List.fold(
+			rows,
+			[],
+			|acc, r| {
+				n = Sports.plain_name(sport_of(r))
+				match List.find_first_index(acc, |e| e.name == n) {
+					Ok(i) =>
+						match List.get(acc, i) {
+							Ok(e) => (List.set(acc, i, { name: n, row: merge(e.row, r) })).ok_or(acc)
+							Err(_) => acc
+						}
+
+					Err(_) => List.append(acc, { name: n, row: r })
+				}
+			},
+		)
 
 	# two-decimal float, e.g. 0.979 -> "0.98". Preserves the sign for -1 < x < 0
 	# (where the integer part rounds to 0 but the value is negative).
@@ -801,7 +826,7 @@ Render :: [].{
 					("load", |row| fmt0(row.tss)),
 				]
 				SpeedHr => [
-					("pace (${pace_unit(units)})", |row| pace_per_dist(units, row.distance_m, row.moving_time)),
+					(Units.split_rate_head(units, (List.first(rows)).map_ok(|r| r.sport).ok_or("")), |row| Units.split_rate(units, row.sport, row.distance_m, row.moving_time)),
 					("hr", hr_of),
 					("spd/hr", prim_of),
 					("drift", |row| if (row.decoupling_known) "${signed(row.decoupling_pct)}%" else "-"),
@@ -915,7 +940,7 @@ Render :: [].{
 		}
 		legend = match lens {
 			Ef => "ef = normalized power (np) / avg HR — watts per heartbeat, climbing = fitter · drift = aerobic decoupling, 2nd half vs 1st — LOWER is better, - = not computable · kJ = total work"
-			SpeedHr => "spd/hr (aero-eff) = speed per heartbeat — climbing = fitter · drift = aerobic decoupling, 2nd half vs 1st — LOWER is better, - = not computable · pace is ${pace_unit(units)}"
+			SpeedHr => "spd/hr (aero-eff) = speed per heartbeat — climbing = fitter · drift = aerobic decoupling, 2nd half vs 1st — LOWER is better, - = not computable · ${Units.split_rate_head(units, (List.first(rows)).map_ok(|r| r.sport).ok_or(""))}"
 			Rpe => "rpe = how hard it felt (1-10) — for a fixed workout, dropping = adapting"
 		}
 		# no baseline -> no percentage. Printing "(0%)" there claimed a measurement we
@@ -1258,7 +1283,7 @@ Render :: [].{
 	}
 
 	# ── power-duration curve screen ─────────────────────────────────────
-	power_curve_screen : { window_days : U64, sport : Str, points : List({ dur_s : U64, watts : F64 }), cp : F64, w_prime : F64, fit_r2 : F64, fit_points : I64 } -> Str
+	power_curve_screen : { window_days : U64, sport : Str, points : List({ dur_s : U64, watts : F64 }), cp : F64, w_prime : F64, fit_r2 : F64, fit_points : I64, estimated_sessions : I64 } -> Str
 	power_curve_screen = |pc| {
 		dur_label = |s|
 			if (s < 60) "${U64.to_str(s)}s"
@@ -1267,7 +1292,7 @@ Render :: [].{
 		sport_lbl = if (pc.sport == "") "all power sports" else pc.sport
 		header = "power-duration curve — ${sport_lbl}, last ${U64.to_str(pc.window_days)} days"
 		if List.is_empty(pc.points) {
-			"${header}\n\nno power data in this window."
+			(if (pc.estimated_sessions > 0) "${header}\n\n${Sports.estimated_power_only} in this window: ${pc.estimated_sessions.to_str()} ${if (pc.estimated_sessions == 1) "session carries" else "sessions carry"} only Strava's estimated watts." else "${header}\n\nno power data in this window.")
 		} else {
 			table = render_table(
 				["duration", "best power (W)"],
@@ -1421,9 +1446,9 @@ Render :: [].{
 				["    polarization: unavailable (requires HR, power, or distance streams)"]
 		last7_line =
 			if (s.last_7d.intensity_streams > 0 and s.last_7d.polarization_known)
-				"  last 7 days: ${I64.to_str(s.last_7d.sessions)} sessions · ${fmt1(s.last_7d.moving_time.to_f64() / 3600.0)}h · ${fmt1(dist_value(units, s.last_7d.distance_m))} ${dist_unit(units)} · ${fmt0(s.last_7d.tss)} load — ${I64.to_str(s.last_7d.easy_pct)}% easy / ${I64.to_str(s.last_7d.moderate_pct)}% moderate / ${I64.to_str(s.last_7d.hard_pct)}% hard"
+				"  last 7 days: ${I64.to_str(s.last_7d.sessions)} sessions · ${Fmt.hours_tenths(s.last_7d.moving_time)}h · ${fmt1(dist_value(units, s.last_7d.distance_m))} ${dist_unit(units)} · ${fmt0(s.last_7d.tss)} load — ${I64.to_str(s.last_7d.easy_pct)}% easy / ${I64.to_str(s.last_7d.moderate_pct)}% moderate / ${I64.to_str(s.last_7d.hard_pct)}% hard"
 			else
-				"  last 7 days: ${I64.to_str(s.last_7d.sessions)} sessions · ${fmt1(s.last_7d.moving_time.to_f64() / 3600.0)}h · ${fmt1(dist_value(units, s.last_7d.distance_m))} ${dist_unit(units)} · ${fmt0(s.last_7d.tss)} load — intensity unavailable"
+				"  last 7 days: ${I64.to_str(s.last_7d.sessions)} sessions · ${Fmt.hours_tenths(s.last_7d.moving_time)}h · ${fmt1(dist_value(units, s.last_7d.distance_m))} ${dist_unit(units)} · ${fmt0(s.last_7d.tss)} load — intensity unavailable"
 		last_hard_str =
 			if (s.last_hard_session_date != "") s.last_hard_session_date
 			else if (z.intensity_streams == 0) "unavailable (no detailed streams)"
@@ -1432,7 +1457,7 @@ Render :: [].{
 			if (List.is_empty(s.sports_28d)) []
 			else List.concat(
 				["", "  sport mix (28d):"],
-				List.map(s.sports_28d, |sport| "    ${sport.sport}: ${I64.to_str(sport.sessions)} sessions · ${fmt1(sport.moving_time.to_f64() / 3600.0)}h · ${fmt1(dist_value(units, sport.distance_m))} ${dist_unit(units)} · ${fmt0(sport.tss)} load"),
+				List.map(by_plain_name(s.sports_28d, |sp| sp.sport, |a, b| { ..a, sessions: a.sessions + b.sessions, moving_time: a.moving_time + b.moving_time, distance_m: a.distance_m + b.distance_m, tss: a.tss + b.tss }), |e| "    ${e.name}: ${I64.to_str(e.row.sessions)} sessions · ${Fmt.hours_tenths(e.row.moving_time)}h · ${fmt1(dist_value(units, e.row.distance_m))} ${dist_unit(units)} · ${fmt0(e.row.tss)} load"),
 			)
 		Str.join_with(
 			List.join([
@@ -1447,8 +1472,10 @@ Render :: [].{
 					"  → form ${fmt0(s.form_tsb)}${form_trend_phrase(if (s.form_delta_known) Known(s.form_delta_7d) else Unknown)} — ${Metrics.form_label(s.form_tsb)}${band_days_phrase(if (s.form_band_days <= 0) Unknown else if (s.form_band_days_capped) AtLeast(s.form_band_days) else Known(s.form_band_days))}",
 					# Numbers, no verdict: the usual sustainable band is the coach's
 					# knowledge, not the engine's. Signed, because a taper reads negative
-					# and clamping that to 0 would hide a deliberate unload.
-					"  ramp: ${signed(s.ramp_7d)}/wk · ${signed(s.ramp_28d_avg)}/wk over 28d",
+					# and clamping that to 0 would hide a deliberate unload. Each number
+					# names its span (core Load.last_days): a rolling week is not the
+					# calendar week the window's ramp card reads, and both read to a tenth.
+					"  fitness ramp: ${Fmt.tenths_signed((s.ramp_7d * 10.0).round_to_i64_try().ok_or(0))} ctl ${Load.last_days(7)} · ${Fmt.tenths_signed((s.ramp_28d_avg * 10.0).round_to_i64_try().ok_or(0))} ctl/wk averaged ${Load.last_days(28)}",
 					# CTL starts at zero, so a short history reads LOW rather than unknown and the
 					# form verdict above is drawn from absolute bands that do not apply yet. Say so
 					# here, not only in the JSON — a human reading a confident-looking number has no
@@ -1456,7 +1483,7 @@ Render :: [].{
 					warming_up_note(s.ctl_warming_up, s.load_days),
 					"",
 					"  last 28 days:",
-					"    ${I64.to_str(z.sessions)} sessions · ${fmt1(z.moving_time.to_f64() / 3600.0)}h · ${fmt1(dist_value(units, z.distance_m))} ${dist_unit(units)}",
+					"    ${I64.to_str(z.sessions)} sessions · ${Fmt.hours_tenths(z.moving_time)}h · ${fmt1(dist_value(units, z.distance_m))} ${dist_unit(units)}",
 					"    training load: ${fmt0(z.tss)} (${I64.to_str(z.measured_pct)}% measured by power or pace — rest estimated from HR/RPE; see doctor)",
 				],
 				# tier line: descriptive provenance for the load number above
@@ -1614,7 +1641,10 @@ Render :: [].{
 				"${p.target_date} was ${I64.to_str(-p.days_away)}d ago — baseline shown, `stride load` holds the day's reading"
 			else
 				"projected to ${p.target_date} (in ${I64.to_str(p.days_away)}d) from ${p.projected_from}, over the ${p.plan_source} plan"
-		nums = "  ctl ${fmt1(p.ctl)}  atl ${fmt1(p.atl)}  tsb ${fmt1(p.tsb)}  (${(p.sessions_projected).to_str()} of ${(p.sessions_considered).to_str()} sessions in the window carry a projectable load)"
+		# the projected state in the text `stride events` and the window's event
+		# card print for the same date (core Load.projected_on); a past horizon
+		# shows the baseline, so it names the baseline's own day
+		nums = "  ${Load.projected_on(if (p.days_away < 0) p.projected_from else p.target_date, p.ctl, p.tsb)} (fatigue ${fmt1(p.atl)}) — ${(p.sessions_projected).to_str()} of ${(p.sessions_considered).to_str()} sessions in the window carry a projectable load"
 		hyp =
 			if (List.is_empty(p.hypothetical)) ""
 			else Str.join_with(List.map(p.hypothetical, |h| "\n  hypothetical: ${h.date} ${h.target_literal}"), "")
@@ -1656,8 +1686,11 @@ Render :: [].{
 	## event targets: the projection as numbers in plain indented rows, its inputs
 	## in the lead line and the degraded-baseline note, and NO verdict line — "are you on
 	## track" is the coach's sentence, and ADR 0010 notes the denylist would not even
-	## catch it, so nothing here says it.
-	events_screen : { projected_from : Str, baseline_known : Bool, ftp_known : Bool, events : List({ id : I64, event_date : Str, name : Str, days_away : I64, ctl : F64, atl : F64, tsb : F64, planned_in_window : U64, sessions_projected : U64, unprojected : List({ date : Str, target_literal : Str, reason : Str }) }) } -> Str
+	## catch it, so nothing here says it. Each projected state names the date it is
+	## for (core Load.projected_on, the text the window's event card reads): the event
+	## day, and the plan's last day when the written plan stops short of the event,
+	## since past that day the event-day numbers are decay alone.
+	events_screen : { projected_from : Str, baseline_known : Bool, ftp_known : Bool, events : List({ id : I64, event_date : Str, name : Str, days_away : I64, ctl : F64, atl : F64, tsb : F64, planned_in_window : U64, sessions_projected : U64, unprojected : List({ date : Str, target_literal : Str, reason : Str }), plan_end : { known : Bool, date : Str, ctl : F64, atl : F64, tsb : F64 } }) } -> Str
 	events_screen = |p|
 		if List.is_empty(p.events) {
 			"no event targets on file — `stride event add <YYYY-MM-DD> \"<name>\"` records one"
@@ -1669,14 +1702,16 @@ Render :: [].{
 					# reading (daily_load holds that) — say so instead of printing "in -3d"
 					if (e.days_away < 0)
 						"  #${I64.to_str(e.id)}  ${e.event_date}  ${I64.to_str(-e.days_away)}d ago — baseline shown, `stride load` holds the event-day reading  ${e.name}"
-					else
-						"  #${I64.to_str(e.id)}  ${e.event_date}  in ${I64.to_str(e.days_away)}d  ctl ${fmt1(e.ctl)}  atl ${fmt1(e.atl)}  tsb ${fmt1(e.tsb)}  (${(e.sessions_projected).to_str()} of ${(e.planned_in_window).to_str()} planned sessions carry a projectable load)  ${e.name}${unprojected_tally(e.unprojected)}",
+					else {
+						plan_end = if (e.plan_end.known) "\n      plan's last day ${Load.projected_on(e.plan_end.date, e.plan_end.ctl, e.plan_end.tsb)} (fatigue ${fmt1(e.plan_end.atl)}); nothing is planned after it" else ""
+						"  #${I64.to_str(e.id)}  ${e.event_date}  in ${I64.to_str(e.days_away)}d  ${e.name}\n      event day ${Load.projected_on(e.event_date, e.ctl, e.tsb)} (fatigue ${fmt1(e.atl)}) — ${(e.sessions_projected).to_str()} of ${(e.planned_in_window).to_str()} planned sessions carry a projectable load${plan_end}${unprojected_tally(e.unprojected)}"
+					},
 			)
 			base_note =
 				if (!(p.baseline_known)) "\nno computed history to project from — every number above is decay over zero; `stride analyze` first"
 				else ""
 			body = Str.join_with(
-				List.concat(["projected CTL/ATL/TSB from ${p.projected_from} over the open plan's targets"], rows),
+				List.concat(["projected fitness, fatigue and form from ${p.projected_from} over the open plan's targets"], rows),
 				"\n",
 			)
 			"${body}${base_note}"
@@ -1867,7 +1902,7 @@ Render :: [].{
 		# and a raw delta of -44 - every reader subtracts the columns, gets
 		# 43, and concludes the arithmetic is wrong). A table must agree with
 		# itself; signed() on the raw value remains right for a delta with no
-		# columns beside it, like the summary ramp line. The agreement rests
+		# columns beside it. The agreement rests
 		# on rf sharing fmt0's exact body, ok_or(0) fallback included - change
 		# how fmt0 rounds and this rounding must move with it, or the deltas
 		# quietly stop describing the cells beside them.
@@ -2228,6 +2263,7 @@ expect {
 		w_prime: 20000.0,
 		fit_r2: 0.72,
 		fit_points: 3.I64,
+		estimated_sessions: 0.I64,
 	})
 	# a degenerate fit and a perfect one rendered identically here, on the
 	# command that PUBLISHES the fit -- so the quality travels with it
@@ -2239,6 +2275,7 @@ expect {
 		w_prime: 20000.0,
 		fit_r2: 1.0,
 		fit_points: 2.I64,
+		estimated_sessions: 0.I64,
 	})
 	Str.contains(s, "5s") and Str.contains(s, "20m") and Str.contains(s, "Critical Power 250") and Str.contains(s, "Ride")
 		and Str.contains(s, "fit r2 0.72")
@@ -2247,8 +2284,12 @@ expect {
 		and !(Str.contains(thin, "r2 1.00")) and Str.contains(thin, "r2 needs 3")
 }
 expect {
-	s = Render.power_curve_screen({ window_days: 30, sport: "", points: [], cp: 0.0, w_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
+	s = Render.power_curve_screen({ window_days: 30, sport: "", points: [], cp: 0.0, w_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64, estimated_sessions: 0 })
+	est = Render.power_curve_screen({ window_days: 30, sport: "Ride", points: [], cp: 0.0, w_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64, estimated_sessions: 1 })
 	Str.contains(s, "no power data") and Str.contains(s, "all power sports")
+		# a window holding only estimated watts says so, in the words doctor and
+		# the window use for the same session
+		and Str.contains(est, "estimated power only (no power meter) in this window") and !(Str.contains(est, "no power data"))
 }
 
 # the pace twin. CS renders as a PACE and D' as a DISTANCE, and both follow the
@@ -2318,8 +2359,8 @@ expect {
 	out = Render.summary_screen(Metric, s)
 	Str.contains(out, "stride report") and Str.contains(out, "zone gap") and Str.contains(out, "none on record")
 		# a build and an unload each keep their sign in the same line
-		and Str.contains(out, "+4/wk")
-		and Str.contains(out, "-1/wk")
+		and Str.contains(out, "fitness ramp: +4.0 ctl in the last 7 days")
+		and Str.contains(out, "-1.0 ctl/wk averaged in the last 28 days")
 		# the verdict carries the trend, not just the band
 		and Str.contains(out, "form 10, up 5 from a week ago")
 		# the label NAMES the state and no longer prescribes, and the streak says
@@ -2717,6 +2758,7 @@ expect {
 		cp: 254.0,
 		w_prime: 6416.0,
 		fit_points: 3.I64,
+		estimated_sessions: 0.I64,
 		fit_r2: 0.72,
 		window_days: 90.I64,
 		sport_family: "Ride",
@@ -2889,6 +2931,7 @@ expect {
 # the rule is about surfaces rather than intent — and a sweep that skips a surface
 # because someone judged it exempt is how the gap recurs.
 expect {
+	no_end = { known: Bool.False, date: "", ctl: 0.0, atl: 0.0, tsb: 0.0 }
 	# the complete clause's input with nothing known: each target row below overrides
 	# only what its kind carries
 	tm_base = { target_kind: "", target_literal: "", target_pace_unit: "", target_rpe: 0, detected_known: Bool.False, detected_reps: 0, detected_mean_dur_s: 0, detected_mean_watts: 0.0, exec_known: Bool.False, exec_reason: "", hr_under_s: 0, hr_in_s: 0, hr_over_s: 0, hr_mean: 0.0, zone_below_s: 0, zone_in_s: 0, zone_above_s: 0, pace_basis: "", pace_actual_s: 0.0, pace_reps: 0, rpe_actual: 0.0 }
@@ -2941,10 +2984,10 @@ expect {
 		# the denylist, which is why the screen carries no verdict line AT ALL, and the
 		# sweep is backstop rather than proof
 		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [] }),
-		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 38.2, atl: 22.1, tsb: 16.1, planned_in_window: 4, sessions_projected: 2, unprojected: [{ date: "2026-09-02", target_literal: "", reason: "no_target" }, { date: "2026-09-03", target_literal: "1x1:00:00@4:10/km", reason: "no_threshold_pace" }] }] }),
-		Render.events_screen({ projected_from: "2026-08-30", baseline_known: False, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 0.0, atl: 0.0, tsb: 0.0, planned_in_window: 0, sessions_projected: 0, unprojected: [] }] }),
-		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 12.0, atl: 3.0, tsb: 9.0, planned_in_window: 2, sessions_projected: 0, unprojected: [{ date: "2026-09-02", target_literal: "3x12:00@230W", reason: "no_ftp" }, { date: "2026-09-04", target_literal: "3x12:00@230W", reason: "no_ftp" }] }] }),
-		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [{ id: 2, event_date: "2026-08-01", name: "Past Race", days_away: -29, ctl: 40.0, atl: 50.0, tsb: -10.0, planned_in_window: 0, sessions_projected: 0, unprojected: [] }] }),
+		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 38.2, atl: 22.1, tsb: 16.1, planned_in_window: 4, sessions_projected: 2, unprojected: [{ date: "2026-09-02", target_literal: "", reason: "no_target" }, { date: "2026-09-03", target_literal: "1x1:00:00@4:10/km", reason: "no_threshold_pace" }], plan_end: no_end }] }),
+		Render.events_screen({ projected_from: "2026-08-30", baseline_known: False, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 0.0, atl: 0.0, tsb: 0.0, planned_in_window: 0, sessions_projected: 0, unprojected: [], plan_end: no_end }] }),
+		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 12.0, atl: 3.0, tsb: 9.0, planned_in_window: 2, sessions_projected: 0, unprojected: [{ date: "2026-09-02", target_literal: "3x12:00@230W", reason: "no_ftp" }, { date: "2026-09-04", target_literal: "3x12:00@230W", reason: "no_ftp" }], plan_end: no_end }] }),
+		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [{ id: 2, event_date: "2026-08-01", name: "Past Race", days_away: -29, ctl: 40.0, atl: 50.0, tsb: -10.0, planned_in_window: 0, sessions_projected: 0, unprojected: [], plan_end: no_end }] }),
 		# project_screen joins on arrival: recorded, hypothetical, and both notes
 		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "recorded", ctl: 30.0, atl: 20.0, tsb: 10.0, sessions_considered: 3, sessions_projected: 2, unprojected: [], hypothetical: [] }),
 		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "hypothetical", ctl: 30.0, atl: 20.0, tsb: 10.0, sessions_considered: 1, sessions_projected: 1, unprojected: [{ date: "2026-09-20", target_literal: "1x1:00:00@HR125-147", reason: "no_hr_zones" }, { date: "2026-09-21", target_literal: "", reason: "no_target" }], hypothetical: [{ date: "2026-09-15", target_kind: "power", target_literal: "3x12:00@230W", reps: 3, dur_s: 720, watts: 230.0 }] }),
@@ -3095,3 +3138,13 @@ expect Render.drain_note(BudgetReached, { streams: 4, owed: 4, resume: "10:45", 
 expect Str.trim_end(Render.wait_frame({ daily: True, tick: 3, at: "18:00", left: 27720 })) == "daily allowance     \\ returns 18:00, 7 h 42 min left"
 expect Render.progress_bar("streams", 939, 1412) == "streams             [██████░░░░]  939/1412"
 expect Render.progress_bar("scoring", 85, 85) == "scoring             [██████████] 85/85"
+
+# an event the written plan stops short of names both dates its numbers are
+# for, each through Load.projected_on, the text the window's event card reads
+# for the same date and numbers (Board.proj_lines, in the window's expects)
+expect {
+	s = Render.events_screen({ projected_from: "2026-11-25", baseline_known: True, ftp_known: True, events: [{ id: 2, event_date: "2027-06-26", name: "Tour de Chi", days_away: 212, ctl: 0.6, atl: 0.0, tsb: 0.6, planned_in_window: 20, sessions_projected: 16, unprojected: [], plan_end: { known: Bool.True, date: "2026-12-15", ctl: 54.94, atl: 53.6, tsb: 1.26 } }] })
+	Str.contains(s, "event day 2027-06-26: fitness 0.6, form 0.6 (fatigue 0.0)")
+		and Str.contains(s, "plan's last day 2026-12-15: fitness 54.9, form 1.3 (fatigue 53.6); nothing is planned after it")
+		and !(Str.contains(s, "ctl 0.6"))
+}
