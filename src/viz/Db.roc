@@ -33,10 +33,9 @@ Db :: [].{
 	# in the fit's own units (watts, or a speed in m/s), 0 when none is
 	TestAnchor : { value : F32, kind : Str, date : Str }
 
-	# what the power tab's top line reads: the window's fit, a marked test
-	# in force, and the family's threshold today as the engine scores with
-	# it (0: none), with whether that test set it
-	CurveInfo : { fit : Fit, test : TestAnchor, thr : F32, from_test : Bool }
+	# what the power tab's top line reads: the engine's answer for the curve
+	# (parse_fit)
+	CurveInfo : FitRead
 
 	Point : { ctl : F32, atl : F32, tsb : F32, tss : F32 }
 	# integer tenths -> "41.9" / "-8.9"; the rule lives in core.Fmt so the CLI
@@ -1861,25 +1860,34 @@ Db :: [].{
 	# for a pace sport, carried in the same four fields; the test in force;
 	# and the family's threshold today as the engine scores with it (FTP in
 	# watts, or a threshold speed in m/s), with whether the test set it
-	load_fit! : Cmd.Runner, I64, Str => { fit : Fit, test : TestAnchor, thr : F32, from_test : Bool }
+	load_fit! : Cmd.Runner, I64, Str => FitRead
 	load_fit! = |runner, days, curve| {
 		args = match Bus.curve_key(curve) {
 			Pace(sp) => ["pace-curve", I64.to_str(days), sp, "--json"]
 			Power(fam) => ["power-curve", I64.to_str(days), fam, "--json"]
 		}
-		pace = Str.starts_with(curve, Bus.pace_prefix)
-		threshold_key = if (pace) "cs" else "cp"
-		reserve_key = if (pace) "d_prime" else "w_prime"
 		out = match runner.run_utf8!(Cmd.with_args(Cmd.new("stride"), args)) {
 			Ok(o) => if (o.exit_code == 0) o.stdout else ""
 			Err(_) => ""
 		}
+		parse_fit(out, Str.starts_with(curve, Bus.pace_prefix))
+	}
+
+	# what a curve command's JSON says, or what is missing from it. A failed
+	# call leaves the text empty, and a `stride` that predates the threshold
+	# fields answers without them: either way the threshold is not known,
+	# which is its own state, never a threshold of 0. A threshold the engine
+	# answered with 0 is known: the family has none.
+	FitRead : { fit : Fit, test : TestAnchor, thr : F32, thr_known : Bool, from_test : Bool }
+
+	parse_fit : Str, Bool -> FitRead
+	parse_fit = |out, pace| {
 		num = |key| match F32.from_str(json_number(out, key)) {
 			Ok(v) => v
 			Err(_) => -1.0
 		}
-		cp = num(threshold_key)
-		wp = num(reserve_key)
+		cp = num(if (pace) "cs" else "cp")
+		wp = num(if (pace) "d_prime" else "w_prime")
 		r2 = num("fit_r2")
 		fp = num("fit_points")
 		tv = num("test_value")
@@ -1888,6 +1896,7 @@ Db :: [].{
 			fit: { cp, w_prime: wp, r2, points: fp, ok: cp >= 0.0 and wp >= 0.0 and r2 >= 0.0 and fp >= 0.0 },
 			test: { value: if (tv > 0.0) tv else 0.0, kind: json_string(out, "test_kind"), date: json_string(out, "test_date") },
 			thr: if (thr > 0.0) thr else 0.0,
+			thr_known: thr >= 0.0,
 			from_test: json_string(out, if (pace) "threshold_source" else "ftp_source") == "test",
 		}
 	}

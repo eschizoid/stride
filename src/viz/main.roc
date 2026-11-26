@@ -323,8 +323,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 	# the database could not answer, and still unchosen while booting; then
 	# the fit, which runs the engine, so the skeleton skips it
 	cf = if (boot) curve_family else if (loaded.cf == "") "Ride" else loaded.cf
-	ft = if (boot) ({ fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: { value: 0.0, kind: "none", date: "none" }, thr: 0.0, from_test: Bool.False }) else Db.load_fit!(acc.io.commands(), curve_days, cf)
-	fit = ft.fit
+	ft = if (boot) ({ fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: { value: 0.0, kind: "none", date: "none" }, thr: 0.0, thr_known: Bool.False, from_test: Bool.False }) else Db.load_fit!(acc.io.commands(), curve_days, cf)
 	# the board projects as far as the written plan reaches, never past the
 	# next event (load_plan_horizon! caps it there), and reads the numbers
 	# and the day-by-day series from the engine's own walk
@@ -469,7 +468,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		trace_cache: loaded.tcache,
 		segs: loaded.sg,
 		trace_dur: loaded.du,
-		curve_info: { fit, test: ft.test, thr: ft.thr, from_test: ft.from_test },
+		curve_info: ft,
 		data: loaded.s.data,
 		days: loaded.s.days,
 		stride_dir: acc.dir,
@@ -2027,7 +2026,7 @@ load_curve_window! = |acc, font, curve_days, curve_family| {
 		c: read.c,
 		cpv: read.cpv,
 		title: Text.from(Curve.title_text(curve_family), head).size(15).prepare!()?,
-		info: { fit: ft.fit, test: ft.test, thr: ft.thr, from_test: ft.from_test },
+		info: ft,
 	})
 }
 

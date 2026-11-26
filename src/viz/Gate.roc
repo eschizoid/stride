@@ -234,7 +234,7 @@ Gate :: [].{
 			prs,
 			curve,
 			curve_prev: prev,
-			curve_info: { fit, test, thr: if (pace) r20 * 0.95 / 1000.0 else r20 * 0.95, from_test: days == 90 },
+			curve_info: { fit, test, thr: if (pace) r20 * 0.95 / 1000.0 else r20 * 0.95, thr_known: Bool.True, from_test: days == 90 },
 		}
 	}
 
@@ -290,7 +290,8 @@ Gate :: [].{
 	# to fit and no test is in force, so the card asks for one, and the rows
 	# from 20 minutes have bests only from before both windows. "test under
 	# the derivation": the test in force is lower than the 60-day derivation,
-	# so the card credits the derivation.
+	# so the card credits the derivation. "threshold unread": the engine's
+	# answer lacked the threshold, so the card says it could not be read.
 	story_models : List({ name : Str, model : Ui.Model })
 	story_models =
 		List.join(
@@ -309,6 +310,7 @@ Gate :: [].{
 						{ name: "${c.name} mixed rows", model: { ..m, curve: List.keep_if(level, |p| p.dur_s != 600), curve_prev: List.keep_if(m.curve_prev, |p| p.dur_s != 1200) } },
 						{ name: "${c.name} too few for a fit", model: { ..m, curve: List.keep_if(m.curve, |p| p.dur_s < 1200), curve_prev: List.keep_if(m.curve_prev, |p| p.dur_s < 1200), curve_info: { ..m.curve_info, fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 1.0, ok: Bool.True }, test: { value: 0.0, kind: "none", date: "none" }, from_test: Bool.False } } },
 						{ name: "${c.name} test under the derivation", model: { ..m, curve_info: { ..m.curve_info, test: { ..m.curve_info.test, value: m.curve_info.thr * 0.9 }, from_test: Bool.False } } },
+						{ name: "${c.name} threshold unread", model: { ..m, curve_info: { ..m.curve_info, thr_known: Bool.False } } },
 					]
 				},
 			),
@@ -497,7 +499,7 @@ Gate :: [].{
 			curve_days: 90,
 			curve_family: "Ride",
 			curve_keys: { power: [], pace: [] },
-			curve_info: { fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: { value: 0.0, kind: "none", date: "none" }, thr: 0.0, from_test: Bool.False },
+			curve_info: { fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: { value: 0.0, kind: "none", date: "none" }, thr: 0.0, thr_known: Bool.False, from_test: Bool.False },
 			data: [],
 			days: [],
 			day_notes: [],
@@ -1493,11 +1495,12 @@ expect Gate.failures(|m| Gate.judge(Curve.owned(m, Gate.builtin_measure), Curve.
 # the gate above judges the strings it claims to: a card whose line wraps
 # at the minimum window and none at the wide one, a run's two ways to a
 # threshold, both test-due lines (bests not flat out, too few to fit), a
-# test that set the threshold and one under the derivation, a usable fit,
-# the empty window before, an empty row that never had a best on a power
-# and a pace curve and one whose best is older than both windows, a level
-# row, a row only the window before has and one only this window has, and
-# both long sport names in plain words are all on screen somewhere
+# threshold that could not be read, a test that set the threshold and one
+# under the derivation, a usable fit, the empty window before, an empty row
+# that never had a best on a power and a pace curve and one whose best is
+# older than both windows, a level row, a row only the window before has
+# and one only this window has, and both long sport names in plain words
+# are all on screen somewhere
 expect {
 	models = List.join([Gate.curve_models, Gate.long_models, Gate.story_models])
 	texts = |f| List.map(Curve.scene(f.model, Gate.measure), |p| p.item.text)
@@ -1517,6 +1520,7 @@ expect {
 		and List.contains(all, "none in the last 90 days")
 		and List.contains(all, "none before")
 		and shows("no 60-minute session yet")
+		and shows("Your FTP could not be read from stride")
 		and List.contains(all, "none in the last 180 days")
 		and List.any(all, |t| Str.contains(t, "from your best 20 minutes of the last 60 days, higher than your test on 10-27"))
 		and List.any(all, |t| Str.contains(t, "stand up paddling"))

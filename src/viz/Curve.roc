@@ -322,12 +322,13 @@ Curve :: [].{
 	# due, by the rule the tab has always used: a test is due when the
 	# window's critical power (or speed) fit is not usable (fit_usable_for)
 	# and no marked test is in force. The line names what made the fit
-	# unusable: the engine gave no answer; it had fewer than two of the
-	# window's 5, 10 and 20-minute bests to fit; or the bests it fitted do
-	# not fall on one curve or leave too little or too much in reserve,
-	# which is what bests from steady rather than flat-out efforts give. A
-	# test stays in force for the engine's 90 days and stands in for the
-	# fit; a curve with no threshold at all says how to get one: two
+	# unusable: fewer than two of the window's 5, 10 and 20-minute bests to
+	# fit, or bests that do not fall on one curve or leave too little or too
+	# much in reserve, which is what bests from steady rather than flat-out
+	# efforts give. An answer from the engine that is missing, or lacks the
+	# threshold or the fit, is said as such and claims nothing else. A test
+	# stays in force for the engine's 90 days and stands in for the fit; a
+	# curve the engine answered with no threshold says how to get one: two
 	# 20-minute bests within 60 days set the derived one, and on foot a
 	# marked 5 km time trial sets it too.
 	TestNote : { text : Str, due : Bool }
@@ -340,14 +341,15 @@ Curve :: [].{
 		thr_v = F32.round_to_i64_try(if (pace) (info.thr * 1000.0) else info.thr) ?? 0
 		shown = v_text(curve, units, thr_v)
 		due = !(fit_usable_for(curve, info.fit)) and info.test.value <= 0.0
-		if thr_v <= 0 {
+		if !(info.thr_known) or !(info.fit.ok) {
+			{ text: "Your ${thr_name} could not be read from stride - press R to try again, or update stride", due: Bool.False }
+		} else if thr_v <= 0 {
 			test_way = if (pace and verb == "run") ", or run 5 km as fast as you can and mark it as a test" else " to set one"
 			how_first = if (pace) "without stopping" else "hard"
 			{ text: "No ${thr_name} yet - ${verb} 20 minutes ${how_first} twice within 60 days${test_way}", due: Bool.True }
 		} else if due {
 			why =
-				if (!(info.fit.ok)) "your ${thr_name} could not be checked"
-				else if (info.fit.points < 2.0) "too few hard 5 to 20-minute efforts in the ${now_name(days)} to check your ${thr_name}"
+				if (info.fit.points < 2.0) "too few hard 5 to 20-minute efforts in the ${now_name(days)} to check your ${thr_name}"
 				else "${bests_named(bests)} of the ${now_name(days)} ${if_one(bests, "was", "were")} not flat out"
 			how = if (pace) "as hard as you can without stopping" else "as hard as you can"
 			{ text: "Test due: ${why} - ${verb} 20 minutes ${how} to update your ${thr_name} (now ${shown})", due: Bool.True }
@@ -944,13 +946,13 @@ expect {
 
 # ── the top line ────────────────────────────────────────────────────────────
 # each due line names the condition that fired and nothing else: steady
-# bests that fit no curve, named by the durations the window has, too few
-# bests to fit, or no answer from the engine; none carries a day count of
-# its own
+# bests that fit no curve, named by the durations the window has, or too
+# few bests to fit; none carries a day count of its own. An answer that
+# lacks the fit says it could not be read, and asks for no test
 expect {
 	weak = { cp: 252.9, w_prime: 2980.0, r2: 0.84, points: 3.0, ok: Bool.True }
 	none = { value: 0.0, kind: "none", date: "none" }
-	info = { fit: weak, test: none, thr: 241.0, from_test: Bool.False }
+	info = { fit: weak, test: none, thr: 241.0, thr_known: Bool.True, from_test: Bool.False }
 	all3 = [300, 600, 1200]
 	due = Curve.top_line("Ride", Metric, 90, info, all3)
 	due == { text: "Test due: your 5, 10 and 20-minute bests of the last 90 days were not flat out - ride 20 minutes as hard as you can to update your FTP (now 241 W)", due: Bool.True }
@@ -958,11 +960,40 @@ expect {
 		and Curve.top_line("Ride", Metric, 90, { ..info, fit: { ..weak, r2: 0.95, w_prime: 60000.0 } }, all3) == due
 		and (Curve.top_line("Ride", Metric, 90, info, [300, 1200])).text == "Test due: your 5 and 20-minute bests of the last 90 days were not flat out - ride 20 minutes as hard as you can to update your FTP (now 241 W)"
 		and Curve.top_line("Ride", Metric, 90, { ..info, fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 1.0, ok: Bool.True } }, [1200]) == { text: "Test due: too few hard 5 to 20-minute efforts in the last 90 days to check your FTP - ride 20 minutes as hard as you can to update your FTP (now 241 W)", due: Bool.True }
-		and Curve.top_line("Ride", Metric, 90, { ..info, fit: { ..weak, ok: Bool.False } }, all3) == { text: "Test due: your FTP could not be checked - ride 20 minutes as hard as you can to update your FTP (now 241 W)", due: Bool.True }
+		and Curve.top_line("Ride", Metric, 90, { ..info, fit: { ..weak, ok: Bool.False } }, all3) == { text: "Your FTP could not be read from stride - press R to try again, or update stride", due: Bool.False }
 		and (Curve.top_line("Rowing", Metric, 30, { ..info, thr: 121.0 }, all3)).text == "Test due: your 5, 10 and 20-minute bests of the last 30 days were not flat out - row 20 minutes as hard as you can to update your FTP (now 121 W)"
 }
 expect Curve.bests_named([300, 600, 1200]) == "your 5, 10 and 20-minute bests" and Curve.bests_named([600, 1200]) == "your 10 and 20-minute bests" and Curve.bests_named([1200]) == "your 20-minute best"
 expect Curve.fit_bests([{ secs: 300, now: 262, prev: 0, ever: Bool.True, i: 0 }, { secs: 600, now: 0, prev: 271, ever: Bool.True, i: 1 }, { secs: 1200, now: 254, prev: 0, ever: Bool.True, i: 2 }, { secs: 3600, now: 233, prev: 0, ever: Bool.True, i: 3 }]) == [300, 1200]
+
+# the top line over what the loader really reads: a failed call (no text)
+# and an answer from a stride that predates the threshold fields both say
+# the threshold could not be read and claim nothing else, never "No FTP
+# yet"; an answer with a threshold of 0 is the engine saying there is none;
+# an answer with one is printed, credited to the test only when its source
+# says the test set it
+expect {
+	head = "{\"schema_version\":3,\"data\":{\"window_days\":90,\"sport\":\"Ride\",\"points\":[],\"cp\":252.9,\"w_prime\":2980.0,\"fit_r2\":0.84,\"fit_points\":3,\"test_known\":false,\"test_value\":0,\"test_kind\":\"\",\"test_date\":\"\""
+	old = Db.parse_fit("${head}}}", Bool.False)
+	failed = Db.parse_fit("", Bool.False)
+	none = Db.parse_fit("${head},\"ftp_w\":0,\"ftp_source\":\"derived\"}}", Bool.False)
+	derived = Db.parse_fit("${head},\"ftp_w\":241,\"ftp_source\":\"derived\"}}", Bool.False)
+	unread = "Your FTP could not be read from stride - press R to try again, or update stride"
+	line = |info| (Curve.top_line("Ride", Metric, 90, info, [300, 600, 1200])).text
+	!old.thr_known and !failed.thr_known and none.thr_known and derived.thr_known
+		and line(failed) == unread
+		and line(old) == unread
+		and line(none) == "No FTP yet - ride 20 minutes hard twice within 60 days to set one"
+		and line(derived) == "Test due: your 5, 10 and 20-minute bests of the last 90 days were not flat out - ride 20 minutes as hard as you can to update your FTP (now 241 W)"
+}
+expect {
+	tested = Db.parse_fit("{\"data\":{\"cp\":250.0,\"w_prime\":15000.0,\"fit_r2\":0.95,\"fit_points\":3,\"test_known\":true,\"test_value\":246.5,\"test_kind\":\"cp3-12\",\"test_date\":\"2026-10-27\",\"ftp_w\":247,\"ftp_source\":\"test\"}}", Bool.False)
+	under = Db.parse_fit("{\"data\":{\"cp\":250.0,\"w_prime\":15000.0,\"fit_r2\":0.95,\"fit_points\":3,\"test_known\":true,\"test_value\":217.0,\"test_kind\":\"ftp20\",\"test_date\":\"2026-11-14\",\"ftp_w\":241,\"ftp_source\":\"derived\"}}", Bool.False)
+	run = Db.parse_fit("{\"data\":{\"cs\":3.4,\"d_prime\":200.0,\"fit_r2\":0.95,\"fit_points\":3,\"test_known\":false,\"test_value\":0,\"test_kind\":\"\",\"test_date\":\"\",\"threshold_speed\":3.5,\"threshold_source\":\"derived\"}}", Bool.True)
+	(Curve.top_line("Ride", Metric, 90, tested, [300, 600, 1200])).text == "FTP 247 W - set by your test on 10-27"
+		and (Curve.top_line("Ride", Metric, 90, under, [300, 600, 1200])).text == "FTP 241 W - from your best 20 minutes of the last 60 days, higher than your test on 11-14"
+		and run.thr_known and (run.thr - 3.5).abs() < 0.001 and (Curve.top_line("pace:Run", Metric, 90, run, [300, 600, 1200])).text == "threshold pace ${Curve.v_text("pace:Run", Metric, 3500)} - no test due"
+}
 
 # a test is credited only when it set the threshold the engine scores
 # with: in force and at least the derivation, the line names the test;
@@ -974,22 +1005,22 @@ expect {
 	good = { cp: 250.0, w_prime: 15000.0, r2: 0.95, points: 3.0, ok: Bool.True }
 	none = { value: 0.0, kind: "none", date: "none" }
 	all3 = [300, 600, 1200]
-	low = Curve.top_line("Ride", Metric, 90, { fit: weak, test: { value: 217.0, kind: "ftp20", date: "2026-11-14" }, thr: 241.0, from_test: Bool.False }, all3)
-	high = Curve.top_line("Ride", Metric, 90, { fit: weak, test: { value: 246.5, kind: "cp3-12", date: "2026-10-27" }, thr: 246.5, from_test: Bool.True }, all3)
-	usable = Curve.top_line("Ride", Metric, 90, { fit: good, test: none, thr: 241.0, from_test: Bool.False }, all3)
+	low = Curve.top_line("Ride", Metric, 90, { fit: weak, test: { value: 217.0, kind: "ftp20", date: "2026-11-14" }, thr: 241.0, thr_known: Bool.True, from_test: Bool.False }, all3)
+	high = Curve.top_line("Ride", Metric, 90, { fit: weak, test: { value: 246.5, kind: "cp3-12", date: "2026-10-27" }, thr: 246.5, thr_known: Bool.True, from_test: Bool.True }, all3)
+	usable = Curve.top_line("Ride", Metric, 90, { fit: good, test: none, thr: 241.0, thr_known: Bool.True, from_test: Bool.False }, all3)
 	low == { text: "FTP 241 W - from your best 20 minutes of the last 60 days, higher than your test on 11-14", due: Bool.False }
 		and !(Str.contains(low.text, "set by your test"))
 		and high == { text: "FTP 247 W - set by your test on 10-27", due: Bool.False }
 		and usable == { text: "FTP 241 W - no test due", due: Bool.False }
 		and !(Str.contains(usable.text, "flat out"))
-		and (Curve.top_line("pace:Run", Metric, 90, { fit: weak, test: { value: 3.2, kind: "5k", date: "2026-11-02" }, thr: 3.5, from_test: Bool.False }, all3)).text == "threshold pace ${Curve.v_text("pace:Run", Metric, 3500)} - from your best 20 minutes of the last 60 days, faster than your test on 11-02"
+		and (Curve.top_line("pace:Run", Metric, 90, { fit: weak, test: { value: 3.2, kind: "5k", date: "2026-11-02" }, thr: 3.5, thr_known: Bool.True, from_test: Bool.False }, all3)).text == "threshold pace ${Curve.v_text("pace:Run", Metric, 3500)} - from your best 20 minutes of the last 60 days, faster than your test on 11-02"
 }
 
 # a curve with no threshold says how to get one, in the sport's own verb,
 # and on foot names the 5 km time trial too
 expect {
 	none = { value: 0.0, kind: "none", date: "none" }
-	info = { fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: none, thr: 0.0, from_test: Bool.False }
+	info = { fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.True }, test: none, thr: 0.0, thr_known: Bool.True, from_test: Bool.False }
 	Curve.top_line("Ride", Metric, 90, info, []) == { text: "No FTP yet - ride 20 minutes hard twice within 60 days to set one", due: Bool.True }
 		and (Curve.top_line("Rowing", Metric, 90, info, [])).text == "No FTP yet - row 20 minutes hard twice within 60 days to set one"
 		and (Curve.top_line("pace:Run", Imperial, 90, info, [])).text == "No threshold pace yet - run 20 minutes without stopping twice within 60 days, or run 5 km as fast as you can and mark it as a test"
@@ -1000,7 +1031,7 @@ expect {
 # a pace curve's due line asks for the effort without stopping and reads
 # the threshold as a pace in the sport's unit
 expect {
-	info = { fit: { cp: 3.4, w_prime: 2000.0, r2: 0.95, points: 3.0, ok: Bool.True }, test: { value: 0.0, kind: "none", date: "none" }, thr: 3.5, from_test: Bool.False }
+	info = { fit: { cp: 3.4, w_prime: 2000.0, r2: 0.95, points: 3.0, ok: Bool.True }, test: { value: 0.0, kind: "none", date: "none" }, thr: 3.5, thr_known: Bool.True, from_test: Bool.False }
 	(Curve.top_line("pace:Run", Metric, 60, info, [300, 600, 1200])).text == "Test due: your 5, 10 and 20-minute bests of the last 60 days were not flat out - run 20 minutes as hard as you can without stopping to update your threshold pace (now ${Curve.v_text("pace:Run", Metric, 3500)})" and Curve.pace_secs(3500, 1000.0) == 286
 }
 

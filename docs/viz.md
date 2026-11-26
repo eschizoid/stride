@@ -1095,18 +1095,22 @@ foot), and a marked test stays in force for the engine's 90 days. The lines:
   curve or leave an implausible reserve, which steady efforts give, naming
   only the durations the window has a best at (`your 5 and 20-minute
   bests`); `too few hard 5 to 20-minute efforts in the last 90 days to check
-  your FTP` when fewer than two bests reach the fit; `your FTP could not be
-  checked` when the engine gave no answer. A pace curve asks for 20 minutes
-  as hard as you can without stopping and names the threshold pace;
+  your FTP` when fewer than two bests reach the fit. A pace curve asks for 20
+  minutes as hard as you can without stopping and names the threshold pace;
 - a marked test that set the threshold (it is at least the derivation):
   `FTP 246 W - set by your test on 10-27`;
 - a marked test under the derivation, which then sets the threshold: `FTP
   241 W - from your best 20 minutes of the last 60 days, higher than your
   test on 11-14` (`faster than` on a pace curve);
 - a usable fit and no test: `FTP 241 W - no test due`;
-- no threshold at all: `No FTP yet - ride 20 minutes hard twice within 60
-  days to set one`; on foot it adds the other way in, `or run 5 km as fast
-  as you can and mark it as a test` (`stride test <activity_id> 5k`).
+- no threshold, by the engine's own answer: `No FTP yet - ride 20 minutes
+  hard twice within 60 days to set one`; on foot it adds the other way in,
+  `or run 5 km as fast as you can and mark it as a test` (`stride test
+  <activity_id> 5k`);
+- an answer that could not be read (the command failed, or a `stride` that
+  predates `ftp_w` answered without it): `Your FTP could not be read from
+  stride - press R to try again, or update stride`, which asks for no test
+  and names no number.
 
 The line wraps inside the card when the window is too narrow for it, and
 the card grows to hold it.
