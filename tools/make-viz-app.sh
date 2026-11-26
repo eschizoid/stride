@@ -1,15 +1,19 @@
 #!/usr/bin/env sh
 # Builds the viz window as a real macOS app under $VIZ_APP_DIR (default
-# ~/Applications),
-# launchable from Launchpad/Spotlight/Dock like anything else. The bundle carries
-# its own binary (no roc needed at launch); the stride logo becomes the icon.
+# ~/Applications), launchable from Launchpad/Spotlight/Dock like anything
+# else. The bundle carries its own binary (no roc needed at launch) and the
+# stride command from the same build as Contents/MacOS/stride; the stride
+# logo becomes the icon. STRIDE_CLI names a stride binary already built,
+# which the release sets to its own CLI asset; without it the command is
+# built here on the same compiler.
 #
-# The launcher widens PATH before exec: a GUI app inherits launchd's minimal
-# PATH, and the board runs `stride` for the CP fit and `sh` for the zone offset.
-# It also passes the athlete's directory, the window's read-write grant, which
-# cannot be written into the source because it sits under a home resolved at
-# launch, and the home itself as the launch directory a capture's status row
-# names its file under.
+# The launcher puts the bundle's command first on the PATH and widens the
+# rest: a GUI app inherits launchd's minimal PATH, and the board runs
+# `stride` for the CP fit and `sh` for the zone offset. It also passes the
+# athlete's directory, the window's read-write grant, which cannot be
+# written into the source because it sits under a home resolved at launch,
+# and the home itself as the launch directory a capture's status row names
+# its file under.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -34,16 +38,30 @@ ROC="$ROC_VIZ" sh tools/roc-viz.sh build src/viz/main.roc --output="$WORK/stride
 mkdir -p "$C/MacOS" "$C/Resources"
 cp "$WORK/stride-viz" "$C/MacOS/stride-viz"
 
+# the command is copied as built, never re-signed, so the bundle's copy is
+# the release's CLI asset byte for byte
+if [ -n "${STRIDE_CLI:-}" ]; then
+  [ -s "$STRIDE_CLI" ] || { echo "make-viz-app: STRIDE_CLI names no binary: $STRIDE_CLI" >&2; exit 1; }
+  cp "$STRIDE_CLI" "$C/MacOS/stride"
+else
+  echo "building the stride command ($ROC_VIZ)..."
+  "$ROC_VIZ" build src/cli/main.roc --output="$WORK/stride" --opt=dev
+  cp "$WORK/stride" "$C/MacOS/stride"
+fi
+chmod +x "$C/MacOS/stride"
+
 cat > "$C/MacOS/launcher" <<'SH'
 #!/bin/sh
-# step: path
-# a GUI app inherits launchd's minimal PATH, and the window runs `stride`
-# for the CP fit and `sh` for the zone offset
-PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
-export PATH
 # step: locate
 here="$(cd "$(dirname "$0")" && pwd)"
 assets="$here/../Resources"
+# step: path
+# the window runs `stride` for the CP fit, found on the PATH: the command
+# in this bundle comes first, so the window runs its own build's. A GUI
+# app inherits launchd's minimal PATH, so the usual install folders
+# follow, for `sh`, which the zone offset runs
+PATH="$here:$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+export PATH
 # step: log
 log="$HOME/.stride/seed.log"
 # step: seed-fonts

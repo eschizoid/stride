@@ -39,17 +39,23 @@ jobs:
       matrix:
         include:
           - target: linux-x86_64
+            asset: stride-cli-linux-x86_64
             runs-on: ubuntu-latest
           - target: linux-arm64
+            asset: stride-cli-linux-arm64
             runs-on: ubuntu-24.04-arm
             # Left to itself the compiler detects arm64v1musl on this runner, which
             # resolves to no usable host. verify-arm64.yml re-checks this flag on demand.
             roc_target: arm64musl
           - target: macos-arm64
+            asset: stride-cli-macos-arm64
             runs-on: macos-latest # Apple Silicon
           - target: macos-x86_64
+            asset: stride-cli-macos-x86_64
             runs-on: macos-15-intel # current Intel runner, standard tier (free for public)
+          # Windows runs a program by its extension, so its asset carries one
           - target: windows-x86_64
+            asset: stride-cli-windows-x86_64.exe
             runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -65,29 +71,31 @@ jobs:
           # only linux-arm64 sets roc_target; everywhere else the native default is right
           target_flag=""
           if [ -n "${{ matrix.roc_target }}" ]; then target_flag="--target=${{ matrix.roc_target }}"; fi
-          roc build src/cli/main.roc --output="stride-cli-${{ matrix.target }}" --opt=dev $target_flag
-          ls -la stride-cli-${{ matrix.target }}* || true
-          test -f "stride-cli-${{ matrix.target }}" || test -f "stride-cli-${{ matrix.target }}.exe"
+          roc build src/cli/main.roc --output="${{ matrix.asset }}" --opt=dev $target_flag
+          ls -la "${{ matrix.asset }}"
+          test -s "${{ matrix.asset }}"
 
       - name: Verify binary version
         env:
           TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
           set -euo pipefail
-          bin="stride-cli-${{ matrix.target }}"; [ -f "$bin" ] || bin="${bin}.exe"
-          out=$(./"$bin" --version)
+          out=$(./"${{ matrix.asset }}" --version)
           [ "$out" = "stride ${TAG#v}" ] || { echo "::error::binary says '$out', tag is $TAG"; exit 1; }
 
       - uses: actions/upload-artifact@v7
         with:
           name: stride-cli-${{ matrix.target }}
-          path: stride-cli-${{ matrix.target }}*
+          path: ${{ matrix.asset }}
           if-no-files-found: error
 
   build-viz:
     name: build the app (${{ matrix.target }})
-    needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    # each app carries the command its target's build job made, byte for
+    # byte; !cancelled() lets one target's app build when another target's
+    # command failed, and its own missing command fails the download below
+    needs: [release-please, build]
+    if: ${{ !cancelled() && needs.release-please.outputs.release_created == 'true' }}
     runs-on: ${{ matrix.runs-on }}
     # upload waits on these; the 360-minute default would hold a release's
     # assets for six hours
@@ -110,10 +118,17 @@ jobs:
       - name: Set up Roc (the viz pin, not the engine pin)
         uses: ./.github/actions/setup-roc
 
+      - uses: actions/download-artifact@v8
+        with:
+          name: stride-cli-${{ matrix.target }}
+          path: cli
+
       - name: Build the .app bundle
         run: |
           set -euo pipefail
-          VIZ_APP_DIR="$PWD/stage" bash tools/make-viz-app.sh
+          # an artifact keeps no file mode
+          chmod +x "cli/stride-cli-${{ matrix.target }}"
+          VIZ_APP_DIR="$PWD/stage" STRIDE_CLI="$PWD/cli/stride-cli-${{ matrix.target }}" bash tools/make-viz-app.sh
 
       - name: Verify the bundle before it ships
         env:
@@ -135,9 +150,15 @@ jobs:
           # --verify, not -dv: -dv only displays, and exits 0 on a signature
           # that has been modified - the case Apple Silicon kills at launch
           codesign --verify --strict "$bin" || { echo "::error::${{ matrix.target }} signature is missing or invalid"; exit 1; }
-          # exactly assets/fonts byte for byte, the splash's mark and the streak
-          # flame, and a launcher with the steps the linux and windows ones share
-          bash tools/package-viz.sh macos verify "$app"
+          # the bundled command keeps the signature its linker wrote; an arm64
+          # Mac refuses to run it without one
+          if [ "${{ matrix.target }}" = macos-arm64 ]; then
+            codesign --verify --strict "$app/Contents/MacOS/stride" || { echo "::error::the bundled command's signature is missing or invalid"; exit 1; }
+          fi
+          # the command from this release's build, exactly assets/fonts byte for
+          # byte, the splash's mark and the streak flame, and a launcher with the
+          # steps the linux and windows ones share
+          bash tools/package-viz.sh macos verify "$app" "cli/stride-cli-${{ matrix.target }}"
           # the script falls back to 0.0.0-dev if the version marker moves;
           # the CLI gates its --version against the tag, so the app gates too
           got_v=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app/Contents/Info.plist")
@@ -167,11 +188,11 @@ jobs:
 
   build-viz-linux:
     name: build the app (linux-x86_64)
-    needs: release-please
+    needs: [release-please, build]
     # roc-ray's only linux host is x64glibc, so linux-arm64 gets no app. Linux has no
     # bundle format; tools/package-viz.sh says what the tarball carries, and
     # build.yml runs the same script on every pull request.
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    if: ${{ !cancelled() && needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -193,11 +214,17 @@ jobs:
           sudo apt-get install -y -qq libgl1-mesa-dev libx11-dev libxrandr-dev \
             libxinerama-dev libxi-dev libxcursor-dev libasound2-dev
 
+      - uses: actions/download-artifact@v8
+        with:
+          name: stride-cli-linux-x86_64
+          path: cli
+
       - name: Build and package
         run: |
           set -euo pipefail
           sh tools/roc-viz.sh build src/viz/main.roc --output=stride-viz-linux --opt=dev
-          bash tools/package-viz.sh linux package stride-viz-linux
+          chmod +x cli/stride-cli-linux-x86_64
+          bash tools/package-viz.sh linux package stride-viz-linux cli/stride-cli-linux-x86_64
 
       - name: Prove the launcher seeds a fresh home
         run: bash tools/package-viz.sh linux prove
@@ -210,10 +237,10 @@ jobs:
 
   build-viz-windows:
     name: build the app (windows-x86_64)
-    needs: release-please
+    needs: [release-please, build]
     # Windows has no bundle format either; tools/package-viz.sh says what the zip
     # carries, and build.yml runs the same script on every pull request.
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    if: ${{ !cancelled() && needs.release-please.outputs.release_created == 'true' }}
     runs-on: windows-2025
     timeout-minutes: 25
     steps:
@@ -224,12 +251,17 @@ jobs:
       - name: Set up Roc (the viz pin, not the engine pin)
         uses: ./.github/actions/setup-roc
 
+      - uses: actions/download-artifact@v8
+        with:
+          name: stride-cli-windows-x86_64
+          path: cli
+
       - name: Build and package
         shell: bash
         run: |
           set -euo pipefail
           sh tools/roc-viz.sh build src/viz/main.roc --output=stride-viz.exe --opt=dev
-          bash tools/package-viz.sh windows package stride-viz.exe
+          bash tools/package-viz.sh windows package stride-viz.exe cli/stride-cli-windows-x86_64.exe
 
       - name: Prove the launcher seeds a fresh home
         shell: bash
@@ -263,11 +295,27 @@ jobs:
           cd dist
           ls stride-* >/dev/null 2>&1 || { echo "::error::nothing built — nothing to attach"; exit 1; }
           ls stride-cli-* >/dev/null 2>&1 || { echo "::error::no CLI binaries built"; exit 1; }
-          # the CLI binaries satisfy stride-* alone, so a missing app zip
-          # would pass unnoticed
-          for z in stride-app-macos-arm64.zip stride-app-macos-x86_64.zip stride-app-linux-x86_64.tar.gz stride-app-windows-x86_64.zip; do
+          # one built asset satisfies stride-* alone, so every asset the
+          # installers fetch is named here and a missing one is reported
+          for z in stride-cli-linux-x86_64 stride-cli-linux-arm64 stride-cli-macos-arm64 stride-cli-macos-x86_64 stride-cli-windows-x86_64.exe \
+            stride-app-macos-arm64.zip stride-app-macos-x86_64.zip stride-app-linux-x86_64.tar.gz stride-app-windows-x86_64.zip; do
             [ -f "$z" ] || echo "::warning::$z is missing from this release - its build job failed"
           done
           sha256sum stride-* > SHA256SUMS.txt
           gh release upload "$TAG" stride-* SHA256SUMS.txt \
             --repo "${{ github.repository }}" --clobber
+
+      # install.ps1 fetches the windows command by its .exe name, the name
+      # Windows needs to run it, so the published release must list it so
+      # and must list no command under the name without the extension
+      - name: The release lists the windows command with its extension
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          names="$(gh release view "$TAG" --repo "${{ github.repository }}" --json assets -q '.assets[].name')"
+          sums="$(gh release download "$TAG" --repo "${{ github.repository }}" --pattern SHA256SUMS.txt --output -)"
+          grep -qxF stride-cli-windows-x86_64.exe <<<"$names" || { echo "::error::$TAG lists no stride-cli-windows-x86_64.exe"; exit 1; }
+          ! grep -qxF stride-cli-windows-x86_64 <<<"$names" || { echo "::error::$TAG lists stride-cli-windows-x86_64 without its .exe"; exit 1; }
+          grep -qE '^[0-9a-f]{64} [ *]stride-cli-windows-x86_64\.exe$' <<<"$sums" || { echo "::error::$TAG's SHA256SUMS.txt has no row for stride-cli-windows-x86_64.exe"; exit 1; }
