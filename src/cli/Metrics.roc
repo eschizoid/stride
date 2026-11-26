@@ -142,26 +142,32 @@ Metrics :: [].{
 	#
 	# The stitch is BOUNDED per break, because this value feeds threshold
 	# derivation (best 20-min × 0.95 sets the period threshold that scores
-	# every pace activity in its window): a break of up to max_sample_gap_s
-	# collapses to one moving second — the same bound that limits countable
-	# training time — while a longer break keeps its wall length, so no best
-	# window can quietly span a real rest. An unbounded stitch would let a
-	# run's fastest fragments, harvested around genuine recoveries, set an
-	# inflated threshold for two months of scoring.
+	# every pace activity in its window): a break of up to `break_s` wall
+	# seconds between two moving seconds collapses to one moving second,
+	# while a longer break keeps its wall length, so no best window can
+	# quietly span a real rest. A break of dt wall seconds holds dt - 1
+	# seconds without distance gained. The default bound is max_sample_gap_s,
+	# the same bound that limits countable training time; a sport passes its
+	# own through pace_break_s. An unbounded stitch would let a run's fastest
+	# fragments, harvested around genuine recoveries, set an inflated
+	# threshold for two months of scoring.
 	#
 	# POWER bests stay on wall time: Hold-resampling emits a sample for every
 	# recorded and every filled second and leaves a hole only where a gap
 	# exceeds its fill bound, so on the watts path a broken window is a real
 	# pause and wall contiguity is the right arbiter of it.
 	best_rolling_mean_moving : List({ t : I64, v : F64 }), U64 -> Try(F64, [TooShort])
-	best_rolling_mean_moving = |pairs, window| {
+	best_rolling_mean_moving = |pairs, window| best_rolling_mean_moving_within(pairs, window, max_sample_gap_s)
+
+	best_rolling_mean_moving_within : List({ t : I64, v : F64 }), U64, I64 -> Try(F64, [TooShort])
+	best_rolling_mean_moving_within = |pairs, window, break_s| {
 		reindexed =
 			List.fold(
 				pairs,
 				{ out: [], prev_wall: 0.I64, prev_new: 0.I64, started: False },
 				|acc, p| {
 					dt = p.t - acc.prev_wall
-					step = if (!(acc.started)) 0.I64 else if (dt > max_sample_gap_s) dt else 1.I64
+					step = if (!(acc.started)) 0.I64 else if (dt > break_s) dt else 1.I64
 					tn = acc.prev_new + step
 					{ out: List.append(acc.out, { t: tn, v: p.v }), prev_wall: p.t, prev_new: tn, started: True }
 				},
@@ -3087,15 +3093,31 @@ Metrics :: [].{
 	# Strava streams a pool swim one sample per length, so its time stream steps
 	# by a length's duration: half a minute for 25 m, and 120 s covers a 50 m
 	# length at 4:00/100m. Every interval of such a stream is longer than the
-	# 1 Hz bound, and under it a pool swim would carry no speed at all. A wall
-	# rest recorded as a sample at the same distance is still a stop, since its
-	# filled seconds do not advance. Every other sport records about once a
-	# second, where an interval past the 1 Hz bound is a dropout or a pause.
+	# 1 Hz bound, and under it a pool swim would carry no speed at all. Every
+	# other sport records about once a second, where an interval past the 1 Hz
+	# bound is a dropout or a pause.
 	swim_length_gap_s : I64
 	swim_length_gap_s = 120
 
 	pace_fill_gap : Str -> I64
 	pace_fill_gap = |sport| if (Sports.canonical(sport) == "Swim") swim_length_gap_s else max_fill_gap
+
+	# The longest span without distance gained that a swim's continuous stretch
+	# survives: a rule on the stream, since the engine fetches no `moving`
+	# stream and distance is the only signal it has of a stop. A rest at the
+	# wall is an interval with no distance gained, its seconds filled flat. A
+	# turn is not: a per-length stream has no sample inside a turn, and a
+	# 1 Hz stream shows one as a second or two without gain. So a swim's
+	# stretch survives up to 5 s without distance gained and ends at 6 s,
+	# which keeps a set of fast lengths with rests between them from reading
+	# as one sustained swim at the lengths' speed.
+	swim_turn_s : I64
+	swim_turn_s = 5
+
+	# the break_s a sport's pace bests roll with (best_rolling_mean_moving_within):
+	# a break of dt wall seconds holds dt - 1 seconds without distance gained
+	pace_break_s : Str -> I64
+	pace_break_s = |sport| if (Sports.canonical(sport) == "Swim") swim_turn_s + 1 else max_sample_gap_s
 
 	# rTSS / sTSS: the power formula with speed for watts — IF = ngp_speed /
 	# threshold_speed, IF^exp x hours x 100; 1 h at threshold = 100 for any exponent.
@@ -3603,9 +3625,12 @@ Metrics :: [].{
 		}
 
 	post_moving_best : List({ t : I64, v : F64 }), U64, U64 -> Try(F64, [NotReached, TooShort])
-	post_moving_best = |speed_pairs, threshold_s, window|
+	post_moving_best = |speed_pairs, threshold_s, window| post_moving_best_within(speed_pairs, threshold_s, window, max_sample_gap_s)
+
+	post_moving_best_within : List({ t : I64, v : F64 }), U64, U64, I64 -> Try(F64, [NotReached, TooShort])
+	post_moving_best_within = |speed_pairs, threshold_s, window, break_s|
 		match after_moving(speed_pairs, threshold_s) {
-			Ok(rest) => best_rolling_mean_moving(rest, window)
+			Ok(rest) => best_rolling_mean_moving_within(rest, window, break_s)
 			Err(NotReached) => Err(NotReached)
 		}
 
@@ -5075,18 +5100,17 @@ expect {
 	List.all(gas, |p| p.v > 3.5 and p.v < 4.5) and List.len(gas) == 118
 }
 
-# a pool swim as Strava streams it: one sample per 25 m length, 28 s apart, for
-# 42 minutes. Under the swim bound every second of it is motion at 25/28 m/s and
-# the 20-minute best exists; under the 1 Hz bound every interval is a gap, so the
-# same stream carries no speed at all, which is what a run's dropout must still get
-pool_lengths : U64, U64, U64 -> { time : List(F64), dist : List(F64) }
-pool_lengths = |n, rest_every, rest_s| {
+# a pool swim as Strava streams it: one sample per `len_m` length, `secs` apart,
+# with `rest_s` seconds at the wall after every `rest_every`-th length recorded
+# as a sample at the same distance
+pool_lengths : U64, F64, F64, U64, U64 -> { time : List(F64), dist : List(F64) }
+pool_lengths = |n, secs, len_m, rest_every, rest_s| {
 	walked = Iter.fold(
 		(1.U64..<(n + 1)).iter(),
 		{ t: 0.0, d: 0.0, time: [0.0], dist: [0.0] },
 		|acc, i| {
-			t = acc.t + 28.0
-			d = acc.d + 25.0
+			t = acc.t + secs
+			d = acc.d + len_m
 			if rest_every > 0 and i % rest_every == 0 and i < n {
 				rt = t + (rest_s).to_f64()
 				{ t: rt, d, time: List.concat(acc.time, [t, rt]), dist: List.concat(acc.dist, [d, d]) }
@@ -5098,45 +5122,66 @@ pool_lengths = |n, rest_every, rest_s| {
 	{ time: walked.time, dist: walked.dist }
 }
 
-expect {
-	s = pool_lengths(90, 0, 0)
+# a swim's pace stream and its best held for `secs`, under the swim bounds, or
+# under every other sport's when `swim` is false
+swim_best : { time : List(F64), dist : List(F64) }, U64, Bool -> Try(F64, [TooShort])
+swim_best = |s, secs, swim| {
 	flat = List.repeat(0.0, List.len(s.time))
-	swim = Metrics.graded_speed_1s_within(s.time, s.dist, flat, Metrics.pace_fill_gap("Swim"))
-	steady = List.len(swim) == 2520 and List.all(swim, |p| (p.v - 25.0 / 28.0).abs() < 0.001)
-	best = match Metrics.best_rolling_mean_moving(swim, 1200) {
-		Ok(v) => (v - 25.0 / 28.0).abs() < 0.001
-		Err(_) => Bool.False
-	}
-	steady and best and List.is_empty(Metrics.graded_speed_1s(s.time, s.dist, flat))
+	pairs = Metrics.graded_speed_1s_within(s.time, s.dist, flat, Metrics.pace_fill_gap("Swim"))
+	Metrics.best_rolling_mean_moving_within(pairs, secs, if (swim) Metrics.pace_break_s("Swim") else Metrics.pace_break_s("Run"))
 }
 
-# a wall rest recorded as a sample at the same distance is a stop under the swim
-# bound: 45 s at the wall after every 16 lengths leaves no 20 unbroken minutes,
-# while the 5-minute best still stands, and 20 s rests collapse as any short stop does
-expect {
-	best_of = |s, secs| {
-		flat = List.repeat(0.0, List.len(s.time))
-		Metrics.best_rolling_mean_moving(Metrics.graded_speed_1s_within(s.time, s.dist, flat, Metrics.pace_fill_gap("Swim")), secs)
+near_or_false = |r, want|
+	match r {
+		Ok(v) => (v - want).abs() < 0.001
+		Err(_) => Bool.False
 	}
-	long_rests = pool_lengths(90, 16, 45)
-	short_rests = pool_lengths(90, 8, 20)
-	broken = match best_of(long_rests, 1200) {
+
+absent = |r|
+	match r {
 		Ok(_) => Bool.False
 		Err(_) => Bool.True
 	}
-	five = match best_of(long_rests, 300) {
-		Ok(v) => (v - 25.0 / 28.0).abs() < 0.001
-		Err(_) => Bool.False
-	}
-	whole = match best_of(short_rests, 1200) {
-		Ok(v) => (v - 25.0 / 28.0).abs() < 0.001
-		Err(_) => Bool.False
-	}
-	broken and five and whole
+
+# 42 minutes of 25 m lengths 28 s apart: under the swim fill bound every second
+# of it is motion at 25/28 m/s and the 20-minute best exists; under the 1 Hz
+# bound every interval is a gap, so the same stream carries no speed at all,
+# which is what a run's dropout must still get
+expect {
+	s = pool_lengths(90, 28.0, 25.0, 0, 0)
+	flat = List.repeat(0.0, List.len(s.time))
+	swim = Metrics.graded_speed_1s_within(s.time, s.dist, flat, Metrics.pace_fill_gap("Swim"))
+	steady = List.len(swim) == 2520 and List.all(swim, |p| (p.v - 25.0 / 28.0).abs() < 0.001)
+	steady and near_or_false(swim_best(s, 1200, Bool.True), 25.0 / 28.0) and List.is_empty(Metrics.graded_speed_1s(s.time, s.dist, flat))
 }
 
-# only the swim family takes the length bound; every other sport keeps the 1 Hz one
-expect Metrics.pace_fill_gap("Swim") == 120 and Metrics.pace_fill_gap("OpenWaterSwim") == 120 and Metrics.pace_fill_gap("Run") == Metrics.max_fill_gap and Metrics.pace_fill_gap("Rowing") == Metrics.max_fill_gap
+# a sprint set is not a sustained swim: 80 lengths of 25 m in 20 s with 29 s at
+# the wall after each has no 20-minute best under the swim rule, where the
+# run's 30 s bound would stitch the lengths into 1.25 m/s held for 20 minutes
+expect {
+	set = pool_lengths(80, 20.0, 25.0, 1, 29)
+	absent(swim_best(set, 1200, Bool.True)) and absent(swim_best(set, 300, Bool.True)) and near_or_false(swim_best(set, 1200, Bool.False), 1.25)
+}
+
+# the rule's edge: 5 s without distance gained after every length is a turn and
+# the 20 minutes stand, 6 s is a rest and they do not; a 45 s rest after every
+# 16 lengths still leaves the 5-minute best between rests
+expect {
+	turns = pool_lengths(90, 28.0, 25.0, 1, 5)
+	rests = pool_lengths(90, 28.0, 25.0, 1, 6)
+	sets = pool_lengths(90, 28.0, 25.0, 16, 45)
+	near_or_false(swim_best(turns, 1200, Bool.True), 25.0 / 28.0) and absent(swim_best(rests, 1200, Bool.True)) and absent(swim_best(sets, 1200, Bool.True)) and near_or_false(swim_best(sets, 300, Bool.True), 25.0 / 28.0)
+}
+
+# slow lengths are still swimming: 25 m in 40 s and 50 m in 65 s, each stream
+# sampled once per length, hold their 20 minutes at the lengths' own speed
+expect {
+	near_or_false(swim_best(pool_lengths(40, 40.0, 25.0, 0, 0), 1200, Bool.True), 25.0 / 40.0) and near_or_false(swim_best(pool_lengths(25, 65.0, 50.0, 0, 0), 1200, Bool.True), 50.0 / 65.0)
+}
+
+# only the swim family takes the length and turn bounds; every other sport keeps
+# the 1 Hz fill bound and the 30 s break
+expect Metrics.pace_fill_gap("Swim") == 120 and Metrics.pace_fill_gap("OpenWaterSwim") == 120 and Metrics.pace_fill_gap("Run") == Metrics.max_fill_gap and Metrics.pace_fill_gap("Rowing") == Metrics.max_fill_gap and Metrics.pace_break_s("Swim") == 6 and Metrics.pace_break_s("OpenWaterSwim") == 6 and Metrics.pace_break_s("Run") == Metrics.max_sample_gap_s
 
 # resample_1s_linear interpolates a cumulative stream instead of holding it: two samples
 # 5 s apart, 20 m covered, must produce 4 m per second — not four zeros and a 20 m jump.

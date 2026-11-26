@@ -415,7 +415,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1494)?
+	checks_ran_exactly!(1495)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7391,26 +7391,31 @@ b_period_pace! = |ctx| {
 # length. Every interval is longer than the 1 Hz resampler's fill bound, so a
 # pace path that treats each as an unrecorded gap sees no swimming at all,
 # and no pool swim ever derives the threshold pace the career page says two
-# 20-minute swims set. A recorded wall rest is a sample at the same distance:
-# one longer than the stop bound breaks the 20 minutes, a short one does not.
+# 20-minute swims set. A recorded wall rest is a sample at the same distance,
+# and a swim's continuous stretch survives up to 5 s without distance gained
+# (a turn) and ends at 6 s (a rest), so a set of fast lengths with rests
+# between them never reads as 20 sustained minutes at the lengths' speed.
 b_pool_swim! : Ctx => Try({}, _)
 b_pool_swim! = |ctx| {
-	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (8201,'Pool Swim','Swim','2019-05-06T07:00:00Z',2520,2250),(8202,'Pool Swim','Swim','2019-05-13T07:00:00Z',2520,2250),(8203,'Pool Sets','Swim','2019-05-20T07:00:00Z',2520,2250),(8204,'Pool Short Rests','Swim','2019-05-27T07:00:00Z',2520,2250);")
+	_ = sql!(ctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (8201,'Pool Swim','Swim','2019-05-06T07:00:00Z',2520,2250),(8202,'Pool Swim','Swim','2019-05-13T07:00:00Z',2520,2250),(8203,'Pool Sets','Swim','2019-05-20T07:00:00Z',2520,2250),(8204,'Pool Turns','Swim','2019-05-27T07:00:00Z',2520,2250),(8205,'Sprint Set','Swim','2019-05-29T07:00:00Z',1600,2000);")
 	_ = seed_pool_swim_stream!(ctx.db, 8201, 90, 28, 0, 0)
 	_ = seed_pool_swim_stream!(ctx.db, 8202, 90, 28, 0, 0)
 	_ = seed_pool_swim_stream!(ctx.db, 8203, 90, 28, 16, 45)
-	_ = seed_pool_swim_stream!(ctx.db, 8204, 90, 28, 8, 20)
+	_ = seed_pool_swim_stream!(ctx.db, 8204, 90, 28, 1, 5)
+	_ = seed_pool_swim_stream!(ctx.db, 8205, 80, 20, 1, 29)
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 	cm_s! = |id, col| Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(COALESCE(${col}, 0) * 100) AS INTEGER) FROM activity_metrics WHERE activity_id=${id};"))
 	# 25 m every 28 s is 0.89 m/s, and the threshold is 0.95 of that best
 	check!("a pool swim streamed length by length yields its 20-minute pace best (${cm_s!("8201", "best_20min_speed")})", cm_s!("8201", "best_20min_speed") == "89" and cm_s!("8202", "best_20min_speed") == "89")?
 	check!("...two of them within 60 days derive a threshold pace (${cm_s!("8202", "threshold_pace_used")})", cm_s!("8201", "threshold_pace_used") == "85" and cm_s!("8202", "threshold_pace_used") == "85")?
-	models = Str.trim(sql!(ctx.db, "SELECT group_concat(load_model, ',') FROM (SELECT load_model FROM activity_metrics WHERE activity_id BETWEEN 8201 AND 8204 ORDER BY activity_id);"))
-	check!("...and every pool swim scores on pace (${models})", models == "rtss,rtss,rtss,rtss")?
+	models = Str.trim(sql!(ctx.db, "SELECT group_concat(load_model, ',') FROM (SELECT load_model FROM activity_metrics WHERE activity_id BETWEEN 8201 AND 8205 ORDER BY activity_id);"))
+	check!("...and every pool swim scores on pace (${models})", models == "rtss,rtss,rtss,rtss,rtss")?
 	tss = sfloat(Str.trim(sql!(ctx.db, "SELECT COALESCE(tss, 0) FROM activity_metrics WHERE activity_id=8202;")))
 	check!("...at a sane magnitude for 42 minutes just over threshold (${Str.trim(sql!(ctx.db, "SELECT ROUND(tss, 1) FROM activity_metrics WHERE activity_id=8202;"))})", tss > 60.0 and tss < 100.0)?
-	check!("a wall rest longer than the stop bound breaks the 20 minutes", cm_s!("8203", "best_20min_speed") == "0" and cm_s!("8203", "best_300s_speed") == "89")?
-	check!("...and a short one does not", cm_s!("8204", "best_20min_speed") == "89")?
+	check!("a wall rest breaks the 20 minutes, leaving the 5-minute best between rests", cm_s!("8203", "best_20min_speed") == "0" and cm_s!("8203", "best_300s_speed") == "89")?
+	check!("...while a turn's few seconds without distance do not", cm_s!("8204", "best_20min_speed") == "89")?
+	# 25 m in 20 s is 1.25 m/s; stitched across its rests it would set the threshold
+	check!("a sprint set with a rest after every length is no 20-minute swim, and sets no threshold (${cm_s!("8205", "best_20min_speed")}/${cm_s!("8205", "threshold_pace_used")})", cm_s!("8205", "best_20min_speed") == "0" and cm_s!("8205", "threshold_pace_used") == "85")?
 	spine = Str.trim(sql!(ctx.db, "SELECT fam || '/' || kind || '/' || CAST(ROUND(value * 100) AS INTEGER) FROM monthly_threshold WHERE month = '2019-05' AND fam = 'Swim';"))
 	check!("the month's swimming threshold reaches the career spine (${spine})", spine == "Swim/pace/85")?
 	# the career page's other way to a swimming threshold: a 400 m and 200 m
@@ -7418,7 +7423,7 @@ b_pool_swim! = |ctx| {
 	css = strjq!(ctx, ["test", "8203", "css"], "[.data.signal, .data.unit, (.data.value * 100 | round)] | map(tostring) | join(\",\")")
 	check!("a 400 m and 200 m swim test marks from a length-by-length stream (${css})", css == "pace,m/s,89")?
 	_ = sql!(ctx.db, "DELETE FROM threshold_tests WHERE activity_id = 8203;")
-	_ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (8201,8202,8203,8204); DELETE FROM activity_metrics WHERE activity_id IN (8201,8202,8203,8204); DELETE FROM streams WHERE activity_id IN (8201,8202,8203,8204);")
+	_ = sql!(ctx.db, "DELETE FROM activities WHERE id IN (8201,8202,8203,8204,8205); DELETE FROM activity_metrics WHERE activity_id IN (8201,8202,8203,8204,8205); DELETE FROM streams WHERE activity_id IN (8201,8202,8203,8204,8205);")
 	_ = stride!(ctx.bin, ctx.home, ["analyze"])
 	Ok({})
 }

@@ -840,12 +840,13 @@ Analyze :: [].{
 			}
 		gas_speeds = List.map(gas_1s_pairs, |p| p.v)
 		ngp_speed = Metrics.normalized_power(gas_speeds)
-		best20_speed = Metrics.best_rolling_mean_moving(gas_1s_pairs, 1200)
+		brk = Metrics.pace_break_s(row.sport)
+		best20_speed = Metrics.best_rolling_mean_moving_within(gas_1s_pairs, 1200, brk)
 		# the 300 s and 600 s rungs of the same grade-adjusted ladder. Same source
 		# stream as best20_speed, so a hilly rep is comparable with a flat one; together
 		# the three points are what critical speed fits S(t) = D'/t + CS against.
-		best300_speed = Metrics.best_rolling_mean_moving(gas_1s_pairs, 300)
-		best600_speed = Metrics.best_rolling_mean_moving(gas_1s_pairs, 600)
+		best300_speed = Metrics.best_rolling_mean_moving_within(gas_1s_pairs, 300, brk)
+		best600_speed = Metrics.best_rolling_mean_moving_within(gas_1s_pairs, 600, brk)
 		# ADR 0005 as amended: the threshold in force on THIS activity's date, carried on the
 		# row by the SELECT — not one global current threshold applied to all of history.
 		threshold_speed = row.pthr
@@ -964,7 +965,7 @@ Analyze :: [].{
 				Err(_) => Null
 			}
 		after_moving_speed = |secs, window|
-			match Metrics.post_moving_best(gas_1s_pairs, secs, window) {
+			match Metrics.post_moving_best_within(gas_1s_pairs, secs, window, brk) {
 				Ok(b) => Real(b)
 				Err(_) => Null
 			}
@@ -1370,5 +1371,5 @@ Analyze :: [].{
 	# stays NULL on every row already in the db, so the feature reading it is
 	# inert for exactly the history that would make it useful — the whole
 	# activity archive.
-	metrics_rev = 39
+	metrics_rev = 40
 }
