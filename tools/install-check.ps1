@@ -374,7 +374,10 @@ function Test-Release([string]$Older) {
   $r = Invoke-Installer $installer $prof @{}
   Write-Host $r.Out
   if ($r.Code -ne 0) { Fail "install.ps1 failed (exit $($r.Code))" }
-  $last = @($r.Out.Trim() -split "`r?`n")[-1]
+  # a child PowerShell whose output is redirected writes its progress
+  # stream as serialized CLIXML records; the last line the athlete reads is
+  # the last line that is not one
+  $last = @($r.Out.Trim() -split "`r?`n" | Where-Object { $_.Trim() -ne '' -and $_ -notmatch '^(#< CLIXML|<Objs )' })[-1]
   if (-not $last.StartsWith('next: run `stride setup` ')) { Fail "install.ps1 did not end by naming stride setup; its last line was '$last'" }
   $bin = Join-Path $prof.Env.LOCALAPPDATA 'Programs\stride\bin'
   $exe = Join-Path $bin 'stride.exe'
