@@ -65,6 +65,7 @@ just layer-check           # every engine import points down the layer table (AD
 just pin-check             # one compiler pin: no workflow override, the justfile agrees, the viz header names none
 just viz-check             # type-check the window on the viz nightly, through the count-pinning wrapper
 just viz-test              # the window's expects + assertion-count pins, on the viz nightly
+just viz-bus               # the window run headless through its bus against a fake home (needs ./stride)
 just issue-claims          # issue-state claims in comments (needs `gh` auth)
 ```
 
@@ -258,7 +259,11 @@ discovery source for steering (view numbers, directive fields, staleness),
 never a doc's copy. `docs/viz.md` is the reference for all of it.
 
 The e2e suite cannot run the window (it is a GUI): its viz passes play the
-window's part by seeding exactly what the window would write. CI links the
+window's part by seeding exactly what the window would write. `just viz-bus`
+(`tools/viz-bus.sh`) runs the real window headless, drawing nothing, against a
+fake home with a series and a plan, writes directives and reads back what the
+window wrote, which is where the bus contract the window judges is proven;
+CI's linux viz job runs it on the binaries it links. CI links the
 window on every OS, proves the packages carry and seed what it reads, and
 starts the packaged linux window under Xvfb, where it must land its boot
 load and capture the form board through its own bus; the hosted macOS and

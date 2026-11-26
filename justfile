@@ -524,6 +524,17 @@ viz-check:
 viz-test:
     ROC="{{roc_viz}}" sh tools/roc-viz.sh test src/viz/main.roc
 
+# Drive the window headless through its own bus against a fake home and read
+# back what it wrote (tools/viz-bus.sh); needs ./stride from `just build`.
+# the window's bus contract, proven headless
+viz-bus:
+    #!/usr/bin/env sh
+    set -eu
+    out="$(mktemp -d)"
+    trap 'rm -rf "$out"' EXIT
+    ROC="{{roc_viz}}" sh tools/roc-viz.sh build src/viz/main.roc --output="$out/stride-viz" --opt=dev
+    sh tools/viz-bus.sh ./stride "$out/stride-viz"
+
 # ADR 0016: every engine import points down the layer table; viz stays behind the DB
 layer-check:
     bash tools/layer-check.sh
