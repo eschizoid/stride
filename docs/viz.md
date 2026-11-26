@@ -245,10 +245,13 @@ title. Then come the sports with sessions and no threshold, the most
 sessions first. Their page keeps the cards, the ground and the strip, and
 in place of the line it says there is no trend yet, why, and what would
 draw one: two sessions of 20 minutes or more within two months (without
-stopping for a pace sport, with a power meter for a power sport), or a
-marked test, `stride test <activity_id> 5k` for a run, `css` for a swim,
-`ftp20` for a power sport. A strength-like sport has no threshold, so its
-page says so, and strength's page points at the lifts tab.
+stopping for running, walking, swimming and rowing, with a power meter for
+cycling), or a marked test, `stride test <activity_id> 5k` for a run, `css`
+for a swim, `ftp20` for a ride. Any other sport (strength, yoga, a ball
+game, skiing) has no threshold to draw, so its page says so and promises
+nothing, and strength's page points at the lifts tab. The cards and the
+heading name the sport in plain words; a name too long for a card leaves
+the card's caption to the heading.
 
 ![The career view](img/career.png)
 
@@ -820,9 +823,10 @@ sport no family holds. The fixtures per view:
 
 - power: every curve each athlete has, at 30, 60 and 90 days, with the short
   rungs folded and shown;
-- career: every page of every athlete, again with no threshold at all, and
-  an athlete with short runs and no running threshold beside a power trend,
-  in the brand faces and in the built-in face;
+- career: every page of every athlete, again with no threshold at all, an
+  athlete with short runs and no running threshold beside a power trend,
+  and one whose sports sit in no family under long Strava names, in the
+  brand faces and in the built-in face;
 - form board: every range, with an event ahead (a two-line name and a
   projection drawn on the plot), with the event-day story (the event marked
   on the plot, a ridden event and an unreadable event record) and with an

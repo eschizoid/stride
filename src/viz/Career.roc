@@ -89,6 +89,27 @@ Career :: [].{
 		else if (List.contains(Sports.family("strength"), fam)) "strength"
 		else Str.from_utf8_lossy(List.join(List.map_with_index(Str.to_utf8(fam), |b, i| if (b >= 65 and b <= 90) (if (i == 0) [b + 32] else [32, b + 32]) else [b])))
 
+	# the sport a page is about, as its heading, cards and legend name it: in
+	# plain words on a page without a trend, by its family's name on a trend
+	page_word : Db.CareerSpine -> Str
+	page_word = |cur| if (cur.kind == no_trend) sport_word(cur.fam) else Str.with_ascii_lowercased(family_name(cur.fam))
+
+	# a card's caption: the quantity and the sport it counts when the two fit
+	# the card's width, the quantity alone when the sport's name is too long
+	# for it (the heading above the cards names the sport either way)
+	card_caption : Str, Str, F32, (Str -> F32) -> Str
+	card_caption = |quantity, word, room, width| {
+		full = "${quantity} - ${word}"
+		if (word == "") quantity else if (width(full) <= room) full else quantity
+	}
+
+	# the families a threshold can be derived for and the window can say how:
+	# the pace families (a 20-minute best speed) and cycling (a 20-minute
+	# best power). Every other sport's page promises nothing; should one of
+	# them carry a power meter, its threshold turns the page into a trend.
+	threshold_family : Str -> Bool
+	threshold_family = |fam| fam == Sports.family_head("bike") or List.contains(Sports.pace_target_families, fam)
+
 	# one session of a family, and several, as a sentence says them
 	session_nouns : Str -> { one : Str, many : Str }
 	session_nouns = |fam|
@@ -103,15 +124,16 @@ Career :: [].{
 	# missing, why, and what would draw it. A threshold is derived from the
 	# best 20 minutes of two sessions within 60 days, on the moving clock for
 	# pace (a stop breaks the window) and from a power meter for power, or set
-	# by a marked test (stride test); a strength-like sport has none at all.
-	# `cmd` is the command line to type, empty when no test applies.
+	# by a marked test (stride test). A sport outside the threshold families
+	# is told it has none, with nothing promised. `cmd` is the command line
+	# to type, empty when no test applies.
 	EmptyState : { head : Str, lines : List(Str), cmd : Str }
 
 	empty_state : Str -> EmptyState
 	empty_state = |fam| {
 		word = sport_word(fam)
 		n = session_nouns(fam)
-		if Sports.class(fam) == StrengthLike {
+		if !(threshold_family(fam)) {
 			lifts = if (List.contains(Sports.family("strength"), fam)) ["Your lifts and how they progress are on the lifts tab."] else []
 			{ head: "No ${word} trend", lines: List.prepend(lifts, "This page draws a threshold month by month, and ${word} has none."), cmd: "" }
 		} else if List.contains(Sports.pace_target_families, fam) {
@@ -319,8 +341,8 @@ Career :: [].{
 		cur = spine_at(model.career_spines, model.spine_idx)
 		switch_note = if (List.len(model.career_spines) > 1) "   F  next sport" else ""
 		if (cur.fam == "") "career - every month since the first session"
-		else if (cur.kind == no_trend) "career - ${sport_word(cur.fam)}${switch_note}"
-		else "career - ${Str.with_ascii_lowercased(cur.fam)} ${unit_note(model.units, cur.kind, cur.fam)}${switch_note}"
+		else if (cur.kind == no_trend) "career - ${page_word(cur)}${switch_note}"
+		else "career - ${page_word(cur)} ${unit_note(model.units, cur.kind, cur.fam)}${switch_note}"
 	}
 
 	# ── the kind chips. A family can carry more than one threshold kind (a
@@ -603,7 +625,7 @@ Career :: [].{
 		fam = g.cur.fam
 		List.join([
 			[{ label: "monthly load, every sport", fill: Color.with_alpha(Theme.ctl_c, 90), base: Color.with_alpha(Theme.ctl_c, 90), split: Bool.False }],
-			if (fam == "") [] else [{ label: Str.with_ascii_lowercased(family_name(fam)), fill: Color.with_alpha(Theme.sport_color(fam), 210), base: Color.with_alpha(Theme.sport_color(fam), 210), split: Bool.False }],
+			if (fam == "") [] else [{ label: page_word(g.cur), fill: Color.with_alpha(Theme.sport_color(fam), 210), base: Color.with_alpha(Theme.sport_color(fam), 210), split: Bool.False }],
 			if (List.any(g.months, |m| m.partial)) [{ label: "month in progress", fill: Color.with_alpha(Theme.ctl_c, 50), base: if (fam == "") Color.with_alpha(Theme.ctl_c, 50) else Color.with_alpha(Theme.sport_color(fam), 120), split: Bool.True }] else [],
 		])
 	}
@@ -1041,12 +1063,12 @@ Career :: [].{
 		chart = { x: g.plot_l - 40.0, y: g.line_top - 64.0, w: g.plot_w + 40.0 + Theme.pad_r - 24.0, h: comp_y(model.win.h) - g.line_top + 64.0 }
 		# ── header: the career racking up. The final figures are the true
 		# ones; the count-up is the feeling of accumulation, nothing else. The
-		# cards count the spine's own family, not the whole career: rows fold
-		# through Sports.canonical to reach the family the spine names, and
-		# the captions carry the family, since a scoped number under an
-		# unscoped word reads as the whole career's.
+		# cards count the page's own family, not the whole career: rows fold
+		# through Sports.canonical to reach the family the page names, and
+		# each caption carries the sport (card_caption), since a scoped number
+		# under an unscoped word reads as the whole career's.
 		scoped = if (sp.fam == "") (model.career_sports) else List.keep_if(model.career_sports, |s| Sports.canonical(s.sport) == sp.fam)
-		fam_cap = if (sp.fam == "") "" else " - ${Str.with_ascii_lowercased(sp.fam)}"
+		word = page_word(g.cur)
 		tot = List.fold(scoped, { h10: 0.I64, m: 0.0.F64, ss: 0.I64 }, |a, s| { h10: a.h10 + s.hours10, m: a.m + s.dist_m, ss: a.ss + s.sessions })
 		# metres held until here; the card is the last moment (core.Units)
 		dist_whole = (Units.dist_value(units, tot.m)).round_to_i64_try().ok_or(0)
@@ -1064,17 +1086,18 @@ Career :: [].{
 		# zero: 0 km under a lifting arc reads as a measurement that came back
 		# empty, when the sport does not carry the quantity
 		cards = [
-			{ v: Db.num_unit(ease_i(tot.h10) // 10, "h"), c: "moving time${fam_cap}" },
-			{ v: if (tot.m <= 0.0) "-" else Db.num_unit(ease_i(dist_whole), Units.dist_unit(units)), c: "distance${fam_cap}" },
-			{ v: Db.grouped(ease_i(tot.ss)), c: "sessions${fam_cap}" },
-			{ v: Db.grouped(ease_i(trained)), c: "months trained${fam_cap}" },
+			{ v: Db.num_unit(ease_i(tot.h10) // 10, "h"), c: "moving time" },
+			{ v: if (tot.m <= 0.0) "-" else Db.num_unit(ease_i(dist_whole), Units.dist_unit(units)), c: "distance" },
+			{ v: Db.grouped(ease_i(tot.ss)), c: "sessions" },
+			{ v: Db.grouped(ease_i(trained)), c: "months trained" },
 		]
 		card_texts = List.join(
 			List.map_with_index(
 				cards,
 				|c, i| {
 					b = card_box(win_w, U64.to_i64_wrap(i))
-					[fix(Scene.data(c.v, 22.0, Color.white), b.x + 16.0, b.y + 10.0, Left, b), fix(Scene.data(c.c, 11.0, ink_faint), b.x + 16.0, b.y + 42.0, Left, b)]
+					cap = card_caption(c.c, word, b.w - 32.0, |t| measure(t, 11.0, Data))
+					[fix(Scene.data(c.v, 22.0, Color.white), b.x + 16.0, b.y + 10.0, Left, b), fix(Scene.data(cap, 11.0, ink_faint), b.x + 16.0, b.y + 42.0, Left, b)]
 				},
 			),
 		)
@@ -1439,4 +1462,29 @@ expect {
 		and Career.sport_word("HighIntensityIntervalTraining") == "high intensity interval training"
 		and row.cmd == "" and List.last(row.lines) == Ok("Two rows of 20 minutes or more without stopping, within two months, set one.")
 		and (Career.empty_state("Ride")).cmd == "stride test <activity_id> ftp20"
+}
+
+# a sport outside the threshold families promises nothing, whatever its
+# class: ball games, skiing and an e-bike read like yoga, and only the
+# families a threshold is derived for name a session or a test
+expect {
+	nothing = |fam| {
+		es = Career.empty_state(fam)
+		es.head == "No ${Career.sport_word(fam)} trend" and es.cmd == "" and es.lines == ["This page draws a threshold month by month, and ${Career.sport_word(fam)} has none."]
+	}
+	nothing("Soccer") and nothing("Elliptical") and nothing("BackcountrySki") and nothing("EBikeRide") and nothing("Yoga")
+		and Career.empty_state("Soccer").head == "No soccer trend"
+		and List.all(["Ride", "Run", "Swim", "Walk", "Rowing"], |f| Career.threshold_family(f))
+}
+
+# a card's caption names the sport when both fit the card and the quantity
+# alone when the name is too long, and a page names a sport without a trend
+# in plain words and a trend by its family
+expect {
+	w = |t| U64.to_f32(Str.count_utf8_bytes(t)) * 5.0
+	Career.card_caption("sessions", "running", 180.0, w) == "sessions - running"
+		and Career.card_caption("months trained", "high intensity interval training", 180.0, w) == "months trained"
+		and Career.card_caption("sessions", "", 180.0, w) == "sessions"
+		and Career.page_word({ fam: "HighIntensityIntervalTraining", kind: Career.no_trend, rows: [] }) == "high intensity interval training"
+		and Career.page_word({ fam: "Ride", kind: "power", rows: [] }) == "ride"
 }

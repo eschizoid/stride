@@ -420,6 +420,12 @@ Gate :: [].{
 	short_runner : Athlete
 	short_runner = { name: "short runs beside rides", units: Metric, sports: [{ sport: "Ride", sessions: 300 }, { sport: "Rowing", sessions: 120 }, { sport: "Run", sessions: 20 }] }
 
+	# an athlete whose sports sit in no family and carry long Strava names,
+	# beside a ride trend: each is a page without a trend, named on its
+	# cards and in its heading
+	long_names : Athlete
+	long_names = { name: "long sport names beside rides", units: Metric, sports: [{ sport: "Ride", sessions: 300 }, { sport: "HighIntensityIntervalTraining", sessions: 60 }, { sport: "StandUpPaddling", sessions: 40 }, { sport: "BackcountrySki", sessions: 30 }, { sport: "EBikeRide", sessions: 20 }] }
+
 	career_models : List({ name : Str, model : Ui.Model })
 	career_models = {
 		pages = |name, m| List.map_with_index(m.career_spines, |s, i| { name: "${name} ${s.fam} ${s.kind}", model: { ..m, spine_idx: i } })
@@ -443,6 +449,10 @@ Gate :: [].{
 					{
 						m = career_model(athlete_model(short_runner, sz), short_runner)
 						pages("${short_runner.name} career at ${size_name(sz)}", { ..m, career_spines: career_pages(List.keep_if(m.career_spines, |s| s.fam != "Run"), m.career_sports) })
+					},
+					{
+						m = career_model(athlete_model(long_names, sz), long_names)
+						pages("${long_names.name} career at ${size_name(sz)}", m)
 					},
 				]),
 			),
@@ -2008,3 +2018,7 @@ expect {
 		and Map.map_focus(up) == 1 and Map.map_focus({ ..up, view: 2 }) == -1 and Map.map_focus(base) == -1
 		and Map.waiting_on(held(Opening).map_card) == 1 and Map.waiting_on(up.map_card) == -1
 }
+
+# the long-named sports are in the career gate as pages without a trend,
+# every one at every size
+expect List.len(List.keep_if(Gate.career_models, |e| Str.starts_with(e.name, Gate.long_names.name) and (Career.spine_at(e.model.career_spines, e.model.spine_idx)).kind == Career.no_trend)) == 4 * List.len(Gate.sizes)
