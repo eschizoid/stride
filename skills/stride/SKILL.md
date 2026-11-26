@@ -488,8 +488,8 @@ polls about once a second and every row reaches a status you can read back.
    it alone. Name a session exactly by activity id (`trace_id`, `ghost_id`) or by day
    (`trace_day`, `ghost_day`, which pick that day's newest session; never use a day when
    it holds two sessions). The id wins when both are given. `ghost_day = 'none'`
-   dismisses the ghost. `cursor_day` parks the form board's cursor on a measured day
-   or on a projected day the board draws. `capture = 'png'` writes the landed view to
+   dismisses the ghost. `cursor_day` parks the cursor on a measured day, or on the form
+   board (view 0) on a projected day it draws; a refusal says why. `capture = 'png'` writes the landed view to
    `captures/<view>.png` under the window's launch directory; `'webm_start'` and
    `'webm_stop'` record. One capture runs at a time. `family` picks the power view's
    curve: a family head (`'Rowing'`, `'Run'`) for its power curve, record book and CP

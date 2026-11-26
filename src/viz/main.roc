@@ -1562,13 +1562,13 @@ capture_refusal_for = |kind, rec_active, cap_pending|
 # inline block: on the pinned compiler, a large conditional binding captured
 # by a task closure compiles to its empty default, and a call compiles
 # correctly.
-refusals_for : { has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, capture : Str, family : Str, short : I64 }, I64, U64, U64, List(TraceId), Bool, Bool -> Str
-refusals_for = |dv, cdir, wsel, cur_sel, ids, rec_active, cap_pending| {
+refusals_for : { has_d : Bool, id : I64, view : I64, range : I64, cursor_day : Str, trace_day : Str, ghost_day : Str, trace_id : I64, ghost_id : I64, capture : Str, family : Str, short : I64 }, Str, U64, U64, List(TraceId), Bool, Bool -> Str
+refusals_for = |dv, cwhy, wsel, cur_sel, ids, rec_active, cap_pending| {
 	segs = List.keep_if(
 		[
 			(if (dv.view > 12 or dv.view < -1) ("view ${I64.to_str(dv.view)} unknown") else ""),
 			(if (dv.range != -1 and dv.range != 30 and dv.range != 60 and dv.range != 90) ("range ${I64.to_str(dv.range)} not 30/60/90") else ""),
-			(if (dv.cursor_day != "" and cdir == -2) ("cursor_day ${dv.cursor_day} not in the series") else ""),
+			(if (dv.cursor_day != "" and cwhy != "") ("cursor_day ${dv.cursor_day} not in the series: ${cwhy}") else ""),
 			# a day beside an id is not judged: the resolver reads the id and never
 			# the day, so the refusal names only what was consulted
 			(
@@ -1913,12 +1913,12 @@ expect {
 	# naming the shown session as its own ghost is refused BY NAME - the kind
 	# test cannot catch it (a session trivially matches itself) and the
 	# dismissal downstream is silent
-	refusals_for(dv, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_day d1 is the session on screen"
+	refusals_for(dv, "", 0, 0, m, Bool.False, Bool.False) == "ghost_day d1 is the session on screen"
 		# the same day as a ghost for the OTHER session is a kind question, and
 		# these two differ by sport
-		and refusals_for(dv, -2, 1, 1, m, Bool.False, Bool.False) == "ghost_day d1 is Ride, the session is Rowing"
+		and refusals_for(dv, "", 1, 1, m, Bool.False, Bool.False) == "ghost_day d1 is Ride, the session is Rowing"
 		# a clean directive refuses nothing
-		and refusals_for({ has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "", family: "", short: -1 }, -2, 0, 0, m, Bool.False, Bool.False) == ""
+		and refusals_for({ has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "", family: "", short: -1 }, "", 0, 0, m, Bool.False, Bool.False) == ""
 }
 
 # a session named by id is judged by identity: absent, the one on screen, or
@@ -1931,20 +1931,20 @@ expect {
 	blank = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "", family: "", short: -1 }
 	# an id no picker entry carries; the selection did not move, so it is
 	# judged against the shown session and refused by name
-	refusals_for({ ..blank, trace_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "trace_id 9 not in the picker"
+	refusals_for({ ..blank, trace_id: 9 }, "", 0, 0, m, Bool.False, Bool.False) == "trace_id 9 not in the picker"
 		# the same absent id while the selection MOVED (wsel differs from
 		# cur_sel) is not judged against the shown session at all - the move is
 		# the answer - so nothing is refused; this is the guard's own case
-		and refusals_for({ ..blank, trace_id: 9 }, -2, 1, 0, m, Bool.False, Bool.False) == ""
-		and refusals_for({ ..blank, ghost_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 9 not in the picker"
-		and refusals_for({ ..blank, ghost_id: 1 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 1 is the session on screen"
-		and refusals_for({ ..blank, ghost_id: 1 }, -2, 1, 1, m, Bool.False, Bool.False) == "ghost_id 1 is Ride, the session is Rowing"
+		and refusals_for({ ..blank, trace_id: 9 }, "", 1, 0, m, Bool.False, Bool.False) == ""
+		and refusals_for({ ..blank, ghost_id: 9 }, "", 0, 0, m, Bool.False, Bool.False) == "ghost_id 9 not in the picker"
+		and refusals_for({ ..blank, ghost_id: 1 }, "", 0, 0, m, Bool.False, Bool.False) == "ghost_id 1 is the session on screen"
+		and refusals_for({ ..blank, ghost_id: 1 }, "", 1, 1, m, Bool.False, Bool.False) == "ghost_id 1 is Ride, the session is Rowing"
 		# 'none' dismisses; an id beside it is never judged, so nothing is refused
 		# - not an absent id, not the shown session's own id, not one of the
 		# wrong kind (each would otherwise name its own refusal)
-		and refusals_for({ ..blank, ghost_day: "none", ghost_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == ""
-		and refusals_for({ ..blank, ghost_day: "none", ghost_id: 1 }, -2, 0, 0, m, Bool.False, Bool.False) == ""
-		and refusals_for({ ..blank, ghost_day: "none", ghost_id: 1 }, -2, 1, 1, m, Bool.False, Bool.False) == ""
+		and refusals_for({ ..blank, ghost_day: "none", ghost_id: 9 }, "", 0, 0, m, Bool.False, Bool.False) == ""
+		and refusals_for({ ..blank, ghost_day: "none", ghost_id: 1 }, "", 0, 0, m, Bool.False, Bool.False) == ""
+		and refusals_for({ ..blank, ghost_day: "none", ghost_id: 1 }, "", 1, 1, m, Bool.False, Bool.False) == ""
 }
 
 # a day beside an id: the id takes precedence in the resolver, so the
@@ -1956,34 +1956,38 @@ expect {
 		{ id: 2, day: "d2", name: "n2", sport: "Rowing", chan: Db.watts_chan },
 	]
 	blank = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "", family: "", short: -1 }
-	refusals_for({ ..blank, trace_day: "d9", trace_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "trace_id 9 not in the picker"
-		and refusals_for({ ..blank, trace_day: "d9" }, -2, 0, 0, m, Bool.False, Bool.False) == "trace_day d9 not in the picker"
-		and refusals_for({ ..blank, trace_day: "d9", trace_id: 1 }, -2, 0, 0, m, Bool.False, Bool.False) == ""
-		and refusals_for({ ..blank, ghost_day: "d9", ghost_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 9 not in the picker"
-		and refusals_for({ ..blank, ghost_day: "d9" }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_day d9 not in the picker"
-		and refusals_for({ ..blank, ghost_day: "d1", ghost_id: 2 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 2 is Rowing, the session is Ride"
-		and refusals_for({ ..blank, ghost_day: "d2", ghost_id: 9 }, -2, 0, 0, m, Bool.False, Bool.False) == "ghost_id 9 not in the picker"
+	refusals_for({ ..blank, trace_day: "d9", trace_id: 9 }, "", 0, 0, m, Bool.False, Bool.False) == "trace_id 9 not in the picker"
+		and refusals_for({ ..blank, trace_day: "d9" }, "", 0, 0, m, Bool.False, Bool.False) == "trace_day d9 not in the picker"
+		and refusals_for({ ..blank, trace_day: "d9", trace_id: 1 }, "", 0, 0, m, Bool.False, Bool.False) == ""
+		and refusals_for({ ..blank, ghost_day: "d9", ghost_id: 9 }, "", 0, 0, m, Bool.False, Bool.False) == "ghost_id 9 not in the picker"
+		and refusals_for({ ..blank, ghost_day: "d9" }, "", 0, 0, m, Bool.False, Bool.False) == "ghost_day d9 not in the picker"
+		and refusals_for({ ..blank, ghost_day: "d1", ghost_id: 2 }, "", 0, 0, m, Bool.False, Bool.False) == "ghost_id 2 is Rowing, the session is Ride"
+		and refusals_for({ ..blank, ghost_day: "d2", ghost_id: 9 }, "", 0, 0, m, Bool.False, Bool.False) == "ghost_id 9 not in the picker"
 }
 
 # a capture is judged by its vocabulary and by the recorder's state: a
 # misspelt kind is named with the vocabulary, a start while a recording runs
 # and a stop while none does are refused by name, and a PNG is always
-# askable; the capture refusal joins the others with the separator
+# askable; the capture refusal joins the others with the separator. A
+# cursor_day refusal names the reason Board.cursor_at gave, and a day it
+# took is not refused
 expect {
 	m = [
 		{ id: 1, day: "d1", name: "n1", sport: "Ride", chan: Db.watts_chan },
 	]
 	blank = { has_d: Bool.True, id: 0, view: 2, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "", family: "", short: -1 }
-	refusals_for({ ..blank, capture: "gif" }, -2, 0, 0, m, Bool.False, Bool.False) == "capture gif not png/webm_start/webm_stop"
-		and refusals_for({ ..blank, capture: "png" }, -2, 0, 0, m, Bool.False, Bool.False) == ""
-		and refusals_for({ ..blank, capture: "png" }, -2, 0, 0, m, Bool.True, Bool.False) == ""
-		and refusals_for({ ..blank, capture: "png" }, -2, 0, 0, m, Bool.False, Bool.True) == "capture png: an earlier capture is still pending"
-		and refusals_for({ ..blank, capture: "gif" }, -2, 0, 0, m, Bool.False, Bool.True) == "capture gif not png/webm_start/webm_stop"
-		and refusals_for({ ..blank, capture: "webm_start" }, -2, 0, 0, m, Bool.False, Bool.False) == ""
-		and refusals_for({ ..blank, capture: "webm_start" }, -2, 0, 0, m, Bool.True, Bool.False) == "capture webm_start: a recording is already running"
-		and refusals_for({ ..blank, capture: "webm_stop" }, -2, 0, 0, m, Bool.True, Bool.False) == ""
-		and refusals_for({ ..blank, capture: "webm_stop" }, -2, 0, 0, m, Bool.False, Bool.False) == "capture webm_stop: no recording is running"
-		and refusals_for({ ..blank, range: 45, capture: "webm_stop" }, -2, 0, 0, m, Bool.False, Bool.False) == "range 45 not 30/60/90; capture webm_stop: no recording is running"
+	refusals_for({ ..blank, capture: "gif" }, "", 0, 0, m, Bool.False, Bool.False) == "capture gif not png/webm_start/webm_stop"
+		and refusals_for({ ..blank, capture: "png" }, "", 0, 0, m, Bool.False, Bool.False) == ""
+		and refusals_for({ ..blank, capture: "png" }, "", 0, 0, m, Bool.True, Bool.False) == ""
+		and refusals_for({ ..blank, capture: "png" }, "", 0, 0, m, Bool.False, Bool.True) == "capture png: an earlier capture is still pending"
+		and refusals_for({ ..blank, capture: "gif" }, "", 0, 0, m, Bool.False, Bool.True) == "capture gif not png/webm_start/webm_stop"
+		and refusals_for({ ..blank, capture: "webm_start" }, "", 0, 0, m, Bool.False, Bool.False) == ""
+		and refusals_for({ ..blank, capture: "webm_start" }, "", 0, 0, m, Bool.True, Bool.False) == "capture webm_start: a recording is already running"
+		and refusals_for({ ..blank, capture: "webm_stop" }, "", 0, 0, m, Bool.True, Bool.False) == ""
+		and refusals_for({ ..blank, capture: "webm_stop" }, "", 0, 0, m, Bool.False, Bool.False) == "capture webm_stop: no recording is running"
+		and refusals_for({ ..blank, range: 45, capture: "webm_stop" }, "", 0, 0, m, Bool.False, Bool.False) == "range 45 not 30/60/90; capture webm_stop: no recording is running"
+		and refusals_for({ ..blank, cursor_day: "2026-12-20" }, "past the projection's last day, 2026-12-15", 0, 0, m, Bool.False, Bool.False) == "cursor_day 2026-12-20 not in the series: past the projection's last day, 2026-12-15"
+		and refusals_for({ ..blank, cursor_day: "2026-11-20" }, "", 0, 0, m, Bool.False, Bool.False) == ""
 }
 
 expect join_refusal("", "b") == "b" and join_refusal("a", "") == "a" and join_refusal("a", "b") == "a; b"
@@ -2249,7 +2253,7 @@ expect List.last(caps_views) == Ok({ id: last_view, name: "map-play" })
 # last is not
 expect {
 	dv = { has_d: Bool.True, id: 0, view: 10, range: -1, cursor_day: "", trace_day: "", ghost_day: "", trace_id: -1, ghost_id: -1, capture: "", family: "", short: -1 }
-	List.all([10, 11, 12], |v| refusals_for({ ..dv, view: v }, -2, 0, 0, [], Bool.False, Bool.False) == "") and refusals_for({ ..dv, view: 13 }, -2, 0, 0, [], Bool.False, Bool.False) == "view 13 unknown"
+	List.all([10, 11, 12], |v| refusals_for({ ..dv, view: v }, "", 0, 0, [], Bool.False, Bool.False) == "") and refusals_for({ ..dv, view: 13 }, "", 0, 0, [], Bool.False, Bool.False) == "view 13 unknown"
 }
 
 # what the bus accepts, as data. caps_views derives from view_basename
@@ -2263,7 +2267,7 @@ caps_fields : List({ name : Str, kind : Str, accepts : Str })
 caps_fields = [
 	{ name: "view", kind: "integer", accepts: "0..12 (3, 4 and 5 are the day tab's log, week and year modes; 10, 11 and 12 the map tab's routes, heat and play)" },
 	{ name: "range", kind: "integer", accepts: "30|60|90 (days; omitted leaves the range unchanged)" },
-	{ name: "cursor_day", kind: "date", accepts: "YYYY-MM-DD the form board draws: a day of its measured series, or a projected day past it" },
+	{ name: "cursor_day", kind: "date", accepts: "YYYY-MM-DD the view shows: a day of the measured series, or on the form board a projected day past it; a refusal names why" },
 	{ name: "trace_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions; picks that day's newest session, trace_id names one exactly" },
 	{ name: "ghost_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions, or 'none' to dismiss; picks that day's newest session of the shown session's kind" },
 	{ name: "trace_id", kind: "integer", accepts: "an activity id among the trace picker's sessions; when both are given it takes precedence over trace_day" },
@@ -2711,15 +2715,22 @@ update! = |model0, program_input, io| {
 			}
 			else if (d.key_pressed(KeyRightBracket)) (if (model.ghost_sel >= 0) (next_ghost(model.trace_ids, model.ghost_sel, model.trace_sel, Bool.False)) else -1)
 			else model.ghost_sel
-		# the cursor a directive's day asks for (Board.cursor_at): a measured
-		# day of the series or a projected day the board draws. cursor_dir is
-		# its days-back index, or -2 when there is no directive day or the
-		# board does not hold it, both of which leave the cursor alone
-		dir_cursor = if (directive.has_d and directive.cursor_day != "") (Board.cursor_at(model, directive.cursor_day)) else Err(NotShown)
+		# the cursor a directive's day asks for on the view it lands on
+		# (Board.cursor_at): a measured day of the series, or a projected day
+		# when that view draws the projection. cursor_dir is its days-back
+		# index, or -2 when there is no directive day or the day is refused,
+		# both of which leave the cursor alone; cursor_why is the refusal's
+		# reason, "" when nothing was refused
+		dir_cursor = if (directive.has_d and directive.cursor_day != "") (Board.cursor_at(model, directive.cursor_day, view)) else Err("")
 		cursor_dir =
 			match dir_cursor {
 				Ok(c) => c.back
 				Err(_) => -2
+			}
+		cursor_why =
+			match dir_cursor {
+				Ok(_) => ""
+				Err(why) => why
 			}
 		# the pre-click cursor: arrows and directives applied, row
 		# clicks not yet - the scroll state a click resolves against; the
@@ -2786,7 +2797,9 @@ update! = |model0, program_input, io| {
 			if view2 == 0 and layout.scale == model.ui_scale and cursor2 == model.cursor and ahead2 == model.cursor_ahead and cursor2 >= 0 and (m.x != model.mouse_x or m.y != model.mouse_y) and m.y > Theme.pad_t + Board.band_h and m.y < win.h - Theme.pad_b and m.x >= Theme.pad_l and m.x <= win.w - Theme.pad_r {
 				-1
 			} else cursor2
-		ahead3 = if (cursor3 < 0) 0 else ahead2
+		# a view that draws no projection holds the latest measured day in
+		# place of a projected one (Board.held)
+		ahead3 = (Board.held({ back: cursor3, ahead: ahead2 }, view2)).ahead
 		# TAB on the power view with a rung hovered opens the session that set
 		# that rung's window best (TAB already moves the power view to the trace),
 		# and the map's card opens the session whose route was clicked.
@@ -3095,7 +3108,7 @@ update! = |model0, program_input, io| {
 			_ => Bool.False
 		}
 		cap_pending = capture_is_pending(pending1)
-		refused9 = if (directive.has_d and directive.id >= 0) (join_refusal(refusals_for(directive, cursor_dir, want_sel2, model.trace_sel, model.trace_ids, rec_active, cap_pending), curve_refusal(model.curve_keys, directive.family))) else ""
+		refused9 = if (directive.has_d and directive.id >= 0) (join_refusal(refusals_for(directive, cursor_why, want_sel2, model.trace_sel, model.trace_ids, rec_active, cap_pending), curve_refusal(model.curve_keys, directive.family))) else ""
 		# a capture the refusals let through waits on the host for its mark;
 		# the test is the predicate that produced the refusal, so refusal text
 		# elsewhere in the row cannot suppress it. The file is named for the

@@ -71,8 +71,10 @@ reaches is marked where it falls, and a key along the plot's top says the
 dashed part is projected and how many of the window's sessions are priced,
 the count the tile shows. The pointer and the arrow cursor read projected
 days too: → walks on past the last measured day into them, one day a
-press, and past the last one turns the cursor off. Over a projected day
-the day card says "projected" and reads the planned load, or "unpriced"
+press, and past the last one turns the cursor off; the table, which shows
+measured days only, holds the latest of them instead. On a board drawing a
+projection the day card opens below the key, and over a projected day it
+says "projected" and reads the planned load, or "unpriced"
 for a session the engine could not price, and carries no line of what was
 done.
 
@@ -964,9 +966,15 @@ INSERT INTO viz_directives (view, short) VALUES (1, 1);
 -- directive lands on: named view if set, else the visible one — on the power
 -- view it re-windows the ladder+fit, on every other view it sets the form board's
 -- range.
--- cursor_day parks the crosshair on a measured day of the form board's
--- series or on one of the projected days it draws past the last measured
--- day; trace_day picks the session - and resets
+-- cursor_day parks the crosshair on a measured day of the series, or, on
+-- the form board alone, on one of the projected days it draws past the
+-- last measured day; a projected day for any other view is refused, and
+-- every refused day says why: before the series, past the projection's
+-- last day, after the series with no plan projected, a projected day on a
+-- view that draws no projection, or not a date. A view that draws no
+-- projection holds the latest measured day in place of a projected one,
+-- so the table never stands on, or reports, a day it does not show.
+-- trace_day picks the session - and resets
 -- the window's sport filter when the landed session sits outside it, so the
 -- header never claims a filter the trace violates.
 -- ghost_day overlays a second session on the trace view at reduced alpha
@@ -1047,7 +1055,8 @@ Every directive reaches a terminal state, readable back by id:
 
 - `applied` — every field honoured; `applied_at` says when.
 - `applied_partial` — the window took what it could; `error` names each
-  refused field ("cursor_day 1999-01-01 not in the series").
+  refused field and why ("cursor_day 1999-01-01 not in the series:
+  before the series, which starts 2025-10-12").
 - `superseded` — a newer directive arrived before this one was applied;
   newest wins.
 - `stale` — older than 600 seconds when read. A directive written while no

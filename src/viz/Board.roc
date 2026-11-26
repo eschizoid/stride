@@ -254,18 +254,73 @@ Board :: [].{
 				else { back: -1, ahead: 0 }
 		}
 
-	# the cursor a day names: a measured day of the series, or a projected
-	# day the board draws; any other day is not on the board
-	cursor_at : Ui.Model, Str -> Try(Cursor, [NotShown])
-	cursor_at = |model, day| {
+	# the views that draw the plan's projection: the form board alone, so a
+	# cursor on a projected day exists there and nowhere else
+	draws_projection : U8 -> Bool
+	draws_projection = |view| view == 0
+
+	# the cursor a view holds: a view that draws no projection holds the
+	# latest measured day in place of a projected one, so the table never
+	# stands on, or reports, a day it does not show
+	held : Cursor, U8 -> Cursor
+	held = |c, view| if (c.back < 0) { back: -1, ahead: 0 } else if (draws_projection(view)) c else { back: c.back, ahead: 0 }
+
+	# the cursor a day names on `view`: a measured day of the series, or a
+	# projected day when the view draws the projection. Any other day is
+	# refused with the reason in the athlete's words: not a date, before the
+	# series, past the projection's last day, after the series with no plan
+	# projected, or a projected day on a view that draws no projection
+	cursor_at : Ui.Model, Str, U8 -> Try(Cursor, Str)
+	cursor_at = |model, day, view| {
 		total = List.len(model.days)
 		measured = List.keep_oks(List.map_with_index(model.days, |d, i| { d, i }), |e| if (e.d == day) (U64.to_i64_try(total - 1 - e.i)) else Err(OutOfRange))
-		projected = List.keep_oks(List.map_with_index(shown_proj(model), |p, i| { p, i }), |e| if (e.p.day == day) Ok(e.i + 1) else Err(Other))
+		proj = shown_proj(model)
+		projected = List.keep_oks(List.map_with_index(proj, |p, i| { p, i }), |e| if (e.p.day == day) Ok(e.i + 1) else Err(Other))
+		first = (List.first(model.days)) ?? ""
+		last = (List.last(model.days)) ?? ""
 		match (List.last(measured), List.first(projected)) {
 			(Ok(back), _) => Ok({ back, ahead: 0 })
-			(_, Ok(ahead)) => Ok({ back: 0, ahead })
-			_ => Err(NotShown)
+			(_, Ok(ahead)) => if (draws_projection(view)) Ok({ back: 0, ahead }) else Err("a projected day, and this view draws no projection")
+			_ =>
+				if !(is_date(day)) {
+					Err("not a YYYY-MM-DD date")
+				} else if total == 0 {
+					Err("no series is loaded")
+				} else if earlier(day, first) {
+					Err("before the series, which starts ${first}")
+				} else if earlier(last, day) {
+					match List.last(proj) {
+						Ok(p) => Err("past the projection's last day, ${p.day}")
+						Err(_) => Err("after the last measured day, ${last}, and no plan is projected")
+					}
+				} else {
+					Err("a day missing from the series")
+				}
 		}
+	}
+
+	# a date in the canonical YYYY-MM-DD form the series stores
+	is_date : Str -> Bool
+	is_date = |s| {
+		b = Str.to_utf8(s)
+		digit = |c| c >= '0' and c <= '9'
+		List.len(b) == 10 and List.all(List.map_with_index(b, |c, i| if (i == 4 or i == 7) c == '-' else digit(c)), |ok| ok)
+	}
+
+	# whether canonical date `a` falls before `b`: for YYYY-MM-DD the byte
+	# order is the date order
+	earlier : Str, Str -> Bool
+	earlier = |a, b| {
+		walk = List.fold(
+			List.map2(Str.to_utf8(a), Str.to_utf8(b), |x, y| { x, y }),
+			Same,
+			|acc, p|
+				match acc {
+					Same => if (p.x < p.y) Before else if (p.x > p.y) After else Same
+					_ => acc
+				},
+		)
+		walk == Before
 	}
 
 	# the projected day `ahead` days past the latest measured one, clamped
@@ -347,6 +402,11 @@ Board :: [].{
 				|e| if (e.i + 1 == g.meas or (e.i >= g.meas and U64.to_f32(e.i) - 1.0 < limit)) Ok({ x: x_at(g, e.i), y: y_at(g, value_of(e.p, sel)) }) else Err(Off),
 			)
 		}
+
+	# the height the projection key's two candidate rows take at the top of
+	# the plot, the first at 4 px below its top and the second 18 px lower
+	key_rows_h : F32
+	key_rows_h = 36.0
 
 	# the plot draws once the series holds two days and no error stands
 	plotted : Ui.Model -> Bool
@@ -479,7 +539,9 @@ Board :: [].{
 			}
 		tip_h = 107.0 + U64.to_f32(List.len(note_lines)) * 14.0 + 9.0
 		tip_x = if (hx + 14.0 + tip_w > g.left + g.pw) (hx - 14.0 - tip_w) else hx + 14.0
-		tip_y = g.top + 8.0
+		# under the projection key's two rows when the board draws one, so a
+		# card over the projected days never covers the caption that reads them
+		tip_y = if (g.n > g.meas) g.top + key_rows_h + 8.0 else g.top + 8.0
 		box = { x: tip_x, y: tip_y, w: tip_w, h: tip_h }
 		fix = |it, x, y, align| Scene.fixed(measure, it, { x, y, align }, box)
 		load_row = match planned {

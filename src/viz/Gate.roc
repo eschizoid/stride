@@ -1638,9 +1638,12 @@ expect {
 # the arrow cursor walks on past the latest measured day into each
 # projected day the board draws, and past the last of them turns off; a
 # directive's day finds a measured day by days back and a projected one by
-# days ahead, and a board too short to plot holds no projected day; focus
-# reads a projected cursor's day, held to the last drawn; a parked cursor
-# holds the crosshair while the pointer rests inside the plot
+# days ahead on the board, and is refused with its reason otherwise: a
+# projected day on the table, a day past the projection, before the
+# series, after it with no plan projected, or no date at all. Focus reads
+# a projected cursor's day, held to the last drawn; the table holds the
+# latest measured day in place of a projected one; a parked cursor holds
+# the crosshair while the pointer rests inside the plot
 expect {
 	a = Gate.first_athlete
 	m = Gate.board_model(Gate.athlete_model(a, Gate.default_size), a, 0, 30, 0)
@@ -1648,6 +1651,7 @@ expect {
 	walk = List.fold(List.repeat({}, 20), [{ back: 0, ahead: 0 }], |acc, _u| List.append(acc, Board.step((List.last(acc)) ?? { back: -1, ahead: 0 }, Newer, 20)))
 	at = |c| Board.hovered({ ..m, cursor: c.back, cursor_ahead: c.ahead }, g)
 	short = { ..m, data: List.take_first(m.data, 1), days: List.take_first(m.days, 1) }
+	unplanned = { ..m, proj: [] }
 	List.len(Board.shown_proj(m)) == 20
 		and List.map(walk, at) == List.map_with_index(List.repeat({}, 21), |_u, i| Ok(29 + i))
 		and Board.step({ back: 0, ahead: 20 }, Newer, 20) == { back: -1, ahead: 0 }
@@ -1655,12 +1659,21 @@ expect {
 		and at({ back: 0, ahead: 25 }) == Ok(49)
 		and Board.hovered({ ..m, cursor: 0, cursor_ahead: 5, mouse_in: Bool.True, mouse_x: g.left, mouse_y: g.top + 10.0 }, g) == Ok(34)
 		and Board.hovered({ ..m, mouse_in: Bool.True, mouse_x: g.left, mouse_y: g.top + 10.0 }, g) == Ok(0)
-		and Board.cursor_at(m, "2026-11-12") == Ok({ back: 0, ahead: 0 })
-		and Board.cursor_at(m, "2026-11-09") == Ok({ back: 3, ahead: 0 })
-		and Board.cursor_at(m, "2026-11-13") == Ok({ back: 0, ahead: 1 })
-		and Board.cursor_at(m, "2026-12-02") == Ok({ back: 0, ahead: 20 })
-		and Board.cursor_at(m, "2026-12-03") == Err(NotShown)
-		and Board.cursor_at(short, "2026-11-13") == Err(NotShown)
+		and Board.cursor_at(m, "2026-11-12", 0) == Ok({ back: 0, ahead: 0 })
+		and Board.cursor_at(m, "2026-11-09", 0) == Ok({ back: 3, ahead: 0 })
+		and Board.cursor_at(m, "2026-11-09", 3) == Ok({ back: 3, ahead: 0 })
+		and Board.cursor_at(m, "2026-11-13", 0) == Ok({ back: 0, ahead: 1 })
+		and Board.cursor_at(m, "2026-12-02", 0) == Ok({ back: 0, ahead: 20 })
+		and Board.cursor_at(m, "2026-11-13", 3) == Err("a projected day, and this view draws no projection")
+		and Board.cursor_at(m, "2026-12-03", 0) == Err("past the projection's last day, 2026-12-02")
+		and Board.cursor_at(m, "2026-08-01", 0) == Err("before the series, which starts 2026-08-15")
+		and Board.cursor_at(unplanned, "2026-11-13", 0) == Err("after the last measured day, 2026-11-12, and no plan is projected")
+		and Board.cursor_at(short, "2026-11-13", 0) == Err("after the last measured day, 2026-08-15, and no plan is projected")
+		and Board.cursor_at(m, "2026-13-45x", 0) == Err("not a YYYY-MM-DD date")
+		and Board.held({ back: 0, ahead: 5 }, 3) == { back: 0, ahead: 0 }
+		and Board.held({ back: 0, ahead: 5 }, 0) == { back: 0, ahead: 5 }
+		and Board.held({ back: 4, ahead: 0 }, 3) == { back: 4, ahead: 0 }
+		and Board.held({ back: -1, ahead: 0 }, 3) == { back: -1, ahead: 0 }
 		and Board.ahead_day(m, 1) == "2026-11-13"
 		and Board.ahead_day(m, 99) == "2026-12-02"
 		and Board.ahead_day(m, 0) == ""
@@ -1684,10 +1697,11 @@ expect {
 }
 
 # the day card the arrow cursor opens over each projected day: its lines
-# clear one another and stay inside the card, the card inside the plot,
-# its header says the day is projected and no line says what was done,
-# for every board with a projection at every size, in the brand faces and
-# in the built-in face
+# clear one another and stay inside the card, the card inside the plot and
+# clear of the projection key the board places along the plot's top, its
+# header says the day is projected and no line says what was done, for
+# every board with a projection at every size, in the brand faces and in
+# the built-in face
 expect {
 	cards = |boards, measure|
 		List.join(
@@ -1711,11 +1725,15 @@ expect {
 										inside = b.x >= plot.x and b.y >= plot.y and b.x + b.w <= plot.x + plot.w and b.y + b.h <= plot.y + plot.h
 										head = List.any(owned, |o| Str.ends_with(o.key, " projected'"))
 										done = List.any(owned, |o| o.key == "'rest day'")
+										key = List.keep_if(Board.owned(mk, measure), |o| Str.starts_with(o.key, "'dashed: projected"))
+										covered = List.any(key, |o| Labels.intersects(o.box, b))
 										List.join([
 											List.map(Labels.check(owned), |e| "${f.name} day +${U64.to_str(k)}: ${e}"),
 											if (inside) [] else ["${f.name} day +${U64.to_str(k)}: the card leaves the plot"],
 											if (head) [] else ["${f.name} day +${U64.to_str(k)}: the card does not say projected"],
 											if (done) ["${f.name} day +${U64.to_str(k)}: the card says what was done on a day still to come"] else [],
+											if (List.is_empty(key)) ["${f.name} day +${U64.to_str(k)}: the board placed no projection key"] else [],
+											if (covered) ["${f.name} day +${U64.to_str(k)}: the card covers the projection key"] else [],
 										])
 									}
 								}
