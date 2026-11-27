@@ -8609,10 +8609,10 @@ b_forecast! = |ctx| {
 		},
 	)?
 	ph = human!(["project", six])
-	check!("project says where the projected days came from, and names only the target it could not price", Str.contains(ph, "\n  6 projected days: 4 estimated from your history, 1 from your recent training, 1 at rest\n  not from its target: ${six} 1x1:00:00@HR125-147: no HR zones configured") and !(Str.contains(ph, "no structured target")))?
+	check!("project says where the projected days came from, and names only the target it could not price", Str.contains(ph, "\n  6 projected days: 4 estimated from your history, 1 from your recent training, 1 rest\n  not from its target: ${six} 1x1:00:00@HR125-147: no heart-rate zones set") and !(Str.contains(ph, "no target")))?
 	_ = stride!(fctx.bin, fctx.home, ["event", "add", d!(20), "Near Race"])
 	check!("events counts an event's days by source, the days after the plan from recent training", strjq!(fctx, ["events"], ".data.events[0] | [.load_sources.estimate, .load_sources.habit, .load_sources.rest, .plan_end.known, .plan_end.date] | map(tostring) | join(\",\")") == "4,15,1,true,${six}")?
-	check!("...and says so in words", Str.contains(human!(["events"]), "\n      20 projected days: 4 estimated from your history, 15 from your recent training, 1 at rest"))?
+	check!("...and says so in words", Str.contains(human!(["events"]), "\n      20 projected days: 4 estimated from your history, 15 from your recent training, 1 rest"))?
 	check!("the events payload conforms to its schema with every source in it", validate_schema!(fctx, "events", "events") == "")?
 	# a well-targeted plan: every session priced by its target, the rest
 	# session still at rest and no day estimated
@@ -8625,7 +8625,7 @@ b_forecast! = |ctx| {
 	check!("a well-targeted plan's days are all from targets but the rest session (got ${tsrcs})", tsrcs == "target:50,target:50,rest:0,target:50,target:20,target:50")?
 	check!("...its target fields read as they always have", strjq!(fctx, ["project", six], "[.data.sessions_considered, .data.sessions_projected, (.data.unprojected | map(.date + \":\" + .reason) | join(\";\"))] | map(tostring) | join(\",\")") == "6,5,${d!(3)}:no_target")?
 	th = human!(["project", six])
-	check!("...and the screen says so, with no target left unpriced", Str.contains(th, "\n  6 projected days: 5 from targets, 1 at rest") and !(Str.contains(th, "not from its target")))?
+	check!("...and the screen says so, with no target it could not price", Str.contains(th, "\n  6 projected days: 5 from targets, 1 rest") and !(Str.contains(th, "not from its target")))?
 	_ = sh!("rm -rf '${fh}'")
 	# no history at all: nothing to estimate from, and the projection says so
 	# rather than inventing a load

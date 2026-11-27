@@ -252,7 +252,7 @@ Load :: [].{
 					part(m.target, "from a target", "from targets"),
 					part(m.estimate, "estimated from your history", "estimated from your history"),
 					part(m.habit, "from your recent training", "from your recent training"),
-					part(m.rest, "at rest", "at rest"),
+					part(m.rest, "rest", "rest"),
 					part(m.none, "with nothing to estimate from", "with nothing to estimate from"),
 				],
 				|p| p,
@@ -278,7 +278,7 @@ Load :: [].{
 
 	expect mix_of(["target", "estimate", "estimate", "habit", "rest", "none", "other"]) == { target: 1, estimate: 2, habit: 1, rest: 1, none: 1 }
 	expect mix_text({ target: 12, estimate: 20, habit: 0, rest: 0, none: 0 }) == "12 from targets, 20 estimated from your history"
-	expect mix_text({ target: 1, estimate: 1, habit: 3, rest: 1, none: 2 }) == "1 from a target, 1 estimated from your history, 3 from your recent training, 1 at rest, 2 with nothing to estimate from"
+	expect mix_text({ target: 1, estimate: 1, habit: 3, rest: 1, none: 2 }) == "1 from a target, 1 estimated from your history, 3 from your recent training, 1 rest, 2 with nothing to estimate from"
 	expect mix_text({ target: 0, estimate: 0, habit: 0, rest: 0, none: 0 }) == ""
 	expect mix_short({ target: 12, estimate: 20, habit: 3, rest: 2, none: 0 }) == "23 days estimated"
 	expect mix_short({ target: 12, estimate: 20, habit: 3, rest: 2, none: 1 }) == "1 day with no estimate"
