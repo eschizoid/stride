@@ -1117,12 +1117,24 @@ Metrics :: [].{
 					match fill {
 						AsWritten => { d: s.d, tss: 0.0, source: "none" }
 						FromHistory(h) =>
-							match estimate_load(h.sessions, s.kind, s.detail, s.target.reps * s.target.dur_s) {
+							match estimate_load(h.sessions, s.kind, s.detail, target_work_s(s.target)) {
 								Estimated(x) => { d: s.d, tss: x, source: "estimate" }
 								NoHistory => { d: s.d, tss: 0.0, source: "none" }
 							}
 					}
 				}
+		}
+
+	# the work time a target names, in seconds: its reps times its rep
+	# time, or for a distance rep the time its pace takes to cover the
+	# distance (ADR 0019); 0 for no target
+	target_work_s : Target -> I64
+	target_work_s = |t|
+		if t.dist_m > 0.0 {
+			unit_m = pace_unit_m(t.pace_unit)
+			if (unit_m > 0.0 and t.pace_s > 0.0) ((t.reps).to_f64() * t.dist_m * t.pace_s / unit_m).round_to_i64_try().ok_or(0) else 0
+		} else {
+			t.reps * t.dur_s
 		}
 
 	# a day no session names: the recent daily mean when the plan is filled
@@ -1138,14 +1150,17 @@ Metrics :: [].{
 				}
 		}
 
-	# a day holding several sessions names the least certain of their
-	# sources: none, then estimate, then target, then rest
+	# a day holding several sessions names the least certain source among
+	# those that carry a load, in the order estimate, then target, then rest;
+	# none only when no session on it carries one
 	source_rank : Str -> U64
 	source_rank = |s| if (s == "none") 0 else if (s == "estimate") 1 else if (s == "target") 2 else 3
 
 	## one day of a projection: its load, where that load came from (ADR
-	## 0022), and the state the walk leaves. `load_known` is false only for a
-	## day whose source is none.
+	## 0022), and the state the walk leaves. `load_known` is false when a
+	## session on the day has nothing to estimate from: its load then counts
+	## only the sessions that carried one, and a day where none did reads
+	## source none and load 0.
 	ProjectedDay : { date : Str, load : F64, load_known : Bool, load_source : Str, ctl : F64, atl : F64, tsb : F64 }
 
 	## A plan projected onto a horizon (ADR 0010, ADR 0019, ADR 0022): every
@@ -1168,15 +1183,23 @@ Metrics :: [].{
 				on = List.keep_if(loaded, |x| x.d == d)
 				day =
 					match on {
-						[] => unplanned_day(fill)
-						[first, ..] => {
-							worst = List.fold(on, first.source, |w, x| if (source_rank(x.source) < source_rank(w)) x.source else w)
-							{ tss: List.fold(on, 0.0, |t, x| t + x.tss), source: worst }
+						[] => {
+							u = unplanned_day(fill)
+							{ tss: u.tss, source: u.source, missing: u.source == "none" }
+						}
+						_ => {
+							carried = List.keep_if(on, |x| x.source != "none")
+							source =
+								match carried {
+									[] => "none"
+									[first, ..] => List.fold(carried, first.source, |w, x| if (source_rank(x.source) < source_rank(w)) x.source else w)
+								}
+							{ tss: List.fold(carried, 0.0, |t, x| t + x.tss), source, missing: List.any(on, |x| x.source == "none") }
 						}
 					}
 				s = Load.step({ ctl_prev: acc.ctl, atl_prev: acc.atl, tss: day.tss })
 				load_known : Bool
-				load_known = day.source != "none"
+				load_known = !(day.missing)
 				{ ctl: s.ctl, atl: s.atl, out: List.append(acc.out, { date: days_to_date_str(d), load: day.tss, load_known, load_source: day.source, ctl: s.ctl, atl: s.atl, tsb: s.tsb }) }
 			},
 		)
@@ -6501,18 +6524,23 @@ expect {
 	agrees(AsWritten) and agrees(proj_fill)
 }
 
-# a plan taken as written: the sessions no target prices add nothing and
-# are flagged, a day it names nothing on is a rest day of that plan, and
+# a plan taken as written: a session no target prices adds nothing and is
+# flagged, a day it names nothing on is a rest day of that plan, the day
+# that holds a priced session rating beside an unpriced heart-rate band
+# carries the rating's load under its source with the gap flagged, and
 # the coverage counts are the target's own
 expect {
 	base = { ctl: 42.0, atl: 51.0 }
 	p = Metrics.project_plan(base, proj_base, proj_base + 8, proj_plan, proj_inputs, AsWritten)
-	List.map(p.series, |x| x.load_source) == ["target", "none", "none", "rest", "rest", "rest", "target", "rest"]
+	mixed = (List.get(p.series, 2)) ?? proj_day0
+	List.map(p.series, |x| x.load_source) == ["target", "none", "target", "rest", "rest", "rest", "target", "rest"]
 		and List.map(p.series, |x| x.load_known) == [Bool.True, Bool.False, Bool.False, Bool.True, Bool.True, Bool.True, Bool.True, Bool.True]
+		and (mixed.load - 45.0).abs() < 0.000001
+		and ((List.get(p.series, 1)) ?? proj_day0).load.abs() < 0.000001
 		and List.map(p.unprojected, |u| u.reason) == ["no_target", "no_hr_zones"]
 		and p.considered == 5
 		and p.projected == 3
-		and p.sources == { target: 2, estimate: 0, habit: 0, rest: 4, none: 2 }
+		and p.sources == { target: 3, estimate: 0, habit: 0, rest: 4, none: 1 }
 }
 
 # the same plan filled from history: the untargeted session is estimated
@@ -6564,6 +6592,20 @@ expect proj_no_est(Metrics.estimate_load([], "endurance", "ride", 3600))
 expect proj_no_est(Metrics.estimate_load(List.take_first(proj_history, 2), "endurance", "ride", 3600))
 expect (Metrics.median_of([3.0, 1.0, 2.0]) - 2.0).abs() < 0.000001 and (Metrics.median_of([4.0, 1.0, 3.0, 2.0]) - 2.5).abs() < 0.000001 and Metrics.median_of([]).abs() < 0.000001
 expect Metrics.session_words("Run: easy 40' (Z2)") == ["Run", "easy", "Z"]
+
+# a target's work time: reps times rep time, or for a distance rep the time
+# its pace takes over the distance, so an unpriced 4x1km at 4:30/km is
+# estimated over its own 1080 s of work, not the group's median session
+expect Metrics.target_work_s((Metrics.parse_any_target("4x1km@4:30/km")).ok_or(Metrics.no_target)) == 1080
+expect Metrics.target_work_s((Metrics.parse_any_target("3x12:00@230W")).ok_or(Metrics.no_target)) == 2160
+expect Metrics.target_work_s(Metrics.no_target) == 0
+expect {
+	base = { ctl: 42.0, atl: 51.0 }
+	reps = { ..proj_session(1, "4x1km@4:30/km"), kind: "endurance" }
+	p = Metrics.project_plan(base, proj_base, proj_base + 1, [reps], proj_inputs, proj_fill)
+	day = (List.first(p.series)) ?? proj_day0
+	day.load_source == "estimate" and (day.load - 60.0 * 1080.0 / 3600.0).abs() < 0.000001
+}
 
 # a rest session adds zero whether the plan is filled or not, and a plan
 # with no history to fill from adds nothing on the days it would estimate

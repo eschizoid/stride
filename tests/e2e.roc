@@ -417,7 +417,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1606)?
+	checks_ran_exactly!(1607)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -7093,11 +7093,11 @@ b_events! = |ctx| {
 	# the horizon, every day carrying a load and its source
 	ends = strjq!(ctx, ["project", ten], "[(.data.projected_from | strptime(\"%Y-%m-%d\") | mktime + 86400 | strftime(\"%Y-%m-%d\")) == .data.series[0].date, .data.series[-1].date] | map(tostring) | join(\",\")")
 	check!("the series runs from the day after the baseline to the horizon (got ${ends})", ends == "true,${ten}")?
-	# the untargeted session is estimated from the athlete's history, or flagged
-	# when the fixture's history is too thin; skipped, its day is an empty one
-	# and carries the recent daily mean
+	# the untargeted session is estimated from the athlete's history, which the
+	# fixture holds enough scored sessions to estimate from; skipped, its day is
+	# an empty one and carries the recent daily mean
 	five_src = strjq!(ctx, ["project", ten], ".data.series[] | select(.date == \"${five}\") | \"\\(.load_source):\\(.load_known)\"")
-	check!("the untargeted session's day is estimated from history, or flagged with nothing to go on (got ${five_src})", five_src == "estimate:true" or five_src == "none:false")?
+	check!("the untargeted session's day is estimated from the fixture's scored history (got ${five_src})", five_src == "estimate:true")?
 	_ = sql!(ctx.db, "UPDATE planned_sessions SET status = 'skipped' WHERE id = ${r4};")
 	skipped_src = strjq!(ctx, ["project", ten], ".data.series[] | select(.date == \"${five}\") | .load_source")
 	_ = sql!(ctx.db, "UPDATE planned_sessions SET status = 'open' WHERE id = ${r4};")
@@ -7115,7 +7115,7 @@ b_events! = |ctx| {
 	)?
 	mismatched = List.map(List.keep_if(answers, |a| a.got != a.row), |a| "${a.row} vs ${a.got}")
 	check!("each of the ${U64.to_str(List.len(rows))} series days equals what project returns for that date (mismatched: ${Str.join_with(mismatched, "; ")})", List.len(rows) >= 4 and List.is_empty(mismatched))?
-	check!("...and only a day with nothing to go on says its load is not known", strjq!(ctx, ["project", ten], "[.data.series[] | select(.load_known | not) | .date] | join(\",\")") == (if (five_src == "none:false") five else ""))?
+	check!("...and no day says its load is not known, every one carrying a load", strjq!(ctx, ["project", ten], "[.data.series[] | select(.load_known | not) | .date] | join(\",\")") == "")?
 	_ = sql!(ctx.db, "DELETE FROM events WHERE name = 'Kinds Probe'; DELETE FROM planned_sessions WHERE id IN (${r1}, ${r2}, ${r3}, ${r4}); DELETE FROM activity_metrics WHERE activity_id IN (9811, 9812); DELETE FROM activities WHERE id IN (9811, 9812);")
 	# a planned session names no sport: a power target is priced at the FTP of the
 	# power family the athlete trains most. A rower with no ride power still gets
@@ -8626,6 +8626,11 @@ b_forecast! = |ctx| {
 	check!("...its target fields read as they always have", strjq!(fctx, ["project", six], "[.data.sessions_considered, .data.sessions_projected, (.data.unprojected | map(.date + \":\" + .reason) | join(\";\"))] | map(tostring) | join(\",\")") == "6,5,${d!(3)}:no_target")?
 	th = human!(["project", six])
 	check!("...and the screen says so, with no target it could not price", Str.contains(th, "\n  6 projected days: 5 from targets, 1 rest") and !(Str.contains(th, "not from its target")))?
+	# a hypothetical day holding a priced session rating beside a heart-rate
+	# band no zones price carries the rating's load under its source, and
+	# flags the part it could not see
+	mixed = strjq!(fctx, ["project", d!(1), "${d!(1)}=1x45:00@RPE6,${d!(1)}=1x1:00:00@HR125-147"], ".data.series[0] | \"\\(.load_source):\\(.load):\\(.load_known)\"")
+	check!("a day mixing a priced and an unpriced session counts the priced load and flags the rest (got ${mixed})", mixed == "target:45:false")?
 	_ = sh!("rm -rf '${fh}'")
 	# no history at all: nothing to estimate from, and the projection says so
 	# rather than inventing a load

@@ -263,7 +263,8 @@ reason `--json` and still answers in JSON).
   `series` is the same walk day by day, `{date, load, load_known, load_source, ctl, atl, tsb}`, from
   the day after `projected_from` through `target_date`; `load_source` is `target`,
   `estimate`, `habit`, `rest` or `none` by the rules above, and `load_known: false`
-  marks only a `none` day. The form board draws it.
+  marks a day holding a session with nothing to estimate from (its `load` then counts
+  only the sessions that carried one; with none it reads `none`). The form board draws it.
   Bare, it walks the recorded plan; with pairs (any target kind) it walks your
   hypothetical plan instead, taken as written (a day it does not name is `rest`, and
   nothing is estimated), echoed in `hypothetical` as
