@@ -151,8 +151,8 @@ cp assets/fonts/*.ttf "$HOME/.stride/fonts/" 2>/dev/null || true
 # the splash's mark and the streak flame, carried and seeded exactly like
 # the fonts
 mkdir -p "$C/Resources/img" "$HOME/.stride/img"
-cp img/stride-icon.png img/flame.png "$C/Resources/img/" 2>/dev/null || true
-cp img/stride-icon.png img/flame.png "$HOME/.stride/img/" 2>/dev/null || true
+cp img/splash-mark.png img/flame.png "$C/Resources/img/" 2>/dev/null || true
+cp img/splash-mark.png img/flame.png "$HOME/.stride/img/" 2>/dev/null || true
 
 # Apple Silicon refuses to exec an unsigned arm64 Mach-O, quarantine cleared
 # or not. Ad-hoc needs no Developer ID; the launcher is a script and needs

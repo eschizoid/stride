@@ -188,7 +188,7 @@ Ui :: [].{
 		# outcome - a fresh model landing or the reload failing - so a failed
 		# fetch never strands the note on screen.
 		reloading : Bool,
-		# the brand mark as the authored PNG, loaded for the splash only;
+		# the brand mark as img/splash-mark.png, loaded for the splash only;
 		# NoLogo leaves the splash its words alone
 		logo : [NoLogo, Logo(Texture.Texture)],
 		# the streak chip's flame as an authored PNG, loaded with the logo at

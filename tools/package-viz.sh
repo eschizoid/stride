@@ -52,7 +52,7 @@
 set -euo pipefail
 
 faces="Quicksand-Medium.ttf JetBrainsMono-Regular.ttf"
-images="stride-icon.png flame.png"
+images="splash-mark.png flame.png"
 
 [ -f src/viz/main.roc ] || { echo "package-viz: run from the repository root" >&2; exit 2; }
 os="${1:-}"
@@ -127,17 +127,18 @@ check_fonts_dir() {
   done
 }
 
-# every icon is the one img/make-icons.sh renders from the master: every
-# hash in img/stride-icons.sha256 (the master's, the script's, holding each
-# platform's transform, and the linux and windows outputs') matches its
-# file, and the macOS bundle's iconset is rendered by that script at build
-# time, never scaled from a finished image. The script is hashed with
-# carriage returns dropped, since a windows checkout may write its lines
-# with CRLF; the images are binary and checked out as they are
+# every icon and the splash's mark are the ones img/make-icons.sh renders
+# from the master: every hash in img/stride-icons.sha256 (the master's, the
+# script's, holding each transform, and the linux and windows icons' and the
+# mark's) matches its file, and the macOS bundle's iconset is rendered by
+# that script at build time, never scaled from a finished image. The script
+# is hashed with carriage returns dropped, since a windows checkout may
+# write its lines with CRLF; the images are binary and checked out as they
+# are
 check_icons() {
   local sum line want file got mva
   if command -v sha256sum >/dev/null 2>&1; then sum="sha256sum"; else sum="shasum -a 256"; fi
-  for file in stride-icon.png make-icons.sh stride.ico stride-icon-256.png; do
+  for file in stride-icon.png make-icons.sh stride.ico stride-icon-256.png splash-mark.png; do
     line="$(tr -d '\r' < img/stride-icons.sha256 | grep "  $file\$" || true)"
     [ -n "$line" ] || { echo "::error::img/stride-icons.sha256 pins no hash for $file; rerun img/make-icons.sh"; exit 1; }
     want="${line%%  *}"

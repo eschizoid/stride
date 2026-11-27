@@ -552,7 +552,7 @@ on `main`. You never tag or edit the version by hand.
   artifacts ship beside them: macOS `.app` zips (both arches), a linux tarball and a
   windows zip, each carrying the viz binary, the `stride` command (the same target's
   CLI asset, byte for byte: the app jobs package the build job's artifact), brand
-  fonts, the splash's mark and the streak flame (`img/stride-icon.png`,
+  fonts, the splash's mark and the streak flame (`img/splash-mark.png`,
   `img/flame.png`), and a launcher that puts the package's command first on the
   window's PATH, so the window's `Command("stride")` grant runs its own release's
   command, and seeds `~/.stride/fonts` and `~/.stride/img`. The linux and windows
@@ -573,11 +573,14 @@ on `main`. You never tag or edit the version by hand.
   `img/stride-icon.png`, the 512 px master, as the frame alone, masked at the
   target size just inside its outer edge and sized to each platform's grid (macOS
   and linux 80.5%, Apple's tile and GNOME's keyline; windows 87.5%, its 42-of-48
-  grid), each transform stated once in the script. The windows and linux icons are
-  committed; `tools/make-viz-app.sh` renders the macOS iconset through it at build
-  time. It pins the hashes in `img/stride-icons.sha256`, and with `--check`, which
-  CI's macOS job runs, fails when an icon is not the master's by its transform or
-  carries a light edge fringe;
+  grid), each transform stated once in the script. It renders the splash's mark,
+  `img/splash-mark.png`, from the same master as the S-and-summit alone, every
+  other pixel transparent, so the mark floats on the splash's clear with no tile
+  edge. The windows and linux icons and the mark are committed;
+  `tools/make-viz-app.sh` renders the macOS iconset through it at build time. It
+  pins the hashes in `img/stride-icons.sha256`, and with `--check`, which CI's
+  macOS job runs, fails when an icon or the mark is not the master's by its
+  transform or carries a light edge fringe;
   every launcher carries the macOS launcher's
   `step:`-marked steps; every package ships exactly
   `assets/fonts`. Each package job fails when its package lacks or alters the

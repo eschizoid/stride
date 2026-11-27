@@ -98,9 +98,10 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
-      # sips is macOS's: every icon must be the master's (img/stride-icon.png) by
-      # its transform in img/make-icons.sh, with no light fringe at its edge
-      - name: The committed icons are their master's by their transforms
+      # sips is macOS's: every icon and the splash's mark must be the master's
+      # (img/stride-icon.png) by its transform in img/make-icons.sh, with no
+      # light fringe at its edge
+      - name: The committed icons and splash mark are their master's by their transforms
         run: sh img/make-icons.sh --check
       - name: Install Roc (new compiler)
         uses: ./.github/actions/setup-roc
