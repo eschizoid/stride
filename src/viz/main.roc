@@ -228,7 +228,7 @@ img_texture! = |acc, name| {
 load_logo! : Access, Bool => [NoLogo, Logo(Texture.Texture)]
 load_logo! = |acc, boot|
 	if (!boot) NoLogo
-	else match img_texture!(acc, "stride-icon.png") {
+	else match img_texture!(acc, "splash-mark.png") {
 		Ok(t) => Logo(t)
 		Err(_) => NoLogo
 	}
@@ -3418,23 +3418,16 @@ scene! = |model, frame| {
 }
 
 # The boot splash, shown while the real load runs in its task and until
-# Reloaded lands: the authored mark, img/stride-icon.png, above the words
-# Chrome.splash places. The mark fades in over the first moments and
-# breathes gently while the load works; the glow shader has nothing to add
-# here. Without the PNG the splash is the words alone on the same ground:
-# nothing is drawn in the mark's place.
+# Reloaded lands: the mark, img/splash-mark.png, above the words
+# Chrome.splash places. The mark carries no ground of its own, every pixel
+# off its strokes transparent, so it floats on the splash's clear, the
+# Theme.bg the app views clear to, with no tile edge around it. It fades in
+# over the first moments and breathes gently while the load works; the
+# glow shader has nothing to add here. Without the PNG the splash is the
+# words alone on the same ground: nothing is drawn in the mark's place.
 splash! : Ui.Model, Draw.Frame => Try({}, [Exit(I64)])
 splash! = |model, frame| {
-	# The splash clears to RGB(1, 2, 9), the ground of img/stride-icon.png's
-	# interior away from the mark, so the logo sits on a field of its own
-	# color rather than in a slightly different black; the clear is the only
-	# ground, with no backdrop drawn over it. The asset is RGB with no alpha
-	# and has a lighter padding outside its rounded corners, which a single
-	# clear cannot match, so faint corner wedges show. Nothing at runtime can
-	# read a texture's pixels back, so this value is measured by hand and
-	# must be measured again when the asset changes. The app views clear to
-	# Theme.bg.
-	frame.rectangle!({ x: 0.0, y: 0.0, width: model.win.w, height: model.win.h, style: Draw.filled(Color.rgb(1, 2, 9)) })
+	frame.rectangle!({ x: 0.0, y: 0.0, width: model.win.w, height: model.win.h, style: Draw.filled(Theme.bg) })
 	_ = match model.logo {
 		Logo(lt) => {
 			cx = model.win.w / 2.0

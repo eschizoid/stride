@@ -1,25 +1,27 @@
 #!/usr/bin/env sh
-# Renders every app icon from img/stride-icon.png, the master: a 512 px
-# opaque square, the gradient frame drawn on a dark ground.
+# Renders every app icon and the splash's mark from img/stride-icon.png, the
+# master: a 512 px opaque square, the gradient frame drawn on a dark ground
+# around the S-and-summit mark.
 #
 #   img/stride-icon-256.png  the linux menu icon
 #   img/stride.ico           the windows icon: 16, 24, 32, 48 and 256 px
-#   img/stride-icons.sha256  the SHA-256 of the master, this script and both
-#                            outputs
+#   img/splash-mark.png      the window's splash: the mark alone, 512 px
+#   img/stride-icons.sha256  the SHA-256 of the master, this script and the
+#                            three outputs
 #
 #   sh img/make-icons.sh               regenerate the linux and windows icons
+#                                      and the splash's mark
 #   sh img/make-icons.sh --iconset D   render the macOS iconset into folder D,
 #                                      which tools/make-viz-app.sh turns into
 #                                      the bundle's stride.icns
-#   sh img/make-icons.sh --check       regenerate the linux and windows icons
-#                                      into a scratch folder and fail when a
-#                                      committed icon's pixels differ, or when
-#                                      any platform's icon carries a light
+#   sh img/make-icons.sh --check       regenerate them into a scratch folder
+#                                      and fail when a committed image's
+#                                      pixels differ, or when any platform's
+#                                      icon or the mark carries a light
 #                                      fringe at its edge
 #
-# The linux and windows outputs are committed, so packaging needs no image
-# tool, and tools/package-viz.sh checks every hash in the pin. It needs
-# macOS's sips.
+# The outputs are committed, so packaging needs no image tool, and
+# tools/package-viz.sh checks every hash in the pin. It needs macOS's sips.
 #
 # Every icon is the frame alone: the master scaled so the frame's taller
 # side spans its platform's share of the canvas, centered, and masked at
@@ -30,6 +32,16 @@
 # so macOS and linux give the frame 80.5%; Windows' 48 px grid draws its
 # square keyline at 42 of 48, so windows gives it 87.5%. Above 512 px the
 # master is scaled up, as any 1024 px icon drawn from it must be.
+#
+# The splash's mark is the S-and-summit alone, unscaled and where the
+# master draws it, with every other pixel transparent: no frame, no ground
+# and no contour lines, so it floats on whatever the splash clears to. The
+# mark is the master's only saturated colour inside the frame; its ground
+# and contour lines are near-grey. So a pixel is the mark's by its chroma,
+# its largest channel less its smallest, and an edge pixel's chroma, the
+# mark's colour mixed with the grey ground, says how much of it is the
+# mark's. No scaling is involved, so the regeneration must match the
+# committed image byte for byte once decoded.
 #
 # An ICO file may hold PNG images directly (Windows Vista and later read
 # them): a 6-byte header (reserved 0, type 1, image count), one 16-byte
@@ -55,9 +67,30 @@ share_windows=0.875
 ico_sizes="16 24 32 48 256"
 # Apple's iconset: each point size at 1x and 2x
 iconset_points="16 32 128 256 512"
+# the box the mark lies in, in master px (left top right bottom, inclusive):
+# a few px past its outermost pixels and clear of the frame's inner edge.
+# Below mark_low a pixel's chroma is the ground's or a contour line's; from
+# mark_high up it is a whole pixel of the mark's own stroke
+mark_box="75 76 420 442"
+mark_low=24
+mark_high=136
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+
+# the header of a top-down 32bpp BGRA BMP of N px square, as hex: a
+# BITMAPV5HEADER whose masks name the fourth byte as alpha, which sips
+# carries into the PNG it writes
+cat > "$work/bmp.awk" <<'AWK'
+function hex4(v) { return sprintf("%02x%02x%02x%02x", v % 256, int(v / 256) % 256, int(v / 65536) % 256, int(v / 16777216) % 256) }
+function header(N,   i) {
+  printf "424d%s00000000%s", hex4(138 + N * N * 4), hex4(138)
+  printf "%s%s%s01002000%s%s%s%s%s%s", hex4(124), hex4(N), hex4(4294967296 - N), hex4(3), hex4(N * N * 4), hex4(2835), hex4(2835), hex4(0), hex4(0)
+  printf "0000ff0000ff0000ff000000000000ff42475273"
+  for (i = 0; i < 48; i++) printf "00"
+  printf "%s%s%s%s", hex4(4), hex4(0), hex4(0), hex4(0)
+}
+AWK
 
 # the masking pass: reads a scaled master as the bytes of a top-down 24bpp
 # BMP (M px square) and prints, as hex, a top-down 32bpp BGRA BMP of N px:
@@ -67,7 +100,6 @@ trap 'rm -rf "$work"' EXIT
 # corners are inside is wholly inside, and one outside its bounding box is
 # wholly outside; only the rest are sampled
 cat > "$work/mask.awk" <<'AWK'
-function hex4(v) { return sprintf("%02x%02x%02x%02x", v % 256, int(v / 256) % 256, int(v / 65536) % 256, int(v / 16777216) % 256) }
 function inside(px, py,   cx, cy, dx, dy) {
   if (px < X0 || px > X1 || py < Y0 || py > Y1) return 0
   cx = (px < X0 + R) ? X0 + R : (px > X1 - R) ? X1 - R : px
@@ -86,11 +118,7 @@ function coverage(x, y,   k, c, sx, sy) {
 { for (i = 1; i <= NF; i++) byte[n++] = $i }
 END {
   row = int((M * 3 + 3) / 4) * 4
-  printf "424d%s00000000%s", hex4(138 + N * N * 4), hex4(138)
-  printf "%s%s%s01002000%s%s%s%s%s%s", hex4(124), hex4(N), hex4(4294967296 - N), hex4(3), hex4(N * N * 4), hex4(2835), hex4(2835), hex4(0), hex4(0)
-  printf "0000ff0000ff0000ff000000000000ff42475273"
-  for (i = 0; i < 48; i++) printf "00"
-  printf "%s%s%s%s", hex4(4), hex4(0), hex4(0), hex4(0)
+  header(N)
   for (y = 0; y < N; y++) {
     line = ""
     for (x = 0; x < N; x++) {
@@ -98,6 +126,45 @@ END {
       mx = x - OX; my = y - OY
       if (a == 0 || mx < 0 || my < 0 || mx >= M || my >= M) { line = line "00000000"; continue }
       o = my * row + mx * 3
+      line = line sprintf("%02x%02x%02x%02x", byte[o], byte[o + 1], byte[o + 2], a)
+    }
+    printf "%s", line
+  }
+}
+AWK
+
+# the mark's pass: reads the master as the bytes of a top-down 24bpp BMP (M
+# px square) and prints, as hex, a top-down 32bpp BGRA BMP of M px. A pixel
+# inside the box [X0, X1] x [Y0, Y1] whose chroma reaches LO, with a pixel
+# of chroma HI or more within 3 px, is the mark's: opaque from HI up and
+# ramping linearly to nothing at LO, and coloured as the most chromatic
+# pixel within 3 px, the mark's own colour at that point. Every other pixel
+# is transparent
+cat > "$work/mark.awk" <<'AWK'
+{ for (i = 1; i <= NF; i++) byte[n++] = $i }
+END {
+  row = int((M * 3 + 3) / 4) * 4
+  for (y = Y0; y <= Y1; y++) for (x = X0; x <= X1; x++) {
+    o = y * row + x * 3; hi = byte[o]; lo = byte[o]
+    for (k = 1; k < 3; k++) { if (byte[o + k] > hi) hi = byte[o + k]; if (byte[o + k] < lo) lo = byte[o + k] }
+    chroma[y * M + x] = hi - lo
+  }
+  header(M)
+  for (y = 0; y < M; y++) {
+    line = ""
+    for (x = 0; x < M; x++) {
+      c = (x < X0 || x > X1 || y < Y0 || y > Y1) ? 0 : chroma[y * M + x]
+      if (c < LO) { line = line "00000000"; continue }
+      best = -1
+      for (dy = -3; dy <= 3; dy++) for (dx = -3; dx <= 3; dx++) {
+        if (x + dx < X0 || x + dx > X1 || y + dy < Y0 || y + dy > Y1) continue
+        q = (y + dy) * M + (x + dx)
+        if (chroma[q] > best) { best = chroma[q]; bx = x + dx; by = y + dy }
+      }
+      a = (c >= HI) ? 255 : int((c - LO) * 255 / (HI - LO) + 0.5)
+      if (best < HI || a == 0) { line = line "00000000"; continue }
+      if (a == 255) { bx = x; by = y }
+      o = by * row + bx * 3
       line = line sprintf("%02x%02x%02x%02x", byte[o], byte[o + 1], byte[o + 2], a)
     }
     printf "%s", line
@@ -120,9 +187,22 @@ render() {
   # shellcheck disable=SC2086
   set -- "$3" $geometry
   od -An -tu1 -v -j"$off" "$work/scaled.bmp" |
-    awk -v N="$n" -v M="$m" -v OX="$2" -v OY="$3" -v X0="$4" -v X1="$5" -v Y0="$6" -v Y1="$7" -v R="$8" -f "$work/mask.awk" |
+    awk -v N="$n" -v M="$m" -v OX="$2" -v OY="$3" -v X0="$4" -v X1="$5" -v Y0="$6" -v Y1="$7" -v R="$8" -f "$work/bmp.awk" -f "$work/mask.awk" |
     xxd -r -p > "$work/masked.bmp"
   sips -s format png "$work/masked.bmp" --out "$1" >/dev/null
+}
+
+# the splash's mark at the master's own size, written to $1
+mark() {
+  sips -s format bmp "$here/stride-icon.png" --out "$work/master.bmp" >/dev/null
+  off=$(od -An -tu4 -j10 -N4 "$work/master.bmp" | tr -d ' ')
+  m=$(sips -g pixelWidth "$here/stride-icon.png" | awk '/pixelWidth/ { print $2 }')
+  # shellcheck disable=SC2086
+  set -- "$1" $mark_box
+  od -An -tu1 -v -j"$off" "$work/master.bmp" |
+    awk -v M="$m" -v X0="$2" -v Y0="$3" -v X1="$4" -v Y1="$5" -v LO="$mark_low" -v HI="$mark_high" -f "$work/bmp.awk" -f "$work/mark.awk" |
+    xxd -r -p > "$work/mark.bmp"
+  sips -s format png "$work/mark.bmp" --out "$1" >/dev/null
 }
 
 # the macOS iconset, each size rendered at that size, into the folder given
@@ -143,7 +223,8 @@ byte() { printf "\\$(printf '%03o' "$(($1 & 255))")"; }
 u16() { byte "$1"; byte "$(($1 >> 8))"; }
 u32() { u16 "$(($1 & 65535))"; u16 "$(($1 >> 16))"; }
 
-# the linux and windows icons, rendered into the folder given
+# the linux and windows icons and the splash's mark, rendered into the
+# folder given
 build() {
   render 256 "$share_linux" "$1/stride-icon-256.png"
   count=0
@@ -170,6 +251,7 @@ build() {
     done
     for s in $ico_sizes; do cat "$1/win-$s.png"; done
   } > "$1/stride.ico"
+  mark "$1/splash-mark.png"
 }
 
 # the unsigned little-endian integer of $3 bytes at offset $2 in file $1
@@ -207,6 +289,14 @@ same_pixels() {
       mean = sum / n; frac = big / n
       if (mean > 0.5 || frac > 0.001) { printf "make-icons: %s differs from its regeneration (mean %.3f, %.3f%% of bytes off by more than 32)\n", what, mean, frac * 100 > "/dev/stderr"; exit 1 }
     }'
+}
+
+# whether two PNGs show exactly the same pixels, decoded to BMP: for an
+# image no scaler touched, where any difference is an edit
+identical_pixels() {
+  sips -s format bmp "$1" --out "$work/a.bmp" >/dev/null
+  sips -s format bmp "$2" --out "$work/b.bmp" >/dev/null
+  cmp -s "$work/a.bmp" "$work/b.bmp" || { echo "make-icons: $3 differs from its regeneration" >&2; return 1; }
 }
 
 # whether a PNG's partly transparent pixels are no lighter than the opaque
@@ -260,14 +350,17 @@ case "${1:-}" in
       w=$(sips -g pixelWidth "$f" | awk '/pixelWidth/ { print $2 }')
       [ "$w" -lt 48 ] || no_light_fringe "$f" "the macOS iconset's ${f##*/}"
     done
-    echo "make-icons: every icon is the master's by its recorded transform, with no light fringe"
+    identical_pixels "$work/new/splash-mark.png" splash-mark.png img/splash-mark.png
+    no_light_fringe splash-mark.png img/splash-mark.png
+    echo "make-icons: every icon and the splash's mark are the master's by their recorded transforms, with no light fringe"
     ;;
   "")
     build "$work"
     cp "$work/stride-icon-256.png" stride-icon-256.png
     cp "$work/stride.ico" stride.ico
-    shasum -a 256 stride-icon.png make-icons.sh stride.ico stride-icon-256.png > stride-icons.sha256
-    echo "make-icons: wrote img/stride.ico ($ico_sizes), img/stride-icon-256.png and img/stride-icons.sha256"
+    cp "$work/splash-mark.png" splash-mark.png
+    shasum -a 256 stride-icon.png make-icons.sh stride.ico stride-icon-256.png splash-mark.png > stride-icons.sha256
+    echo "make-icons: wrote img/stride.ico ($ico_sizes), img/stride-icon-256.png, img/splash-mark.png and img/stride-icons.sha256"
     ;;
   *)
     echo "usage: make-icons.sh [--iconset <folder> | --check]" >&2

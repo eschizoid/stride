@@ -543,7 +543,7 @@ Releases attach `stride-app-macos-arm64.zip`, `stride-app-macos-x86_64.zip`,
 built from the tagged commit. Every package carries the window's binary, the
 `stride` command from the same release build, byte for byte the CLI asset
 the release attaches beside it, the brand fonts, the splash's mark and the
-streak flame (`img/stride-icon.png` and `img/flame.png`), and a launcher
+streak flame (`img/splash-mark.png` and `img/flame.png`), and a launcher
 that puts the package's own command first on the PATH the window inherits,
 so the window runs the command from its own release before any other
 install of it, and seeds those files into `~/.stride/fonts` and
@@ -635,17 +635,22 @@ tile at 824 of 1024 px and GNOME's app icon template its square keyline at
 103 of 128, so macOS and linux give the frame 80.5%; Windows' 48 px grid
 draws its square keyline at 42 of 48, so windows gives it 87.5%. Above
 512 px the master is scaled up, as any 1024 px icon drawn from it must be.
-`img/make-icons.sh` states each transform once. It builds `stride.ico` and
-the linux `stride.png` with macOS's `sips` and pins the SHA-256 of the
-master, itself and both outputs in `img/stride-icons.sha256`; those
-outputs are committed, so packaging needs no image tool. `just viz-app`
-and the release build the macOS iconset through it at each size, and
-packaging fails when `tools/make-viz-app.sh` does otherwise. `sh
-img/make-icons.sh --check` renders every icon again and fails when a
-committed image's pixels differ from its rendering or when an icon from
-48 px up carries an edge pixel lighter than the edge it borders; CI's
-macOS job runs it on every pull request, so an icon edited by hand or
-moved by 4 px fails. At 16 px the frame outweighs the S, which reads as a
+`img/make-icons.sh` states each transform once. It builds `stride.ico`,
+the linux `stride.png` and the splash's mark, `img/splash-mark.png`, with
+macOS's `sips` and pins the SHA-256 of the master, itself and the three
+outputs in `img/stride-icons.sha256`; those outputs are committed, so
+packaging needs no image tool. The mark is the S-and-summit alone at the
+master's size, the frame, its dark ground and the contour lines inside it
+left transparent, so the splash draws it straight onto its own clear with
+no tile edge around it. `just viz-app` and the release build the macOS
+iconset through the script at each size, and packaging fails when
+`tools/make-viz-app.sh` does otherwise. `sh img/make-icons.sh --check`
+renders every icon and the mark again and fails when a committed image's
+pixels differ from its rendering (the mark, which nothing scales, byte for
+byte) or when an icon from 48 px up or the mark carries an edge pixel
+lighter than the edge it borders; CI's macOS job runs it on every pull
+request, so an image edited by hand or moved by 4 px fails. At 16 px the
+frame outweighs the S, which reads as a
 faint line; from 24 px up the mark is clear. The three launchers carry the
 same steps, in order, each marked `step:` in the launcher: `locate`,
 `path` (the package's own command first; the linux and macOS launchers
