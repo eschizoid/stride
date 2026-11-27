@@ -212,8 +212,13 @@ Trace :: [].{
 	# per session; model.trace_unit names what the samples count. The shapes
 	# draw from geom and every string from scene, so the drawing, the label
 	# placer and the gate read one layout.
+	#
+	# The trace's own keys are fixed text and never drop, so the line must
+	# fit the minimum window in the widest face it can be drawn in, the
+	# platform's built-in one; the label gate judges it in both faces at
+	# every window size.
 	hint_text : Str
-	hint_text = "[ / ]  older/newer session      X  sport filter      shift+[ / shift+]  ghost older/newer      C  clear ghost      wheel zoom  drag pan  0 reset      TAB  plan"
+	hint_text = "[ / ]  older/newer session      X  sport      shift+[ / ]  older/newer ghost      C  clear ghost      wheel zoom  drag pan  0 reset      TAB  plan"
 
 	# the keys every view shares, after the trace's own on the footer row
 	keys_text : Str
