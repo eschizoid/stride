@@ -148,7 +148,7 @@ Strength :: [].{
 	title_text = "lifts - the heaviest weight each lift moved, newest on the right"
 
 	hint_text : Str
-	hint_text = "wheel or up/down  scroll      TAB  zones      R  reload      S  screenshot      V  record      ESC quit"
+	hint_text = "wheel or up/down  scroll      TAB  weeks      R  reload      S  screenshot      V  record      ESC quit"
 
 	# ── the layout the drawing, the scene and the gate share ───────────────
 	# the lifts on screen from the scroll offset, each with its row's top,

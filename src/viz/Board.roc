@@ -151,7 +151,7 @@ Board :: [].{
 		mmdd = Str.from_utf8_lossy(List.drop_first(Str.to_utf8(horizon), 5))
 		which = if (horizon == event_day) "event day" else "plan's last day"
 		if (!p.ok or horizon == "") []
-		else [Load.projected_on(mmdd, p.ctl, p.tsb), "${which}, ${I64.to_str(p.projected)} of ${I64.to_str(p.considered)} priced"]
+		else [Load.projected_on(mmdd, p.ctl, p.tsb), "${which}, ${I64.to_str(p.projected)} of ${I64.to_str(p.considered)} estimated"]
 	}
 
 	clamp_idx : F32, U64 -> U64
@@ -165,7 +165,7 @@ Board :: [].{
 	# ── the board's strings: the window prepares each at load from these,
 	# and the scene measures the same strings ───────────────────────────────
 	hint_text : Str
-	hint_text = "1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   V record   G glow   ESC quit"
+	hint_text = "1/2/3 range   TAB power   hover or arrows to read a day   R reload   S screenshot   V record   G glow on/off   ESC quit"
 
 	# a board with no day to draw names the command that fills it, and R
 	# loads what that command wrote: setup while no activity exists, analyze
@@ -190,7 +190,7 @@ Board :: [].{
 	stale_text : List(Str) -> Str
 	stale_text = |days|
 		match List.last(days) {
-			Ok(ld) => "data as of ${ld} - analyze to refresh"
+			Ok(ld) => "data as of ${ld} - run stride analyze to refresh"
 			Err(_) => ""
 		}
 
@@ -204,7 +204,8 @@ Board :: [].{
 	sel_color : U8 -> Color.Rgba
 	sel_color = |sel| if (sel == 0) Theme.ctl_c else if (sel == 1) Theme.atl_c else Theme.tsb_c
 
-	# a KPI tile's number and caption, and a line's end label
+	# a KPI tile's number and caption, and a line's end label: the number
+	# alone, in the line's color, which the legend above names
 	kpi_value : List(Db.Point), U8 -> Str
 	kpi_value = |data, sel| Db.fmt_f(value_of(last_point(data), sel))
 
@@ -212,7 +213,7 @@ Board :: [].{
 	kpi_caption = |sel| if (sel == 0) "fitness - 42-day load avg" else if (sel == 1) "fatigue - 7-day load avg" else "form - fitness minus fatigue"
 
 	end_text : List(Db.Point), U8 -> Str
-	end_text = |data, sel| "${if (sel == 0) "CTL" else if (sel == 1) "ATL" else "TSB"} ${kpi_value(data, sel)}"
+	end_text = |data, sel| kpi_value(data, sel)
 
 	y_text : I64 -> Str
 	y_text = |v| I64.to_str(v)
@@ -357,7 +358,7 @@ Board :: [].{
 	# the key under the legend: what the dashed part is, and how much of the
 	# plan's load it carries
 	proj_key_text : I64, I64 -> Str
-	proj_key_text = |considered, projected| "dashed: projected, ${I64.to_str(projected)} of ${I64.to_str(considered)} sessions priced"
+	proj_key_text = |considered, projected| "dashed: projected from ${I64.to_str(projected)} of ${I64.to_str(considered)} sessions"
 
 	# a line through `pts` cut into dashes `on` long with `off` between,
 	# measured by distance along the whole line from its first point, so the
@@ -596,9 +597,9 @@ Board :: [].{
 		if pd.known {
 			Db.fmt_f(pd.tss)
 		} else if pd.tss > 0.0 {
-			"${Db.fmt_f(pd.tss)} + unpriced"
+			"${Db.fmt_f(pd.tss)} + not estimated"
 		} else {
-			"unpriced"
+			"not estimated"
 		}
 
 	# ── every string the view writes, placed ───────────────────────────────
@@ -960,14 +961,14 @@ expect Str.ends_with(Str.join_with(Board.ev_lines(Text.font_stub, "one two three
 
 # the projection names where it ends - the event only when the plan reaches
 # it - and how many of the window's sessions carry load
-expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.True, ctl: 46.0, tsb: 14.3, considered: 4, projected: 1, days: [] }) == ["11-08: fitness 46.0, form 14.3", "plan's last day, 1 of 4 priced"]
-expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 40, projected: 12, days: [] }) == ["06-26: fitness 52.5, form -3.2", "event day, 12 of 40 priced"]
+expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.True, ctl: 46.0, tsb: 14.3, considered: 4, projected: 1, days: [] }) == ["11-08: fitness 46.0, form 14.3", "plan's last day, 1 of 4 estimated"]
+expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 40, projected: 12, days: [] }) == ["06-26: fitness 52.5, form -3.2", "event day, 12 of 40 estimated"]
 expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0, days: [] }) == []
 expect Board.proj_lines("", "", { ok: Bool.True, ctl: 1.0, tsb: 1.0, considered: 1, projected: 1, days: [] }) == []
 # the plan ending 2026-12-15 short of a June event reads the numbers `stride
 # project 2026-12-15` returns, in the text `stride events` prints beside
 # "plan's last day 2026-12-15" for them (pinned in the e2e suite)
-expect Board.proj_lines("2026-12-15", "2027-06-26", { ok: Bool.True, ctl: 54.94, tsb: 1.26, considered: 20, projected: 16, days: [] }) == ["12-15: fitness 54.9, form 1.3", "plan's last day, 16 of 20 priced"]
+expect Board.proj_lines("2026-12-15", "2027-06-26", { ok: Bool.True, ctl: 54.94, tsb: 1.26, considered: 20, projected: 16, days: [] }) == ["12-15: fitness 54.9, form 1.3", "plan's last day, 16 of 20 estimated"]
 
 # the zero rule's caption keeps the right end of the rule unless a series
 # crosses it there and the left end is clear; a series along the whole rule
@@ -1007,7 +1008,7 @@ expect {
 # the key names the dashed part and how many sessions are priced; a
 # projected day's card reads the priced load, says when a session on it
 # went unpriced, and never prints a load for a day nothing was priced onto
-expect Board.proj_key_text(20, 17) == "dashed: projected, 17 of 20 sessions priced"
+expect Board.proj_key_text(20, 17) == "dashed: projected from 17 of 20 sessions"
 expect Board.planned_load_text({ day: "2026-12-01", ctl: 1.0, atl: 1.0, tsb: 0.0, tss: 45.0, known: Bool.True }) == "45.0"
-expect Board.planned_load_text({ day: "2026-12-01", ctl: 1.0, atl: 1.0, tsb: 0.0, tss: 45.0, known: Bool.False }) == "45.0 + unpriced"
-expect Board.planned_load_text({ day: "2026-12-01", ctl: 1.0, atl: 1.0, tsb: 0.0, tss: 0.0, known: Bool.False }) == "unpriced"
+expect Board.planned_load_text({ day: "2026-12-01", ctl: 1.0, atl: 1.0, tsb: 0.0, tss: 45.0, known: Bool.False }) == "45.0 + not estimated"
+expect Board.planned_load_text({ day: "2026-12-01", ctl: 1.0, atl: 1.0, tsb: 0.0, tss: 0.0, known: Bool.False }) == "not estimated"

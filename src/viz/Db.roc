@@ -103,7 +103,7 @@ Db :: [].{
 		# the decode fails into the visible error state rather than plotting 0s.
 		q = "SELECT CAST(day AS TEXT) AS day, CAST(ROUND(ctl*10) AS INTEGER) AS c10, CAST(ROUND(atl*10) AS INTEGER) AS a10, CAST(ROUND(tsb*10) AS INTEGER) AS t10, CAST(ROUND(tss*10) AS INTEGER) AS s10 FROM (SELECT day, ctl, atl, tsb, tss FROM daily_load ORDER BY day DESC LIMIT 90) ORDER BY day ASC"
 		match db.query!(q, []) {
-			Err(_) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "daily_load query failed - analyzed yet?" }
+			Err(_) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "could not read your daily load - run stride analyze in a terminal, then press R" }
 			Ok(rows) => {
 				decoded = List.map_try(
 					rows,
@@ -1248,7 +1248,7 @@ Db :: [].{
 	stats_line : { mins : I64, dist : Str, load : I64, np : I64 } -> Str
 	stats_line = |s| {
 		head = "${num_unit(s.mins, "min")}  ${s.dist}  ${num_unit(s.load, "load")}"
-		if (s.np > 0) "${head}  ${num_unit(s.np, "w")} np" else head
+		if (s.np > 0) "${head}  ${num_unit(s.np, "W")} normalized" else head
 	}
 
 	# one day's full story for the detail panel: each activity with its type,
@@ -1274,8 +1274,8 @@ Db :: [].{
 		dk = Fmt.tenths((Units.dist_value(units, dist_m) * 10.0).round_to_i64_try().ok_or(0))
 		du = Units.dist_unit(units)
 		stats = stats_line({ mins, dist: "${dk}${du}", load: tss, np })
-		# if100 is intensity_factor * 100 rounded: 98 -> "IF 0.98", 105 -> "IF 1.05"
-		p1 = if (if100 > 0) "IF ${Fmt.hundredths(if100)}" else ""
+		# if100 is intensity_factor * 100 rounded: 98 -> "intensity 0.98", 105 -> "intensity 1.05"
+		p1 = if (if100 > 0) "intensity ${Fmt.hundredths(if100)}" else ""
 		p2 = if (hr > 0) "${I64.to_str(hr)} bpm avg" else ""
 		p3 = if (rpe != "0.0" and rpe != "0") "rpe ${rpe}" else "unrated"
 		extra = Str.join_with(List.keep_if([p1, p2, p3], |s| s != ""), "   ")
@@ -2499,7 +2499,7 @@ expect Db.directive_text({ at: "11-12 08:14", view: -1, range: -1, cursor_day: "
 
 # a session's numbers line names its load as load, and adds normalized
 # power only when a meter measured it
-expect Db.stats_line({ mins: 62, dist: "42.1km", load: 85, np: 230 }) == "62 min  42.1km  85 load  230 w np"
+expect Db.stats_line({ mins: 62, dist: "42.1km", load: 85, np: 230 }) == "62 min  42.1km  85 load  230 W normalized"
 expect Db.stats_line({ mins: 45, dist: "0.0km", load: 1250, np: 0 }) == "45 min  0.0km  1,250 load"
 
 # a database only the window has opened holds its bus tables and no series;

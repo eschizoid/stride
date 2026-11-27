@@ -51,7 +51,7 @@ Zones :: [].{
 	tile = |w| {
 		itot = split_s(w)
 		if itot <= 0 {
-			{ value: "-", label: "no polarized time", color: Theme.ink_muted }
+			{ value: "-", label: "no easy, moderate or hard time", color: Theme.ink_muted }
 		} else {
 			e = (Fmt.shares(w.easy, w.moderate, w.hard)).easy
 			{ value: "${I64.to_str(e)}/${I64.to_str(100 - e)}", label: "easy / harder, wk of ${Weeks.week_label(w.wk)}", color: verdict(w.easy, itot, w.days) }
@@ -98,7 +98,7 @@ Zones :: [].{
 	# first run while no activity exists, the analyze still owed while none
 	# is scored, else the session that fills it
 	empty_text : Ui.Model -> Str
-	empty_text = |model| Chrome.empty_line(model, "no polarized time in the last 12 weeks - an endurance session with heart rate, power or pace fills it")
+	empty_text = |model| Chrome.empty_line(model, "no easy, moderate or hard time in the last 12 weeks - an endurance session with heart rate, power or pace fills it")
 
 	charted : Ui.Model -> Bool
 	charted = |model| List.any(model.zone_weeks, |w| split_s(w) > 0)
@@ -346,7 +346,7 @@ expect {
 		and Zones.tile(wk(8100, 1800, 100, 7)) == { value: "81/19", label: "easy / harder, wk of 11-23", color: Theme.tsb_c }
 		and Zones.tile(wk(7000, 1000, 2000, 7)) == { value: "70/30", label: "easy / harder, wk of 11-23", color: Theme.alarm_c }
 		and Zones.tile(wk(9000, 900, 100, 3)) == { value: "90/10", label: "easy / harder, wk of 11-23", color: Theme.ink_muted }
-		and Zones.tile(wk(0, 0, 0, 7)) == { value: "-", label: "no polarized time", color: Theme.ink_muted }
+		and Zones.tile(wk(0, 0, 0, 7)) == { value: "-", label: "no easy, moderate or hard time", color: Theme.ink_muted }
 		and Zones.tile(wk(7999, 1, 2000, 7)) == { value: "79/21", label: "easy / harder, wk of 11-23", color: Theme.alarm_c }
 }
 

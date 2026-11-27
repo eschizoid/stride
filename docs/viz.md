@@ -10,7 +10,7 @@ the SQLite — no export step, no baked data, nothing the CLI has to prepare.
 - **Fitness** (CTL, blue, filled), **fatigue** (ATL, violet), **form** (TSB,
   teal — the brand accent) over the selected range.
 - Daily load as a rug along the bottom, on its own scale.
-- Y-axis labels, current values at the line ends, and the next planned event:
+- Y-axis labels, current values at the line ends (each in its line's color, which the legend names), and the next planned event:
   a dashed in-plot marker when its date is inside the plotted window, or the
   event tile's countdown (in the KPI row) when it is beyond it. A future event
   usually takes the tile form — the series ends on the last analyzed day, so
@@ -27,11 +27,11 @@ the CLI uses (`core.Units`); storage stays SI. Rowing and swim paces keep
 Every view carries a thin XP rail on the panel's left edge. Career hours set
 an athlete level (reaching level L takes 5·L·(L+1) hours, so each level costs
 ten hours more than the last), the rail fills with progress through the
-current level, and the level number sits at its foot. Hovering the rail opens
-the sheet: level and tier, hours to the next level, and the current training
+current level, and the level number sits at its foot under the word "level".
+Hovering the rail opens the sheet: the level and the hours trained, hours to the next level, and the current training
 streak in consecutive Mon–Sun weeks with any load. The detail lives where it
 belongs — the career view wears the level chip, XP bar and streak flame; the
-plan view turns the week into a quest row of seven pips (one per weekday,
+plan view turns the week into a row of seven pips (one per weekday,
 Monday first, colored by what became of that day, gold when done, pulsing
 when every session is done); the career view
 turns the spine's peak gold with a breathing "all-time high" halo when the
@@ -67,14 +67,15 @@ bar on the load rug's scale; a day it priced nothing onto draws no bar. The
 range chips still count measured days, and the projected days follow them.
 The line-end values read the projection's last day, an event the plan
 reaches is marked where it falls, and a key along the plot's top says the
-dashed part is projected and how many of the window's sessions are priced,
-the count the tile shows. The pointer and the arrow cursor read projected
+dashed part is projected and from how many of the window's sessions ("dashed:
+projected from 16 of 20 sessions"), the count the tile shows ("16 of 20
+estimated"). The pointer and the arrow cursor read projected
 days too: → walks on past the last measured day into them, one day a
 press, and past the last one turns the cursor off; the table, which shows
 measured days only, holds the latest of them instead. On a board drawing a
 projection the day card opens below the key, and over a projected day it
-says "projected" and reads the planned load, or "unpriced"
-for a session the engine could not price, and carries no line of what was
+says "projected" and reads the planned load, or "not estimated"
+for a session the engine could not estimate a load for, and carries no line of what was
 done.
 
 The subtitle always carries the as-of day, and the TSB zero rule is
@@ -113,14 +114,14 @@ target, the detected power work reps with their share of the target watts;
 for a heart-rate, zone, pace or RPE target, the result `stride complete`
 stated for it (stored on the session by `complete` and refreshed by
 `stride rate`); or the skip reason and the substitute the athlete did
-instead. The quest strip carries the week's done count and one pip per
+instead. The pip strip carries the week's done count ("2 of 7 done") and one pip per
 weekday colored by that day's status, with a substitute day distinct from a
 plain skip; the bottom strip states this week's load beside last week's,
 over the same calendar week the ladder lists. While an activity of the
 week is not yet scored it says so and names `stride analyze` instead of a
 number, and while no activity is on record it is absent and the card names
 the first run; the coach corner shows the newest bus directive: no line until a coach
-has written one, and "directives unreadable" when the bus cannot be read.
+has written one, and "last request unreadable" when the bus cannot be read.
 The strip, the table's day detail and the heat card all say load, never
 TSS: a session scores in TSS or session-RPE load by its model, and a
 day's or a week's total blends both. Steerable like
@@ -158,8 +159,8 @@ lands on this tab in that mode, and a capture is named for its mode
 One week is in focus across both modes: the bar under the pointer, else the
 one last clicked (clicking it again drops it). The header line under the
 chips reads that week the same way in either mode: the hours of its split
-and their easy share, its load beside its hold level, and the fitness it
-gained. With no week in focus the line is empty.
+and their easy share, its load beside the load that would hold fitness
+("340 holds fitness"), and the fitness it gained. With no week in focus the line is empty.
 
 The current week, until the series covers all seven of its days, is marked
 in both modes, with "so far" over it: in zones its bar is faded and the
@@ -959,10 +960,10 @@ INSERT INTO viz_directives (view, capture) VALUES (1, 'png');
 -- vocabulary is refused by name, and so is a valid one the athlete has no
 -- data for.
 INSERT INTO viz_directives (view, family) VALUES (1, 'pace:Run');
--- short: the power view shows no rungs under 5 minutes, so any value is
+-- short: the power view shows no duration under 5 minutes, so any value is
 -- refused by name ("short 1 refused: the power view has no short rungs");
--- the column stays for the bus shape, and `stride viz --json` lists the
--- field with that refusal as what it accepts
+-- the column stays so the request table keeps its shape, and `stride viz
+-- --json` lists the field with that refusal as what it accepts
 -- view 0..12 (form/power/trace/table/plan/heat/zones/ramp/career/lifts/map/map-heat/map-play;
 -- 3, 4 and 5 are the day tab's log, week and year modes; 6 and 7 are the
 -- weeks tab's zones and load modes; 10, 11 and 12 are the map tab's
@@ -1039,7 +1040,8 @@ integer, or the row predates the id columns.
 The lifecycle those rows go through — stale, superseded, pending until the
 applying frame reports, applied — is one definition in the pure `core.Bus`
 module, executed by the window every second and by `stride viz tick`, which
-runs one poll-and-mark cycle against the database without a window (its
+runs one poll-and-mark cycle (expire stale requests, set aside all but the
+newest, mark it applied) against the database without a window (its
 `--no-ack` leaves the winner pending, the state a window crashed between
 apply and report leaves behind). The e2e suite drives the tick, so every
 state above is tested where no window can open; the tick honours every

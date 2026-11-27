@@ -783,7 +783,7 @@ Gate :: [].{
 				|sz| {
 					base = empty_model(sz)
 					[
-						{ name: "form with a load error at ${size_name(sz)}", model: { ..base, view: 0, has_error: Bool.True, status: txt("daily_load query failed - analyzed yet?", 16.0) } },
+						{ name: "form with a load error at ${size_name(sz)}", model: { ..base, view: 0, has_error: Bool.True, status: txt("could not read your daily load - run stride analyze in a terminal, then press R", 16.0) } },
 						{ name: "form with no data at ${size_name(sz)}", model: { ..base, view: 0 } },
 						{ name: "form with one day at ${size_name(sz)}", model: { ..base, view: 0, data: [{ ctl: 1.0, atl: 7.0, tsb: -6.0, tss: 50.0 }], days: ["2026-11-26"] } },
 					]
@@ -1569,7 +1569,7 @@ Gate :: [].{
 		else if (v == 4) Plan.no_plan_text
 		else if (state == "an unscored ride") Chrome.no_scored_text
 		else if (v == 1) "no cycling power on record yet - a session recorded with a power meter fills it"
-		else if (v == 6) "no polarized time in the last 12 weeks - an endurance session with heart rate, power or pace fills it"
+		else if (v == 6) "no easy, moderate or hard time in the last 12 weeks - an endurance session with heart rate, power or pace fills it"
 		else if (v == 7) "no load in the last 12 weeks - a session stride analyze scores fills it, then press R"
 		else ""
 
@@ -1807,7 +1807,7 @@ expect {
 		and g.n == 50
 		and List.last(g.days) == Ok("2026-12-02")
 		and (Board.x_at(g, g.n - 1) - (g.left + g.pw)).abs() < 0.01
-		and Board.end_text(g.data, 0) == "CTL ${Db.fmt_f(last.ctl)}"
+		and Board.end_text(g.data, 0) == Db.fmt_f(last.ctl)
 		and List.map(planned, |b| b.day) == List.keep_oks(m.proj, |d| if (d.tss > 0.0) Ok(d.day) else Err(Rest))
 		and List.len(planned) == 14
 		and List.all(bs, |b| b.box.x + b.box.w <= g.left + g.pw + 0.01)
@@ -1940,7 +1940,7 @@ expect Gate.failures(|m| Gate.tip_judge(m, Gate.builtin_measure), Gate.heat_mode
 expect {
 	m = { ..Gate.empty_model({ w: 1280.0, h: 800.0 }), view: 4 }
 	coach = |note| List.keep_if(List.map(Plan.owned({ ..m, bus_note: note }, Gate.measure), |t| t.key), |k| Str.starts_with(k, "'coach:"))
-	coach(NoDirective) == [] and coach(Note("11-12 08:14  ->  plan / 30d")) == ["'coach: 11-12 08:14  ->  plan / 30d'"] and coach(Unreadable) == ["'coach: directives unreadable'"]
+	coach(NoDirective) == [] and coach(Note("11-12 08:14  ->  plan / 30d")) == ["'coach: 11-12 08:14  ->  plan / 30d'"] and coach(Unreadable) == ["'coach: last request unreadable'"]
 }
 
 # the wording rule: "tss" as a word fails in any case and beside any

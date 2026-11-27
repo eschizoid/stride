@@ -2244,9 +2244,9 @@ caps_fields = [
 	{ name: "ghost_day", kind: "date", accepts: "YYYY-MM-DD among the trace picker's sessions, or 'none' to dismiss; picks that day's newest session of the shown session's kind" },
 	{ name: "trace_id", kind: "integer", accepts: "an activity id among the trace picker's sessions; when both are given it takes precedence over trace_day" },
 	{ name: "ghost_id", kind: "integer", accepts: "an activity id among the trace picker's sessions, of the same kind as the session shown; takes precedence over ghost_day, and 'none' in ghost_day still dismisses" },
-	{ name: "capture", kind: "text", accepts: "'png' writes the view the directive lands on, once it has settled, to captures/<view>.png under the window's working directory; 'webm_start' and 'webm_stop' begin and end a WebM recording of it; the row stays pending until the host answers, then result names the file by its absolute path once it exists: a written PNG, or the recording a stop finished; a start closes with no result" },
+	{ name: "capture", kind: "text", accepts: "'png' writes the view the request lands on, once it has settled, to captures/<view>.png under the window's working directory; 'webm_start' and 'webm_stop' begin and end a WebM recording of it; the row stays pending until the host answers, then result names the file by its absolute path once it exists: a written PNG, or the recording a stop finished; a start closes with no result" },
 	{ name: "family", kind: "text", accepts: "a sport family's head ('Ride', 'Rowing', 'Run', ...) switches the power view to that family's power curve, record book and CP fit; 'pace:' and a sport type ('pace:Run', 'pace:Swim', 'pace:Rowing') switches it to that sport's pace curve and critical-speed fit; refused by name when the athlete has no such data; omitted leaves it unchanged" },
-	{ name: "short", kind: "integer", accepts: "none: the power view shows no rungs under 5 minutes, so any value is refused by name; the column stays for the bus shape" },
+	{ name: "short", kind: "integer", accepts: "none: the power view shows no duration under 5 minutes, so any value is refused by name; the field stays so the request table keeps its shape" },
 ]
 
 update! : Model, App.Input(Msg), App.Io => Try(Model, [Exit(I64)])

@@ -1005,7 +1005,7 @@ Career :: [].{
 	prio_strip = 4
 
 	hint_text : Str
-	hint_text = "click to settle   F  sport   TAB  form board   R  reload   S  screenshot   ESC  quit"
+	hint_text = "click  finish drawing   F  sport   TAB  map   R  reload   S  screenshot   ESC  quit"
 
 	# a career with no month names the command that fills it, and R loads
 	# what that command wrote; one month is a history too short for a line
@@ -1034,7 +1034,7 @@ Career :: [].{
 				lb = level_box(win_w)
 				sb = streak_box(win_w)
 				List.concat(
-					[fix(Scene.data("LVL ${I64.to_str(lvl)}", 13.0, Theme.gold_c), lb.x + 10.0, 68.0, Left, lb), fix(Scene.data(Hud.tier(lvl), 11.0, ink_muted), lb.x + 62.0, 70.0, Left, lb)],
+					[fix(Scene.data("level ${I64.to_str(lvl)}", 13.0, Theme.gold_c), lb.x + 10.0, 68.0, Left, lb), fix(Scene.data(Db.num_unit(Hud.total_hours(model.career_sports), "h"), 11.0, ink_muted), lb.x + 66.0, 70.0, Left, lb)],
 					if (shown.streak) [fix(Scene.data("${I64.to_str(Hud.streak_weeks(model.heat))} wk streak", 11.0, Theme.ember_c), streak_text_x(win_w), 70.0, Left, sb)] else [],
 				)
 			} else {
@@ -1133,7 +1133,7 @@ Career :: [].{
 				col = Theme.sport_color(sp.fam)
 				List.prepend(
 					List.map(withheld_dots(g), |d| Scene.kept(measure, Scene.data(spine_label(units, d.f, sp.kind, sp.fam), 11.0, col), [{ x: d.x, y: d.y - 20.0, align: Center }, { x: d.x, y: d.y + 9.0, align: Center }], prio_milestone, chart)),
-					fix(Scene.data("tonnage arc: ${U64.to_str(g.measured)} of 3 months measured - the spine draws at 3", 13.0, ink_muted), g.plot_l + g.plot_w / 2.0, g.line_top + 24.0, Center, panel),
+					fix(Scene.data("tonnage: ${U64.to_str(g.measured)} of 3 months measured - the line draws at 3", 13.0, ink_muted), g.plot_l + g.plot_w / 2.0, g.line_top + 24.0, Center, panel),
 				)
 			}
 		# a page without a trend says so where the line would be, centred on

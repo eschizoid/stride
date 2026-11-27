@@ -269,7 +269,7 @@ Plan :: [].{
 		match note {
 			NoDirective => []
 			Note(s) => ["coach: ${s}"]
-			Unreadable => ["coach: directives unreadable"]
+			Unreadable => ["coach: last request unreadable"]
 		}
 
 	# ── every string the view writes, placed ───────────────────────────────
@@ -298,7 +298,7 @@ Plan :: [].{
 		quest =
 			if qt > 0 {
 				complete = qd >= qt
-				[fix(Scene.data(if (complete) "week complete" else "quest ${I64.to_str(qd)}/${I64.to_str(qt)}", 11.0, if (complete) Theme.gold_c else ink_muted), pips_x(win_w) - 10.0, 72.0, Right, panel)]
+				[fix(Scene.data(if (complete) "week complete" else "${I64.to_str(qd)} of ${I64.to_str(qt)} done", 11.0, if (complete) Theme.gold_c else ink_muted), pips_x(win_w) - 10.0, 72.0, Right, panel)]
 			} else {
 				[]
 			}
@@ -360,7 +360,7 @@ Plan :: [].{
 		List.join([
 			Chrome.marks(model),
 			Days.chip_marks,
-			if (model.plan_week.total > 0) [{ key: "the quest pips", box: { x: pips_x(model.win.w), y: 70.0, w: 7.0 * (pip_w + 4.0) - 4.0, h: 8.0 } }] else [],
+			if (model.plan_week.total > 0) [{ key: "the done pips", box: { x: pips_x(model.win.w), y: 70.0, w: 7.0 * (pip_w + 4.0) - 4.0, h: 8.0 } }] else [],
 			[{ key: "today's card", box: card_box(model.win.w, card.h) }, { key: "today's stripe", box: stripe_box(card.h) }],
 			List.map((shown_rows(model)).rows, |r| { key: "the ${r.p.day} type pill", box: type_pill(r.top) }),
 			match scroll_box(model) {
@@ -465,7 +465,7 @@ Plan :: [].{
 	# line once one does, and a failed read said as such
 	expect coach_lines(NoDirective) == []
 	expect coach_lines(Note("11-12 08:14  ->  plan / 30d")) == ["coach: 11-12 08:14  ->  plan / 30d"]
-	expect coach_lines(Unreadable) == ["coach: directives unreadable"]
+	expect coach_lines(Unreadable) == ["coach: last request unreadable"]
 }
 
 # an unlinked activity sits on its day after that day's planned session,

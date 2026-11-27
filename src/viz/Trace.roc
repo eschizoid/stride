@@ -360,7 +360,7 @@ Trace :: [].{
 				List.concat(
 					[
 						fix(Scene.data(sel.name, 13.0, Color.white), right, 70.0, Right),
-						fix(Scene.data("${sel.day}   ${sel.sport}   ${U64.to_str(model.trace_sel + 1)}/${U64.to_str(List.len(model.trace_ids))}   showing ${filt} (X cycles)", 12.0, ink_muted), right, 90.0, Right),
+						fix(Scene.data("${sel.day}   ${sel.sport}   ${U64.to_str(model.trace_sel + 1)}/${U64.to_str(List.len(model.trace_ids))}   showing ${filt} (X changes it)", 12.0, ink_muted), right, 90.0, Right),
 					],
 					ghost,
 				)

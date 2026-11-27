@@ -407,7 +407,7 @@ ReportHealth :: [].{
 		Output.out!(
 			payload,
 			|p| {
-				model_lines = List.map(p.scored_by, |mrow| "    ${mrow.model}: ${(mrow.n).to_str()}")
+				model_lines = List.map(p.scored_by, |mrow| "    ${Render.load_model_name(mrow.model)}: ${(mrow.n).to_str()}")
 				hint =
 					if (p.strength_unrated > 0)
 						["", "  → ${(p.strength_unrated).to_str()} strength-class sessions have no rating — `stride rate <id> <1-10>` scores them honestly"]
@@ -468,7 +468,7 @@ ReportHealth :: [].{
 							"    with streams: ${(p.with_streams).to_str()}",
 							"    rated (session-RPE): ${(p.rated).to_str()}",
 							"",
-							"  scored by (load provenance):",
+							"  load scored from:",
 						],
 						model_lines,
 						[
@@ -481,7 +481,7 @@ ReportHealth :: [].{
 							"",
 							"  hr-less endurance sessions in a row: ${(p.hr_missing_streak).to_str()}",
 							"  rides on estimated power (30d): ${(p.estimated_power_count_30d).to_str()}",
-							"  junk samples dropped (30d): ${Render.fmt1(p.junk_filtered_pct_30d)}% overall · worst session ${Render.fmt1(p.junk_worst_session_pct_30d)}%",
+							"  implausible heart-rate and power samples dropped (30d): ${Render.fmt1(p.junk_filtered_pct_30d)}% overall · worst session ${Render.fmt1(p.junk_worst_session_pct_30d)}%",
 							"  zero load (no usable data): ${(p.zero_load).to_str()}",
 							"  not yet analyzed: ${(p.unanalyzed).to_str()}",
 							# Beside "not yet analyzed", not replacing it: one is what has
@@ -742,12 +742,11 @@ ReportHealth :: [].{
 				Ok(rows) => rows
 				Err(_) => []
 			}
-			focus_word = if (!focus.present) "none" else if (focus.live) "live" else "stale"
 			if (Output.json_mode!({}))
 				Output.emit_ok!({ protocol: s.protocol, published_at: s.published, staleness_seconds: s.staleness, focus_staleness_seconds: s.fstale, focus, views, fields, history, captures })
 			else {
-				Stdout.line!("bus protocol ${(s.protocol).to_str()}, published ${s.published}, directives stale after ${(s.staleness).to_str()}s, focus stale after ${(s.fstale).to_str()}s")?
-				Stdout.line!("focus: ${focus_word}${(if (focus.present) " - view ${(focus.view).to_str()}, trace ${focus.trace_day} (id ${(focus.trace_id).to_str()}), ${(focus.age_seconds).to_str()}s ago" else "")}")?
+				Stdout.line!(Render.viz_head({ protocol: s.protocol, published: s.published, staleness: s.staleness, fstale: s.fstale }))?
+				Stdout.line!(Render.viz_focus_line({ present: focus.present, live: focus.live, view: focus.view, trace_day: focus.trace_day, trace_id: focus.trace_id, age_seconds: focus.age_seconds }))?
 				Stdout.line!(
 					Render.render_table(
 						["view", "name"],
@@ -762,7 +761,7 @@ ReportHealth :: [].{
 				)?
 				Stdout.line!(
 					Render.render_table(
-						["directive", "written", "status", "error"],
+						["request", "written", "status", "error"],
 						List.map(history, |h| [(h.id).to_str(), h.created_at, h.status, h.error]),
 					),
 				)?
@@ -890,7 +889,7 @@ ReportHealth :: [].{
 		if (Output.json_mode!({}))
 			Output.emit_ok!(out)
 		else
-			Stdout.line!(if (out.found) "tick: directive ${(out.id).to_str()} ${out.status} (view ${(out.view).to_str()}, range ${(out.range).to_str()}, trace ${out.trace_day}/${(out.trace_id).to_str()}, ghost ${out.ghost_day}/${(out.ghost_id).to_str()})" else "tick: nothing pending")
+			Stdout.line!(if (out.found) Render.tick_line({ id: out.id, status: out.status, view: out.view, range: out.range, trace_day: out.trace_day, trace_id: out.trace_id, ghost_day: out.ghost_day, ghost_id: out.ghost_id }) else "tick: nothing pending")
 	}
 
 	# power-zone reference chart: the 7 Coggan/Peloton zones as watt ranges from your

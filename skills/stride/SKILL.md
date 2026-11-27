@@ -501,7 +501,7 @@ polls about once a second and every row reaches a status you can read back.
    curve: a family head (`'Rowing'`, `'Run'`) for its power curve, record book and CP
    fit, or `'pace:<sport_type>'` (`'pace:Run'`, `'pace:Swim'`) for that sport's pace
    curve and critical-speed fit; a curve the athlete has no data for is refused by name.
-   The power view shows no rungs under 5 minutes, so a `short` value is refused by
+   The power view shows no duration under 5 minutes, so a `short` value is refused by
    name.
 3. **Verify by id.** `stride viz --json` lists the last ten directives newest first in
    `history` and capture rows in `captures`, each
@@ -524,12 +524,13 @@ polls about once a second and every row reaches a status you can read back.
    never anything about their training. Steer when seeing the thing helps; answer without
    steering when the numbers settle the question. The athlete's own clicks win.
 
-`stride viz tick` runs one headless poll-and-mark cycle for tests. It consumes
+`stride viz tick` runs one headless poll-and-mark cycle for tests (expire stale
+requests, set aside all but the newest, mark it applied). It consumes
 directives, so never run it while a window is open. The full contract is docs/viz.md.
 
 The window also shows a game layer that no `--json` payload carries: athlete level from
-career hours across all sports (level L needs 5·L·(L+1) cumulative hours; tiers every ten
-levels: rookie, grinder, engine, machine, legend), a streak of consecutive Mon-Sun weeks
+career hours across all sports (level L needs 5·L·(L+1) cumulative hours; the window shows
+the level beside the hours trained), a streak of consecutive Mon-Sun weeks
 with any load (the current week cannot break it), and gold celebrations for a ride power
 record in the last seven days or a family's threshold peaking this month. Derive level
 from `stats` hours if asked.

@@ -819,7 +819,7 @@ Render :: [].{
 					# and a real value there.
 					("np (W)", |row| if (row.np_w > 0.0) fmt0(row.np_w) else "-"),
 					("hr", hr_of),
-					("ef", prim_of),
+					("W/beat", prim_of),
 					# aerobic decoupling per session — "-" when not computable,
 					# never a fabricated 0 (0.0 is a real, perfect result)
 					("drift", |row| if (row.decoupling_known) "${signed(row.decoupling_pct)}%" else "-"),
@@ -829,7 +829,7 @@ Render :: [].{
 				SpeedHr => [
 					(Units.split_rate_head(units, (List.first(rows)).map_ok(|r| r.sport).ok_or("")), |row| Units.split_rate(units, row.sport, row.distance_m, row.moving_time)),
 					("hr", hr_of),
-					("spd/hr", prim_of),
+					("speed/beat", prim_of),
 					("drift", |row| if (row.decoupling_known) "${signed(row.decoupling_pct)}%" else "-"),
 					# same rule: the speed/HR lens requires `distance_m > 0`, so 0.0 km on
 					# a row it refused is an absence rather than a measurement
@@ -935,13 +935,13 @@ Render :: [].{
 			}
 		avg = Metrics.mean(scores)
 		short = match lens {
-			Ef => "ef"
-			SpeedHr => "aero-eff"
+			Ef => "watts per heartbeat"
+			SpeedHr => "speed per heartbeat"
 			Rpe => "rpe"
 		}
 		legend = match lens {
-			Ef => "ef = normalized power (np) / avg HR — watts per heartbeat, climbing = fitter · drift = aerobic decoupling, 2nd half vs 1st — LOWER is better, - = not computable · kJ = total work"
-			SpeedHr => "spd/hr (aero-eff) = speed per heartbeat — climbing = fitter · drift = aerobic decoupling, 2nd half vs 1st — LOWER is better, - = not computable · ${Units.split_rate_head(units, (List.first(rows)).map_ok(|r| r.sport).ok_or(""))}"
+			Ef => "W/beat = normalized power (np) / avg HR — watts per heartbeat, climbing = fitter · drift = aerobic decoupling, 2nd half vs 1st — LOWER is better, - = not computable · kJ = total work"
+			SpeedHr => "speed/beat = speed per heartbeat — climbing = fitter · drift = aerobic decoupling, 2nd half vs 1st — LOWER is better, - = not computable · ${Units.split_rate_head(units, (List.first(rows)).map_ok(|r| r.sport).ok_or(""))}"
 			Rpe => "rpe = how hard it felt (1-10) — for a fixed workout, dropping = adapting"
 		}
 		# no baseline -> no percentage. Printing "(0%)" there claimed a measurement we
@@ -1243,7 +1243,7 @@ Render :: [].{
 			)
 			weeks = Metrics.weekly_rollup(day_loads)
 			table = render_table(
-				["week of", "sessions", "load", "fitness end (ctl)", "form end (tsb)"],
+				["week of", "sessions", "load", "fitness at end", "form at end"],
 				List.map(
 					weeks,
 					|w| [
@@ -1306,9 +1306,9 @@ Render :: [].{
 			# false reassurance; below that there is no fit and it is 0.
 			quality =
 				if pc.fit_points >= 3.I64 {
-					" · fit r2 ${fmt2(pc.fit_r2)} from ${I64.to_str(pc.fit_points)} bests"
+					" · fit quality ${fmt2(pc.fit_r2)} of 1, from ${I64.to_str(pc.fit_points)} bests"
 				} else {
-					" · from ${I64.to_str(pc.fit_points)} bests (r2 needs 3)"
+					" · from ${I64.to_str(pc.fit_points)} bests (a fit quality needs 3)"
 				}
 			cp_line =
 				# both must be positive: power_curve! already zeroes a non-positive fit, but
@@ -1360,9 +1360,9 @@ Render :: [].{
 			# suppressed below 3 points, for the reason power_curve_screen gives.
 			quality =
 				if pc.fit_points >= 3.I64 {
-					" · fit r2 ${fmt2(pc.fit_r2)} from ${I64.to_str(pc.fit_points)} bests"
+					" · fit quality ${fmt2(pc.fit_r2)} of 1, from ${I64.to_str(pc.fit_points)} bests"
 				} else {
-					" · from ${I64.to_str(pc.fit_points)} bests (r2 needs 3)"
+					" · from ${I64.to_str(pc.fit_points)} bests (a fit quality needs 3)"
 				}
 			# D' is a DISTANCE, so it converts to yards rather than to miles: the value is
 			# a couple of hundred metres and "0.12 mi" would be unreadable at that size.
@@ -1402,7 +1402,7 @@ Render :: [].{
 								)
 							).ok
 						if (pc.fit_points < 2.I64)
-							"→ Critical Speed: needs two ladder durations with data, at different lengths"
+							"→ Critical Speed: needs bests at two different durations"
 						else if (!(descending))
 							"→ Critical Speed: these bests hold or rise with duration, so no fit is possible"
 						else
@@ -1476,7 +1476,7 @@ Render :: [].{
 					# and clamping that to 0 would hide a deliberate unload. Each number
 					# names its span (core Load.last_days): a rolling week is not the
 					# calendar week the window's ramp card reads, and both read to a tenth.
-					"  fitness ramp: ${Fmt.tenths_signed((s.ramp_7d * 10.0).round_to_i64_try().ok_or(0))} ctl ${Load.last_days(7)} · ${Fmt.tenths_signed((s.ramp_28d_avg * 10.0).round_to_i64_try().ok_or(0))} ctl/wk averaged ${Load.last_days(28)}",
+					"  fitness ramp: ${Fmt.tenths_signed((s.ramp_7d * 10.0).round_to_i64_try().ok_or(0))} ${Load.last_days(7)} · ${Fmt.tenths_signed((s.ramp_28d_avg * 10.0).round_to_i64_try().ok_or(0))} a week averaged ${Load.last_days(28)}",
 					# CTL starts at zero, so a short history reads LOW rather than unknown and the
 					# form verdict above is drawn from absolute bands that do not apply yet. Say so
 					# here, not only in the JSON — a human reading a confident-looking number has no
@@ -1574,7 +1574,7 @@ Render :: [].{
 				# on a screen with no blocks, is what this replaces
 				"no training blocks yet — there are scored days on record but none carry load; `stride analyze` rebuilds them"
 			} else {
-				render_table(["block", "wk", "sess", "/wk", "trend", "r2", "e/m/h", "ftp"], block_rows)
+				render_table(["block", "wk", "sess", "/wk", "trend", "fit", "intensity", "ftp"], block_rows)
 			}
 		# 13, not 12: twelve is the one count that hides the same month a year
 		# ago, which is the obvious question to ask of a month table
@@ -1604,8 +1604,8 @@ Render :: [].{
 			[
 				"a block is a run of training weeks closed by ${I64.to_str(p.gap_weeks)}+ weeks with no load — described by measurement, never named as a phase",
 				"wk = weeks trained / calendar weeks spanned · sess = activities · /wk = load over the span",
-				"trend = where the fitted line starts and ends · r2 = how much of the week-to-week scatter it explains",
-				"a LOW r2 means the weeks were SCATTERED, not that there was no trend · e/m/h = easy/moderate/hard time %",
+				"trend = where the fitted line starts and ends · fit = how much of the week-to-week scatter that line explains, from 0 to 1",
+				"a LOW fit means the weeks were SCATTERED, not that there was no trend · intensity = easy/moderate/hard time %",
 				"ftp = the period's FIRST and LAST recorded threshold, with its peak or trough between them when it went outside both",
 				"the ftp cell names the sport it belongs to · NN% = that sport's share when it is close to a coin flip",
 				"* = still open: no absence has closed this block, or the month is still running · - = not available",
@@ -1645,12 +1645,12 @@ Render :: [].{
 		# the projected state in the text `stride events` and the window's event
 		# card print for the same date (core Load.projected_on); a past horizon
 		# shows the baseline, so it names the baseline's own day
-		nums = "  ${Load.projected_on(if (p.days_away < 0) p.projected_from else p.target_date, p.ctl, p.tsb)} (fatigue ${fmt1(p.atl)}) — ${(p.sessions_projected).to_str()} of ${(p.sessions_considered).to_str()} sessions in the window carry a projectable load"
+		nums = "  ${Load.projected_on(if (p.days_away < 0) p.projected_from else p.target_date, p.ctl, p.tsb)} (fatigue ${fmt1(p.atl)}) — ${(p.sessions_projected).to_str()} of ${(p.sessions_considered).to_str()} sessions in the window have an estimated load"
 		hyp =
 			if (List.is_empty(p.hypothetical)) ""
 			else Str.join_with(List.map(p.hypothetical, |h| "\n  hypothetical: ${h.date} ${h.target_literal}"), "")
 		unpriced =
-			Str.join_with(List.map(p.unprojected, |u| "\n  no load: ${u.date} ${unprojected_reason(u.target_literal, u.reason)}"), "")
+			Str.join_with(List.map(p.unprojected, |u| "\n  not estimated: ${u.date} ${unprojected_reason(u.target_literal, u.reason)}"), "")
 		note =
 			if (!(p.baseline_known)) "\nno computed history to project from — the numbers are decay over zero; with activities on record `stride analyze` builds it, and with none `stride setup` syncs your history"
 			else ""
@@ -1661,10 +1661,10 @@ Render :: [].{
 	unprojected_reason : Str, Str -> Str
 	unprojected_reason = |lit, reason| {
 		why =
-			if (reason == "no_target") "no structured target"
-			else if (reason == "no_ftp") "no 60d best-20min power on file"
-			else if (reason == "no_hr_zones") "no HR zones configured"
-			else if (reason == "no_threshold_pace") "no 60d threshold pace for its sport on file"
+			if (reason == "no_target") "no target"
+			else if (reason == "no_ftp") "no FTP from the last 60 days"
+			else if (reason == "no_hr_zones") "no heart-rate zones set"
+			else if (reason == "no_threshold_pace") "no threshold pace for its sport from the last 60 days"
 			else reason
 		if (lit == "") why else "${lit}: ${why}"
 	}
@@ -1678,10 +1678,10 @@ Render :: [].{
 			["no_target", "no_ftp", "no_hr_zones", "no_threshold_pace"],
 			|r| {
 				n = List.count_if(ups, |u| u.reason == r)
-				if (n == 0) Err(None) else Ok("${n.to_str()} ${unprojected_reason("", r)}")
+				if (n == 0) Err(None) else Ok("${n.to_str()} with ${unprojected_reason("", r)}")
 			},
 		)
-		if (List.is_empty(parts)) "" else "\n      no load: ${Str.join_with(parts, ", ")}"
+		if (List.is_empty(parts)) "" else "\n      not estimated: ${Str.join_with(parts, ", ")}"
 	}
 
 	## event targets: the projection as numbers in plain indented rows, its inputs
@@ -1705,7 +1705,7 @@ Render :: [].{
 						"  #${I64.to_str(e.id)}  ${e.event_date}  ${I64.to_str(-e.days_away)}d ago — baseline shown, `stride load` holds the event-day reading  ${e.name}"
 					else {
 						plan_end = if (e.plan_end.known) "\n      plan's last day ${Load.projected_on(e.plan_end.date, e.plan_end.ctl, e.plan_end.tsb)} (fatigue ${fmt1(e.plan_end.atl)}); nothing is planned after it" else ""
-						"  #${I64.to_str(e.id)}  ${e.event_date}  in ${I64.to_str(e.days_away)}d  ${e.name}\n      event day ${Load.projected_on(e.event_date, e.ctl, e.tsb)} (fatigue ${fmt1(e.atl)}) — ${(e.sessions_projected).to_str()} of ${(e.planned_in_window).to_str()} planned sessions carry a projectable load${plan_end}${unprojected_tally(e.unprojected)}"
+						"  #${I64.to_str(e.id)}  ${e.event_date}  in ${I64.to_str(e.days_away)}d  ${e.name}\n      event day ${Load.projected_on(e.event_date, e.ctl, e.tsb)} (fatigue ${fmt1(e.atl)}) — ${(e.sessions_projected).to_str()} of ${(e.planned_in_window).to_str()} planned sessions have an estimated load${plan_end}${unprojected_tally(e.unprojected)}"
 					},
 			)
 			base_note =
@@ -1722,8 +1722,8 @@ Render :: [].{
 	tte_screen = |p| {
 		# suppressed below 3 points, for the reason power_curve_screen gives — there the
 		# COUNT is the signal.
-		quality = if (p.fit_points >= 3.I64) ", r2 ${fmt2(p.fit_r2)}" else ""
-		head = "at ${fmt0(p.watts)}W against CP ${fmt0(p.cp)} (${p.sport_family} fit, W' ${fmt1(p.w_prime / 1000.0)} kJ from ${I64.to_str(p.fit_points)} of the 5/10/20-min bests over ${I64.to_str(p.window_days)}d${quality})"
+		quality = if (p.fit_points >= 3.I64) ", fit quality ${fmt2(p.fit_r2)} of 1" else ""
+		head = "at ${fmt0(p.watts)}W against your critical power (CP) ${fmt0(p.cp)}W (${p.sport_family} fit, W' ${fmt1(p.w_prime / 1000.0)} kJ from ${I64.to_str(p.fit_points)} of the 5/10/20-min bests over ${I64.to_str(p.window_days)}d${quality})"
 		# The athlete's own record at or above this power, when it is on file.
 		# A model that predicts less than what is already recorded is refuted by
 		# its own inputs, and the coach should see that on the same screen as
@@ -1751,8 +1751,8 @@ Render :: [].{
 	# pace in the unit the caller wrote theirs in
 	tte_pace_screen = |p| {
 		pace = |s| "${mmss((s).round_to_i64_try().ok_or(0))}${p.pace_unit}"
-		quality = if (p.fit_points >= 3.I64) ", r2 ${fmt2(p.fit_r2)}" else ""
-		head = "at ${pace(p.pace_s)} against CS ${pace(p.cs_pace_s)} (${p.sport} fit, D′ ${fmt0(p.d_prime)} m from ${I64.to_str(p.fit_points)} of the 5/10/20-min speed bests over ${I64.to_str(p.window_days)}d${quality})"
+		quality = if (p.fit_points >= 3.I64) ", fit quality ${fmt2(p.fit_r2)} of 1" else ""
+		head = "at ${pace(p.pace_s)} against your critical speed (CS) ${pace(p.cs_pace_s)} (${p.sport} fit, D′ ${fmt0(p.d_prime)} m from ${I64.to_str(p.fit_points)} of the 5/10/20-min speed bests over ${I64.to_str(p.window_days)}d${quality})"
 		record =
 			if p.demonstrated_known {
 				on = " · on record: ${pace(Metrics.pace_s_per_unit(p.demonstrated_speed, p.pace_unit))} for ${hms((p.demonstrated_s).round_to_i64_try().ok_or(0))} in this window"
@@ -1848,6 +1848,86 @@ Render :: [].{
 		legend = "reps left to right within each session, in ${unit} · fade = change across the session, NEGATIVE means faded (weaker watts, slower pace) · hr = first-to-last change across reps"
 		Str.join_with(List.join([[header, "", census, ""], rows, ["", legend]]), "\n")
 	}
+
+	# a session a window request or the window's focus names, by its day and
+	# its activity id, each part only when it is set: an id below zero and an
+	# empty day both mean the row did not name one
+	session_ref : Str, Str, I64 -> Str
+	session_ref = |label, day, id| {
+		id_part = if (id < 0) "" else "id ${id.to_str()}"
+		if (day == "" and id_part == "") ""
+		else if (day == "") " ${label} ${id_part}"
+		else if (id_part == "") " ${label} ${day}"
+		else " ${label} ${day} (${id_part})"
+	}
+
+	# `stride viz`'s first two lines: what the window published, and what it
+	# shows now
+	viz_head : { protocol : I64, published : Str, staleness : I64, fstale : I64 } -> Str
+	viz_head = |s| "window protocol ${s.protocol.to_str()}, published ${s.published}; a request expires after ${s.staleness.to_str()}s, the focus after ${s.fstale.to_str()}s"
+
+	viz_focus_line : { present : Bool, live : Bool, view : I64, trace_day : Str, trace_id : I64, age_seconds : I64 } -> Str
+	viz_focus_line = |f|
+		if (!f.present) "focus: none - the window is not open"
+		else {
+			trace = Str.trim_start(session_ref("trace", f.trace_day, f.trace_id))
+			parts = List.keep_if(["view ${f.view.to_str()}", trace, "${f.age_seconds.to_str()}s ago"], |p| p != "")
+			"focus: ${if (f.live) "live" else "stale"} - ${Str.join_with(parts, ", ")}"
+		}
+
+	# the config keys this database has set, never their values: each key a
+	# person sets stands unmarked, every other names who owns it, a secret
+	# says so, and the last line names the command that reads a value
+	config_screen : List({ key : Str, status : Str, redacted : Bool }) -> Str
+	config_screen = |keys|
+		if List.is_empty(keys) {
+			"no config set — `stride config set <key> <value>`"
+		} else {
+			lines = List.map(
+				keys,
+				|e| {
+					owner =
+						if (e.status == "settable") ""
+						else if (e.status == "managed") "set by stride"
+						else if (e.status == "derived") "derived from your power history"
+						else "unrecognised, stride does not read it"
+					marks = List.keep_if([if (e.redacted) "secret" else "", owner], |m| m != "")
+					if (List.is_empty(marks)) e.key else "${e.key}  (${Str.join_with(marks, "; ")})"
+				},
+			)
+			Str.join_with(List.append(lines, "values are not listed — `stride config get <key>` reads one"), "\n")
+		}
+
+	# what one headless tick did with the request it took
+	tick_line : { id : I64, status : Str, view : I64, range : I64, trace_day : Str, trace_id : I64, ghost_day : Str, ghost_id : I64 } -> Str
+	tick_line = |t| {
+		parts = List.keep_if(
+			[
+				if (t.view < 0) "" else "view ${t.view.to_str()}",
+				if (t.range < 0) "" else "range ${t.range.to_str()}",
+				Str.trim_start(session_ref("trace", t.trace_day, t.trace_id)),
+				Str.trim_start(session_ref("ghost", t.ghost_day, t.ghost_id)),
+			],
+			|p| p != "",
+		)
+		"tick: request ${t.id.to_str()} ${t.status}${if (List.is_empty(parts)) "" else " (${Str.join_with(parts, ", ")})"}"
+	}
+
+	# the scoring step a load came from, in the words a person reads; the
+	# payload keeps the stored name, and a name this list lacks reads as stored
+	load_model_name : Str -> Str
+	load_model_name = |m|
+		if (m == "power_stream") "power, second by second"
+		else if (m == "weighted_watts") "Strava's weighted power"
+		else if (m == "avg_watts") "average power"
+		else if (m == "rtss") "pace"
+		else if (m == "hr_zones") "time in heart-rate zones"
+		else if (m == "hr_avg") "average heart rate"
+		else if (m == "session_rpe") "your rating (session-RPE)"
+		else if (m == "relative_effort") "Strava's relative effort"
+		else if (m == "none") "not scored"
+		else if (Str.starts_with(m, "unknown")) "unknown"
+		else m
 
 	# one session's load, named by the rung that scored it: power, pace and
 	# heart rate score in TSS, while a session rating or relative effort does
@@ -2092,7 +2172,7 @@ expect {
 expect {
 	span = "2021-12-13..2022-02-10-and-a-tail-long-enough-that-it-cannot-possibly-fit"
 	t = Render.render_table(
-		["block", "wk", "sessions", "load/wk", "trend", "r2", "polarization", "ftp"],
+		["block", "wk", "sessions", "load/wk", "trend", "fit", "intensity", "ftp"],
 		[[span, "71", "128", "315", "falling", "0.10", "54/15/31", "239-271"]],
 	)
 	List.all(Str.split_on(t, "\n"), |l| Render.display_width(l) <= Render.max_total)
@@ -2280,10 +2360,10 @@ expect {
 		estimated_sessions: 0.I64,
 	})
 	Str.contains(s, "5s") and Str.contains(s, "20m") and Str.contains(s, "Critical Power 250") and Str.contains(s, "Ride")
-		and Str.contains(s, "fit r2 0.72")
+		and Str.contains(s, "fit quality 0.72 of 1")
 		# ...and is suppressed at two points, where it would be false reassurance —
 		# power_curve_screen states why.
-		and !(Str.contains(thin, "r2 1.00")) and Str.contains(thin, "r2 needs 3")
+		and !(Str.contains(thin, "fit quality 1.00")) and Str.contains(thin, "a fit quality needs 3")
 }
 expect {
 	s = Render.power_curve_screen({ window_days: 30, sport: "", points: [], cp: 0.0, w_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64, estimated_sessions: 0 })
@@ -2303,7 +2383,7 @@ expect {
 	# 1000/4.0 = 250 s -> 4:10/km; 1609.344/4.0 = 402.3 s -> 6:42/mi; 200 m -> 219 yd
 	Str.contains(m, "Critical Speed 4:10 min/km") and Str.contains(m, "D′ 200 m")
 		and Str.contains(i, "Critical Speed 6:42 min/mi") and Str.contains(i, "D′ 219 yd")
-		and Str.contains(m, "fit r2 0.91") and Str.contains(m, "Run")
+		and Str.contains(m, "fit quality 0.91 of 1") and Str.contains(m, "Run")
 }
 # a fit refused (cs 0) must not print as a real fit, and two points is not a quality signal
 expect {
@@ -2314,7 +2394,7 @@ expect {
 	# fitting one curve through rides and runs together and labelling it "all pace sports"
 	nosport = Render.pace_curve_screen(Metric, { available_sports: ["Run", "Rowing"], window_days: 30, sport: "", points: [], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
 	bare = Render.pace_curve_screen(Metric, { available_sports: [], window_days: 30, sport: "", points: [], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 0.I64 })
-	Str.contains(none, "needs two ladder durations") and !(Str.contains(none, "Critical Speed 0"))
+	Str.contains(none, "needs bests at two different durations") and !(Str.contains(none, "Critical Speed 0"))
 		# three rungs DESCENDING but too steeply for the model — the fitted ceiling lands below
 		# zero, so the fit is refused for a reason that is neither a data gap nor a flat curve.
 		# 10.0/3.0/2.0 m/s renders 1:40, 5:33, 8:20 per km: visibly descending, and the old
@@ -2323,7 +2403,7 @@ expect {
 			Render.pace_curve_screen(Metric, { available_sports: ["Run"], window_days: 90, sport: "Run", points: [{ dur_s: 300, speed: 10.0 }, { dur_s: 600, speed: 3.0 }, { dur_s: 1200, speed: 2.0 }], cs: 0.0, d_prime: 0.0, fit_r2: 0.0, fit_points: 3.I64 }),
 			"fall too steeply",
 		)
-		and !(Str.contains(thin, "r2 1.00")) and Str.contains(thin, "r2 needs 3")
+		and !(Str.contains(thin, "fit quality 1.00")) and Str.contains(thin, "a fit quality needs 3")
 		and Str.contains(empty, "no pace data")
 		and Str.contains(nosport, "per-sport") and Str.contains(nosport, "Run, Rowing") and !(Str.contains(nosport, "Critical Speed"))
 		and Str.contains(bare, "none in this window")
@@ -2361,8 +2441,8 @@ expect {
 	out = Render.summary_screen(Metric, s)
 	Str.contains(out, "stride report") and Str.contains(out, "zone gap") and Str.contains(out, "none on record")
 		# a build and an unload each keep their sign in the same line
-		and Str.contains(out, "fitness ramp: +4.0 ctl in the last 7 days")
-		and Str.contains(out, "-1.0 ctl/wk averaged in the last 28 days")
+		and Str.contains(out, "fitness ramp: +4.0 in the last 7 days")
+		and Str.contains(out, "-1.0 a week averaged in the last 28 days")
 		# the verdict carries the trend, not just the band
 		and Str.contains(out, "form 10, up 5 from a week ago")
 		# the label NAMES the state and no longer prescribes, and the streak says
@@ -2778,7 +2858,7 @@ expect {
 	List.all(tte_phrases, |p| !(Metrics.has_coaching_language(p)))
 		# the query-independent fit-quality number reaches the human screen -- a
 		# coach reading only the terminal must see what the payload sees
-		and Str.contains(tte("in_model", False, False), "r2 0.72")
+		and Str.contains(tte("in_model", False, False), "fit quality 0.72 of 1")
 		# ...and is SUPPRESSED at two points. Only the presence direction was asserted, so
 		# mutating the gate to always-show left the suite green.
 		and !(
@@ -2799,7 +2879,7 @@ expect {
 					demonstrated_known: False,
 					contradicts_model: False,
 				}),
-				"r2",
+				"fit quality",
 			)
 		)
 		# the hour rollover is what keeps a near-CP query from rendering 222 days
@@ -2833,10 +2913,10 @@ expect {
 	})
 	phrases = [tp("in_model", False, False, 3.I64), tp("in_model", True, True, 3.I64), tp("outside_model", True, False, 3.I64), tp("below_cs", False, False, 3.I64)]
 	List.all(phrases, |p| !(Metrics.has_coaching_language(p)))
-		and Str.contains(tp("in_model", True, False, 3.I64), "at 3:45/km against CS 4:10/km (Run fit, D′ 240 m")
+		and Str.contains(tp("in_model", True, False, 3.I64), "at 3:45/km against your critical speed (CS) 4:10/km (Run fit, D′ 240 m")
 		and Str.contains(tp("in_model", True, False, 3.I64), "~9:00 · on record: 3:28/km for 5:00")
-		and Str.contains(tp("in_model", False, False, 3.I64), "r2 0.97")
-		and !(Str.contains(tp("in_model", False, False, 2.I64), "r2"))
+		and Str.contains(tp("in_model", False, False, 3.I64), "fit quality 0.97 of 1")
+		and !(Str.contains(tp("in_model", False, False, 2.I64), "fit quality"))
 		and Str.contains(tp("below_cs", False, False, 3.I64), "no limit")
 		and Str.contains(tp("outside_model", False, False, 3.I64), "OUTSIDE")
 		and Str.contains(tp("in_model", True, True, 3.I64), "LONGER than the model predicts")
@@ -3100,7 +3180,7 @@ expect
 expect Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [] }) == "no event targets on file — `stride event add <YYYY-MM-DD> \"<name>\"` records one"
 # an event whose window holds unpriced sessions names why, counted per reason in a
 # fixed order; a window with none adds no line
-expect Render.unprojected_tally([{ date: "2026-09-04", target_literal: "3x12:00@230W", reason: "no_ftp" }, { date: "2026-09-02", target_literal: "", reason: "no_target" }, { date: "2026-09-05", target_literal: "3x12:00@230W", reason: "no_ftp" }]) == "\n      no load: 1 no structured target, 2 no 60d best-20min power on file"
+expect Render.unprojected_tally([{ date: "2026-09-04", target_literal: "3x12:00@230W", reason: "no_ftp" }, { date: "2026-09-02", target_literal: "", reason: "no_target" }, { date: "2026-09-05", target_literal: "3x12:00@230W", reason: "no_ftp" }]) == "\n      not estimated: 1 with no target, 2 with no FTP from the last 60 days"
 expect Render.unprojected_tally([]) == ""
 
 # the verdict line analyze and sync both print, and none before there is form
@@ -3150,3 +3230,23 @@ expect {
 		and Str.contains(s, "plan's last day 2026-12-15: fitness 54.9, form 1.3 (fatigue 53.6); nothing is planned after it")
 		and !(Str.contains(s, "ctl 0.6"))
 }
+
+# the config listing names who owns each key and never shows a value, a
+# secret included, and says which command reads one
+expect {
+	s = Render.config_screen([{ key: "ftp_ride", status: "derived", redacted: Bool.False }, { key: "strava_access_token", status: "managed", redacted: Bool.True }, { key: "timezone", status: "settable", redacted: Bool.False }, { key: "timezon", status: "unrecognised", redacted: Bool.False }])
+	s == "ftp_ride  (derived from your power history)\nstrava_access_token  (secret; set by stride)\ntimezone\ntimezon  (unrecognised, stride does not read it)\nvalues are not listed — `stride config get <key>` reads one"
+}
+expect Render.config_screen([]) == "no config set — `stride config set <key> <value>`"
+
+# doctor names each scoring step in words; a name the list lacks reads as stored
+expect List.map(["power_stream", "rtss", "hr_zones", "session_rpe", "relative_effort", "none", "unknown (pre-provenance)", "later_model"], Render.load_model_name) == ["power, second by second", "pace", "time in heart-rate zones", "your rating (session-RPE)", "Strava's relative effort", "not scored", "unknown", "later_model"]
+
+# the window's lines name a session only by what the row set, never by a
+# sentinel id
+expect Render.viz_focus_line({ present: Bool.True, live: Bool.True, view: 0, trace_day: "", trace_id: -1, age_seconds: 24 }) == "focus: live - view 0, 24s ago"
+expect Render.viz_focus_line({ present: Bool.True, live: Bool.False, view: 2, trace_day: "2026-11-25", trace_id: 211, age_seconds: 95 }) == "focus: stale - view 2, trace 2026-11-25 (id 211), 95s ago"
+expect Render.viz_focus_line({ present: Bool.False, live: Bool.False, view: -1, trace_day: "", trace_id: -1, age_seconds: -1 }) == "focus: none - the window is not open"
+expect Render.tick_line({ id: 7, status: "applied", view: 2, range: -1, trace_day: "2026-11-25", trace_id: -1, ghost_day: "", ghost_id: -1 }) == "tick: request 7 applied (view 2, trace 2026-11-25)"
+expect Render.tick_line({ id: 8, status: "superseded", view: -1, range: -1, trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1 }) == "tick: request 8 superseded"
+expect Render.viz_head({ protocol: 1, published: "2026-11-26 19:45:05", staleness: 600, fstale: 90 }) == "window protocol 1, published 2026-11-26 19:45:05; a request expires after 600s, the focus after 90s"

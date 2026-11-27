@@ -55,7 +55,7 @@ Ramp :: [].{
 	# names its rolling week the same way), so two different spans never
 	# share one label
 	card_span : Db.RampWeek -> Str
-	card_span = |w| "ctl ${Load.week_span(w.wk, Weeks.partial(w.days))}"
+	card_span = |w| "fitness ${Load.week_span(w.wk, Weeks.partial(w.days))}"
 
 	# a week before the athlete's history: no load and no CTL yet
 	before_history : Db.RampWeek -> Bool
@@ -92,7 +92,7 @@ Ramp :: [].{
 	classes = [
 		{ name: "loses fitness", color: verdict(0) },
 		{ name: "builds fitness", color: verdict(1) },
-		{ name: "past +${I64.to_str(ramp_limit)} ctl a week", color: verdict(ramp_limit * 10 + 1) },
+		{ name: "past +${I64.to_str(ramp_limit)} fitness a week", color: verdict(ramp_limit * 10 + 1) },
 	]
 
 	key_row : Scene.Measure -> List({ name : Str, color : Color.Rgba, swatch : Labels.Rect, text_x : F32 })
@@ -256,7 +256,7 @@ Ramp :: [].{
 				List.join([
 					[
 						fix(Scene.data(Fmt.tenths(last.ctl10), 28.0, Theme.ctl_c), card.x + 16.0, 68.0, Left, card),
-						fix(Scene.data("ctl now", 11.0, ink_faint), card.x + 16.0, 102.0, Left, card),
+						fix(Scene.data("fitness now", 11.0, ink_faint), card.x + 16.0, 102.0, Left, card),
 						fix(Scene.data(change_text(last), 28.0, verdict(delta10(last))), win_w - pad - 16.0, 68.0, Right, card),
 						fix(Scene.data(card_span(last), 11.0, ink_faint), win_w - pad - 16.0, 102.0, Right, card),
 						Scene.kept(measure, Scene.data(line_label, 10.0, Color.white), [{ x: axis, y: ly - 18.0, align: Right }, { x: axis, y: ly + 8.0, align: Right }], 1, panel),
@@ -283,7 +283,7 @@ Ramp :: [].{
 			List.join([
 				Chrome.marks(model),
 				Weeks.chip_marks,
-				[{ key: "the ctl card", box: Weeks.card_box(model.win.w) }, { key: "the holds-fitness line", box: line_box(model.win, scale_of(model.ramp_weeks)) }],
+				[{ key: "the fitness card", box: Weeks.card_box(model.win.w) }, { key: "the holds-fitness line", box: line_box(model.win, scale_of(model.ramp_weeks)) }],
 				List.map(key_row(measure), |k| { key: "the ${k.name} swatch", box: k.swatch }),
 				List.join(List.map(drawn_bars(model), |b| [{ key: "the ${b.w.wk} bar", box: b.box }, { key: "the ${b.w.wk} chip", box: chip_box(b) }])),
 			])
@@ -356,7 +356,7 @@ Ramp :: [].{
 expect Ramp.ramp_limit == 6
 expect Ramp.verdict(61) == Theme.alarm_c and Ramp.verdict(60) == Theme.ctl_c and Ramp.verdict(1) == Theme.ctl_c
 expect Ramp.verdict(0) == Theme.ink_muted and Ramp.verdict(-19) == Theme.ink_muted
-expect List.map(Ramp.classes, |c| c.name) == ["loses fitness", "builds fitness", "past +6 ctl a week"] and List.map(Ramp.classes, |c| c.color) == [Theme.ink_muted, Theme.ctl_c, Theme.alarm_c]
+expect List.map(Ramp.classes, |c| c.name) == ["loses fitness", "builds fitness", "past +6 fitness a week"] and List.map(Ramp.classes, |c| c.color) == [Theme.ink_muted, Theme.ctl_c, Theme.alarm_c]
 
 # a week's change is rounded once, from the unrounded difference: the
 # first real week rose 0.866 from 42.27 to an end stored as 43.1, and its
@@ -461,5 +461,5 @@ expect {
 expect {
 	running = { wk: "2026-11-23", days: 3, tss: 210, ctl10: 559, ramp10: 39, ctl_start: 52.0 }
 	done = { ..running, wk: "2026-11-16", days: 7 }
-	Ramp.change_text(running) == "+3.9" and Ramp.card_span(running) == "ctl since Monday 11-23" and Ramp.card_span(done) == "ctl in the week of 11-16"
+	Ramp.change_text(running) == "+3.9" and Ramp.card_span(running) == "fitness since Monday 11-23" and Ramp.card_span(done) == "fitness in the week of 11-16"
 }

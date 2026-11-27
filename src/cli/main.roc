@@ -81,19 +81,22 @@ help_text =
 	\\                                heart-rate zones, first sync; resumes where it stopped
 	\\    init                        create ~/.stride and migrate the SQLite db
 	\\    auth                        authorize with Strava (one-time paste flow; stores creds)
-	\\    config                      list the config that is set (secrets redacted)
+	\\    config                      list which keys are set (secrets marked);
+	\\                                `config get` reads a value
 	\\    config get <key>            read one key's value
 	\\    config set <key> <value>    write one key (hr zone bounds, timezone, units)
 	\\    config unset <key>          remove a key outright
 	\\                                — FTP is derived, never set
 	\\
 	\\GET DATA
-	\\    sync                        pull new activities + streams (rolling 30d self-heal)
-	\\    sync --all                  force a full re-list from scratch (dev escape hatch)
+	\\    sync                        pull new activities + streams, and re-check the
+	\\                                last 30 days for edits
+	\\    sync --all                  re-read your whole Strava history from scratch (rarely needed)
 	\\    import <zip|dir>            load a Strava account export — no API creds needed
 	\\    strength import <file|->    store strength sets from the JSON Strava's connector
 	\\                                returned (`-` reads stdin)
-	\\    analyze                     compute training metrics (load, zones, CTL/ATL/TSB)
+	\\    analyze                     compute training metrics: load, zones, fitness,
+	\\                                fatigue and form
 	\\
 	\\WHERE DO I STAND?
 	\\    summary                     form, 7d/28d zones + polarization, derived FTP, per-sport
@@ -101,13 +104,14 @@ help_text =
 	\\    doctor                      dataset health: coverage + how each activity was scored
 	\\
 	\\AM I IMPROVING?
-	\\    tte <watts> [sport]         how long the CP model says you could hold a power;
-	\\                                the sport's family fit (default the ride family)
+	\\    tte <watts> [sport]         how long you could hold a power, from the critical power
+	\\                                (CP) fit for the sport's family (default the ride family)
 	\\    tte pace <pace> <sport>     the same from the critical-speed fit, at a pace
 	\\                                like 4:10/km, 6:45/mi, 1:40/100m or 1:55/500m
 	\\    reps [date]                 the same workout shape across sessions, rep by rep
 	\\    progress [date] [asc|desc]  trend on a repeated workout, sport-aware lens
-	\\                                (power→EF, distance→speed/HR, rated→RPE);
+	\\                                (power→watts per heartbeat, distance→speed per
+	\\                                heartbeat, rated→RPE);
 	\\                                latest by default, oldest-first — desc reverses
 	\\    compare [week|month]        this period vs the one before it (default week)
 	\\    review [week|YYYY-MM-DD]    one Mon-Sun week: sessions and how they went, load, intensity, sports
@@ -149,27 +153,29 @@ help_text =
 	\\                                mark a session as a threshold test; it sets
 	\\                                that sport's threshold for 90 days
 	\\    test remove <activity_id>  unmark a threshold test
-	\\    event add <date> <name>    record an event target (judgment tier)
+	\\    event add <date> <name>    record an event you are training for
 	\\    event remove <event_id>    delete an event target
-	\\    events                      projected CTL/ATL/TSB on each event date,
-	\\                                from the open plan's targets, every kind priced
-	\\    project <date> [plan]       CTL/ATL/TSB on a date — recorded plan, or a
-	\\                                hypothetical one (date=target pairs, echoed
+	\\    events                      projected fitness, fatigue and form on each event
+	\\                                date, from the open plan's targets of every kind
+	\\    project <date> [plan]       fitness, fatigue and form on a date — recorded
+	\\                                plan, or a hypothetical one (date=target pairs, echoed
 	\\                                back, never stored)
 	\\
 	\\REFERENCE
 	\\    zones                       power-zone watt ranges (7) from your FTP (alias: pz)
-	\\    viz                         the window's published bus capabilities — views,
-	\\                                directive fields, staleness (launch the app once first)
-	\\    viz tick [--no-ack]         one poll-and-mark cycle of the window's directive
-	\\                                lifecycle, headless; --no-ack leaves the winner pending
+	\\    viz                         what the window can be asked to show: its views, the
+	\\                                request fields and how long a request lasts (launch
+	\\                                the app once first)
+	\\    viz tick [--no-ack]         handle the coach's requests once, as the window does:
+	\\                                expire stale ones, set aside all but the newest and
+	\\                                mark it applied; --no-ack leaves it pending
 	\\
 	\\FLAGS
 	\\    --json                      machine output (beats STRIDE_FORMAT)
 	\\    --human                     human tables, even for tool callers
 	\\    --help, -h                  show this help
 	\\    --version                   show version
-	\\    --all                       sync only — force a full re-list
+	\\    --all                       sync only — re-read the whole history
 	\\    --                          end flag parsing, so a following
 	\\                                --json is a literal value
 	\\
@@ -553,20 +559,7 @@ config_list! = |{}| {
 	)
 	Output.out!(
 		{ keys: entries },
-		|p|
-			if (List.is_empty(p.keys))
-				"no config set — `stride config set <key> <value>`"
-			else
-				Str.join_with(
-					List.map(
-						p.keys,
-						|e| {
-							shown = if (e.redacted) "${e.key} = <redacted>" else e.key
-							if (e.status == "settable") shown else "${shown}  (${e.status})"
-						},
-					),
-					"\n",
-				),
+		|p| Render.config_screen(p.keys),
 	)
 }
 
