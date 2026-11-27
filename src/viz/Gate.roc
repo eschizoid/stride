@@ -32,6 +32,7 @@ import "Career.roc" as career_src : Str
 import "Chrome.roc" as chrome_src : Str
 import "Curve.roc" as curve_src : Str
 import "Days.roc" as days_src : Str
+import "Db.roc" as db_src : Str
 import "DisplayScale.roc" as display_scale_src : Str
 import "Earcut.roc" as earcut_src : Str
 import "Geo.roc" as geo_src : Str
@@ -676,8 +677,9 @@ Gate :: [].{
 	check_words = |texts| List.concat(Labels.check(texts), wording(texts))
 
 	# The modules whose literals hold the window's words, as source text:
-	# every module of src/viz but Db, whose literals are SQL and column
-	# names, and this gate, whose literals are fixtures.
+	# every module of src/viz but this gate, whose literals are fixtures.
+	# Db's SQL, the columns its decoders read and the keys its json_
+	# readers read are skipped by core.Words.literals itself.
 	sources : List({ name : Str, src : Str })
 	sources = [
 		{ name: "Board", src: board_src },
@@ -685,6 +687,7 @@ Gate :: [].{
 		{ name: "Chrome", src: chrome_src },
 		{ name: "Curve", src: curve_src },
 		{ name: "Days", src: days_src },
+		{ name: "Db", src: db_src },
 		{ name: "DisplayScale", src: display_scale_src },
 		{ name: "Earcut", src: earcut_src },
 		{ name: "Geo", src: geo_src },
@@ -831,7 +834,7 @@ Gate :: [].{
 			ev_label: txt(event, 13.0),
 			ev_found: ev != 0,
 			ev_idx: if (ev == 2) List.len(series_days) + List.len(proj) - 1 else List.len(series_days) - 1,
-			ev_warn: txt("event record unreadable", 13.0),
+			ev_warn: txt(Db.event_unreadable_text, 13.0),
 			ev_warn_found: ev == 1,
 			stale_found: Bool.True,
 		}
@@ -865,7 +868,7 @@ Gate :: [].{
 				|sz| {
 					base = empty_model(sz)
 					[
-						{ name: "form with a load error at ${size_name(sz)}", model: { ..base, view: 0, has_error: Bool.True, status: txt("could not read your daily load - run stride analyze in a terminal, then press R", 16.0) } },
+						{ name: "form with a load error at ${size_name(sz)}", model: { ..base, view: 0, has_error: Bool.True, status: txt(Db.load_error_text, 16.0) } },
 						{ name: "form with no data at ${size_name(sz)}", model: { ..base, view: 0 } },
 						{ name: "form with one day at ${size_name(sz)}", model: { ..base, view: 0, data: [{ ctl: 1.0, atl: 7.0, tsb: -6.0, tss: 50.0 }], days: ["2026-11-26"] } },
 					]
@@ -2037,9 +2040,9 @@ expect Gate.wording([{ key: "'fitness (CTL) 46.0'", box: { x: 0.0, y: 0.0, w: 1.
 
 # the source guard: no string literal in a module that writes the window's
 # words uses an internal term bare, so a string no fixture reaches is held
-# to the rule too; every module of src/viz but Db and this gate is read
+# to the rule too; every module of src/viz but this gate is read
 expect List.join(List.map(Gate.sources, |f| Words.findings(f.name, f.src))) == []
-expect List.len(Gate.sources) == 30
+expect List.len(Gate.sources) == 31
 
 # the map's gate, over every map fixture
 expect Gate.failures(|m| Gate.judge(Map.owned(m, Gate.measure), Map.marks(m, Gate.measure)), Gate.map_models) == []

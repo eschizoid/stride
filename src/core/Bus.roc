@@ -190,7 +190,7 @@ Bus :: [].{
 	# power view shows no rungs under 5 minutes to fold or show, so any
 	# value is refused by name
 	short_refusal : I64 -> Str
-	short_refusal = |v| if (v == -1) "" else "short ${v.to_str()} refused: the power view has no short rungs"
+	short_refusal = |v| if (v == -1) "" else "short ${v.to_str()} refused: the power view shows no duration under 5 minutes"
 
 	focus_upsert_sql : Str
 	focus_upsert_sql = "INSERT INTO viz_focus (id, updated_at, view, range, cursor_day, trace_day, ghost_day, trace_id, ghost_id, detail_day, sport, family, curve_family, curve_short, map_id) VALUES (1, datetime('now'), :v, :rg, NULLIF(:cd, ''), NULLIF(:td, ''), NULLIF(:gd, ''), NULLIF(:ti, -1), NULLIF(:gi, -1), NULLIF(:dd, ''), NULLIF(:sp, ''), NULLIF(:fm, ''), NULLIF(:cf, ''), NULLIF(:cs, -1), NULLIF(:mi, -1)) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, view = excluded.view, range = excluded.range, cursor_day = excluded.cursor_day, trace_day = excluded.trace_day, ghost_day = excluded.ghost_day, trace_id = excluded.trace_id, ghost_id = excluded.ghost_id, detail_day = excluded.detail_day, sport = excluded.sport, family = excluded.family, curve_family = excluded.curve_family, curve_short = excluded.curve_short, map_id = excluded.map_id"
@@ -263,5 +263,5 @@ expect List.all(Sports.family("bike"), |s| Bus.family_refusal(Bus.pace_key(s)) =
 expect Bus.curve_key("pace:Swim") == Pace("Swim") and Bus.curve_key("Ride") == Power("Ride") and Bus.pace_key("Run") == "pace:Run"
 expect Str.contains(Bus.winner_sql, "AS fm, ")
 # a directive asking nothing of the short rungs passes; any value is refused
-expect Bus.short_refusal(-1) == "" and Bus.short_refusal(1) == "short 1 refused: the power view has no short rungs" and Bus.short_refusal(0) == "short 0 refused: the power view has no short rungs" and Bus.short_refusal(2) == "short 2 refused: the power view has no short rungs"
+expect Bus.short_refusal(-1) == "" and Bus.short_refusal(1) == "short 1 refused: the power view shows no duration under 5 minutes" and Bus.short_refusal(0) == "short 0 refused: the power view shows no duration under 5 minutes" and Bus.short_refusal(2) == "short 2 refused: the power view shows no duration under 5 minutes"
 expect Str.contains(Bus.winner_sql, "AS sh, ") and Str.contains(Bus.focus_upsert_sql, "curve_short = excluded.curve_short") and Str.contains(Bus.focus_upsert_sql, "map_id = excluded.map_id")

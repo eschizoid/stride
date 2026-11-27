@@ -5,10 +5,41 @@ import core.Load
 import core.Words
 import Metrics
 import Drain
+import "Analyze.roc" as analyze_src : Str
+import "Command.roc" as command_src : Str
+import "Config.roc" as config_src : Str
+import "Csv.roc" as csv_src : Str
+import "Db.roc" as db_src : Str
+import "Drain.roc" as drain_src : Str
+import "Import.roc" as import_src : Str
+import "Metrics.roc" as metrics_src : Str
+import "Output.roc" as output_src : Str
+import "Plan.roc" as plan_src : Str
 import "Render.roc" as render_src : Str
-import "main.roc" as main_src : Str
+import "Report.roc" as report_src : Str
 import "ReportHealth.roc" as report_health_src : Str
+import "ReportReview.roc" as report_review_src : Str
+import "ReportSeason.roc" as report_season_src : Str
+import "ReportSessions.roc" as report_sessions_src : Str
+import "ReportStrength.roc" as report_strength_src : Str
+import "Schema.roc" as schema_src : Str
 import "Setup.roc" as setup_src : Str
+import "Sql.roc" as sql_src : Str
+import "Strava.roc" as strava_src : Str
+import "Streams.roc" as streams_src : Str
+import "Strength.roc" as strength_src : Str
+import "ThresholdTest.roc" as threshold_test_src : Str
+import "main.roc" as main_src : Str
+import "../core/Bus.roc" as core_bus_src : Str
+import "../core/Fmt.roc" as core_fmt_src : Str
+import "../core/Load.roc" as core_load_src : Str
+import "../core/Route.roc" as core_route_src : Str
+import "../core/Series.roc" as core_series_src : Str
+import "../core/Sports.roc" as core_sports_src : Str
+import "../core/Units.roc" as core_units_src : Str
+import "../strength/Adapter.roc" as strength_adapter_src : Str
+import "../strength/Peloton.roc" as strength_peloton_src : Str
+import "../strength/StravaLog.roc" as strength_strava_log_src : Str
 
 Render :: [].{
 	# ── pure text-rendering helpers for human CLI output ────────────────
@@ -3236,12 +3267,54 @@ expect {
 		and !(Str.contains(s, "ctl 0.6"))
 }
 
-# the source guard: no string literal in the modules that write the CLI's
-# human screens, help and setup steps uses an internal term bare
-# (core.Words.bare, the list and matcher the window's label gate runs). A
-# load a power or heart-rate session scored stays "TSS" here, which is why
-# the list leaves that term to the window's own rule.
-expect List.join([Words.findings("Render", render_src), Words.findings("main", main_src), Words.findings("ReportHealth", report_health_src), Words.findings("Setup", setup_src)]) == []
+# the source guard: no string literal in any module of the engine, the
+# core package or the strength package uses an internal term bare
+# (core.Words.bare, the list and matcher the window's label gate runs).
+# The scan itself skips what is never text: comments, expects, SQL, the
+# columns a row decoder reads, the keys a json_ reader reads and SQL bind
+# names. core/Words is left out, being the list itself. A load a power or
+# heart-rate session scored stays "TSS" here, which is why the list leaves
+# that term to the window's own rule.
+expect {
+	sources = [
+		{ name: "Analyze", src: analyze_src },
+		{ name: "Command", src: command_src },
+		{ name: "Config", src: config_src },
+		{ name: "Csv", src: csv_src },
+		{ name: "Db", src: db_src },
+		{ name: "Drain", src: drain_src },
+		{ name: "Import", src: import_src },
+		{ name: "Metrics", src: metrics_src },
+		{ name: "Output", src: output_src },
+		{ name: "Plan", src: plan_src },
+		{ name: "Render", src: render_src },
+		{ name: "Report", src: report_src },
+		{ name: "ReportHealth", src: report_health_src },
+		{ name: "ReportReview", src: report_review_src },
+		{ name: "ReportSeason", src: report_season_src },
+		{ name: "ReportSessions", src: report_sessions_src },
+		{ name: "ReportStrength", src: report_strength_src },
+		{ name: "Schema", src: schema_src },
+		{ name: "Setup", src: setup_src },
+		{ name: "Sql", src: sql_src },
+		{ name: "Strava", src: strava_src },
+		{ name: "Streams", src: streams_src },
+		{ name: "Strength", src: strength_src },
+		{ name: "ThresholdTest", src: threshold_test_src },
+		{ name: "main", src: main_src },
+		{ name: "core/Bus", src: core_bus_src },
+		{ name: "core/Fmt", src: core_fmt_src },
+		{ name: "core/Load", src: core_load_src },
+		{ name: "core/Route", src: core_route_src },
+		{ name: "core/Series", src: core_series_src },
+		{ name: "core/Sports", src: core_sports_src },
+		{ name: "core/Units", src: core_units_src },
+		{ name: "strength/Adapter", src: strength_adapter_src },
+		{ name: "strength/Peloton", src: strength_peloton_src },
+		{ name: "strength/StravaLog", src: strength_strava_log_src },
+	]
+	List.len(sources) == 35 and List.join(List.map(sources, |f| Words.findings(f.name, f.src))) == []
+}
 
 # the config listing names who owns each key and never shows a value, a
 # secret included, and says which command reads one

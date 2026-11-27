@@ -69,7 +69,7 @@ The line-end values read the projection's last day, an event the plan
 reaches is marked where it falls, and a key along the plot's top says the
 dashed part is projected and how many of the window's sessions carry a load
 from a target ("dashed: projected, 16 of 20 sessions from targets"), the
-count the tile shows ("16 of 20 have a target"). The pointer and the arrow cursor read projected
+count the tile shows ("plan's last day, 16 of 20 from targets"). The pointer and the arrow cursor read projected
 days too: → walks on past the last measured day into them, one day a
 press, and past the last one turns the cursor off; the table, which shows
 measured days only, holds the latest of them instead. On a board drawing a
@@ -961,7 +961,7 @@ INSERT INTO viz_directives (view, capture) VALUES (1, 'png');
 -- data for.
 INSERT INTO viz_directives (view, family) VALUES (1, 'pace:Run');
 -- short: the power view shows no duration under 5 minutes, so any value is
--- refused by name ("short 1 refused: the power view has no short rungs");
+-- refused by name ("short 1 refused: the power view shows no duration under 5 minutes");
 -- the column stays so the request table keeps its shape, and `stride viz
 -- --json` lists the field with that refusal as what it accepts
 -- view 0..12 (form/power/trace/table/plan/heat/zones/ramp/career/lifts/map/map-heat/map-play;

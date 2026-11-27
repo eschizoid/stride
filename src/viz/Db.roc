@@ -93,6 +93,15 @@ Db :: [].{
 	unwritten : List(Str) -> Bool
 	unwritten = |tables| !(List.contains(tables, "daily_load"))
 
+	# what the board says when an event row cannot be read
+	event_unreadable_text : Str
+	event_unreadable_text = "event record unreadable"
+
+	# what the board says when the daily load cannot be read, and the command
+	# that rebuilds it
+	load_error_text : Str
+	load_error_text = "could not read your daily load - run stride analyze in a terminal, then press R"
+
 	load_series! : Sqlite.Db => Loaded
 	load_series! = |db| {
 		# day is the engine-written PRIMARY KEY in canonical YYYY-MM-DD; for
@@ -103,16 +112,16 @@ Db :: [].{
 		# the decode fails into the visible error state rather than plotting 0s.
 		q = "SELECT CAST(day AS TEXT) AS day, CAST(ROUND(ctl*10) AS INTEGER) AS c10, CAST(ROUND(atl*10) AS INTEGER) AS a10, CAST(ROUND(tsb*10) AS INTEGER) AS t10, CAST(ROUND(tss*10) AS INTEGER) AS s10 FROM (SELECT day, ctl, atl, tsb, tss FROM daily_load ORDER BY day DESC LIMIT 90) ORDER BY day ASC"
 		match db.query!(q, []) {
-			Err(_) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: "could not read your daily load - run stride analyze in a terminal, then press R" }
+			Err(_) => { data: [], days: [], last: { c: 0, a: 0, t: 0 }, err: load_error_text }
 			Ok(rows) => {
 				decoded = List.map_try(
 					rows,
 					|r| {
-						d = r.str("day") ? |_| "bad day"
-						c = r.i64("c10") ? |_| "bad ctl"
-						a = r.i64("a10") ? |_| "bad atl"
-						t = r.i64("t10") ? |_| "bad tsb"
-						s = r.i64("s10") ? |_| "bad tss"
+						d = r.str("day") ? |_| "a daily load row with an unreadable day"
+						c = r.i64("c10") ? |_| "a daily load row with an unreadable fitness"
+						a = r.i64("a10") ? |_| "a daily load row with an unreadable fatigue"
+						t = r.i64("t10") ? |_| "a daily load row with an unreadable form"
+						s = r.i64("s10") ? |_| "a daily load row with an unreadable load"
 						Ok({ d, c, a, t, s })
 					},
 				)
@@ -178,7 +187,7 @@ Db :: [].{
 					# a row that exists but will not decode is corruption — surface it,
 					# same rule as load_event!
 					if d == "" or nm == "" or ag < 0 {
-						{ day: "", name: "", ago: -1, err: "event record unreadable" }
+						{ day: "", name: "", ago: -1, err: event_unreadable_text }
 					} else {
 						# the gate every drawn human-authored string passes: an
 						# em-dash in an event name would render as unmapped glyphs do
@@ -202,11 +211,11 @@ Db :: [].{
 						Ok(d) => match r.str("name") {
 							Ok(nm) => match r.i64("ahead") {
 								Ok(ah) => { day: d, name: ascii_safe(nm), ahead: ah, err: "" }
-								Err(_) => { day: "", name: "", ahead: 0, err: "event record unreadable" }
+								Err(_) => { day: "", name: "", ahead: 0, err: event_unreadable_text }
 							}
-							Err(_) => { day: "", name: "", ahead: 0, err: "event record unreadable" }
+							Err(_) => { day: "", name: "", ahead: 0, err: event_unreadable_text }
 						}
-						Err(_) => { day: "", name: "", ahead: 0, err: "event record unreadable" }
+						Err(_) => { day: "", name: "", ahead: 0, err: event_unreadable_text }
 					}
 					decoded
 				}
@@ -1908,16 +1917,16 @@ Db :: [].{
 
 			_ => { top: out, rows: "" }
 		}
-		num = |key| F64.from_str(json_number(cut.top, key))
-		int = |key| I64.from_str(json_number(cut.top, key))
+		json_f64 = |key| F64.from_str(json_number(cut.top, key))
+		json_i64 = |key| I64.from_str(json_number(cut.top, key))
 		days = List.map_try(
 			List.keep_if(Str.split_on(cut.rows, "},{"), |r| r != ""),
 			|r| {
-				f = |key| F32.from_str(json_number(r, key))
-				Ok({ day: json_string(r, "date"), ctl: f("ctl")?, atl: f("atl")?, tsb: f("tsb")?, tss: f("load")?, known: Str.contains(r, "\"load_known\":true") })
+				json_f32 = |key| F32.from_str(json_number(r, key))
+				Ok({ day: json_string(r, "date"), ctl: json_f32("ctl")?, atl: json_f32("atl")?, tsb: json_f32("tsb")?, tss: json_f32("load")?, known: Str.contains(r, "\"load_known\":true") })
 			},
 		)
-		match (num("ctl"), num("tsb"), int("sessions_considered"), int("sessions_projected"), days) {
+		match (json_f64("ctl"), json_f64("tsb"), json_i64("sessions_considered"), json_i64("sessions_projected"), days) {
 			(Ok(c), Ok(t), Ok(sc), Ok(sp), Ok(ds)) => if (Str.contains(cut.top, "\"baseline_known\":true")) { ok: Bool.True, ctl: c, tsb: t, considered: sc, projected: sp, days: ds } else no_projection
 			_ => no_projection
 		}

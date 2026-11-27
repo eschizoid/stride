@@ -151,7 +151,7 @@ Board :: [].{
 		mmdd = Str.from_utf8_lossy(List.drop_first(Str.to_utf8(horizon), 5))
 		which = if (horizon == event_day) "event day" else "plan's last day"
 		if (!p.ok or horizon == "") []
-		else [Load.projected_on(mmdd, p.ctl, p.tsb), "${which}, ${I64.to_str(p.projected)} of ${I64.to_str(p.considered)} have a target"]
+		else [Load.projected_on(mmdd, p.ctl, p.tsb), "${which}, ${I64.to_str(p.projected)} of ${I64.to_str(p.considered)} from targets"]
 	}
 
 	clamp_idx : F32, U64 -> U64
@@ -961,14 +961,14 @@ expect Str.ends_with(Str.join_with(Board.ev_lines(Text.font_stub, "one two three
 
 # the projection names where it ends - the event only when the plan reaches
 # it - and how many of the window's sessions carry load
-expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.True, ctl: 46.0, tsb: 14.3, considered: 4, projected: 1, days: [] }) == ["11-08: fitness 46.0, form 14.3", "plan's last day, 1 of 4 have a target"]
-expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 40, projected: 12, days: [] }) == ["06-26: fitness 52.5, form -3.2", "event day, 12 of 40 have a target"]
+expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.True, ctl: 46.0, tsb: 14.3, considered: 4, projected: 1, days: [] }) == ["11-08: fitness 46.0, form 14.3", "plan's last day, 1 of 4 from targets"]
+expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 40, projected: 12, days: [] }) == ["06-26: fitness 52.5, form -3.2", "event day, 12 of 40 from targets"]
 expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0, days: [] }) == []
 expect Board.proj_lines("", "", { ok: Bool.True, ctl: 1.0, tsb: 1.0, considered: 1, projected: 1, days: [] }) == []
 # the plan ending 2026-12-15 short of a June event reads the numbers `stride
 # project 2026-12-15` returns, in the text `stride events` prints beside
 # "plan's last day 2026-12-15" for them (pinned in the e2e suite)
-expect Board.proj_lines("2026-12-15", "2027-06-26", { ok: Bool.True, ctl: 54.94, tsb: 1.26, considered: 20, projected: 16, days: [] }) == ["12-15: fitness 54.9, form 1.3", "plan's last day, 16 of 20 have a target"]
+expect Board.proj_lines("2026-12-15", "2027-06-26", { ok: Bool.True, ctl: 54.94, tsb: 1.26, considered: 20, projected: 16, days: [] }) == ["12-15: fitness 54.9, form 1.3", "plan's last day, 16 of 20 from targets"]
 
 # the zero rule's caption keeps the right end of the rule unless a series
 # crosses it there and the left end is clear; a series along the whole rule

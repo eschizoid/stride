@@ -1,4 +1,5 @@
 app [Context, program] {
+	core: "../src/core/package.roc",
 	http: "https://github.com/roc-lang/http/releases/download/1.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 	pf: platform "https://github.com/roc-lang/basic-webserver/releases/download/0.22.0/BM2BUXA8mwbcoKPUfRV8cLtsUdnsSBPwjNLPRUJQAQ7Q.tar.zst",
 }
@@ -45,6 +46,7 @@ import pf.Env
 import pf.Server
 import pf.Sleep
 import http.Response
+import core.Words
 
 # `tz` rides on Ctx so every scenario that touches the clock reads the SAME zone the
 # dates were computed in. A second literal lets the two zones drift apart.
@@ -3926,7 +3928,7 @@ b_seed_analyze! = |ctx| {
 	# and form rather than their acronyms, and no internal term at all
 	check!("help text names fitness, fatigue and form in plain words", Str.contains(help_text_out, "projected fitness, fatigue and form on each event") and Str.contains(help_text_out, "fitness, fatigue and form on a date"))?
 	check!("...and says what sync re-reads and what viz tick does", Str.contains(help_text_out, "re-check the\n") and Str.contains(help_text_out, "expire stale ones, set aside all but the newest"))?
-	check!("...and uses no internal term", List.all(["CTL", "ATL", "TSB", "self-heal", "escape hatch", "judgment tier", "directive", "lifecycle", "priced", "bus ", "CP model", "→EF"], |t| !(Str.contains(help_text_out, t))))?
+	check!("...and uses no internal term, by the one list the window and the source guards share (${Str.join_with(Words.bare(help_text_out), ", ")})", List.is_empty(Words.bare(help_text_out)))?
 	check!("skill teaches no environment detection", !(Str.contains(skill_text, "CLAUDECODE")) and !(Str.contains(skill_text, "detected automatically")))?
 
 	# ── the JSON contract as a tested artifact ────────────────────
@@ -9085,9 +9087,9 @@ b_viz_tick! = |ctx| {
 	# short is refused by name whatever its value, and the tick still echoes
 	# what was asked
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, short) VALUES (1, 1);")
-	check!("a directive asking for the short rungs is refused by name, its value echoed", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + (.short | tostring) + \"/\" + .error") == "applied_partial/1/short 1 refused: the power view has no short rungs")?
+	check!("a directive asking for the short rungs is refused by name, its value echoed", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + (.short | tostring) + \"/\" + .error") == "applied_partial/1/short 1 refused: the power view shows no duration under 5 minutes")?
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, short) VALUES (1, 0);")
-	check!("...and so is one folding them", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/short 0 refused: the power view has no short rungs")?
+	check!("...and so is one folding them", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/short 0 refused: the power view shows no duration under 5 minutes")?
 	# pending until reported: a cycle that does not ack leaves the winner
 	# pending, and the next cycle returns the SAME row - a crash between
 	# apply and report retries rather than loses the directive
@@ -9153,10 +9155,10 @@ b_doctor! = |ctx| {
 	# the human screen names each scoring step and each dropped sample in
 	# words, never the stored model name or an internal term
 	doc_human = stride_human!(ctx.bin, ctx.home, ["doctor"])
-	check!("doctor names how each load was scored in words", Str.contains(doc_human, "  load scored from:") and Str.contains(doc_human, "implausible heart-rate and power samples dropped (30d)") and !(Str.contains(doc_human, "provenance")) and !(Str.contains(doc_human, "junk")) and !(Str.contains(doc_human, "power_stream:")))?
+	check!("doctor names how each load was scored in words", Str.contains(doc_human, "  load scored from:") and Str.contains(doc_human, "implausible heart-rate and power samples dropped (30d)") and !(Str.contains(doc_human, "provenance")) and !(Str.contains(doc_human, "junk")) and !(Str.contains(doc_human, "power_stream:")) and List.is_empty(Words.bare(doc_human)))?
 	# the season table names its fit and its intensity split in words
 	sea_human = stride_human!(ctx.bin, ctx.home, ["season"])
-	check!("season names its fit and intensity split in words", Str.contains(sea_human, "intensity = easy/moderate/hard time %") and Str.contains(sea_human, "fit = how much of the week-to-week scatter") and !(Str.contains(sea_human, "r2")) and !(Str.contains(sea_human, "e/m/h")))?
+	check!("season names its fit and intensity split in words", Str.contains(sea_human, "intensity = easy/moderate/hard time %") and Str.contains(sea_human, "fit = how much of the week-to-week scatter") and !(Str.contains(sea_human, "r2")) and !(Str.contains(sea_human, "e/m/h")) and List.is_empty(Words.bare(sea_human)))?
 	# The junk-data watchdog. Every assertion selects its OWN field with jq rather than matching the
 	# whole report, so a number appearing elsewhere cannot satisfy it by accident.
 	# Seeded dated AFTER the fixture activities so they are genuinely the most recent —
