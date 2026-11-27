@@ -424,24 +424,17 @@ Report :: [].{
 	no_activities_text : Str
 	no_activities_text = "no activities yet — run `stride setup`: it connects your Strava account and syncs your history"
 
-	# What an empty report says: `otherwise`, which names the session that
-	# fills it, while the database holds an activity, and the first-run
-	# sentence while it holds none.
+	# What an empty report says, on its screen and in its error envelope's
+	# message alike: `otherwise`, which names what fills it, while the
+	# database holds an activity, and the first-run sentence while it holds
+	# none.
 	empty_line! : Str, Str => Try(Str, _)
 	empty_line! = |path, otherwise| Ok(if (has_activities!(path)?) otherwise else no_activities_text)
-
-	# The message of the error a report raises when the history it reads is
-	# missing. The JSON envelope carries `json_msg` whatever the database
-	# holds; a human reads empty_line!'s sentence, so `otherwise` names what
-	# fills the report once an activity is on record.
-	empty_msg! : Str, Str, Str => Try(Str, _)
-	empty_msg! = |path, json_msg, otherwise|
-		if (Output.json_mode!({})) Ok(json_msg) else empty_line!(path, otherwise)
 
 	# summary, plan and compare read the load series analyze builds, so an
 	# activity on record with no series yet is one `stride analyze` away
 	no_series_msg! : Str => Try(Str, _)
-	no_series_msg! = |path| empty_msg!(path, "nothing analyzed yet — run `stride sync`, or after a `stride import`, `stride analyze`", "nothing analyzed yet — run `stride analyze` to score your activities")
+	no_series_msg! = |path| empty_line!(path, "nothing analyzed yet — run `stride analyze` to score your activities")
 
 	has_activities! : Str => Try(Bool, _)
 	has_activities! = |path| {

@@ -106,7 +106,7 @@ ReportSeason :: [].{
 			},
 		})?
 		if List.is_empty(day_rows) {
-			Output.err_out!("no_activities", Report.empty_msg!(path, "no scored training days yet — `stride sync` builds the history a season is read from", "no scored training days yet — run `stride analyze` to score your activities")?)
+			Output.err_out!("no_activities", Report.empty_line!(path, "no scored training days yet — run `stride analyze` to score your activities")?)
 		} else {
 			# Per date AND family. Block boundaries come from the weekly series
 			# and have no SQL expression, so the bucketing happens in Roc.

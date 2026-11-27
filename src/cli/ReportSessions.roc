@@ -27,7 +27,7 @@ ReportSessions :: [].{
 	activity! = |id_str| {
 		path = Db.open_db!({})?
 		match Metrics.arg_i64(id_str) {
-			Err(_) => Output.err_out!("activity_not_found", Report.empty_msg!(path, "activity ${id_str} not found (run `stride activities` to list ids)", "activity ${id_str} not found (run `stride activities` to list ids)")?)
+			Err(_) => Output.err_out!("activity_not_found", Report.empty_line!(path, "activity ${id_str} not found (run `stride activities` to list ids)")?)
 			Ok(aid) => activity_body!(path, id_str, aid)
 
 		}
@@ -96,7 +96,7 @@ ReportSessions :: [].{
 			},
 		})?
 		match List.first(rows) {
-			Err(_) => Output.err_out!("activity_not_found", Report.empty_msg!(path, "activity ${id_str} not found (run `stride activities` to list ids)", "activity ${id_str} not found (run `stride activities` to list ids)")?)
+			Err(_) => Output.err_out!("activity_not_found", Report.empty_line!(path, "activity ${id_str} not found (run `stride activities` to list ids)")?)
 			Ok(a) => {
 				# REFUSES rather than rendering an empty date, because this screen COMPUTES
 				# from the date and the computation fails silently. The personal-baselines
@@ -1024,7 +1024,7 @@ ReportSessions :: [].{
 		match List.first(anchor) {
 			Err(_) =>
 				if (Str.is_empty(date_arg))
-					Output.err_out!("no_detected_intervals", Report.empty_msg!(path, "no session on record has detected interval structure yet — `stride activity <id>` shows what a ride's blocks look like", "no session on record has detected interval structure yet — `stride activity <id>` shows what a ride's blocks look like")?)
+					Output.err_out!("no_detected_intervals", Report.empty_line!(path, "no session on record has detected interval structure yet — `stride activity <id>` shows what a ride's blocks look like")?)
 				else
 					Output.err_out!("no_intervals_on_date", "no detected interval structure on ${date_arg} — the ride may have been continuous, or its streams are missing")
 			Ok(a) => {
@@ -1552,7 +1552,7 @@ ReportSessions :: [].{
 		anchor_group_dropped = List.len(scored) != List.len(labeled)
 		if List.is_empty(scored) {
 			if Str.is_empty(date) {
-				Output.err_out!("no_scorable_workouts", Report.empty_msg!(path, "nothing to compare yet — analyze activities first (and `stride rate` your strength sessions)", "nothing to compare yet — run `stride analyze` to score your activities (and `stride rate` your strength sessions)")?)
+				Output.err_out!("no_scorable_workouts", Report.empty_line!(path, "nothing to compare yet — run `stride analyze` to score your activities (and `stride rate` your strength sessions)")?)
 			} else {
 				on_date = Sql.query_many!({
 					path: Path.utf8(path),

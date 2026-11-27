@@ -905,7 +905,7 @@ ReportHealth :: [].{
 		test = Db.test_in_force_today!(path, "power", Sports.canonical("Ride"))?
 		source = if (test.value > 0.0 and ((test.value).round_to_i64_try().ok_or(0)).to_f64() >= ftp) "test" else "derived"
 		if (ftp <= 0.0)
-			Output.err_out!("no_power_data", Report.empty_msg!(path, "no cycling FTP yet — power zones derive from your best 20-min ride power in the last 60 days, once two rides carry one. Either those rides have no power, only one of them has a 20-min best, or they haven't been analyzed: run `stride analyze` (and sync rides with a power meter).", "no cycling FTP yet — power zones derive from your best 20-min ride power in the last 60 days, once two rides carry one. Either those rides have no power, only one of them has a 20-min best, or they haven't been analyzed: run `stride analyze` (and sync rides with a power meter).")?)
+			Output.err_out!("no_power_data", Report.empty_line!(path, "no cycling FTP yet — power zones derive from your best 20-min ride power in the last 60 days, once two rides carry one. Either those rides have no power, only one of them has a 20-min best, or they haven't been analyzed: run `stride analyze` (and sync rides with a power meter).")?)
 		else {
 			zones = Metrics.power_zones(ftp)
 			if (Output.json_mode!({}))
@@ -957,7 +957,7 @@ ReportHealth :: [].{
 					family = resolved.family
 					fit = Report.cp_fit_as_of!(path, family, today, 90.U64)?
 					if fit.cp <= 0.0 and !(resolved.known) {
-						Output.err_out!("no_cp_fit", Report.empty_msg!(path, "no session on record belongs to a family named '${family}', so there is nothing to fit a CP model from; `stride stats` lists the sports on record", "no session on record belongs to a family named '${family}', so there is nothing to fit a CP model from; `stride stats` lists the sports on record")?)
+						Output.err_out!("no_cp_fit", Report.empty_line!(path, "no session on record belongs to a family named '${family}', so there is nothing to fit a CP model from; `stride stats` lists the sports on record")?)
 					} else if fit.cp <= 0.0 {
 						# Two different causes, one branch: too few bests, or
 						# bests that are inconsistent (a longer one above a
@@ -1030,7 +1030,7 @@ ReportHealth :: [].{
 				ladder = speed_ladder!(path, sport, 90)?
 				fit = cs_fit(ladder)
 				if fit.cs <= 0.0 {
-					Output.err_out!("no_cs_fit", Report.empty_msg!(path, "could not fit a critical-speed model for ${sport} from the 5/10/20-minute speed bests on record in the last 90 days — there may be too few, or they may be inconsistent (a longer best faster than a shorter one); `stride pace-curve 90 ${sport}` shows what is on record", "could not fit a critical-speed model for ${sport} from the 5/10/20-minute speed bests on record in the last 90 days — there may be too few, or they may be inconsistent (a longer best faster than a shorter one); `stride pace-curve 90 ${sport}` shows what is on record")?)
+					Output.err_out!("no_cs_fit", Report.empty_line!(path, "could not fit a critical-speed model for ${sport} from the 5/10/20-minute speed bests on record in the last 90 days — there may be too few, or they may be inconsistent (a longer best faster than a shorter one); `stride pace-curve 90 ${sport}` shows what is on record")?)
 				} else {
 					res = Metrics.time_to_exhaustion_speed({ cs: fit.cs, d_prime: fit.d_prime }, target.speed)
 					seconds = match res {

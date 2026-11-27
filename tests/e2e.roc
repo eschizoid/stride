@@ -415,7 +415,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1581)?
+	checks_ran_exactly!(1582)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -5018,9 +5018,9 @@ b_seed_analyze! = |ctx| {
 	# ...and the OTHER shape of "nothing to walk" is not the same fact and must not get the
 	# same answer. Rows exist and not one date parses: clearing the table is still right,
 	# but reporting converged: true is not — the engine holds scored activities and would
-	# then tell the athlete "no scored training days yet, run `stride sync` then `stride
-	# analyze`" while `stats` reports their sessions in the same breath — the same
-	# defect one layer down, so `analyze` names the row.
+	# then tell the athlete "no scored training days yet" while `stats` reports their
+	# sessions in the same breath — the same defect one layer down, so `analyze` names
+	# the row.
 	_ = sql!(an_db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (801,'unreadable','Ride','Ride','0000-0z-01T10:00:00Z',3600);")
 	_ = sql!(an_db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (801,40.0,111.0,3600,1);")
 	an_bad = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' analyze 2>/dev/null")
@@ -9345,11 +9345,11 @@ b_review! = |ctx| {
 # header row over nothing or naming a command that has nothing to work on,
 # and one with a single ride, where a report with nothing of its kind names
 # the session that fills it and one that reads scored history names
-# `stride analyze`. JSON keeps its shape throughout: an empty list stays an
-# empty list, and an error envelope keeps its code and message. A week is
-# Monday to Sunday and holds what was done on its days beside what was
-# planned, so `week` and `week all`'s this-week section list the same
-# unlinked ride.
+# `stride analyze`. A success payload keeps its shape throughout, so an
+# empty list stays an empty list; an error envelope keeps its code and
+# carries the sentence the screen prints. A week is Monday to Sunday and
+# holds what was done on its days beside what was planned, so `week` and
+# `week all`'s this-week section list the same unlinked ride.
 b_empty_reports! : Ctx => Try({}, _)
 b_empty_reports! = |ctx| {
 	probe = "${ctx.home}/empty-reports"
@@ -9392,7 +9392,7 @@ b_empty_reports! = |ctx| {
 	check!("...as does an event projection over no history", Str.contains(human!(["events"]), "with activities on record `stride analyze` builds it, and with none `stride setup` syncs your history"))?
 	_ = sql!("${probe}/.stride/db.sqlite", "DELETE FROM events;")
 	check!("a zero-day load window is an empty table, not a claim about the history", Str.starts_with(human!(["load", "0"]), "╭"))?
-	check!("the error envelopes of the empty reports keep their codes and messages", json_err!("compare week") == "no_data: nothing analyzed yet — run `stride sync`, or after a `stride import`, `stride analyze`" and json_err!("season") == "no_activities: no scored training days yet — `stride sync` builds the history a season is read from" and json_err!("progress") == "no_scorable_workouts: nothing to compare yet — analyze activities first (and `stride rate` your strength sessions)")?
+	check!("the error envelopes of the empty reports keep their codes and carry the first-run sentence", json_err!("compare week") == "no_data: ${first_run}" and json_err!("season") == "no_activities: ${first_run}" and json_err!("progress") == "no_scorable_workouts: ${first_run}" and json_err!("zones") == "no_power_data: ${first_run}" and json_err!("reps") == "no_detected_intervals: ${first_run}")?
 	# a plan with no activity on record: the empty this-week section names
 	# setup as what brings activities in
 	_ = sql!("${probe}/.stride/db.sqlite", "INSERT INTO planned_sessions (id,created_at,target_date,session_type,detail,rationale,status,skipped_reason,target_literal) VALUES (9912,'2099-01-01','2099-01-01','endurance','probe ride','r','open','',NULL);")
@@ -9411,6 +9411,7 @@ b_empty_reports! = |ctx| {
 	check!("...and so does a period comparison", human!(["compare", "week"]) == "nothing analyzed yet — run `stride analyze` to score your activities")?
 	check!("...the season", human!(["season"]) == "no scored training days yet — run `stride analyze` to score your activities")?
 	check!("...and the progress table", human!(["progress"]) == "nothing to compare yet — run `stride analyze` to score your activities (and `stride rate` your strength sessions)")?
+	check!("...and their error envelopes name analyze too, codes unchanged", json_err!("compare week") == "no_data: nothing analyzed yet — run `stride analyze` to score your activities" and json_err!("season") == "no_activities: no scored training days yet — run `stride analyze` to score your activities")?
 	check!("a strength log with rides on record says where strength sessions come from", human!(["strength"]) == "no strength sessions yet — they arrive with `stride sync` like every other activity")?
 	week = human!(["week"])
 	all = human!(["week", "all"])
