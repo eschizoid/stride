@@ -208,7 +208,7 @@ Ui :: [].{
 		detail_day : Str,
 		detail : List(Db.DayLine),
 		plan : List(Db.PlanRow),
-		week_tss : { this : I64, last : I64 },
+		week_tss : { this : I64, last : I64, scored : Bool },
 		plan_week : { done : I64, total : I64 },
 		bus_note : Db.BusNote,
 		plan_title : Text.Prepared,

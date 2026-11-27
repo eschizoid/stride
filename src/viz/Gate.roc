@@ -547,7 +547,7 @@ Gate :: [].{
 			detail_day: "",
 			detail: [],
 			plan: [],
-			week_tss: { this: 0, last: 0 },
+			week_tss: { this: 0, last: 0, scored: Bool.True },
 			plan_week: { done: 0, total: 0 },
 			bus_note: NoDirective,
 			plan_title: p,
@@ -1069,7 +1069,7 @@ Gate :: [].{
 					List.map(
 						sizes,
 						|sz| {
-							base = { ..athlete_model(a, sz), view: 4, plan: plan_rows(a), week_tss: { this: 412, last: 1385 }, bus_note: Note("11-12 08:14 plan / 30d"), plan_week: { done: 4, total: 6 } }
+							base = { ..athlete_model(a, sz), view: 4, plan: plan_rows(a), week_tss: { this: 412, last: 1385, scored: Bool.True }, bus_note: Note("11-12 08:14 plan / 30d"), plan_week: { done: 4, total: 6 } }
 							[
 								{ name: "${a.name} week at ${size_name(sz)}", model: base },
 								{ name: "${a.name} week scrolled with the quest complete at ${size_name(sz)}", model: { ..base, week_off: 4, plan_week: { done: 6, total: 6 } } },
@@ -1505,6 +1505,101 @@ Gate :: [].{
 				),
 			),
 		)
+
+	# ── the empty views ─────────────────────────────────────────────────────
+	# Every view that can have nothing to draw, in the three states a new
+	# athlete passes through: a database with no activity (the window draws a
+	# database that does not exist yet the same way), one holding a single
+	# ride that no plan claims and that analyze has not scored, as `stride
+	# import` leaves it, and the same ride scored. The ride carries no stream,
+	# power, pace or lift. The lifts tab carries the twelve empty weeks the
+	# database answers with.
+	empty_views : List(U8)
+	empty_views = [0, 1, 2, 3, 4, 5, 6, 7, 9]
+
+	one_ride_row : Db.PlanRow
+	one_ride_row = { ..Plan.blank_row, day: "2026-11-24", wi: 1, typ: "ride", detail: Db.unlinked_detail("Morning Ride", 16440, 235), status: "unlinked", past: Bool.True, act_name: "Morning Ride", act_secs: 16440, act_load: 235, day_load_known: Bool.False }
+
+	# the states, by the words each fixture's name carries
+	empty_states : List(Str)
+	empty_states = ["no activity", "an unscored ride", "a scored ride"]
+
+	empty_models : List({ name : Str, model : Ui.Model })
+	empty_models = {
+		weeks = List.map(seq(12), |_d| { mon: "2026-11-23", total: 0, with_sets: 0 })
+		List.join(
+			List.map(
+				sizes,
+				|sz| {
+					p = Text.Prepared.stub
+					base = { ..empty_model(sz), subs: [{ p, r: 30, chip: p }, { p, r: 60, chip: p }, { p, r: 90, chip: p }], strength: { ..Db.empty_strength_view, weeks } }
+					unscored = { ..base, career_sports: [{ sport: "Ride", sessions: 1, hours10: 46, dist_m: 101700.0 }], plan: [one_ride_row], week_tss: { this: 0, last: 0, scored: Bool.False } }
+					scored = {
+						..unscored,
+						data: [{ ctl: 5.6, atl: 31.4, tsb: -25.8, tss: 235.0 }, { ctl: 5.5, atl: 27.5, tsb: -22.0, tss: 0.0 }, { ctl: 5.3, atl: 24.1, tsb: -18.8, tss: 0.0 }],
+						days: ["2026-11-24", "2026-11-25", "2026-11-26"],
+						heat: [{ day: "2026-11-24", tss: 235, dow: 2 }],
+						week_tss: { this: 235, last: 0, scored: Bool.True },
+					}
+					List.join(
+						List.map(
+							empty_views,
+							|v| [
+								{ name: "view ${U8.to_str(v)} with no activity at ${size_name(sz)}", model: { ..base, view: v } },
+								{ name: "view ${U8.to_str(v)} with an unscored ride at ${size_name(sz)}", model: { ..unscored, view: v } },
+								{ name: "view ${U8.to_str(v)} with a scored ride at ${size_name(sz)}", model: { ..scored, view: v } },
+							],
+						),
+					)
+				},
+			),
+		)
+	}
+
+	# The one line an empty view must write in a state, "" where the view
+	# draws its data instead. Every view reads the first run while no activity
+	# exists, the form board in its own words; every view drawn from scored
+	# days reads the analyze still owed while the ride is unscored; a view
+	# whose own kind of session is missing names it.
+	empty_line_for : U8, Str -> Str
+	empty_line_for = |v, state|
+		if (state == "no activity") (if (v == 0) Board.empty_text else Chrome.first_run_text)
+		else if (v == 2) Trace.no_stream_text
+		else if (v == 9) Strength.no_lifts_text
+		else if (v == 4) Plan.no_plan_text
+		else if (state == "an unscored ride") Chrome.no_scored_text
+		else if (v == 1) "no cycling power on record yet - a session recorded with a power meter fills it"
+		else if (v == 6) "no polarized time in the last 12 weeks - an endurance session with heart rate, power or pace fills it"
+		else if (v == 7) "no load in the last 12 weeks - a session stride analyze scores fills it, then press R"
+		else ""
+
+	# an empty view's text and shapes, by the view it draws
+	view_owned : Ui.Model, Scene.Measure -> List(Labels.Owned)
+	view_owned = |m, face|
+		if (m.view == 0) Board.owned(m, face)
+		else if (m.view == 1) Curve.owned(m, face)
+		else if (m.view == 2) Trace.owned(m, face)
+		else if (m.view == 3) Table.owned(m, face)
+		else if (m.view == 4) Plan.owned(m, face)
+		else if (m.view == 5) Heat.owned(m, face)
+		else if (m.view == 6) Zones.owned(m, face)
+		else if (m.view == 7) Ramp.owned(m, face)
+		else Strength.owned(m, face)
+
+	view_marks : Ui.Model, Scene.Measure -> List(Labels.Mark)
+	view_marks = |m, face|
+		if (m.view == 0) Board.marks(m)
+		else if (m.view == 1) Curve.marks(m, face)
+		else if (m.view == 2) Trace.marks(m)
+		else if (m.view == 3) Table.marks(m)
+		else if (m.view == 4) Plan.marks(m)
+		else if (m.view == 5) Heat.marks(m)
+		else if (m.view == 6) Zones.marks(m, face)
+		else if (m.view == 7) Ramp.marks(m, face)
+		else Strength.marks(m)
+
+	empty_judge : Scene.Measure -> (Ui.Model -> List(Str))
+	empty_judge = |face| |m| judge(view_owned(m, face), view_marks(m, face))
 
 	# the default window at the default scale, in logical units
 	default_size : { w : F32, h : F32 }
@@ -2278,4 +2373,48 @@ expect {
 			[Gate.measure, Gate.builtin_measure],
 			|measure| List.all(long, |e| List.all(Career.owned(e.model, measure), |o| !(List.any(raw, |r| Str.contains(o.key, r))))),
 		)
+}
+
+# the empty views' gate: every view that can have nothing to draw, in each
+# state of Gate.empty_states, at every size, in the brand faces and in the
+# built-in face
+expect Gate.failures(Gate.empty_judge(Gate.measure), Gate.empty_models) == []
+expect Gate.failures(Gate.empty_judge(Gate.builtin_measure), Gate.empty_models) == []
+
+# Each empty view writes the one line its state calls for (Gate.empty_line_for)
+# and none of the others: the first run, the form board's first run and the
+# analyze still owed are each written only where they are true, and a view
+# that draws its data writes none of them. No empty view writes a zero tile,
+# an as-of with no day, a legend or column headers over nothing, a tonnage or
+# weeks heading with no lift, or a channel heading with no session.
+expect {
+	keys = |e| List.map(Gate.view_owned(e.model, Gate.measure), |o| o.key)
+	says = |e, t| List.contains(keys(e), "'${t}'")
+	state_of = |e| (List.first(List.keep_if(Gate.empty_states, |s| Str.contains(e.name, " with ${s} at ")))) ?? ""
+	generic = [Chrome.first_run_text, Board.empty_text, Chrome.no_scored_text]
+	right = |e| {
+		want = Gate.empty_line_for(e.model.view, state_of(e))
+		(want == "" or says(e, want)) and List.all(generic, |g| g == want or !(says(e, g)))
+	}
+	banned = |k| k == "'0.0'" or Str.contains(k, "as of") or k == "'Fitness'" or k == "'fitness'" or Str.contains(k, "tonnage") or Str.starts_with(k, "'sessions a week") or k == "'power trace'"
+	List.len(Gate.empty_models) == 27 * List.len(Gate.sizes)
+		and List.all(Gate.empty_models, |e| state_of(e) != "")
+		and List.all(Gate.empty_models, right)
+		and List.all(List.keep_if(Gate.empty_models, |e| state_of(e) != "a scored ride"), |e| !(List.any(keys(e), banned)))
+		and List.all(List.keep_if(Gate.empty_models, |e| e.model.view == 9), |e| List.len(Strength.marks(e.model)) == List.len(Chrome.marks(e.model)))
+		and List.all(List.keep_if(Gate.empty_models, |e| e.model.view == 0 and state_of(e) != "a scored ride"), |e| !(List.any(Board.marks(e.model), |mk| Str.starts_with(mk.key, "tile 1"))))
+}
+
+# the week tab lists the week's unclaimed ride on its day, as `week` lists
+# it, beside a today card that is not that ride; the load strip states the
+# calendar week's load once the ride is scored, says the week is unscored
+# before, and is absent with no activity on record
+expect {
+	at = |state| List.keep_if(Gate.empty_models, |f| f.model.view == 4 and Str.contains(f.name, " with ${state} at "))
+	keys = |e| List.map(Plan.owned(e.model, Gate.measure), |o| o.key)
+	ride = |e| List.contains(keys(e), "'unlinked'") and List.contains(keys(e), "'Morning Ride - 274m, 235 load'") and List.contains(keys(e), "'today'")
+	List.all(at("a scored ride"), |e| ride(e) and List.contains(keys(e), "'235 load this week (last 0)'"))
+		and List.all(at("an unscored ride"), |e| ride(e) and List.contains(keys(e), "'${Plan.unscored_week_text}'") and !(List.any(keys(e), |k| Str.contains(k, "load this week"))))
+		and List.all(at("no activity"), |e| !(List.any(keys(e), |k| Str.contains(k, "this week"))))
+		and !(List.is_empty(at("no activity")))
 }

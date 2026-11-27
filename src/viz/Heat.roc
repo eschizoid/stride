@@ -123,6 +123,11 @@ Heat :: [].{
 	owned : Ui.Model, Scene.Measure -> List(Labels.Owned)
 	owned = |model, measure| List.concat(Scene.owned(Chrome.placed(model, measure)), Scene.owned(scene(model, measure)))
 
+	# the grid's line while no day is scored: the first run while no activity
+	# exists, else the analyze that scores the ones on record
+	empty_text : Ui.Model -> Str
+	empty_text = |model| Chrome.empty_line(model, Chrome.no_scored_text)
+
 	texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
 	texts = |model, measure| {
 		win_h = model.win.h
@@ -133,7 +138,7 @@ Heat :: [].{
 		head = [fix(Scene.prepared(model.heat_title, title_text, 15.0, Prose, ink_muted), Days.title_x, 70.0, Left)]
 		grid =
 			if List.is_empty(model.heat) {
-				[fix(Scene.data("no training history yet", 14.0, ink_muted), 36.0, 130.0, Left)]
+				[fix(Scene.data(empty_text(model), 14.0, ink_muted), 36.0, 130.0, Left)]
 			} else {
 				# every weekday row named, each label centred on its row, and a
 				# month tick above each month's first Monday

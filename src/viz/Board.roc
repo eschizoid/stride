@@ -60,6 +60,12 @@ Board :: [].{
 	tile_box : U64 -> Labels.Rect
 	tile_box = |i| { x: tile_x(i), y: tile_top, w: tile_w, h: tile_h }
 
+	# the cards the board draws: the three numbers only once the series holds
+	# a day to read them from, since a 0.0 there would stand for "nothing
+	# yet"; the event card always
+	tiles_shown : Ui.Model -> List(U64)
+	tiles_shown = |model| if (List.is_empty(model.data)) [3] else [0, 1, 2, 3]
+
 	# the width a line of the event tile may take: the card less 12px each side
 	ev_room : F32
 	ev_room = tile_w - 24.0
@@ -162,8 +168,9 @@ Board :: [].{
 	hint_text = "1/2/3 range   TAB view   hover or arrows to read a day   R reload   S screenshot   V record   G glow   ESC quit"
 
 	# a board with no day to draw names the command that fills it, and R
-	# loads what that command wrote; one day on record is a series too
-	# short for a line, not an empty database
+	# loads what that command wrote: setup while no activity exists, analyze
+	# while activities exist unscored (Chrome.no_scored_text). One day on
+	# record is a series too short for a line, not an empty database
 	empty_text : Str
 	empty_text = "no data yet - run stride setup in a terminal to connect Strava, then press R"
 
@@ -645,7 +652,7 @@ Board :: [].{
 		}
 		tiles = List.join(
 			List.map_with_index(
-				model.kpis,
+				if (List.is_empty(model.data)) [] else model.kpis,
 				|k, i| [
 					fix(Scene.prepared(k.v, kpi_value(model.data, k.sel), 27.0, Data, sel_color(k.sel)), tile_text_x(i), 94.0, Left, tile_box(i)),
 					fix(Scene.prepared(k.cap, kpi_caption(k.sel), 11.0, Prose, ink_faint), tile_text_x(i), 127.0, Left, tile_box(i)),
@@ -665,8 +672,9 @@ Board :: [].{
 			if (model.ridden_found and List.is_empty(model.ev_tile_proj)) [fix(Scene.txt(model.ridden_note, Prose, ink_faint), ev_x, 140.0, Left, ev_box)] else [],
 		])
 		chips = List.map(range_chips(model), |c| fix(Scene.prepared(c.p, "${U64.to_str(c.r)}d", 12.0, Data, if (c.on) Color.white else ink_muted), c.box.x + c.box.w / 2.0, 68.0, Center, c.box))
-		# the subtitle clears the legend's third label, "form"
-		sub = List.keep_oks(model.subs, |s| if (s.r == model.range) Ok(fix(Scene.prepared(s.p, sub_text(s.r, as_of(model.days)), 15.0, Prose, ink_muted), 330.0, 70.0, Left, panel)) else Err(Other))
+		# the subtitle clears the legend's third label, "form", and names the
+		# series' last day, so a board with no day carries none
+		sub = List.keep_oks(model.subs, |s| if (s.r == model.range and !(List.is_empty(model.days))) Ok(fix(Scene.prepared(s.p, sub_text(s.r, as_of(model.days)), 15.0, Prose, ink_muted), 330.0, 70.0, Left, panel)) else Err(Other))
 		# an event the database could not read says so inside the plot's top
 		# corner, right first: the header rows belong to the pills and chips
 		warn =
@@ -680,6 +688,8 @@ Board :: [].{
 		body =
 			if model.has_error {
 				[fix(Scene.txt(model.status, Prose, Theme.atl_c), 36.0, g.top + 20.0, Left, panel)]
+			} else if Chrome.unscored(model) {
+				[fix(Scene.prose(Chrome.no_scored_text, 16.0, ink_muted), 36.0, g.top + 20.0, Left, panel)]
 			} else if List.is_empty(model.data) {
 				[fix(Scene.prepared(model.empty, empty_text, 16.0, Prose, ink_muted), 36.0, g.top + 20.0, Left, panel)]
 			} else if List.len(model.data) < 2 {
@@ -702,11 +712,20 @@ Board :: [].{
 		# spans -30..100, which covers the common PMC window; a value outside
 		# it plots fine but gets no gridline
 		ylabels = List.keep_oks(model.ylabels, |yl| if (yl.v >= g.lo and yl.v <= g.hi) Ok(fix(Scene.prepared(yl.p, y_text(F32.round_to_i64_try(yl.v) ?? 0), 12.0, Data, ink_faint), 30.0, y_at(g, yl.v) - 8.0, Left)) else Err(Off))
-		# six date labels under the plot
-		dates = List.keep_oks(
+		# six date labels under the plot, spread evenly over its days; a series
+		# shorter than six days has fewer distinct days than labels, and each
+		# day is labelled once
+		date_idx = List.fold(
 			[0.U64, 1, 2, 3, 4, 5],
-			|k| {
+			[],
+			|acc, k| {
 				di = k * (g.n - 1) // 5
+				if (List.contains(acc, di)) acc else List.append(acc, di)
+			},
+		)
+		dates = List.keep_oks(
+			date_idx,
+			|di| {
 				match List.get(g.days, di) {
 					Ok(d) => Ok(fix(Scene.data(Str.drop_first_bytes(d, 5) ?? d, 11.0, ink_faint), x_at(g, di), g.top + g.ph + 8.0, Center))
 					Err(_) => Err(NoDay)
@@ -749,7 +768,7 @@ Board :: [].{
 	# the load bars, and the three series lines
 	obstacles : Ui.Model, Scene.Measure -> Labels.Obstacles
 	obstacles = |model, measure| {
-		shapes = List.join([Chrome.boxes(model, measure), List.map(range_chips(model), |c| c.box), [verdict_box(model.win.w)], List.map([0, 1, 2, 3], tile_box)])
+		shapes = List.join([Chrome.boxes(model, measure), List.map(range_chips(model), |c| c.box), [verdict_box(model.win.w)], List.map(tiles_shown(model), tile_box)])
 		if plotted(model) {
 			g = geom(model)
 			{ boxes: List.concat(shapes, List.map(bars(g), |b| b.box)), segs: series_segs(g) }
@@ -766,7 +785,7 @@ Board :: [].{
 			Chrome.marks(model),
 			List.map(range_chips(model), |c| { key: "the ${U64.to_str(c.r)}d chip", box: c.box }),
 			if (List.is_empty(model.data)) [] else [{ key: "the form chip", box: verdict_box(model.win.w) }],
-			List.map([0, 1, 2, 3], |i| { key: "tile ${U64.to_str(i + 1)}", box: tile_box(i) }),
+			List.map(tiles_shown(model), |i| { key: "tile ${U64.to_str(i + 1)}", box: tile_box(i) }),
 		])
 		if (plotted(model)) List.concat(shapes, List.map(bars(geom(model)), |b| { key: if (b.planned) "the planned load bar on ${b.day}" else "the load bar on ${b.day}", box: b.box })) else shapes
 	}
@@ -789,7 +808,7 @@ Board :: [].{
 		}
 		# the artifact's tile cards: a lifted rounded panel behind each number
 		List.for_each!(
-			[0, 1, 2, 3],
+			tiles_shown(model),
 			|i| {
 				b = tile_box(i)
 				frame.rounded_rectangle!({ x: b.x, y: b.y, width: b.w, height: b.h, radius: 8.0, segments: 6, style: Draw.filled(Theme.card) })

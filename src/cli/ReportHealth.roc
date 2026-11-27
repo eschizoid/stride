@@ -85,11 +85,18 @@ ReportHealth :: [].{
 					),
 				)
 			}
-			Stdout.line!("ALL TIME")?
-			Stdout.line!(to_table(all_time))?
-			Stdout.line!("")?
-			Stdout.line!("${(year).to_str()} YEAR TO DATE")?
-			Stdout.line!(to_table(ytd))
+			# an empty total is a sentence, never a header row over nothing: no
+			# activity at all is the unfinished first run, and a year with none
+			# yet waits for its first session
+			if List.is_empty(all_time) {
+				Stdout.line!(Report.no_activities_text)
+			} else {
+				Stdout.line!("ALL TIME")?
+				Stdout.line!(to_table(all_time))?
+				Stdout.line!("")?
+				Stdout.line!("${(year).to_str()} YEAR TO DATE")?
+				Stdout.line!(if (List.is_empty(ytd)) "nothing yet in ${(year).to_str()} — your first activity of the year starts this total" else to_table(ytd))
+			}
 		}
 	}
 	stats_rows! : Str, Str => Try(List({ sport : Str, sessions : I64, hours : F64, km : F64 }), _)
@@ -454,7 +461,7 @@ ReportHealth :: [].{
 							"",
 							"── stride doctor ─────────────────────────────",
 							"",
-							"  activities: ${(p.activities).to_str()}",
+							if (p.activities == 0) "  activities: 0 (${Report.no_activities_text})" else "  activities: ${(p.activities).to_str()}",
 							"    with heart rate: ${(p.with_hr).to_str()}",
 							"    with power from a power meter: ${(p.with_power).to_str()}",
 							"    ${Sports.estimated_power_only}: ${(p.with_estimated_power).to_str()}",
@@ -898,7 +905,7 @@ ReportHealth :: [].{
 		test = Db.test_in_force_today!(path, "power", Sports.canonical("Ride"))?
 		source = if (test.value > 0.0 and ((test.value).round_to_i64_try().ok_or(0)).to_f64() >= ftp) "test" else "derived"
 		if (ftp <= 0.0)
-			Output.err_out!("no_power_data", "no cycling FTP yet — power zones derive from your best 20-min ride power in the last 60 days, once two rides carry one. Either those rides have no power, only one of them has a 20-min best, or they haven't been analyzed: run `stride analyze` (and sync rides with a power meter).")
+			Output.err_out!("no_power_data", Report.empty_line!(path, "no cycling FTP yet — power zones derive from your best 20-min ride power in the last 60 days, once two rides carry one. Either those rides have no power, only one of them has a 20-min best, or they haven't been analyzed: run `stride analyze` (and sync rides with a power meter).")?)
 		else {
 			zones = Metrics.power_zones(ftp)
 			if (Output.json_mode!({}))
@@ -950,7 +957,7 @@ ReportHealth :: [].{
 					family = resolved.family
 					fit = Report.cp_fit_as_of!(path, family, today, 90.U64)?
 					if fit.cp <= 0.0 and !(resolved.known) {
-						Output.err_out!("no_cp_fit", "no session on record belongs to a family named '${family}', so there is nothing to fit a CP model from; `stride stats` lists the sports on record")
+						Output.err_out!("no_cp_fit", Report.empty_line!(path, "no session on record belongs to a family named '${family}', so there is nothing to fit a CP model from; `stride stats` lists the sports on record")?)
 					} else if fit.cp <= 0.0 {
 						# Two different causes, one branch: too few bests, or
 						# bests that are inconsistent (a longer one above a
@@ -1023,7 +1030,7 @@ ReportHealth :: [].{
 				ladder = speed_ladder!(path, sport, 90)?
 				fit = cs_fit(ladder)
 				if fit.cs <= 0.0 {
-					Output.err_out!("no_cs_fit", "could not fit a critical-speed model for ${sport} from the 5/10/20-minute speed bests on record in the last 90 days — there may be too few, or they may be inconsistent (a longer best faster than a shorter one); `stride pace-curve 90 ${sport}` shows what is on record")
+					Output.err_out!("no_cs_fit", Report.empty_line!(path, "could not fit a critical-speed model for ${sport} from the 5/10/20-minute speed bests on record in the last 90 days — there may be too few, or they may be inconsistent (a longer best faster than a shorter one); `stride pace-curve 90 ${sport}` shows what is on record")?)
 				} else {
 					res = Metrics.time_to_exhaustion_speed({ cs: fit.cs, d_prime: fit.d_prime }, target.speed)
 					seconds = match res {
@@ -1193,9 +1200,11 @@ ReportHealth :: [].{
 				{ threshold_kj: c.threshold, dur_s: c.dur_s, fresh_w: fresh_w(c.dur_s), after_w: d.after, ratio: d.ratio, known: d.known, sessions: c.sessions }
 			},
 		)
+		# with no activity on record the curve is the unfinished first run
+		first_run = !(Report.has_activities!(path)?)
 		Output.out!(
 			{ window_days: days, sport, points, cp: cpfit.cp, w_prime: cpfit.w_prime, fit_r2: cpfit.r2, fit_points: cpfit.points, test_known, test_value: test.value, test_kind: if (test_known) test.kind else "", test_date: if (test_known) test.date else "", ftp_w: ftp, ftp_source, durability, estimated_sessions },
-			|p| Render.power_curve_screen({ window_days: p.window_days, sport: p.sport, points: p.points, cp: p.cp, w_prime: p.w_prime, fit_r2: p.fit_r2, fit_points: p.fit_points, estimated_sessions: p.estimated_sessions }),
+			|p| if (first_run) Report.no_activities_text else Render.power_curve_screen({ window_days: p.window_days, sport: p.sport, points: p.points, cp: p.cp, w_prime: p.w_prime, fit_r2: p.fit_r2, fit_points: p.fit_points, estimated_sessions: p.estimated_sessions }),
 		)
 	}
 
@@ -1297,9 +1306,11 @@ ReportHealth :: [].{
 					},
 				)
 			}
+		# with no activity on record the curve is the unfinished first run
+		first_run = !(Report.has_activities!(path)?)
 		Output.out!(
 			{ window_days: days, sport, points, cs: csfit.cs, d_prime: csfit.d_prime, fit_r2: csfit.r2, fit_points: csfit.points, available_sports: avail, test_known, test_value: test.value, test_kind: if (test_known) test.kind else "", test_date: if (test_known) test.date else "", threshold_speed, threshold_source, durability },
-			|p| Render.pace_curve_screen(units, { window_days: p.window_days, sport: p.sport, points: p.points, cs: p.cs, d_prime: p.d_prime, fit_r2: p.fit_r2, fit_points: p.fit_points, available_sports: p.available_sports }),
+			|p| if (first_run) Report.no_activities_text else Render.pace_curve_screen(units, { window_days: p.window_days, sport: p.sport, points: p.points, cs: p.cs, d_prime: p.d_prime, fit_r2: p.fit_r2, fit_points: p.fit_points, available_sports: p.available_sports }),
 		)
 	}
 

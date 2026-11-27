@@ -1651,7 +1651,7 @@ Render :: [].{
 		unpriced =
 			Str.join_with(List.map(p.unprojected, |u| "\n  no load: ${u.date} ${unprojected_reason(u.target_literal, u.reason)}"), "")
 		note =
-			if (!(p.baseline_known)) "\nno computed history to project from — the numbers are decay over zero; `stride analyze` first"
+			if (!(p.baseline_known)) "\nno computed history to project from — the numbers are decay over zero; with activities on record `stride analyze` builds it, and with none `stride setup` syncs your history"
 			else ""
 		"${head}\n${nums}${hyp}${unpriced}${note}"
 	}
@@ -1708,7 +1708,7 @@ Render :: [].{
 					},
 			)
 			base_note =
-				if (!(p.baseline_known)) "\nno computed history to project from — every number above is decay over zero; `stride analyze` first"
+				if (!(p.baseline_known)) "\nno computed history to project from — every number above is decay over zero; with activities on record `stride analyze` builds it, and with none `stride setup` syncs your history"
 				else ""
 			body = Str.join_with(
 				List.concat(["projected fitness, fatigue and form from ${p.projected_from} over the open plan's targets"], rows),

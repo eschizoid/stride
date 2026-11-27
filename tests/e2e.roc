@@ -415,7 +415,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1534)?
+	checks_ran_exactly!(1582)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -474,6 +474,7 @@ run_scenarios! = |ctx| {
 	b_events!(ctx)?
 	b_strength_import!(ctx)?
 	b_review!(ctx)?
+	b_empty_reports!(ctx)?
 	b_tte_families!(ctx)?
 	b_concurrency!(ctx)?
 	b_migration!(ctx)?
@@ -5060,9 +5061,9 @@ b_seed_analyze! = |ctx| {
 	# ...and the OTHER shape of "nothing to walk" is not the same fact and must not get the
 	# same answer. Rows exist and not one date parses: clearing the table is still right,
 	# but reporting converged: true is not — the engine holds scored activities and would
-	# then tell the athlete "no scored training days yet, run `stride sync` then `stride
-	# analyze`" while `stats` reports their sessions in the same breath — the same
-	# defect one layer down, so `analyze` names the row.
+	# then tell the athlete "no scored training days yet" while `stats` reports their
+	# sessions in the same breath — the same defect one layer down, so `analyze` names
+	# the row.
 	_ = sql!(an_db, "INSERT INTO activities (id,name,sport_type,sport_family,start_local,moving_time) VALUES (801,'unreadable','Ride','Ride','0000-0z-01T10:00:00Z',3600);")
 	_ = sql!(an_db, "INSERT INTO activity_metrics (activity_id,tss,ftp_used,pi_easy_s,metrics_rev) VALUES (801,40.0,111.0,3600,1);")
 	an_bad = sh!("HOME='${an_home}' STRIDE_FORMAT=json '${ctx.bin}' analyze 2>/dev/null")
@@ -8815,7 +8816,7 @@ b_cross_surface! = |ctx| {
 	anchor_sites = Str.trim(sh!("grep -c \"'now', '..today_mod.'\" src/viz/Db.roc"))
 	local_sites = Str.trim(sh!("grep -c \"'now', 'localtime')\\|date('now', '-'\\|strftime('%Y-%m', 'now')\" src/viz/Db.roc"))
 	check!("the window's calendar anchor, read from its source, names the athlete's day under a far zone and never the machine's (${window_today} vs ${athlete_today}/${machine_today})", !Str.is_empty(anchor_expr) and window_today == athlete_today and window_today != machine_today)?
-	check!("...and every window loader that reads the calendar spells that anchor (the plan strip, the plan rows, both curve windows, the most-trained family, the open month, the strength weeks and the strength month in progress); none anchors on localtime or on UTC's now (${anchor_sites}/${local_sites})", anchor_sites == "8" and local_sites == "0")?
+	check!("...and every window loader that reads the calendar spells that anchor (the plan strip, the plan rows, the unlinked activities, the week's load strip, both curve windows, the most-trained family, the open month, the strength weeks and the strength month in progress); none anchors on localtime or on UTC's now (${anchor_sites}/${local_sites})", anchor_sites == "10" and local_sites == "0")?
 	# end-of-week CTL: weekly_ramp's newest week vs the load series on that
 	# week's last loaded day, both in thousandths
 	wk_ctl = Str.trim(sql!(ctx.db, "SELECT CAST(ROUND(ctl_end * 1000) AS INTEGER) FROM weekly_ramp ORDER BY wk DESC LIMIT 1;"))
@@ -9381,6 +9382,112 @@ b_review! = |ctx| {
 	Ok({})
 }
 
+# ── every report with nothing to show says so in one sentence ───────────
+# A throwaway HOME walks a new athlete's first two states: a database with
+# no activity, where every report names `stride setup` instead of drawing a
+# header row over nothing or naming a command that has nothing to work on,
+# and one with a single ride, where a report with nothing of its kind names
+# the session that fills it and one that reads scored history names
+# `stride analyze`. A success payload keeps its shape throughout, so an
+# empty list stays an empty list; an error envelope keeps its code and
+# carries the sentence the screen prints. A week is Monday to Sunday and
+# holds what was done on its days beside what was planned, so `week` and
+# `week all`'s this-week section list the same unlinked ride.
+b_empty_reports! : Ctx => Try({}, _)
+b_empty_reports! = |ctx| {
+	probe = "${ctx.home}/empty-reports"
+	_ = sh!("rm -rf '${probe}' && mkdir -p '${probe}'")
+	_ = stride!(ctx.bin, probe, ["init"])
+	_ = stride!(ctx.bin, probe, ["config", "set", "timezone", ctx.tz])
+	# zones set, so summary and plan reach the load series rather than
+	# stopping at the missing zone bounds
+	_ = stride!(ctx.bin, probe, ["config", "set", "hr_z1_max", "123"])
+	_ = stride!(ctx.bin, probe, ["config", "set", "hr_z2_max", "153"])
+	_ = stride!(ctx.bin, probe, ["config", "set", "hr_z3_max", "168"])
+	_ = stride!(ctx.bin, probe, ["config", "set", "hr_z4_max", "183"])
+	human! = |args| Str.trim(stride_human!(ctx.bin, probe, args))
+	json_err! = |args| Str.trim(sh!("HOME='${probe}' STRIDE_FORMAT=json '${ctx.bin}' ${args} | jq -r '.error.code + \": \" + .error.message'"))
+	first_run = "no activities yet — run `stride setup`: it connects your Strava account and syncs your history"
+	check!("an empty database's stats is the first-run sentence, not two empty tables", human!(["stats"]) == first_run)?
+	check!("...and so is its activities list", human!(["activities"]) == first_run)?
+	check!("...a sport-filtered list names no empty sport list", human!(["activities", "5", "Run"]) == first_run)?
+	check!("...a top board", human!(["top", "tss"]) == first_run)?
+	check!("...the load series", human!(["load"]) == first_run)?
+	check!("...this week", human!(["week"]) == first_run)?
+	check!("...and the whole plan log", human!(["week", "all"]) == first_run)?
+	check!("...the summary", human!(["summary"]) == first_run)?
+	check!("...the planning bundle", human!(["plan"]) == first_run)?
+	check!("...a period comparison", human!(["compare", "week"]) == first_run)?
+	check!("...the season", human!(["season"]) == first_run)?
+	check!("...the strength log", human!(["strength"]) == first_run)?
+	check!("...the progress table", human!(["progress"]) == first_run)?
+	check!("...the power zones", human!(["zones"]) == first_run)?
+	check!("...a week's review", human!(["review", "week"]) == first_run)?
+	check!("...the power curve", human!(["power-curve", "30", "Ride"]) == first_run)?
+	check!("...the pace curve", human!(["pace-curve", "30", "Run"]) == first_run)?
+	check!("...time to exhaustion at a power", human!(["tte", "300", "Ride"]) == first_run)?
+	check!("...time to exhaustion at a pace", human!(["tte", "pace", "4:10/km", "Run"]) == first_run)?
+	check!("...the interval reps", human!(["reps"]) == first_run)?
+	check!("...an activity looked up by id", human!(["activity", "9901"]) == first_run)?
+	check!("...doctor's activity count", Str.contains(human!(["doctor"]), "activities: 0 (${first_run})"))?
+	check!("...and a projection over no history names setup beside analyze", Str.contains(human!(["project", "2099-01-01"]), "with activities on record `stride analyze` builds it, and with none `stride setup` syncs your history"))?
+	_ = stride!(ctx.bin, probe, ["event", "add", "2099-01-01", "Probe race"])
+	check!("...as does an event projection over no history", Str.contains(human!(["events"]), "with activities on record `stride analyze` builds it, and with none `stride setup` syncs your history"))?
+	_ = sql!("${probe}/.stride/db.sqlite", "DELETE FROM events;")
+	check!("a zero-day load window is an empty table, not a claim about the history", Str.starts_with(human!(["load", "0"]), "╭"))?
+	check!("the error envelopes of the empty reports keep their codes and carry the first-run sentence", json_err!("compare week") == "no_data: ${first_run}" and json_err!("season") == "no_activities: ${first_run}" and json_err!("progress") == "no_scorable_workouts: ${first_run}" and json_err!("zones") == "no_power_data: ${first_run}" and json_err!("reps") == "no_detected_intervals: ${first_run}")?
+	# a plan with no activity on record: the empty this-week section names
+	# setup as what brings activities in
+	_ = sql!("${probe}/.stride/db.sqlite", "INSERT INTO planned_sessions (id,created_at,target_date,session_type,detail,rationale,status,skipped_reason,target_literal) VALUES (9912,'2099-01-01','2099-01-01','endurance','probe ride','r','open','',NULL);")
+	check!("`week all` with a plan and no activity names setup in its empty this week", Str.contains(human!(["week", "all"]), "── this week ──\nnothing planned or recorded — `stride week add` plans a session, and `stride setup` syncs the activities that list here"))?
+	_ = sql!("${probe}/.stride/db.sqlite", "DELETE FROM planned_sessions WHERE id = 9912;")
+	check!("the JSON of the empty reports keeps its shape: empty lists stay empty lists", Str.trim(sh!("for c in 'stats' 'activities' 'top tss' 'load' 'week' 'week all'; do HOME='${probe}' STRIDE_FORMAT=json '${ctx.bin}' $c | jq -c '.data'; done | tr '\\n' ' '")) == "{\"all_time\":[],\"ytd\":[],\"ytd_year\":${Str.trim(sh!("TZ='${ctx.tz}' date +%Y"))}} [] [] [] [] []")?
+	# one ride today, one the week before, neither claimed by a plan
+	db = "${probe}/.stride/db.sqlite"
+	last_week = Str.trim(sql!(db, "SELECT date('${ctx.today}', '-7 days');"))
+	_ = sql!(db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9901,'Probe ride','Ride','${ctx.today}T07:00:00Z',3600,30000,0,140),(9902,'Earlier probe ride','Ride','${last_week}T07:00:00Z',3600,30000,0,140);")
+	check!("a load series analyze has not built names analyze", human!(["load"]) == "no load history yet — run `stride analyze` to score your activities")?
+	check!("a filtered list with no such sport lists the sports there are", human!(["activities", "5", "Run"]) == "no 'Run' activities — sports in your data: Ride")?
+	check!("a top board no session carries names the session that fills it", human!(["top", "power"]) == "no session carries power (np) data yet — a ride recorded with a power meter fills it, once `stride analyze` scores it")?
+	check!("a summary over activities analyze has not scored names analyze", human!(["summary"]) == "nothing analyzed yet — run `stride analyze` to score your activities")?
+	check!("...the planning bundle", human!(["plan"]) == "nothing analyzed yet — run `stride analyze` to score your activities")?
+	check!("...and so does a period comparison", human!(["compare", "week"]) == "nothing analyzed yet — run `stride analyze` to score your activities")?
+	check!("...the season", human!(["season"]) == "no scored training days yet — run `stride analyze` to score your activities")?
+	check!("...and the progress table", human!(["progress"]) == "nothing to compare yet — run `stride analyze` to score your activities (and `stride rate` your strength sessions)")?
+	check!("...and their error envelopes name analyze too, codes unchanged", json_err!("compare week") == "no_data: nothing analyzed yet — run `stride analyze` to score your activities" and json_err!("season") == "no_activities: no scored training days yet — run `stride analyze` to score your activities")?
+	check!("a strength log with rides on record says where strength sessions come from", human!(["strength"]) == "no strength sessions yet — they arrive with `stride sync` like every other activity")?
+	week = human!(["week"])
+	all = human!(["week", "all"])
+	this_week = (List.first(Str.split_on((List.get(Str.split_on(all, "── this week ──"), 1)) ?? "", "── last week ──"))) ?? ""
+	gone_by = (List.get(Str.split_on(all, "── last week ──"), 1)) ?? ""
+	# the window's week strip, its query read from the window's source with
+	# the fixture zone's offset filled in, counts this week's ride as unscored
+	# before analyze has run, so the strip names analyze instead of a 0
+	strip_mod = Str.trim(sh!("off=$(TZ=${fixture_tz} date +%z); s=$(printf %s \"$off\" | cut -c1); h=$(printf %s \"$off\" | cut -c2-3); m=$(printf %s \"$off\" | cut -c4-5); n=$((10#$h * 60 + 10#$m)); if [ \"$s\" = - ]; then n=$((-n)); fi; echo \"$n minutes\""))
+	strip_q = Str.trim(sh!("grep -oE 'WITH anchor AS \\(SELECT date\\(date\\(.now., ...today_mod..\\), .-6 days., .weekday 1.\\) AS mon\\) SELECT CAST\\(ROUND\\(SUM[^\"]*AS un FROM anchor[^\"]*' src/viz/Db.roc | sed 's/..today_mod./${strip_mod}/'"))
+	check!("the window's week strip reads an unanalyzed ride as unscored, not as 0 load", !(Str.is_empty(strip_q)) and Str.trim(sql!(db, "SELECT un FROM (${strip_q});")) == "1")?
+	check!("`week` lists this week's unlinked ride", Str.contains(week, "9901") and Str.contains(week, "unlinked") and !(Str.contains(week, "9902")))?
+	check!("`week all`'s this week is the same week, the ride included", Str.contains(this_week, "9901") and Str.contains(this_week, "unlinked") and !(Str.contains(this_week, "9902")))?
+	check!("...its last week holds last week's ride", Str.contains(gone_by, "9902") and !(Str.contains(gone_by, "9901")))?
+	check!("...and the days ahead, holding no plan, say what fills them", Str.contains(all, "── upcoming ──\nnothing planned past this week — `stride week add` plans a session"))?
+	check!("`week all`'s payload stays the session log", Str.trim(sh!("HOME='${probe}' STRIDE_FORMAT=json '${ctx.bin}' week all | jq -c '.data'")) == "[]")?
+	# last week reads like this week: days in calendar order, and a day's
+	# session before the activity no plan claims on it
+	lw_sun = Str.trim(sql!(db, "SELECT date('${ctx.today}', '-6 days', 'weekday 1', '-1 days');"))
+	_ = sql!(db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,avg_hr) VALUES (9903,'Sunday probe ride','Ride','${lw_sun}T09:00:00Z',3600,30000,0,140); INSERT INTO planned_sessions (id,created_at,target_date,session_type,detail,rationale,status,skipped_reason,target_literal) VALUES (9911,'2099-01-01','${lw_sun}','endurance','probe ride','r','open','',NULL);")
+	lw = (List.get(Str.split_on(human!(["week", "all"]), "── last week ──"), 1)) ?? ""
+	before_sunday_ride = (List.first(Str.split_on(lw, "9903"))) ?? ""
+	check!("`week all`'s last week runs Monday first, a day's session before its unlinked ride", Str.contains(lw, "9903") and Str.contains(before_sunday_ride, "9911") and Str.contains(before_sunday_ride, "9902"))?
+	_ = sql!(db, "DELETE FROM planned_sessions WHERE id = 9911; DELETE FROM activities WHERE id = 9903;")
+	_ = sql!(db, "DELETE FROM activities WHERE id = 9901;")
+	check!("an empty week with history on record names what fills it", Str.starts_with(human!(["week"]), "nothing planned or recorded this week (") and Str.ends_with(human!(["week"]), ") — `stride week add` plans a session, and an activity recorded this week lists here"))?
+	_ = stride!(ctx.bin, probe, ["analyze"])
+	check!("a plan with no open session says what opens one", Str.contains(human!(["plan"]), "OPEN PLAN\nno open session — `stride week add` plans one\n"))?
+	check!("a zero-day load window over an analyzed history is an empty table, not missing history", Str.starts_with(human!(["load", "0"]), "╭") and !(Str.contains(human!(["load", "0"]), "no load history")))?
+	_ = sh!("rm -rf '${probe}'")
+	Ok({})
+}
+
 b_concurrency! : Ctx => Try({}, _)
 b_concurrency! = |ctx| {
 	# A lock held DETERMINISTICALLY, not a race against a real analyze: the
@@ -9520,7 +9627,7 @@ b_migration! = |ctx| {
 	_ = stride!(ctx.bin, v49home, ["init"])
 	_ = sql!(v49db, "CREATE TABLE map_ways (way_id INTEGER PRIMARY KEY, kind TEXT NOT NULL, points TEXT NOT NULL); CREATE TABLE map_blocks (lat_block INTEGER NOT NULL, lng_block INTEGER NOT NULL, fetched_at TEXT NOT NULL, PRIMARY KEY (lat_block, lng_block)); INSERT INTO map_ways VALUES (11, 'arterial', '[41.88,-87.63,41.89,-87.64]'); INSERT INTO map_blocks VALUES (418, -877, '2026-11-19'); INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9851,'ride with a route','Ride','2026-05-04T08:00:00Z',3600,30000); INSERT INTO routes (activity_id, raw_json) VALUES (9851, '{}'); PRAGMA user_version = 49;")
 	_ = stride!(ctx.bin, v49home, ["config", "get", "timezone"])
-	check!("migrating a v49 database drops the base map's two tables and keeps its routes", Str.trim(sql!(v49db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('map_ways', 'map_blocks');")) == "0" and Str.trim(sql!(v49db, "SELECT COUNT(*) FROM routes WHERE activity_id = 9851;")) == "1" and Str.trim(sql!(v49db, "PRAGMA user_version;")) == "51")?
+	check!("migrating a v49 database drops the base map's two tables and keeps its routes", Str.trim(sql!(v49db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('map_ways', 'map_blocks');")) == "0" and Str.trim(sql!(v49db, "SELECT COUNT(*) FROM routes WHERE activity_id = 9851;")) == "1" and Str.trim(sql!(v49db, "PRAGMA user_version;")) == "52")?
 	_ = sh!("rm -rf '${v49home}'")
 	# v51 adds each session's maximum heart rate to the activity mirror: a v50
 	# database gains the column, its rows keep every other field, and NULL there
@@ -9530,7 +9637,7 @@ b_migration! = |ctx| {
 	_ = stride!(ctx.bin, v50home, ["init"])
 	_ = sql!(v50db, "ALTER TABLE activities DROP COLUMN max_hr; PRAGMA user_version = 50; INSERT INTO activities (id,name,sport_type,start_local,moving_time,avg_hr) VALUES (9861,'ride before max_hr','Ride','2026-05-04T08:00:00Z',3600,140);")
 	_ = stride!(ctx.bin, v50home, ["config", "get", "timezone"])
-	check!("migrating a v50 database adds the max_hr mirror column, NULL on the rows it had", Str.trim(sql!(v50db, "SELECT (SELECT COUNT(*) FROM pragma_table_info('activities') WHERE name = 'max_hr') || '/' || (SELECT COALESCE(max_hr, 'null') || ',' || CAST(avg_hr AS INTEGER) FROM activities WHERE id = 9861) || '/' || (SELECT user_version FROM pragma_user_version);")) == "1/null,140/51")?
+	check!("migrating a v50 database adds the max_hr mirror column, NULL on the rows it had", Str.trim(sql!(v50db, "SELECT (SELECT COUNT(*) FROM pragma_table_info('activities') WHERE name = 'max_hr') || '/' || (SELECT COALESCE(max_hr, 'null') || ',' || CAST(avg_hr AS INTEGER) FROM activities WHERE id = 9861) || '/' || (SELECT user_version FROM pragma_user_version);")) == "1/null,140/52")?
 	_ = sh!("rm -rf '${v50home}'")
 	Ok({})
 }

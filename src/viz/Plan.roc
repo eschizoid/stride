@@ -30,12 +30,15 @@ Plan :: [].{
 	# A rest day reads Rested once its date has passed with under 1.0 load on
 	# a day daily_load covers, the rule the engine's `week` and `plan` apply;
 	# a day daily_load has not reached stays Open. Future is an open day after
-	# today, and NoSession is a weekday the plan holds nothing for.
-	DayKind : [Done, Substituted, Skipped, Rested, Open, Future, NoSession]
+	# today, and NoSession is a weekday the plan holds nothing for. Unlinked
+	# is an activity of the week no session claims, listed as `week` lists it;
+	# it is no part of the plan, so it colours no pip.
+	DayKind : [Done, Substituted, Skipped, Rested, Open, Future, NoSession, Unlinked]
 
 	kind_of : Db.PlanRow -> DayKind
 	kind_of = |p|
-		if (p.status == "done") Done
+		if (p.status == "unlinked") Unlinked
+		else if (p.status == "done") Done
 		else if (p.status == "skipped") (if (p.sub_id > 0) Substituted else Skipped)
 		else if (p.typ == "rest" and p.past and p.day_load_known and p.day_load < 1.0) Rested
 		else if (p.past or p.today) Open
@@ -47,7 +50,7 @@ Plan :: [].{
 	week_kinds = |rows|
 		List.map(
 			[0, 1, 2, 3, 4, 5, 6],
-			|i| match List.find_first(rows, |p| p.wi == i) {
+			|i| match List.find_first(rows, |p| p.wi == i and kind_of(p) != Unlinked) {
 				Ok(p) => kind_of(p)
 				Err(_) => NoSession
 			},
@@ -62,6 +65,7 @@ Plan :: [].{
 		Open => Color.with_alpha(Theme.ctl_c, 170)
 		Future => Color.with_alpha(Theme.ink_faint, 70)
 		NoSession => Color.with_alpha(Theme.ink_faint, 25)
+		Unlinked => Color.with_alpha(Theme.ink_faint, 25)
 	}
 
 	# The right-hand status word of a ladder row. A session completed by an
@@ -76,7 +80,29 @@ Plan :: [].{
 		Open => if (p.today) ">>" else "open"
 		Future => ""
 		NoSession => ""
+		Unlinked => "unlinked"
 	}
+
+	# The week's planned sessions and its unlinked activities in one ladder,
+	# by day and, within a day, the plan first, as `week` orders them.
+	with_unlinked : List(Db.PlanRow), List(Db.PlanRow) -> List(Db.PlanRow)
+	with_unlinked = |plan, unlinked|
+		if List.is_empty(unlinked) {
+			plan
+		} else {
+			keyed = List.map_with_index(List.concat(plan, unlinked), |p, i| { p, i, u: if (p.status == "unlinked") 1.I64 else 0.I64 })
+			sorted = List.sort_with(
+				keyed,
+				|x, y| {
+					d = x.p.wi.order_relative_to(y.p.wi)
+					if (d != Same) d else {
+						k = x.u.order_relative_to(y.u)
+						if (k != Same) k else x.i.order_relative_to(y.i)
+					}
+				},
+			)
+			List.map(sorted, |e| e.p)
+		}
 
 	watts_str : F64 -> Str
 	watts_str = |w| I64.to_str(w.round_to_i64_try().ok_or(0))
@@ -120,13 +146,19 @@ Plan :: [].{
 	# today's card: the prescription in full until the day has an outcome, then
 	# the outcome. It is bounded even though coach-written details are not:
 	# past these caps the last line ends in an ellipsis, so a long
-	# prescription cannot crowd the ladder off the screen.
-	today_card : List(Db.PlanRow), F32 -> { today : Db.PlanRow, head : Str, dlines : List(Str), rlines : List(Str), h : F32 }
-	today_card = |plan, win_w| {
-		blank = { day: "", wi: -1, typ: "", detail: "no plan for today - ask the coach", rationale: "", status: "open", reason: "", today: Bool.False, past: Bool.False, done_day: "", act_name: "", act_secs: 0, act_load: 0, sub_id: 0, sub_name: "", tgt_reps: 0, tgt_dur_s: 0, tgt_watts: 0.0, tgt_lit: "", tgt_res: "", det_reps: 0, det_dur_s: 0, det_watts: 0.0, day_load_known: Bool.False, day_load: 0.0 }
-		today = List.fold(plan, blank, |acc, p| if (p.today) p else acc)
+	# prescription cannot crowd the ladder off the screen. With no session
+	# today the card says so, and with no activity on record at all it names
+	# the first run instead. An unlinked activity is never today's card: it
+	# lists in the ladder, as `week` lists it.
+	today_card : Ui.Model -> { today : Db.PlanRow, head : Str, dlines : List(Str), rlines : List(Str), h : F32 }
+	today_card = |model| {
+		plan = model.plan
+		win_w = model.win.w
+		none = if (Chrome.first_run(model)) Chrome.first_run_text else no_plan_text
+		blank = { day: "", wi: -1, typ: "", detail: none, rationale: "", status: "open", reason: "", today: Bool.False, past: Bool.False, done_day: "", act_name: "", act_secs: 0, act_load: 0, sub_id: 0, sub_name: "", tgt_reps: 0, tgt_dur_s: 0, tgt_watts: 0.0, tgt_lit: "", tgt_res: "", det_reps: 0, det_dur_s: 0, det_watts: 0.0, day_load_known: Bool.False, day_load: 0.0 }
+		today = List.fold(plan, blank, |acc, p| if (p.today and kind_of(p) != Unlinked) p else acc)
 		outcome = result_text(today)
-		head = if (outcome == "") "today - ${today.typ}" else "today - ${today.typ} - ${status_text(today)}"
+		head = if (today.typ == "") "today" else if (outcome == "") "today - ${today.typ}" else "today - ${today.typ} - ${status_text(today)}"
 		body = if (outcome == "") today.detail else outcome
 		note = if (outcome == "") today.rationale else today.detail
 		cols = Wrap.cols_for(win_w - 160.0, 7.8)
@@ -150,7 +182,7 @@ Plan :: [].{
 	ladder : Ui.Model -> { heights : List(F32), top : F32, room : F32, cols : U64 }
 	ladder = |model| {
 		cols = Wrap.cols_for(model.win.w - 340.0, 7.2)
-		top = 100.0 + (today_card(model.plan, model.win.w)).h + 20.0
+		top = 100.0 + (today_card(model)).h + 20.0
 		room = (model.win.h - 110.0 - top - 14.0).max(30.0)
 		{ heights: List.map(model.plan, |p| row_height(p, cols)), top, room, cols }
 	}
@@ -164,6 +196,9 @@ Plan :: [].{
 
 	title_text : Str
 	title_text = "the week and the days ahead"
+
+	no_plan_text : Str
+	no_plan_text = "no plan for today - ask the coach"
 
 	hint_text : Str
 	hint_text = "week / log / year  modes      wheel or up/down  scroll      TAB  lifts      R  reload      S  screenshot      V  record      ESC quit"
@@ -218,9 +253,14 @@ Plan :: [].{
 	}
 
 	# the load strip: this Monday-started week's load beside last week's. The
-	# total blends TSS with session-RPE load, so it is named load.
-	strip_text : { this : I64, last : I64 } -> Str
-	strip_text = |wk| "${Db.num_unit(wk.this, "load")} this week (last ${Db.grouped(wk.last)})"
+	# total blends TSS with session-RPE load, so it is named load. While an
+	# activity of the week is unscored the sum is not the week's load, so the
+	# strip says what is owed instead of a number.
+	strip_text : { this : I64, last : I64, scored : Bool } -> Str
+	strip_text = |wk| if (wk.scored) "${Db.num_unit(wk.this, "load")} this week (last ${Db.grouped(wk.last)})" else unscored_week_text
+
+	unscored_week_text : Str
+	unscored_week_text = "this week's load is not scored yet - run stride analyze in a terminal, then press R"
 
 	# the coach corner's lines: none until a directive exists, the newest
 	# directive once one does, and a failed read of the bus said as such
@@ -262,7 +302,7 @@ Plan :: [].{
 			} else {
 				[]
 			}
-		card = today_card(model.plan, win_w)
+		card = today_card(model)
 		cb = card_box(win_w, card.h)
 		nd = U64.to_f32(List.len(card.dlines))
 		card_texts = List.join([
@@ -299,11 +339,12 @@ Plan :: [].{
 			),
 		)
 		# load strip + coach corner. The week's session count lives in the
-		# quest label only; the strip states load, Monday-aligned on both
-		# sides. The corner holds a line only once a coach has written a
+		# quest label only; the strip states the calendar week's load beside
+		# last week's, and with no activity on record there is no load to
+		# state. The corner holds a line only once a coach has written a
 		# directive.
 		foot = List.join([
-			[fix(Scene.data(strip_text(model.week_tss), 13.0, ink_muted), 36.0, win_h - 84.0, Left, panel)],
+			if (Chrome.first_run(model)) [] else [fix(Scene.data(strip_text(model.week_tss), 13.0, ink_muted), 36.0, win_h - 84.0, Left, panel)],
 			List.map(coach_lines(model.bus_note), |ln| fix(Scene.data(ln, 11.0, ink_faint), 36.0, win_h - 60.0, Left, panel)),
 			[fix(Scene.prepared(model.plan_hint, hint_text, 13.0, Prose, ink_faint), 36.0, win_h - 30.0, Left, panel)],
 		])
@@ -315,7 +356,7 @@ Plan :: [].{
 	# the scrollbar
 	marks : Ui.Model -> List(Labels.Mark)
 	marks = |model| {
-		card = today_card(model.plan, model.win.w)
+		card = today_card(model)
 		List.join([
 			Chrome.marks(model),
 			Days.chip_marks,
@@ -349,7 +390,7 @@ Plan :: [].{
 				},
 			)
 		}
-		card = today_card(model.plan, win_w)
+		card = today_card(model)
 		cb = card_box(win_w, card.h)
 		sb = stripe_box(card.h)
 		frame.rounded_rectangle!({ x: cb.x, y: cb.y, width: cb.w, height: cb.h, radius: 10.0, segments: 8, style: Draw.filled(Theme.card) })
@@ -417,10 +458,21 @@ Plan :: [].{
 	expect result_text({ ..blank_row, status: "skipped" }) == "skipped"
 	expect result_text({ ..blank_row, past: Bool.False }) == ""
 	# the load strip names the week's blended total load, both weeks grouped
-	expect strip_text({ this: 74, last: 1702 }) == "74 load this week (last 1,702)"
+	expect strip_text({ this: 74, last: 1702, scored: Bool.True }) == "74 load this week (last 1,702)"
+	expect strip_text({ this: 0, last: 1702, scored: Bool.False }) == "this week's load is not scored yet - run stride analyze in a terminal, then press R"
 	# the coach corner: no line until a directive exists, the directive's
 	# line once one does, and a failed read said as such
 	expect coach_lines(NoDirective) == []
 	expect coach_lines(Note("11-12 08:14  ->  plan / 30d")) == ["coach: 11-12 08:14  ->  plan / 30d"]
 	expect coach_lines(Unreadable) == ["coach: directives unreadable"]
+}
+
+# an unlinked activity sits on its day after that day's planned session,
+# and colours no quest pip
+expect {
+	b = Plan.blank_row
+	merged = Plan.with_unlinked([{ ..b, wi: 0, status: "done" }, { ..b, wi: 2, status: "open" }], [{ ..b, wi: 2, status: "unlinked" }, { ..b, wi: 1, status: "unlinked" }])
+	List.map(merged, |p| "${I64.to_str(p.wi)}${p.status}") == ["0done", "1unlinked", "2open", "2unlinked"]
+		and Plan.week_kinds(merged) == [Done, NoSession, Open, NoSession, NoSession, NoSession, NoSession]
+		and Plan.status_text({ ..b, status: "unlinked" }) == "unlinked"
 }

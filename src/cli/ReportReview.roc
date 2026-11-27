@@ -39,7 +39,10 @@ ReportReview :: [].{
 				# name rather than letting it fall out of a filter
 				_ = Report.guard_activity_dates!(path)?
 				payload = review_payload!(path, Metrics.week_monday(day), today)?
-				Output.out!(payload, |p| review_screen(p))
+				# a week with nothing planned in a database with no activity at all is
+				# the unfinished first run, not a week to review
+				first_run = !(Report.has_activities!(path)?)
+				Output.out!(payload, |p| if (first_run and List.is_empty(p.sessions)) Report.no_activities_text else review_screen(p))
 			}
 		}
 	}

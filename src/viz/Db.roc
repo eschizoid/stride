@@ -661,9 +661,8 @@ Db :: [].{
 	# numerator and denominator. The week is TODAY's, the anchor the engine's
 	# `week` command uses (today minus its Monday offset), not week_bounds',
 	# which is the week of the last analyzed day. The two differ by a week
-	# when analyze has not run since Monday; a plan count is a calendar
-	# question, so it stays on the calendar. load_week_tss! reads week_bounds
-	# because load is a series question.
+	# when analyze has not run since Monday, and every number on the week
+	# tab, the load strip's included, reads the calendar week.
 	load_plan_week_at! : Sqlite.Db, Str => { done : I64, total : I64 }
 	load_plan_week_at! = |db, today_mod|
 		match db.query!("WITH anchor AS (SELECT date(date('now', '${today_mod}'), '-6 days', 'weekday 1') AS mon) SELECT CAST(SUM(CASE WHEN COALESCE(status,'') = 'done' THEN 1 ELSE 0 END) AS INTEGER) AS dn, COUNT(*) AS tot FROM plan_current, anchor WHERE target_date >= mon AND target_date < date(mon, '+7 days')", []) {
@@ -742,6 +741,43 @@ Db :: [].{
 				)
 		}
 
+	# This week's activities no planned session claims (the
+	# unclaimed_activities view the engine's `week` reads), as ladder rows of
+	# status "unlinked", so the tab shows what was done on the week's days
+	# beside what was planned, as `week` does. Same civil anchor as
+	# load_plan_at!.
+	load_unlinked_at! : Sqlite.Db, Str => List(PlanRow)
+	load_unlinked_at! = |db, today_mod|
+		match db.query!("WITH anchor AS (SELECT date('now', '${today_mod}') AS today, date(date('now', '${today_mod}'), '-6 days', 'weekday 1') AS mon) SELECT CAST(substr(a.start_local, 1, 10) AS TEXT) AS d, CAST(julianday(substr(a.start_local, 1, 10)) - julianday(an.mon) AS INTEGER) AS wi, CAST(COALESCE(a.sport_type, '') AS TEXT) AS sp, CAST(COALESCE(a.name, '') AS TEXT) AS nm, CAST(COALESCE(a.moving_time, 0) AS INTEGER) AS mt, CAST(ROUND(COALESCE(m.tss, 0)) AS INTEGER) AS ld, (substr(a.start_local, 1, 10) = an.today) AS td, (substr(a.start_local, 1, 10) < an.today) AS pst FROM activities a CROSS JOIN anchor an LEFT JOIN activity_metrics m ON m.activity_id = a.id WHERE a.id IN (SELECT id FROM unclaimed_activities) AND a.start_local >= an.mon AND a.start_local < date(an.mon, '+7 days') ORDER BY a.start_local, a.id", []) {
+			Err(_) => []
+			Ok(rows) => List.keep_oks(rows, decode_unlinked_row)
+		}
+
+	decode_unlinked_row : Sqlite.Row -> Try(PlanRow, [BadRow])
+	decode_unlinked_row = |r| {
+		day = r.str("d") ? |_| BadRow
+		wi = r.i64("wi") ? |_| BadRow
+		sport = r.str("sp") ? |_| BadRow
+		name = r.str("nm") ? |_| BadRow
+		secs = r.i64("mt") ? |_| BadRow
+		load = r.i64("ld") ? |_| BadRow
+		td = r.i64("td") ? |_| BadRow
+		ps = r.i64("pst") ? |_| BadRow
+		Ok({ day, wi, typ: Str.with_ascii_lowercased(sport), detail: unlinked_detail(ascii_safe(name), secs, load), rationale: "", status: "unlinked", reason: "", today: td == 1, past: ps == 1, done_day: "", act_name: ascii_safe(name), act_secs: secs, act_load: load, sub_id: 0, sub_name: "", tgt_reps: 0, tgt_dur_s: 0, tgt_watts: 0.0, tgt_lit: "", tgt_res: "", det_reps: 0, det_dur_s: 0, det_watts: 0.0, day_load_known: Bool.False, day_load: 0.0 })
+	}
+
+	# an unlinked activity's line in the form the engine's `week` row writes
+	# it: the name, whole minutes and, once scored, the load. The dash is
+	# ASCII, since the brand atlases carry no em dash.
+	unlinked_detail : Str, I64, I64 -> Str
+	unlinked_detail = |name, secs, load| {
+		mins = "${I64.to_str(secs // 60)}m"
+		if (load >= 1) "${name} - ${mins}, ${I64.to_str(load)} load" else "${name} - ${mins}"
+	}
+
+	expect unlinked_detail("Morning Ride", 16440, 235) == "Morning Ride - 274m, 235 load"
+	expect unlinked_detail("Walk", 1790, 0) == "Walk - 29m"
+
 	decode_plan_row : Sqlite.Row -> Try(PlanRow, [BadRow])
 	decode_plan_row = |r| {
 		day = r.str("d") ? |_| BadRow
@@ -772,14 +808,18 @@ Db :: [].{
 		Ok({ day, wi, typ, detail: ascii_safe(detail), rationale: ascii_safe(rationale), status, reason: ascii_safe(reason), today: td == 1, past: ps == 1, done_day, act_name: ascii_safe(act_name), act_secs, act_load, sub_id, sub_name: ascii_safe(sub_name), tgt_reps, tgt_dur_s, tgt_watts, tgt_lit, tgt_res: ascii_safe(tgt_res), det_reps, det_dur_s, det_watts, day_load_known: dlk == 1, day_load })
 	}
 
-	# this week's load beside last week's, MONDAY-ALIGNED to agree with the
-	# engine's Metrics.weekly_rollup - the progress strip's two numbers
-	load_week_tss! : Sqlite.Db => { this : I64, last : I64 }
-	load_week_tss! = |db|
-		match db.query!("WITH anchor AS (SELECT mon FROM week_bounds) SELECT CAST(ROUND(SUM(CASE WHEN day >= mon THEN tss ELSE 0 END)) AS INTEGER) AS tw, CAST(ROUND(SUM(CASE WHEN day >= date(mon, '-7 days') AND day < mon THEN tss ELSE 0 END)) AS INTEGER) AS lw FROM daily_load, anchor", []) {
-			Err(_) => { this: 0, last: 0 }
+	# this week's load beside last week's - the progress strip's two numbers.
+	# The week is the civil Monday-to-Sunday the ladder above the strip lists
+	# and the engine's `week` and `review` read, so one tab never shows two
+	# weeks under the one name. `scored` is false while an activity of the
+	# week has no metrics row or its day has no daily_load row:
+	# analyze has not yet counted it, so the week's sum is not its load.
+	load_week_tss! : Sqlite.Db, Str => { this : I64, last : I64, scored : Bool }
+	load_week_tss! = |db, today_mod|
+		match db.query!("WITH anchor AS (SELECT date(date('now', '${today_mod}'), '-6 days', 'weekday 1') AS mon) SELECT CAST(ROUND(SUM(CASE WHEN day >= mon AND day < date(mon, '+7 days') THEN tss ELSE 0 END)) AS INTEGER) AS tw, CAST(ROUND(SUM(CASE WHEN day >= date(mon, '-7 days') AND day < mon THEN tss ELSE 0 END)) AS INTEGER) AS lw, (SELECT COUNT(*) FROM activities a WHERE a.start_local >= mon AND a.start_local < date(mon, '+7 days') AND (a.id NOT IN (SELECT activity_id FROM activity_metrics) OR NOT EXISTS (SELECT 1 FROM daily_load dl WHERE dl.day = substr(a.start_local, 1, 10)))) AS un FROM anchor LEFT JOIN daily_load ON 1 = 1", []) {
+			Err(_) => { this: 0, last: 0, scored: Bool.True }
 			Ok(rows) => match List.first(rows) {
-				Err(_) => { this: 0, last: 0 }
+				Err(_) => { this: 0, last: 0, scored: Bool.True }
 				Ok(r) => {
 					tw = match r.i64("tw") {
 						Ok(x) => x
@@ -789,7 +829,11 @@ Db :: [].{
 						Ok(x) => x
 						Err(_) => 0
 					}
-					{ this: tw, last: lw }
+					un = match r.i64("un") {
+						Ok(x) => x
+						Err(_) => 0
+					}
+					{ this: tw, last: lw, scored: un == 0 }
 				}
 			}
 		}

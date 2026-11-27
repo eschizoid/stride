@@ -227,6 +227,26 @@ Schema :: [].{
 		\\            ORDER BY (COALESCE(p2.status, 'open') <> 'skipped') DESC, p2.id DESC
 		\\            LIMIT 1)
 
+	# Every activity no planned session claims, as completion or as a live
+	# substitute: a substitute on a skipped session stops claiming once a later
+	# row or a non-skipped row holds that date. A week lists these beside its
+	# sessions as unlinked, in `week`, `week all`, `review` and the window's
+	# week tab alike. Claims are not week-relative, so the view carries no date
+	# window: with one, a substitute linked from another week would read as
+	# unclaimed and still be refused by the claim commands.
+	unclaimed_activities_drop =
+		\\DROP VIEW IF EXISTS unclaimed_activities
+	unclaimed_activities =
+		\\CREATE VIEW unclaimed_activities AS
+		\\SELECT a.id AS id FROM activities a
+		\\WHERE NOT EXISTS (SELECT 1 FROM planned_sessions ps
+		\\       WHERE ps.completed_activity_id = a.id
+		\\          OR (ps.substitute_activity_id = a.id
+		\\              AND (COALESCE(ps.status,'open') <> 'skipped'
+		\\                   OR NOT EXISTS (SELECT 1 FROM planned_sessions p3
+		\\                                  WHERE p3.target_date = ps.target_date
+		\\                                    AND (COALESCE(p3.status,'open') <> 'skipped' OR p3.id > ps.id)))))
+
 	# the series' own clock: `today` is the last analyzed day, so every
 	# surface that says "as of" or counts days back agrees with the plot,
 	# and the wall clock answers only while daily_load is empty (stride's

@@ -94,6 +94,12 @@ Zones :: [].{
 	split_s = |w| w.easy + w.moderate + w.hard
 
 	# the chart draws once any week holds polarized time
+	# the chart's line while its twelve weeks hold no polarized time: the
+	# first run while no activity exists, the analyze still owed while none
+	# is scored, else the session that fills it
+	empty_text : Ui.Model -> Str
+	empty_text = |model| Chrome.empty_line(model, "no polarized time in the last 12 weeks - an endurance session with heart rate, power or pace fills it")
+
 	charted : Ui.Model -> Bool
 	charted = |model| List.any(model.zone_weeks, |w| split_s(w) > 0)
 
@@ -189,7 +195,7 @@ Zones :: [].{
 		head = [fix(Scene.prepared(model.zones_title, title_text, 15.0, Prose, ink_muted), Weeks.title_x, 70.0, Left, panel)]
 		chart =
 			if !(charted(model)) {
-				[fix(Scene.data("no polarized time yet", 14.0, ink_muted), pad, 130.0, Left, panel)]
+				[fix(Scene.data(empty_text(model), 14.0, ink_muted), pad, 130.0, Left, panel)]
 			} else {
 				last = newest(model)
 				t = tile(last)

@@ -27,7 +27,7 @@ ReportSessions :: [].{
 	activity! = |id_str| {
 		path = Db.open_db!({})?
 		match Metrics.arg_i64(id_str) {
-			Err(_) => Output.err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
+			Err(_) => Output.err_out!("activity_not_found", Report.empty_line!(path, "activity ${id_str} not found (run `stride activities` to list ids)")?)
 			Ok(aid) => activity_body!(path, id_str, aid)
 
 		}
@@ -96,7 +96,7 @@ ReportSessions :: [].{
 			},
 		})?
 		match List.first(rows) {
-			Err(_) => Output.err_out!("activity_not_found", "activity ${id_str} not found (run `stride activities` to list ids)")
+			Err(_) => Output.err_out!("activity_not_found", Report.empty_line!(path, "activity ${id_str} not found (run `stride activities` to list ids)")?)
 			Ok(a) => {
 				# REFUSES rather than rendering an empty date, because this screen COMPUTES
 				# from the date and the computation fails silently. The personal-baselines
@@ -663,6 +663,9 @@ ReportSessions :: [].{
 			Output.emit_ok!(rows)
 		else if List.is_empty(rows) and limit > 0 and !(Str.is_empty(sport_filter)) {
 			Stdout.line!(empty_hint!(path, sport_filter, "any")?)
+		} else if List.is_empty(rows) and limit > 0 {
+			# unfiltered and empty: the database holds no activity at all
+			Stdout.line!(Report.no_activities_text)
 		} else {
 			Stdout.line!(
 				Render.render_table(
@@ -719,6 +722,21 @@ ReportSessions :: [].{
 			_ => Err(BadMetric)
 
 		}
+	# the session that puts a metric on the `top` board, said where the board
+	# is empty; `time` names none because every activity carries it, so its
+	# board is empty only while the database holds no activity
+	top_fill : Str -> Str
+	top_fill = |m|
+		match m {
+			"hr" => "a session recorded with a heart-rate monitor fills it"
+			"tss" => "a session `stride analyze` scores from heart rate, power, pace or a rating fills it"
+			"power" => "a ride recorded with a power meter fills it, once `stride analyze` scores it"
+			"intensity" => "a power session scored against your FTP fills it"
+			"distance" => "a session that records distance fills it"
+			"output" => "a session that records average power fills it"
+			_ => "your first activity fills it"
+		}
+
 	known_sports! : Str => Try(List(Str), _)
 	known_sports! = |path|
 		Sql.query_many!({
@@ -742,7 +760,7 @@ ReportSessions :: [].{
 		})?
 		if n == 0 {
 			known = known_sports!(path)?
-			Ok("no '${word}' activities — sports in your data: ${Str.join_with(known, ", ")}")
+			Report.empty_line!(path, "no '${word}' activities — sports in your data: ${Str.join_with(known, ", ")}")
 		} else {
 			noun = if (n == 1) "activity" else "activities"
 			Ok("${I64.to_str(n)} '${word}' ${noun}, but none with ${what} data")
@@ -822,7 +840,7 @@ ReportSessions :: [].{
 				})?
 				if (Output.json_mode!({}))
 					Output.emit_ok!(rows)
-				else if List.is_empty(rows) and limit > 0 and !(Str.is_empty(sport_filter)) {
+				else if List.is_empty(rows) and limit > 0 {
 					# The hint has to know about the bound, or it states a falsehood: two Swim rows at
 					# 250 and 20 bpm produced "2 'swim' activities, but none with heart rate (hr)
 					# data" while both rows HAVE heart-rate data.
@@ -841,8 +859,11 @@ ReportSessions :: [].{
 								row: Sql.i64("n"),
 							})?
 						}
+					subject = if (Str.is_empty(sport_filter)) "your data" else sport_filter
 					if n_excluded > 0 {
-						Stdout.line!("${sport_filter} has ${I64.to_str(n_excluded)} session(s) with ${header} data, but every reading is implausible and none is ranked")
+						Stdout.line!("${subject} has ${I64.to_str(n_excluded)} session(s) with ${header} data, but every reading is implausible and none is ranked")
+					} else if Str.is_empty(sport_filter) {
+						Stdout.line!(Report.empty_line!(path, "no session carries ${header} data yet — ${top_fill(metric)}")?)
 					} else {
 						Stdout.line!(empty_hint!(path, sport_filter, header)?)
 					}
@@ -1003,7 +1024,7 @@ ReportSessions :: [].{
 		match List.first(anchor) {
 			Err(_) =>
 				if (Str.is_empty(date_arg))
-					Output.err_out!("no_detected_intervals", "no session on record has detected interval structure yet — `stride activity <id>` shows what a ride's blocks look like")
+					Output.err_out!("no_detected_intervals", Report.empty_line!(path, "no session on record has detected interval structure yet — `stride activity <id>` shows what a ride's blocks look like")?)
 				else
 					Output.err_out!("no_intervals_on_date", "no detected interval structure on ${date_arg} — the ride may have been continuous, or its streams are missing")
 			Ok(a) => {
@@ -1531,7 +1552,7 @@ ReportSessions :: [].{
 		anchor_group_dropped = List.len(scored) != List.len(labeled)
 		if List.is_empty(scored) {
 			if Str.is_empty(date) {
-				Output.err_out!("no_scorable_workouts", "nothing to compare yet — analyze activities first (and `stride rate` your strength sessions)")
+				Output.err_out!("no_scorable_workouts", Report.empty_line!(path, "nothing to compare yet — run `stride analyze` to score your activities (and `stride rate` your strength sessions)")?)
 			} else {
 				on_date = Sql.query_many!({
 					path: Path.utf8(path),
