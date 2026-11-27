@@ -200,7 +200,7 @@ Report :: [].{
 					block = |w, ctl| {
 						tss: w.tss,
 						sessions: w.sessions,
-						hard_min: w.p_hard // 60,
+						hard_min: Fmt.minutes(w.p_hard),
 						easy_pct: (Fmt.shares(w.p_easy, w.p_total - w.p_easy - w.p_hard, w.p_hard)).easy,
 						polarization_known: w.p_total > 0,
 						ctl,
