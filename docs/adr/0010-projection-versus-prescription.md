@@ -1,6 +1,6 @@
 # ADR 0010. Projection is arithmetic, prescription is coaching
 
-Date: 2026-08-17. Status: accepted. Issue: #161. PR: #176. Prerequisite for #138 (event targeting) and #139 (season view); constrains #140 (taper projection, since split out as #189).
+Date: 2026-08-17. Status: accepted. Issue: #161. PR: #176. Prerequisite for #138 (event targeting) and #139 (season view); constrains #140 (taper projection, since split out as #189). Amended by ADR 0022: a projection of the recorded plan reads the athlete's own history as a stated input for the days the plan does not price, and labels each day by where its load came from; it still never chooses, ranks or adjusts a plan, and a hypothetical plan is projected as written.
 
 ## Exercised on 2026-08-18
 

@@ -32,12 +32,16 @@ most likely future.
      own history, by the rule in 2.
    - `habit`: a day with no open session. The load is the athlete's recent daily
      average, by the rule in 3.
-   - `none`: the history the rule needs is missing. The day adds zero and its
-     `load_known` is false. This is the only source that is not a load.
+   - `none`: the history the rule needs is missing, or a hypothetical plan's
+     target cannot be priced. The day adds zero and its `load_known` is false.
+     This is the only source that is not a load.
 
    The engine allows one open session per date, so a day has at most one session in
-   a recorded plan. A hypothetical plan can name a date twice. That day takes the
-   least certain of its sessions' sources, in the order none, estimate, target, rest.
+   a recorded plan. A hypothetical plan can name a date twice. That day's load is
+   the sum of the sessions that carry one, and its source is the least certain of
+   theirs, in the order estimate, target, rest. When another session on it carries
+   nothing, its `load_known` is false. The day reads `none`, with load 0, only when
+   no session on it carries a load.
 
 2. **The estimate is the athlete's median load per hour, times the session's
    duration.** The engine reads the scored sessions that started in the 90 days
@@ -51,8 +55,10 @@ most likely future.
    - every session.
 
    The duration is the target's own work time when the session has a target with
-   one. Otherwise it is the median moving time of the chosen group. When no group
-   holds three sessions, the day is `none`. No generic default stands in.
+   one: its reps times its rep time, or for a distance rep the time its pace takes
+   over the distance, as ADR 0019 prices one. Otherwise it is the median moving
+   time of the chosen group. When no group holds three sessions, the day is
+   `none`. No generic default stands in.
 
 3. **The habit is the mean daily load of the 28 days ending on the baseline day.**
    A rest day in that span counts as zero, as it does in the fitness numbers. With
@@ -62,9 +68,16 @@ most likely future.
    counts the days of each source in `load_sources`, and `events` gives each event
    the same counts. The human screens and the window state the mix in words, for
    example "12 from targets, 20 estimated from your history". A projection that
-   mixes sources always says so. No existing field changes meaning: `unprojected`
-   still lists every session its target could not price, and `sessions_projected`
-   still counts the ones it could.
+   mixes sources always says so. `unprojected` still lists every session its target
+   could not price, and `sessions_projected` still counts the ones it could. Two
+   fields of `project` change meaning:
+   - `series[].load_known` was false on any day that held a session its target could
+     not price. It is now false only on a day that holds a session with nothing to
+     estimate from, because every other such session now carries an estimate.
+   - `series` ran from the day after the baseline to the plan's last day, or to
+     `target_date` when the plan reached past it. It now always runs to
+     `target_date`, because the days after the plan carry the recent daily average
+     instead of nothing.
 
 5. **A hypothetical plan is projected as written.** The caller states the whole plan
    (ADR 0010), so a day the plan does not name is a `rest` day of that plan. A target
