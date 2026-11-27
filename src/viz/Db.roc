@@ -766,16 +766,17 @@ Db :: [].{
 		Ok({ day, wi, typ: Str.with_ascii_lowercased(sport), detail: unlinked_detail(ascii_safe(name), secs, load), rationale: "", status: "unlinked", reason: "", today: td == 1, past: ps == 1, done_day: "", act_name: ascii_safe(name), act_secs: secs, act_load: load, sub_id: 0, sub_name: "", tgt_reps: 0, tgt_dur_s: 0, tgt_watts: 0.0, tgt_lit: "", tgt_res: "", det_reps: 0, det_dur_s: 0, det_watts: 0.0, day_load_known: Bool.False, day_load: 0.0 })
 	}
 
-	# an unlinked activity's line: its name, minutes and, once scored, load,
-	# the parts the engine's `week` row carries
+	# an unlinked activity's line in the form the engine's `week` row writes
+	# it: the name, whole minutes and, once scored, the load. The dash is
+	# ASCII, since the brand atlases carry no em dash.
 	unlinked_detail : Str, I64, I64 -> Str
 	unlinked_detail = |name, secs, load| {
-		mins = "${I64.to_str((secs + 30) // 60)} min"
-		if (load >= 1) "${name} - ${mins} - load ${I64.to_str(load)}" else "${name} - ${mins}"
+		mins = "${I64.to_str(secs // 60)}m"
+		if (load >= 1) "${name} - ${mins}, ${I64.to_str(load)} load" else "${name} - ${mins}"
 	}
 
-	expect unlinked_detail("Morning Ride", 16440, 235) == "Morning Ride - 274 min - load 235"
-	expect unlinked_detail("Walk", 1790, 0) == "Walk - 30 min"
+	expect unlinked_detail("Morning Ride", 16440, 235) == "Morning Ride - 274m, 235 load"
+	expect unlinked_detail("Walk", 1790, 0) == "Walk - 29m"
 
 	decode_plan_row : Sqlite.Row -> Try(PlanRow, [BadRow])
 	decode_plan_row = |r| {

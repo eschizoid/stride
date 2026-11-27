@@ -2412,7 +2412,7 @@ expect {
 expect {
 	at = |state| List.keep_if(Gate.empty_models, |f| f.model.view == 4 and Str.contains(f.name, " with ${state} at "))
 	keys = |e| List.map(Plan.owned(e.model, Gate.measure), |o| o.key)
-	ride = |e| List.contains(keys(e), "'unlinked'") and List.contains(keys(e), "'Morning Ride - 274 min - load 235'") and List.contains(keys(e), "'today'")
+	ride = |e| List.contains(keys(e), "'unlinked'") and List.contains(keys(e), "'Morning Ride - 274m, 235 load'") and List.contains(keys(e), "'today'")
 	List.all(at("a scored ride"), |e| ride(e) and List.contains(keys(e), "'235 load this week (last 0)'"))
 		and List.all(at("an unscored ride"), |e| ride(e) and List.contains(keys(e), "'${Plan.unscored_week_text}'") and !(List.any(keys(e), |k| Str.contains(k, "load this week"))))
 		and List.all(at("no activity"), |e| !(List.any(keys(e), |k| Str.contains(k, "this week"))))
