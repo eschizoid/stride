@@ -218,7 +218,7 @@ Trace :: [].{
 	# platform's built-in one; the label gate judges it in both faces at
 	# every window size.
 	hint_text : Str
-	hint_text = "[ / ]  older/newer session      X  sport      shift+[ / ]  older/newer ghost      C  clear ghost      wheel zoom  drag pan  0 reset      TAB  plan"
+	hint_text = "[ / ]  older/newer session   X  sport filter   shift+[ / ]  compare older/newer   C  clear compare   wheel zoom  drag pan  0 reset   TAB  plan"
 
 	# the keys every view shares, after the trace's own on the footer row
 	keys_text : Str
@@ -353,7 +353,7 @@ Trace :: [].{
 				ghost =
 					if model.ghost_day != "" {
 						gname = List.fold(model.trace_ids, "", |acc, ge| if (ge.day == model.ghost_day) ge.name else acc)
-						[fix(Scene.data("ghost (purple): ${gname}  ${model.ghost_day}   C clears", 12.0, Theme.atl_c), right, 110.0, Right)]
+						[fix(Scene.data("compare (purple): ${gname}  ${model.ghost_day}   C clears", 12.0, Theme.atl_c), right, 110.0, Right)]
 					} else {
 						[]
 					}

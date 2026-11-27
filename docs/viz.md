@@ -474,7 +474,7 @@ and resumes, and the clock starts over each time the mode opens.
 | `routes` / `heat` / `play` chips (map tab) | switch the map tab between the routes in the accent, the summed segments as heat, and playback |
 | `P` (map playback) | pause and resume playback |
 | `1` / `2` / `3` or the chips (power view) | re-window the rows and the top line to 30/60/90 days |
-| `shift+[` / `shift+]` (trace view) | summon / walk the ghost overlay through sessions of the live one's KIND - same sport, same unit; the walk skips the live session itself, and stepping past the last compatible one dismisses it |
+| `shift+[` / `shift+]` (trace view) | summon / walk the ghost overlay (the footer and its label call it "compare") through sessions of the live one's KIND - same sport, same unit; the walk skips the live session itself, and stepping past the last compatible one dismisses it |
 | `C` (trace view) | clear the ghost in one press, from any state |
 | `X` (trace view) | cycle the picker's sport filter (all / each sport the menu holds); the header names the active filter |
 | wheel / drag / `0` (trace view) | zoom anchored at the cursor's moment, pan while held, reset - the window is [pan, pan+1/zoom] of the session |
