@@ -73,7 +73,11 @@ days, and the projected days follow them. The line-end values read the last
 drawn day, an event among the drawn days is marked where it falls, and a key
 along the plot's top says the dashed part is projected and where its days'
 loads came from, in the words `stride project` prints ("12 from targets, 20
-estimated from your history"). The pointer and the arrow cursor read
+estimated from your history"). Under the key a line says how close the
+forecast has been, the line `stride project` and `stride doctor` print: the
+largest fitness error two weeks out over the last 8 weeks ("last 8 weeks:
+fitness forecast within 1.5 at 2 weeks out"), or that there is too little
+history yet to check it. The pointer and the arrow cursor read
 projected days too: → walks on past the last measured day into them, one day
 a press, and past the last drawn one turns the cursor off; the table, which
 shows measured days only, holds the latest of them instead. On a board

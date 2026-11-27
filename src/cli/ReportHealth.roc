@@ -23,6 +23,7 @@ import Db
 import Output
 import Metrics
 import Render
+import Plan
 import core.Bus
 import core.Sports
 import Sql
@@ -352,6 +353,14 @@ ReportHealth :: [].{
 						Err(_) => { count: 0, known: False, problem: "the pending-metrics count could not be computed" }
 					}
 			}
+		# how close the projection's forecast has been (ADR 0022); a check
+		# that cannot be read reports no week checked rather than stopping
+		# the diagnosis
+		forecast_check =
+			match Plan.forecast_check_today!(path) {
+				Ok(c) => c
+				Err(_) => Metrics.check_unknown
+			}
 		payload = {
 			activities: cov.total,
 			with_hr: cov.with_hr,
@@ -403,6 +412,7 @@ ReportHealth :: [].{
 			estimated_power_count_30d: est_power_30d,
 			junk_filtered_pct_30d: junk.pooled,
 			junk_worst_session_pct_30d: junk.worst,
+			forecast_check,
 		}
 		Output.out!(
 			payload,
@@ -506,6 +516,7 @@ ReportHealth :: [].{
 						[
 							"  config: hr zones ${if (p.zones_set) "set" else "incomplete"}, ${(p.sport_zone_overrides).to_str()} per-sport zone key(s) set · ${(p.ftp_derived_sports).to_str()} sport(s) have a derived FTP (FTP is never configured — see summary)",
 							"  time: ${p.time}",
+							"  forecast check: ${Render.check_line(p.forecast_check)}",
 						],
 						hint,
 						missing_sets_hint,

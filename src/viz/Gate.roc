@@ -511,6 +511,7 @@ Gate :: [].{
 			ev_tile_proj: [],
 			proj: [],
 			proj_keys: [],
+			proj_check: [],
 			ev_tile_sub: t,
 			zero_note: p,
 			ridden_found: Bool.False,
@@ -793,6 +794,14 @@ Gate :: [].{
 	long_event_at : U64
 	long_event_at = 100
 
+	# the forecast checks the boards carry: one measured over every week,
+	# one with too little history to check
+	board_check : Db.ProjCheck
+	board_check = Check({ known: Bool.True, weeks: 8, days_out: Load.check_line_days, max: 1.43 })
+
+	short_check : Db.ProjCheck
+	short_check = Check({ known: Bool.False, weeks: 8, days_out: Load.check_line_days, max: 0.0 })
+
 	board_proj : U64, List(Db.Point), List(Str) -> List(Db.ProjDay)
 	board_proj = |k, data, days| {
 		scale = 0.6 + 0.15 * U64.to_f32(k % 7)
@@ -832,9 +841,9 @@ Gate :: [].{
 		event = "${(List.first(athlete_heads(a))) ?? "Ride"} championship, the long course with every hill"
 		name = Board.ev_name(face, event)
 		p = Text.Prepared.stub
-		projection = { ok: Bool.True, ctl: 54.2, tsb: -9.8, considered: 20, projected: 14, days: proj }
+		projection = { ok: Bool.True, ctl: 54.2, tsb: -9.8, considered: 20, projected: 14, days: proj, check: NoCheck }
 		long_day = (List.get(long_proj_days, long_event_at - 1)) ?? ""
-		to_event = { ok: Bool.True, ctl: 61.4, tsb: 3.6, considered: 60, projected: 40, days: List.take_first(proj, long_event_at) }
+		to_event = { ok: Bool.True, ctl: 61.4, tsb: 3.6, considered: 60, projected: 40, days: List.take_first(proj, long_event_at), check: NoCheck }
 		{
 			..base,
 			view: 0,
@@ -850,6 +859,7 @@ Gate :: [].{
 			ev_tile_proj: if (ev == 0) List.map(Board.tile_lines(long_day, "2027-03-12", projection, to_event), |l| txt(l, 10.0)) else if (ev == 2) List.map(Board.tile_lines("2026-12-02", "2026-12-02", projection, projection), |l| txt(l, 10.0)) else [],
 			proj,
 			proj_keys: List.map([30.U64, 60, 90], |r| { r, t: txt(Board.proj_key_text(List.take_first(proj, r)), 11.0) }),
+			proj_check: if (ev == 1) [] else List.map(Board.check_key_text(if (ev == 0) board_check else short_check), |l| txt(l, 11.0)),
 			ridden_found: ev == 1,
 			ridden_note: txt(Board.ev_line(face, event, " done, 3d ago", 10.0), 10.0),
 			ev_label: txt(event, 13.0),
@@ -1883,6 +1893,27 @@ expect {
 # tile, a load bar or a planned load bar
 expect Gate.failures(|m| Gate.judge(Board.owned(m, Gate.measure), Board.marks(m)), Gate.board_models) == []
 expect Gate.failures(|m| Gate.judge(Board.owned(m, Gate.builtin_measure), Board.marks(m)), Gate.board_models_in(Gate.builtin_font)) == []
+
+# the forecast check's line is placed on every board with a projection,
+# in the brand faces and in the built-in face alike: the measured check
+# on the long projection's boards, the line saying there is too little
+# history on the short one's, and no line where nothing is projected
+expect {
+	shows = |models, measure|
+		List.all(
+			models,
+			|f| {
+				texts = List.map(Board.owned(f.model, measure), |o| o.key)
+				drawn = |s| List.any(texts, |t| Str.starts_with(t, "'${s}"))
+				measured = drawn("last 8 weeks: fitness forecast within 1.5 at 2 weeks out")
+				short = drawn("too little history yet to check the forecast at 2 weeks out")
+				if (Str.contains(f.name, "event=0")) measured and !short
+				else if (Str.contains(f.name, "event=2")) short and !measured
+				else !measured and !short
+			},
+		)
+	shows(Gate.board_models, Gate.measure) and shows(Gate.board_models_in(Gate.builtin_font), Gate.builtin_measure)
+}
 
 # the projection fixtures draw what the gate claims: a board whose event the
 # short projection reaches carries twenty projected days and draws them all,

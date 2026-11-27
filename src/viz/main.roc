@@ -457,6 +457,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		ev_tile_proj: List.map_try!(Board.tile_lines(loaded.e.day, loaded.ph, proj, ev_proj), |l| mkt!(l, 10))?,
 		proj: proj_days,
 		proj_keys: List.map_try!(ranges, |r| mkt!(Board.proj_key_text(List.take_first(proj_days, r)), 11).map_ok(|t| { r, t }))?,
+		proj_check: List.map_try!(Board.check_key_text(proj.check), |l| mkt!(l, 11))?,
 		ev_tile_sub: mkt!(ev_tile.sub, 11)?,
 		zero_note: mk!(Board.zero_text, 11)?,
 		ridden_found: loaded.rd.ago >= 0 and loaded.rd.ago <= 7 and loaded.e.day != "",

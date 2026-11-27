@@ -417,7 +417,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1607)?
+	checks_ran_exactly!(1619)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -458,6 +458,7 @@ run_scenarios! = |ctx| {
 	b_cross_surface!(ctx)?
 	b_window_agrees!(ctx)?
 	b_forecast!(ctx)?
+	b_forecast_check!(ctx)?
 	b_human!(ctx)?
 	b_command_schemas!(ctx)?
 	# LAST of the substantive scenarios: the loop needs a rich, analyzed fixture — real
@@ -8614,6 +8615,13 @@ b_forecast! = |ctx| {
 	check!("events counts an event's days by source, the days after the plan from recent training", strjq!(fctx, ["events"], ".data.events[0] | [.load_sources.estimate, .load_sources.habit, .load_sources.rest, .plan_end.known, .plan_end.date] | map(tostring) | join(\",\")") == "4,15,1,true,${six}")?
 	check!("...and says so in words", Str.contains(human!(["events"]), "\n      20 projected days: 4 estimated from your history, 15 from your recent training, 1 rest"))?
 	check!("the events payload conforms to its schema with every source in it", validate_schema!(fctx, "events", "events") == "")?
+	# 28 recorded days are too few to check the forecast at any distance:
+	# every distance says so with no number, and both screens print the line
+	check!("too short a record checks no distance of the forecast and states no error", strjq!(fctx, ["project", six], ".data.forecast_check | [.weeks, (.horizons | map(\"\\(.days_out):\\(.known):\\(.fitness_mae):\\(.fitness_max)\") | join(\";\"))] | map(tostring) | join(\",\")") == "8,7:false:0:0;14:false:0:0;28:false:0:0")?
+	check!("...and project says there is too little history to check it", Str.contains(human!(["project", six]), "\n  too little history yet to check the forecast at 2 weeks out"))?
+	check!("...and doctor prints the same line", Str.contains(human!(["doctor"]), "\n  forecast check: too little history yet to check the forecast at 2 weeks out\n"))?
+	check!("...and carries the same check", strjq!(fctx, ["doctor"], ".data.forecast_check.horizons | map(.known) | any | tostring") == "false")?
+	check!("the doctor payload conforms to its schema with the forecast check in it", validate_schema!(fctx, "doctor", "doctor") == "")?
 	# a well-targeted plan: every session priced by its target, the rest
 	# session still at rest and no day estimated
 	_ = stride!(fctx.bin, fctx.home, ["week", "add", d!(1), "endurance", "Easy 60 min, conversational", "base", "1x1:00:00@RPE5"])
@@ -8643,6 +8651,40 @@ b_forecast! = |ctx| {
 	check!("with no history, an untargeted day and an empty one carry nothing and are flagged", strjq!(nctx, ["project", d!(3)], "[.data.series[] | \"\\(.load_source):\\(.load):\\(.load_known)\"] | join(\",\")") == "none:0:false,none:0:false,none:0:false")?
 	check!("...and the screen names it", Str.contains(stride_human!(nctx.bin, nctx.home, ["project", d!(3)]), "\n  3 projected days: 3 with nothing to estimate from"))?
 	_ = sh!("rm -rf '${nh}'")
+	Ok({})
+}
+
+# ── how close the forecast has been (ADR 0022) ─────────────────────────────
+# A home whose record is a steady 60 a day for 130 days, fitness and
+# fatigue held at 60: every forecast from the recent mean meets the record
+# exactly, so the check is known at every distance with no error. A rest
+# session done twenty days ago, written long before, is part of the plan
+# as it stood for the weeks before it, so the forecasts across it fall
+# below the record; written after those weeks it is not, and the check
+# reads no error again. The creation time reads in either stored form.
+b_forecast_check! : Ctx => Try({}, _)
+b_forecast_check! = |ctx| {
+	h = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+	cctx = { ..ctx, home: h, db: "${h}/.stride/db.sqlite" }
+	_ = stride!(cctx.bin, cctx.home, ["init"])
+	_ = sql!(cctx.db, "INSERT OR REPLACE INTO config (key,value) VALUES ('timezone','${ctx.tz}');")
+	today = ctx.today
+	_ = sql!(cctx.db, "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 129) INSERT INTO daily_load (day, tss, ctl, atl, tsb) SELECT date('${today}', '-' || i || ' day'), 60.0, 60.0, 60.0, 0.0 FROM n;")
+	ahead = Str.trim(sh!("TZ='${ctx.tz}' date -v+7d +%F 2>/dev/null || TZ='${ctx.tz}' date -d '7 days' +%F"))
+	rows = ".data.forecast_check.horizons | map(\"\\(.days_out):\\(.known):\\(.weeks_checked):\\(.fitness_max * 1000 | round)\") | join(\";\")"
+	check!("a steady record checks every distance over all 8 weeks with no error", strjq!(cctx, ["project", ahead], rows) == "7:true:8:0;14:true:8:0;28:true:8:0")?
+	ph = stride_human!(cctx.bin, cctx.home, ["project", ahead])
+	check!("...and project prints the check, its line and one row per distance", Str.contains(ph, "\n  last 8 weeks: fitness forecast within 0.0 at 2 weeks out\n    1 week out, forecast minus recorded: fitness off by 0.0 on average, 0.0 at most, mean +0.0; form off by 0.0 on average, 0.0 at most, mean +0.0\n"))?
+	check!("...and doctor prints its line", Str.contains(stride_human!(cctx.bin, cctx.home, ["doctor"]), "\n  forecast check: last 8 weeks: fitness forecast within 0.0 at 2 weeks out\n"))?
+	_ = sql!(cctx.db, "INSERT INTO planned_sessions (created_at,target_date,session_type,detail,rationale,status) VALUES ('2000-01-01T00:00:00Z', date('${today}', '-20 day'), 'rest', 'Off', 'recover', 'done');")
+	early = strjq!(cctx, ["project", ahead], ".data.forecast_check.horizons[1] | [.known, .fitness_max > 0.5, .fitness_bias < 0, .fitness_bias == -.fitness_mae] | map(tostring) | join(\",\")")
+	check!("a rest session written before the weeks it falls in pulls their forecasts below the record (got ${early})", early == "true,true,true,true")?
+	_ = sql!(cctx.db, "UPDATE planned_sessions SET created_at = '946684800';")
+	check!("...the same when its creation time is stored as seconds", strjq!(cctx, ["project", ahead], ".data.forecast_check.horizons[1] | [.fitness_max > 0.5, .fitness_bias < 0] | map(tostring) | join(\",\")") == "true,true")?
+	_ = sql!(cctx.db, "UPDATE planned_sessions SET created_at = '${today}T00:00:00Z';")
+	check!("...and written after those weeks it is not part of their plan", strjq!(cctx, ["project", ahead], rows) == "7:true:8:0;14:true:8:0;28:true:8:0")?
+	check!("the project payload conforms to its schema with a known check", validate_schema!(cctx, "project ${ahead}", "project") == "")?
+	_ = sh!("rm -rf '${h}'")
 	Ok({})
 }
 

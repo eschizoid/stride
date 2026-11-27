@@ -93,6 +93,33 @@ most likely future.
    from the engine's projection to that date, with how many of its days were
    estimated, however far past the plot the event lies.
 
+7. **The forecast states how close it has been.** For each of the last 8 weeks the
+   engine rebuilds what it knew at the end of that week's Sunday and projects from
+   there with the same walk, and compares fitness, fatigue and form 7, 14 and 28
+   days out with what `daily_load` recorded on those days. The errors are forecast
+   minus recorded: their mean size, their mean, and the largest. They are
+   arithmetic and carry no verdict (ADR 0012). `project` and `doctor` carry them as
+   `forecast_check`, and `project`, `doctor` and the board's key print one line
+   from them, for example "last 8 weeks: fitness forecast within 1.5 at 2 weeks out". A
+   distance the record cannot check for all 8 weeks says there is too little
+   history and gives no number.
+
+   What the engine knew on a past day is rebuilt from what is stored:
+   - the recorded days and the scored sessions up to that day;
+   - the plan as it stood: every planned session whose creation day is on or
+     before that day and whose date is after it, whatever became of it since, done
+     and skipped sessions alike, since sessions are never deleted. A date written
+     more than once keeps its latest session, the one the rule of one open session
+     per day leaves open.
+
+   The rebuilt plan has limits it cannot see past. A session skipped before the
+   day it was rebuilt for still counts as planned, because no skip time is
+   stored. Changing a planned session rewrites it and its creation time, so the
+   older version is lost and the session joins the plan only from the day it was
+   changed. Creation times are UTC, and a session with no readable creation time
+   is left out. Targets are priced with today's thresholds and zones, and past
+   sessions with today's scores, because neither is stored as it stood.
+
 ## Consequences
 
 ADR 0009 says the engine never invents a value. A measured day still never gets an
@@ -113,3 +140,35 @@ session at least a session rating target.
 A plan written mostly in prose now draws the athlete's usual training rather than a
 decline to zero. Its numbers are only as good as the history behind them, and the
 mix shown beside them says how much of the plan that is.
+
+## Evidence for the settings
+
+Measured 2026-11-27 on a copy of one athlete's database: 1,807 recorded days, 812
+scored sessions and 154 planned sessions written from 2026-07-26 on. The check was
+run at every week's end from the 43rd recorded day on, about 250 weeks, over each
+candidate setting: an estimate window of 28, 56 or 90 days, a median or a mean, and
+a habit window of 14, 28 or 56 days. Errors are fitness (CTL) forecast minus
+recorded. "Change" is the mean change in each week's error size against the
+chosen settings, with two standard errors.
+
+| setting (estimate, average, habit) | 7 days: mean size | 14 days: mean size | 14 days: change | 28 days: mean size |
+|---|---|---|---|---|
+| 90, median, 28 (chosen) | 1.68 | 2.88 | 0 | 5.04 |
+| 28, median, 14 | 1.57 | 2.80 | -0.08 ± 0.22 | 4.97 |
+| 90, mean, 28 | 1.67 | 2.88 | 0.00 ± 0.02 | 5.02 |
+| 28, mean, 28 | 1.66 | 2.87 | 0.00 ± 0.02 | 5.02 |
+| 90, median, 56 | 1.93 | 3.27 | +0.39 ± 0.22 | 5.69 |
+
+The 17 weeks since the plan began are the only ones a planned session's estimate
+can affect. Over them the chosen settings measure 1.60, 2.09 and 2.91 at 7, 14 and
+28 days. The best candidate there, a 28-day mean with the 28-day habit, measures
+1.38, 2.04 and 2.62. Its change at 28 days is -0.29 ± 0.26 over 14 weeks whose
+windows overlap, and at 14 days it is -0.05 ± 0.36.
+
+No candidate is better by more than its noise over the whole history, and the one
+that edges past two standard errors in the planned weeks does so on 14
+overlapping weeks and not at 14 days. The settings stay as decision 2 and 3 state
+them. A 56-day habit is worse beyond noise at every distance, so a longer habit
+window is ruled out. On the same copy the 8-week check reads, at 14 days, a mean
+fitness error size of 2.1, a mean of -0.7 and a largest of 6.2. The check costs
+the `project` command about 20 ms.

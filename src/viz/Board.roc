@@ -385,6 +385,16 @@ Board :: [].{
 		if (mix == "") "dashed: projected" else "dashed: projected - ${mix}"
 	}
 
+	# the forecast check's line under the key (ADR 0022), in the words
+	# `stride project` and `stride doctor` print (core Load.check_text);
+	# none when the projection carries no check
+	check_key_text : Db.ProjCheck -> List(Str)
+	check_key_text = |c|
+		match c {
+			NoCheck => []
+			Check(x) => [Load.check_text(x)]
+		}
+
 	# a line through `pts` cut into dashes `on` long with `off` between,
 	# measured by distance along the whole line from its first point, so the
 	# rhythm runs on through every corner; a dash a corner splits is drawn
@@ -658,6 +668,11 @@ Board :: [].{
 	prio_hint : U64
 	prio_hint = 6
 
+	# the forecast check's line, placed after every other label: it
+	# yields to the key it sits under and to the event marker
+	prio_check : U64
+	prio_check = 7
+
 	texts : Ui.Model, Scene.Measure -> List(Labels.Label(Scene.Item))
 	texts = |model, measure| {
 		win_w = model.win.w
@@ -780,6 +795,17 @@ Board :: [].{
 				}
 				_ => []
 			}
+		# the forecast check under the key: a row below the key's own
+		# spots, at the same two ends, then a row lower again
+		check =
+			match model.proj_check {
+				[t] if g.n > g.meas => {
+					kx = x_at(g, g.meas - 1) + 8.0
+					rx = g.left + g.pw - 6.0
+					[Scene.kept(measure, Scene.txt(t, Prose, ink_faint), [{ x: kx, y: g.top + 22.0, align: Left }, { x: rx, y: g.top + 22.0, align: Right }, { x: kx, y: g.top + 40.0, align: Left }, { x: rx, y: g.top + 40.0, align: Right }], prio_check, plot_box(g))]
+				}
+				_ => []
+			}
 		# the event marker's name beside its dashed line, left first. ev_idx
 		# indexes the full series, so it shifts by the days the range cut,
 		# and an event past the days the range draws has no marker.
@@ -790,7 +816,7 @@ Board :: [].{
 			} else {
 				[]
 			}
-		List.join([ylabels, dates, ends, [zero], key, event])
+		List.join([ylabels, dates, ends, [zero], key, check, event])
 	}
 
 	# what the board's labels keep off: the chrome, the chips, the tiles and
@@ -995,22 +1021,22 @@ proj_day_of = |day, tss, known, source| { day, ctl: 1.0, atl: 1.0, tsb: 0.0, tss
 prose_plan : List(Db.ProjDay)
 prose_plan = List.concat(List.repeat(proj_day_of("2026-12-01", 60.0, Bool.True, "estimate"), 30), [proj_day_of("2026-12-02", 0.0, Bool.True, "rest"), proj_day_of("2026-12-03", 45.0, Bool.True, "habit")])
 
-expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.True, ctl: 46.0, tsb: 14.3, considered: 4, projected: 1, days: prose_plan }) == ["11-08: fitness 46.0, form 14.3", "plan's last day, 31 days estimated"]
-expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 2, projected: 2, days: [proj_day_of("2027-06-25", 80.0, Bool.True, "target"), proj_day_of("2027-06-26", 0.0, Bool.True, "rest")] }) == ["06-26: fitness 52.5, form -3.2", "event day, all from targets"]
-expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 2, projected: 0, days: [proj_day_of("2027-06-25", 0.0, Bool.False, "none"), proj_day_of("2027-06-26", 40.0, Bool.True, "habit")] }) == ["06-26: fitness 52.5, form -3.2", "event day, 1 day with no estimate"]
-expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0, days: [] }) == []
-expect Board.proj_lines("", "", { ok: Bool.True, ctl: 1.0, tsb: 1.0, considered: 1, projected: 1, days: [] }) == []
+expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.True, ctl: 46.0, tsb: 14.3, considered: 4, projected: 1, days: prose_plan, check: NoCheck }) == ["11-08: fitness 46.0, form 14.3", "plan's last day, 31 days estimated"]
+expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 2, projected: 2, days: [proj_day_of("2027-06-25", 80.0, Bool.True, "target"), proj_day_of("2027-06-26", 0.0, Bool.True, "rest")], check: NoCheck }) == ["06-26: fitness 52.5, form -3.2", "event day, all from targets"]
+expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 2, projected: 0, days: [proj_day_of("2027-06-25", 0.0, Bool.False, "none"), proj_day_of("2027-06-26", 40.0, Bool.True, "habit")], check: NoCheck }) == ["06-26: fitness 52.5, form -3.2", "event day, 1 day with no estimate"]
+expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0, days: [], check: NoCheck }) == []
+expect Board.proj_lines("", "", { ok: Bool.True, ctl: 1.0, tsb: 1.0, considered: 1, projected: 1, days: [], check: NoCheck }) == []
 # the plan ending 2026-12-15 short of a June event reads the numbers `stride
 # project 2026-12-15` returns, in the text `stride events` prints beside
 # "plan's last day 2026-12-15" for them (pinned in the e2e suite)
-expect Board.proj_lines("2026-12-15", "2027-06-26", { ok: Bool.True, ctl: 54.94, tsb: 1.26, considered: 20, projected: 16, days: List.concat(List.repeat(proj_day_of("2026-12-01", 70.0, Bool.True, "target"), 16), List.repeat(proj_day_of("2026-12-02", 50.0, Bool.True, "estimate"), 4)) }) == ["12-15: fitness 54.9, form 1.3", "plan's last day, 4 days estimated"]
+expect Board.proj_lines("2026-12-15", "2027-06-26", { ok: Bool.True, ctl: 54.94, tsb: 1.26, considered: 20, projected: 16, days: List.concat(List.repeat(proj_day_of("2026-12-01", 70.0, Bool.True, "target"), 16), List.repeat(proj_day_of("2026-12-02", 50.0, Bool.True, "estimate"), 4)), check: NoCheck }) == ["12-15: fitness 54.9, form 1.3", "plan's last day, 4 days estimated"]
 
 # the event tile reads the projection to the event's own date when an event
 # is ahead, however far past the plot it lies, and the plan's last day when
 # none is
 expect {
-	plan_p = { ok: Bool.True, ctl: 54.94, tsb: 1.26, considered: 20, projected: 16, days: List.repeat(proj_day_of("2026-12-01", 70.0, Bool.True, "target"), 20) }
-	event_p = { ok: Bool.True, ctl: 61.4, tsb: 3.6, considered: 20, projected: 16, days: List.concat(List.repeat(proj_day_of("2026-12-01", 70.0, Bool.True, "target"), 20), List.repeat(proj_day_of("2027-01-01", 45.0, Bool.True, "habit"), 192)) }
+	plan_p = { ok: Bool.True, ctl: 54.94, tsb: 1.26, considered: 20, projected: 16, days: List.repeat(proj_day_of("2026-12-01", 70.0, Bool.True, "target"), 20), check: NoCheck }
+	event_p = { ok: Bool.True, ctl: 61.4, tsb: 3.6, considered: 20, projected: 16, days: List.concat(List.repeat(proj_day_of("2026-12-01", 70.0, Bool.True, "target"), 20), List.repeat(proj_day_of("2027-01-01", 45.0, Bool.True, "habit"), 192)), check: NoCheck }
 	Board.tile_lines("2027-06-26", "2026-12-15", plan_p, event_p) == ["06-26: fitness 61.4, form 3.6", "event day, 192 days estimated"]
 		and Board.tile_lines("", "2026-12-15", plan_p, event_p) == ["12-15: fitness 54.9, form 1.3", "plan's last day, all from targets"]
 		and Board.tile_lines("2027-06-26", "2026-12-15", plan_p, { ..event_p, ok: Bool.False }) == []
@@ -1058,6 +1084,10 @@ expect {
 expect Board.proj_key_text(prose_plan) == "dashed: projected - 30 estimated from your history, 1 from your recent training, 1 rest"
 expect Board.proj_key_text([proj_day_of("2026-12-01", 80.0, Bool.True, "target"), proj_day_of("2026-12-02", 0.0, Bool.False, "none")]) == "dashed: projected - 1 from a target, 1 with nothing to estimate from"
 expect Board.proj_key_text([]) == "dashed: projected"
+# the forecast check's line is the line the CLI prints, and no check is no line
+expect Board.check_key_text(Check({ known: Bool.True, weeks: 8, days_out: 14, max: 1.43 })) == ["last 8 weeks: fitness forecast within 1.5 at 2 weeks out"]
+expect Board.check_key_text(Check({ known: Bool.False, weeks: 8, days_out: 14, max: 0.0 })) == ["too little history yet to check the forecast at 2 weeks out"]
+expect List.is_empty(Board.check_key_text(NoCheck))
 expect Board.planned_load_row(proj_day_of("2026-12-01", 45.0, Bool.True, "target")) == { lbl: "Planned load", v: "45.0" }
 expect Board.planned_load_row(proj_day_of("2026-12-01", 62.5, Bool.True, "estimate")) == { lbl: "Estimated load", v: "62.5" }
 expect Board.planned_load_row(proj_day_of("2026-12-01", 41.2, Bool.True, "habit")) == { lbl: "Recent daily avg", v: "41.2" }

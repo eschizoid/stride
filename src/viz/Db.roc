@@ -1,5 +1,6 @@
 import core.Bus
 import core.Fmt
+import core.Load
 import core.Series
 import core.Sports
 import core.Route
@@ -1895,14 +1896,19 @@ Db :: [].{
 	# returns. `considered` is the open sessions in the window, `projected`
 	# the ones whose target the engine priced into a load, and `days` the
 	# payload's series, the walk day by day to the horizon.
-	Projection : { ok : Bool, ctl : F64, tsb : F64, considered : I64, projected : I64, days : List(ProjDay) }
+	Projection : { ok : Bool, ctl : F64, tsb : F64, considered : I64, projected : I64, days : List(ProjDay), check : ProjCheck }
+
+	# the forecast check (ADR 0022) at the distance the one-line check
+	# states (core Load.check_line_days), in the fields core Load.check_text
+	# reads; NoCheck when the payload carries none that reads
+	ProjCheck : [NoCheck, Check({ known : Bool, weeks : U64, days_out : I64, max : F64 })]
 
 	# one projected day: its date, state and load, whether that load is
 	# known, and where it came from (target, estimate, habit, rest or none)
 	ProjDay : { day : Str, ctl : F32, atl : F32, tsb : F32, tss : F32, known : Bool, source : Str }
 
 	no_projection : Projection
-	no_projection = { ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0, days: [] }
+	no_projection = { ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0, days: [], check: NoCheck }
 
 	# The series array is cut out before the top-level keys are read: its
 	# rows carry `ctl`, `atl` and `tsb` too, and a key scan reads the first
@@ -1931,10 +1937,34 @@ Db :: [].{
 			},
 		)
 		match (json_f64("ctl"), json_f64("tsb"), json_i64("sessions_considered"), json_i64("sessions_projected"), days) {
-			(Ok(c), Ok(t), Ok(sc), Ok(sp), Ok(ds)) => if (Str.contains(cut.top, "\"baseline_known\":true")) { ok: Bool.True, ctl: c, tsb: t, considered: sc, projected: sp, days: ds } else no_projection
+			(Ok(c), Ok(t), Ok(sc), Ok(sp), Ok(ds)) => if (Str.contains(cut.top, "\"baseline_known\":true")) { ok: Bool.True, ctl: c, tsb: t, considered: sc, projected: sp, days: ds, check: parse_check(cut.top) } else no_projection
 			_ => no_projection
 		}
 	}
+
+	# The check's row for the one-line distance, cut from the payload's
+	# forecast_check: each row is a flat object whose keys the encoder
+	# writes in name order, so the row opens on its days_out and closes on
+	# the first `}` after it. A row that lost its largest error, or a
+	# check that lost its weeks, is NoCheck.
+	parse_check : Str -> ProjCheck
+	parse_check = |top|
+		match Str.split_on(top, "\"forecast_check\":{") {
+			[_, fc] =>
+				match Str.split_on(fc, "{\"days_out\":${Load.check_line_days.to_str()},") {
+					[_, rest] =>
+						match (Str.split_first(rest, "}"), U64.from_str(json_number(fc, "weeks"))) {
+							(Ok({ before: row, after: _ }), Ok(weeks)) =>
+								match F64.from_str(json_number(row, "fitness_max")) {
+									Ok(max) => Check({ known: Str.contains(row, "\"known\":true"), weeks, days_out: Load.check_line_days, max })
+									Err(_) => NoCheck
+								}
+							_ => NoCheck
+						}
+					_ => NoCheck
+				}
+			_ => NoCheck
+		}
 
 	load_projection! : Cmd.Runner, Str => Projection
 	load_projection! = |runner, day| {
@@ -2413,6 +2443,40 @@ expect {
 }
 expect !(Db.parse_projection("{\"data\":{\"atl\":40.5,\"baseline_known\":true,\"ctl\":47.92,\"series\":[{\"atl\":1.0,\"date\":\"2026-11-26\",\"load\":0,\"load_known\":true,\"tsb\":1.0}],\"sessions_considered\":1,\"sessions_projected\":1,\"tsb\":7.42}}").ok)
 expect !(Db.parse_projection("{\"data\":{\"atl\":40.5,\"baseline_known\":true,\"ctl\":47.92,\"series\":[{\"atl\":1.0,\"ctl\":2.0,\"date\":\"2026-11-26\",\"load\":0,\"load_known\":true,\"tsb\":1.0}],\"sessions_considered\":1,\"sessions_projected\":1,\"tsb\":7.42}}").ok)
+
+# the forecast check is read from the two-week row of the payload's
+# forecast_check, the other rows ignored; a check without its weeks or
+# without that row's largest error is no check, and the projection still
+# reads
+expect {
+	row = |d, known, mx| "{\"days_out\":${d},\"fatigue_bias\":0.1,\"fatigue_mae\":3.2,\"fatigue_max\":9.5,\"fitness_bias\":-0.7,\"fitness_mae\":2.1,\"fitness_max\":${mx},\"form_bias\":0.3,\"form_mae\":8.1,\"form_max\":16.5,\"known\":${known},\"weeks_checked\":8}"
+	doc = |check| "{\"schema_version\":3,\"data\":{\"atl\":40.5,\"baseline_known\":true,\"ctl\":47.92,\"days_away\":3,${check}\"ftp_known\":true,\"series\":[],\"sessions_considered\":0,\"sessions_projected\":0,\"tsb\":7.42}}"
+	full = doc("\"forecast_check\":{\"horizons\":[${row("7", "true", "4.1")},${row("14", "true", "6.15")},${row("28", "false", "0")}],\"weeks\":8},")
+	short = doc("\"forecast_check\":{\"horizons\":[${row("7", "false", "0")},${row("14", "false", "0")},${row("28", "false", "0")}],\"weeks\":8},")
+	noweeks = doc("\"forecast_check\":{\"horizons\":[${row("14", "true", "6.15")}]},")
+	none = |c|
+		match c {
+			NoCheck => Bool.True
+			Check(_) => Bool.False
+		}
+	p = Db.parse_projection(full)
+	p.ok
+		and (
+			match p.check {
+				Check(c) => c.known and c.weeks == 8 and c.days_out == 14 and (c.max - 6.15).abs() < 0.000001
+				NoCheck => Bool.False
+			}
+		)
+		and (
+			match Db.parse_projection(short).check {
+				Check(c) => !(c.known)
+				NoCheck => Bool.False
+			}
+		)
+		and none(Db.parse_projection(noweeks).check)
+		and Db.parse_projection(noweeks).ok
+		and none(Db.parse_projection(doc("")).check)
+}
 
 # thousands group in threes from the right, a sign stays in front, and a
 # unit sits one space after the number
