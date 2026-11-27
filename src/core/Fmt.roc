@@ -122,4 +122,23 @@ Fmt :: [].{
 	hours_tenths = |secs| tenths((secs * 10 + 1800) // 3600)
 
 	expect hours_tenths(17244) == "4.8" and hours_tenths(3600) == "1.0" and hours_tenths(0) == "0.0" and hours_tenths(179) == "0.0" and hours_tenths(180) == "0.1"
+
+	# seconds as whole minutes, rounded to the nearest minute with a half
+	# minute rounding up: 16,470 s is 274 min 30 s and reads 275. A duration
+	# stated in whole minutes rounds, as hours_tenths does for hours. A clock
+	# reading keeps its own rule: mmss is exact, and a countdown or a playback
+	# position floors, since a clock shows a minute only once it has passed.
+	# Negative input clamps to zero, as mmss does.
+	minutes : I64 -> I64
+	minutes = |secs| if (secs <= 0) 0 else (secs + 30) // 60
+
+	expect minutes(16470) == 275
+	expect minutes(16499) == 275
+	expect minutes(16500) == 275
+	expect minutes(16469) == 274
+	expect minutes(59) == 1
+	expect minutes(29) == 0
+	expect minutes(30) == 1
+	expect minutes(0) == 0
+	expect minutes(-90) == 0
 }

@@ -132,7 +132,7 @@ Plan :: [].{
 		match kind_of(p) {
 			Done => {
 				name = if (p.act_name == "") "linked activity" else p.act_name
-				base = "${name} - ${I64.to_str((p.act_secs + 30) // 60)} min - load ${I64.to_str(p.act_load)}"
+				base = "${name} - ${I64.to_str(Fmt.minutes(p.act_secs))} min - load ${I64.to_str(p.act_load)}"
 				tt = target_text(p)
 				if (tt == "") base else "${base} - ${tt}"
 			}
@@ -455,6 +455,7 @@ Plan :: [].{
 	expect result_text({ ..blank_row, status: "done", act_name: "Pool swim", act_secs: 2700, act_load: 40, tgt_lit: "10x100m@1:40/100m", tgt_res: "whole session at 1:44/100m" }) == "Pool swim - 45 min - load 40 - target 10x100m@1:40/100m; whole session at 1:44/100m"
 	expect result_text({ ..blank_row, status: "done", act_name: "Strength", act_secs: 2700, act_load: 45, tgt_lit: "1x45:00@RPE6", tgt_res: "rated 7.0" }) == "Strength - 45 min - load 45 - target 1x45:00@RPE6; rated 7.0"
 	expect result_text({ ..blank_row, status: "skipped", reason: "sick", sub_id: 7, sub_name: "Z2 Ride" }) == "skipped: sick -> Z2 Ride"
+	expect List.map([16470, 16499, 16500, 59, 0], |s| result_text({ ..blank_row, status: "done", act_name: "Ride", act_secs: s, act_load: 62 })) == ["Ride - 275 min - load 62", "Ride - 275 min - load 62", "Ride - 275 min - load 62", "Ride - 1 min - load 62", "Ride - 0 min - load 62"]
 	expect result_text({ ..blank_row, status: "skipped" }) == "skipped"
 	expect result_text({ ..blank_row, past: Bool.False }) == ""
 	# the load strip names the week's blended total load, both weeks grouped

@@ -549,10 +549,11 @@ Render :: [].{
 	pace_per_dist : [Metric, Imperial], F64, I64 -> Str
 	pace_per_dist = Units.pace_per_dist
 
-	# seconds -> "62m"
+	# seconds -> "62m", rounded to the nearest minute by core Fmt.minutes,
+	# the rule the window's minutes share
 	mins : I64 -> Str
 	mins = |secs|
-		Str.concat(I64.to_str(secs // 60), "m")
+		Str.concat(I64.to_str(Fmt.minutes(secs)), "m")
 
 	# m:ss for interval durations — 181 -> "3:01"; whole minutes keep :00 so
 	# columns align ("12:00", not "12m")
@@ -1434,7 +1435,7 @@ Render :: [].{
 			}
 		zone_lines =
 			if (z.hr_streams > 0)
-				["    time in HR zones: Z1 ${I64.to_str(z.z1_s // 60)}m  Z2 ${I64.to_str(z.z2_s // 60)}m  Z3 ${I64.to_str(z.z3_s // 60)}m  Z4 ${I64.to_str(z.z4_s // 60)}m  Z5 ${I64.to_str(z.z5_s // 60)}m"]
+				["    time in HR zones: Z1 ${mins(z.z1_s)}  Z2 ${mins(z.z2_s)}  Z3 ${mins(z.z3_s)}  Z4 ${mins(z.z4_s)}  Z5 ${mins(z.z5_s)}"]
 			else
 				["    time in HR zones: unavailable (no detailed HR stream in this window)"]
 		polarization_lines =
@@ -1960,6 +1961,7 @@ expect Render.fmt2(-0.5) == "-0.50" # sign survives when the integer part is 0
 expect Render.fmt2(-1.25) == "-1.25"
 expect Render.fmt0(71.9) == "72"
 expect Render.mins(3725) == "62m"
+expect List.map([16470, 16499, 16500, 59, 0], Render.mins) == ["275m", "275m", "275m", "1m", "0m"]
 expect Render.pad_right("ab", 4) == "ab  "
 expect Render.display_width("██") == 2
 expect Render.display_width("abc") == 3

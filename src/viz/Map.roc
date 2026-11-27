@@ -825,7 +825,7 @@ Map :: [].{
 		if secs <= 0 {
 			"-"
 		} else {
-			mins = (secs + 30) // 60
+			mins = Fmt.minutes(secs)
 			h = mins // 60
 			mm = mins % 60
 			if (h == 0) "${I64.to_str(mm)}m" else "${I64.to_str(h)}h ${if (mm < 10) "0" else ""}${I64.to_str(mm)}m"
@@ -1306,6 +1306,7 @@ expect {
 		and data(row, Imperial) == Ok("3.1 mi   20m   2:00 /500m")
 		and (List.first(Map.card_lines(run, Metric, Ready))).map_ok(|l| l.text) == Ok("TrailRun")
 		and Map.time_text(3900) == "1h 05m" and Map.time_text(0) == "-" and Map.dist_text(0.0, Metric) == "-"
+		and List.map([16470, 16499, 16500, 59], Map.time_text) == ["4h 35m", "4h 35m", "4h 35m", "1m"]
 }
 
 # the card says when its trace is on its way and when there is none

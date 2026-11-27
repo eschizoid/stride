@@ -771,12 +771,15 @@ Db :: [].{
 	# ASCII, since the brand atlases carry no em dash.
 	unlinked_detail : Str, I64, I64 -> Str
 	unlinked_detail = |name, secs, load| {
-		mins = "${I64.to_str(secs // 60)}m"
+		mins = "${I64.to_str(Fmt.minutes(secs))}m"
 		if (load >= 1) "${name} - ${mins}, ${I64.to_str(load)} load" else "${name} - ${mins}"
 	}
 
 	expect unlinked_detail("Morning Ride", 16440, 235) == "Morning Ride - 274m, 235 load"
-	expect unlinked_detail("Walk", 1790, 0) == "Walk - 29m"
+	expect unlinked_detail("Walk", 1790, 0) == "Walk - 30m"
+	# the minute rule is core Fmt.minutes, which the engine's Render.mins
+	# shares, so both surfaces read a session's minutes alike
+	expect List.map([16470, 16499, 16500, 59, 0], |s| unlinked_detail("Ride", s, 0)) == ["Ride - 275m", "Ride - 275m", "Ride - 275m", "Ride - 1m", "Ride - 0m"]
 
 	decode_plan_row : Sqlite.Row -> Try(PlanRow, [BadRow])
 	decode_plan_row = |r| {
@@ -1267,7 +1270,7 @@ Db :: [].{
 		z3 = r.i64("z3") ? |_| BadRow
 		z4 = r.i64("z4") ? |_| BadRow
 		z5 = r.i64("z5") ? |_| BadRow
-		mins = secs // 60
+		mins = Fmt.minutes(secs)
 		dk = Fmt.tenths((Units.dist_value(units, dist_m) * 10.0).round_to_i64_try().ok_or(0))
 		du = Units.dist_unit(units)
 		stats = stats_line({ mins, dist: "${dk}${du}", load: tss, np })

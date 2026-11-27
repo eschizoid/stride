@@ -1915,8 +1915,10 @@ expect {
 }
 
 # the session trace's gate: every session of every athlete at home and
-# zoomed with a ghost, and the three blank plots, at every size
+# zoomed with a ghost, and the three blank plots, at every size, in the
+# brand faces and in the built-in face the window falls back to
 expect Gate.failures(|m| Gate.judge(Trace.owned(m, Gate.measure), Trace.marks(m)), Gate.trace_models) == []
+expect Gate.failures(|m| Gate.judge(Trace.owned(m, Gate.builtin_measure), Trace.marks(m)), Gate.trace_models) == []
 
 # the day tab's gates: the week with its card, ladder, scroll hints and
 # quest, the log with a day open and loading, and the year with and without

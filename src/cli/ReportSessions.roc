@@ -432,7 +432,7 @@ ReportSessions :: [].{
 					if_str = if (a.intensity_known) " (if ${Render.fmt2(a.intensity)})" else ""
 					np_str = if (a.np_w > 0) " · np ${Render.fmt0(a.np_w)}W @ ftp ${Render.fmt0(a.ftp_used)}${if_str}" else ""
 					Stdout.line!("load   ${load_str}${np_str}")?
-					Stdout.line!("zones  Z1 ${(a.z1_s // 60).to_str()}m · Z2 ${(a.z2_s // 60).to_str()}m · Z3 ${(a.z3_s // 60).to_str()}m · Z4 ${(a.z4_s // 60).to_str()}m · Z5 ${(a.z5_s // 60).to_str()}m")?
+					Stdout.line!("zones  Z1 ${Render.mins(a.z1_s)} · Z2 ${Render.mins(a.z2_s)} · Z3 ${Render.mins(a.z3_s)} · Z4 ${Render.mins(a.z4_s)} · Z5 ${Render.mins(a.z5_s)}")?
 					(if (has_power_intensity)
 						Stdout.line!("hard   ${Render.mins(pintensity.hard_s)} at/above threshold (by power) · ${Render.mins(hard_s)} in HR Z4+Z5")
 					else
