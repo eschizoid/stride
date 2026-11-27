@@ -768,11 +768,12 @@ Gate :: [].{
 		}
 	}
 
-	# the projection a board continues into: twenty planned days after the
-	# series' last, walked by the engine's step from its last point over a
-	# weekly plan with a rest day nothing prices, a day whose session only
-	# partly prices and a heavy day, so the dashed lines rise and fall and
-	# the hollow bars run to the rug's top
+	# the projection a board continues into: twenty days after the series'
+	# last, walked by the engine's step from its last point over a weekly
+	# pattern holding every load source - a target, a rest session, an
+	# estimate, a day nothing could estimate, a day of recent training and
+	# a heavy day - so the dashed lines rise and fall, the hollow bars run
+	# to the rug's top, and the key names all five sources at its longest
 	proj_days : List(Str)
 	proj_days = List.concat(List.map(seq(18), |d| "2026-11-${two(d + 12)}"), List.map(seq(2), |d| "2026-12-${two(d)}"))
 
@@ -780,6 +781,7 @@ Gate :: [].{
 	board_proj = |k, data| {
 		scale = 0.6 + 0.15 * U64.to_f32(k % 7)
 		plan = [70.0, 0.0, 40.0, 95.0, 0.0, 210.0, 55.0]
+		sources = ["target", "rest", "estimate", "target", "none", "target", "habit"]
 		last = (List.last(data)) ?? { ctl: 0.0, atl: 0.0, tsb: 0.0, tss: 0.0 }
 		walk = List.fold(
 			List.map_with_index(proj_days, |d, i| { d, i }),
@@ -789,7 +791,7 @@ Gate :: [].{
 				s = Load.step({ ctl_prev: F32.to_f64(acc.ctl), atl_prev: F32.to_f64(acc.atl), tss: F32.to_f64(t) })
 				ctl = F64.to_f32_wrap(s.ctl)
 				atl = F64.to_f32_wrap(s.atl)
-				{ ctl, atl, out: List.append(acc.out, { day: e.d, ctl, atl, tsb: ctl - atl, tss: t, known: e.i % 7 != 1 and e.i % 7 != 2 }) }
+				{ ctl, atl, out: List.append(acc.out, { day: e.d, ctl, atl, tsb: ctl - atl, tss: t, known: e.i % 7 != 4, source: (List.get(sources, e.i % 7)) ?? "target" }) }
 			},
 		)
 		walk.out
@@ -828,7 +830,7 @@ Gate :: [].{
 			ev_tile_sub: txt(if (ev == 0) "in 226d, 2027-06-26" else if (ev == 2) "in 20d, 2026-12-02" else "today, 2026-11-12", 11.0),
 			ev_tile_proj: if (ev == 0) List.map(Board.proj_lines("2026-12-02", "2027-06-26", projection), |l| txt(l, 10.0)) else if (ev == 2) List.map(Board.proj_lines("2026-12-02", "2026-12-02", projection), |l| txt(l, 10.0)) else [],
 			proj,
-			proj_key: txt(Board.proj_key_text(projection.considered, projection.projected), 11.0),
+			proj_key: txt(Board.proj_key_text(proj), 11.0),
 			ridden_found: ev == 1,
 			ridden_note: txt(Board.ev_line(face, event, " done, 3d ago", 10.0), 10.0),
 			ev_label: txt(event, 13.0),
@@ -1887,7 +1889,7 @@ expect {
 	g = Board.geom(m)
 	bs = Board.bars(g)
 	planned = List.keep_if(bs, |b| b.planned)
-	last = (List.last(m.proj)) ?? { day: "", ctl: 0.0, atl: 0.0, tsb: 0.0, tss: 0.0, known: Bool.False }
+	last = (List.last(m.proj)) ?? { day: "", ctl: 0.0, atl: 0.0, tsb: 0.0, tss: 0.0, known: Bool.False, source: "" }
 	g.meas == 30
 		and g.n == 50
 		and List.last(g.days) == Ok("2026-12-02")

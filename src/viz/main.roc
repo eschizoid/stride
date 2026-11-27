@@ -331,9 +331,9 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 	# the fit, which runs the engine, so the skeleton skips it
 	cf = if (boot) curve_family else if (loaded.cf == "") "Ride" else loaded.cf
 	ft = if (boot) ({ fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: { value: 0.0, kind: "none", date: "none" }, thr: 0.0, thr_known: Bool.False, from_test: Bool.False }) else Db.load_fit!(acc.io.commands(), curve_days, cf)
-	# the board projects as far as the written plan reaches, never past the
-	# next event (load_plan_horizon! caps it there), and reads the numbers
-	# and the day-by-day series from the engine's own walk
+	# the board projects to the day load_plan_horizon! names, a near event
+	# or the written plan's last day, and reads the numbers and the
+	# day-by-day series from the engine's own walk
 	proj = if (boot or loaded.ph == "") Db.no_projection else Db.load_projection!(acc.io.commands(), loaded.ph)
 	proj_days = if (proj.ok) proj.days else []
 	# the event marker finds its day among the measured days and then the
@@ -451,7 +451,7 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		ev_tile_name: List.map_try!(ev_name.lines, |l| mkt!(l, ev_name.size))?,
 		ev_tile_proj: List.map_try!(Board.proj_lines(loaded.ph, loaded.e.day, proj), |l| mkt!(l, 10))?,
 		proj: proj_days,
-		proj_key: mkt!(Board.proj_key_text(proj.considered, proj.projected), 11)?,
+		proj_key: mkt!(Board.proj_key_text(proj_days), 11)?,
 		ev_tile_sub: mkt!(ev_tile.sub, 11)?,
 		zero_note: mk!(Board.zero_text, 11)?,
 		ridden_found: loaded.rd.ago >= 0 and loaded.rd.ago <= 7 and loaded.e.day != "",

@@ -47,36 +47,39 @@ with their one-line meanings, plus an event slot that counts down to the next
 event, says "ridden" for up to a week after one, and names the add command
 when none is planned. A long event name wraps to two lines rather than
 losing its end. Under the countdown the slot carries the projection: the
-fitness and form `stride project` returns for the last day the written plan
-reaches (open sessions after the series' last day), capped at the event, and
-how many of those sessions carry a load: every target kind is priced (power,
-pace, heart rate, session rating), and a session with no target or none its
-inputs can price adds nothing, so that count is how much of the projection is
-blind;
-past the plan's last day a projection is only decay, so the board names the
-day it stops ("12-15: fitness 54.9, form 1.3", the text `stride events` prints for the same day and numbers) and calls that day the "plan's last day", or the "event day" only when the plan reaches
-it.
+fitness and form `stride project` returns for the day the board projects to,
+and how much of the projection was estimated from the athlete's history.
+The board projects to the next event when it is no more than 42 days away,
+else to the written plan's last day (open sessions after the series' last
+day), capped at the event. The tile names that day ("12-15: fitness 54.9,
+form 1.3", the text `stride events` prints for the same day and numbers) and
+calls it the "event day" or the "plan's last day", then counts the days
+estimated from history ("plan's last day, 20 days estimated"), or the days
+with no estimate when the history is too thin to estimate them, or says
+"all from targets".
 
 The plot draws the same projection. The window reads the `series` of that
 one `stride project` call, the engine's walk day by day, so the board and
-the command cannot disagree about a day. After the last measured day the
-fitness, fatigue and form lines continue dashed to the plan's last day and
-stop there, each line's dashes spaced evenly along its whole projected
-length, and each projected day the plan prices a load onto gets a hollow
-bar on the load rug's scale; a day it priced nothing onto draws no bar. The
-range chips still count measured days, and the projected days follow them.
-The line-end values read the projection's last day, an event the plan
-reaches is marked where it falls, and a key along the plot's top says the
-dashed part is projected and how many of the window's sessions carry a load
-from a target ("dashed: projected, 16 of 20 sessions from targets"), the
-count the tile shows ("plan's last day, 16 of 20 from targets"). The pointer and the arrow cursor read projected
-days too: → walks on past the last measured day into them, one day a
-press, and past the last one turns the cursor off; the table, which shows
-measured days only, holds the latest of them instead. On a board drawing a
-projection the day card opens below the key, and over a projected day it
-says "projected" and reads the planned load, or "no target load"
-for a session whose target gave the engine no load, and carries no line of what was
-done.
+the command cannot disagree about a day. Every projected day carries a load
+and names where it came from (ADR 0022): a session's target, an estimate
+from the athlete's own history for a session no target prices, the recent
+daily average on a day with no session, a rest session, or nothing when the
+history is too thin. After the last measured day the fitness, fatigue and
+form lines continue dashed to that day, each line's dashes spaced evenly
+along its whole projected length, and each projected day with a load gets a
+hollow bar on the load rug's scale. The range chips still count measured
+days, and the projected days follow them. The line-end values read the
+projection's last day, an event the projection reaches is marked where it
+falls, and a key along the plot's top says the dashed part is projected
+and where its days' loads came from, in the words `stride project` prints
+("12 from targets, 20 estimated from your history"). The pointer and the
+arrow cursor read projected days too: → walks on past the last measured day
+into them, one day a press, and past the last one turns the cursor off; the
+table, which shows measured days only, holds the latest of them instead. On
+a board drawing a projection the day card opens below the key, and over a
+projected day it says "projected", names its load by its source ("Planned
+load", "Estimated load", "Recent daily avg", "rest" or "no estimate"), and
+carries no line of what was done.
 
 The subtitle always carries the as-of day, and the TSB zero rule is
 captioned "fresh above" just over the rule: at its right end, else its left,

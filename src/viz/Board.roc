@@ -143,16 +143,21 @@ Board :: [].{
 	# the board's projection, as two tile lines: the day it ends on and the
 	# projected fitness and form there, in the text `stride events` prints
 	# for the same day and numbers (core Load.projected_on), then whether
-	# that day is the event or the written plan's last day, with how many
-	# of the window's sessions carry a load the engine could price - the
-	# rest add none, so this count is how blind the projection is
+	# that day is the event or the written plan's last day, with how much of
+	# the projection was estimated from the athlete's history (core
+	# Load.mix_short over the series' sources)
 	proj_lines : Str, Str, Db.Projection -> List(Str)
 	proj_lines = |horizon, event_day, p| {
 		mmdd = Str.from_utf8_lossy(List.drop_first(Str.to_utf8(horizon), 5))
 		which = if (horizon == event_day) "event day" else "plan's last day"
+		short = Load.mix_short(proj_mix(p.days))
 		if (!p.ok or horizon == "") []
-		else [Load.projected_on(mmdd, p.ctl, p.tsb), "${which}, ${I64.to_str(p.projected)} of ${I64.to_str(p.considered)} from targets"]
+		else [Load.projected_on(mmdd, p.ctl, p.tsb), if (short == "") which else "${which}, ${short}"]
 	}
+
+	# the projected days counted by where their load came from
+	proj_mix : List(Db.ProjDay) -> Load.Mix
+	proj_mix = |days| Load.mix_of(List.map(days, |d| d.source))
 
 	clamp_idx : F32, U64 -> U64
 	clamp_idx = |raw, hi_idx|
@@ -355,10 +360,14 @@ Board :: [].{
 		}
 	}
 
-	# the key under the legend: what the dashed part is, and how much of the
-	# plan's load it carries
-	proj_key_text : I64, I64 -> Str
-	proj_key_text = |considered, projected| "dashed: projected, ${I64.to_str(projected)} of ${I64.to_str(considered)} sessions from targets"
+	# the key under the legend: what the dashed part is, and where its days'
+	# loads came from, in the words `stride project` prints (core
+	# Load.mix_text)
+	proj_key_text : List(Db.ProjDay) -> Str
+	proj_key_text = |days| {
+		mix = Load.mix_text(proj_mix(days))
+		if (mix == "") "dashed: projected" else "dashed: projected - ${mix}"
+	}
 
 	# a line through `pts` cut into dashes `on` long with `off` between,
 	# measured by distance along the whole line from its first point, so the
@@ -442,8 +451,8 @@ Board :: [].{
 	# the top if it shared the axis. One bar per day with load, centred on
 	# its day and clipped to the plot, so the first and last days draw half
 	# a bar rather than reach under the axis labels and the line-end values.
-	# A projected day's bar is the plan's priced load on the same scale,
-	# `planned`, and a day the plan priced nothing onto draws none.
+	# A projected day's bar is its projected load on the same scale,
+	# `planned`, whatever its source, and a day of no load draws none.
 	bars : Geom -> List({ day : Str, box : Labels.Rect, planned : Bool })
 	bars = |g| {
 		bw = F32.max(1.5, g.pw / U64.to_f32(g.n) - 1.4)
@@ -540,8 +549,7 @@ Board :: [].{
 	# what was actually done that day, wrapped by the shared rule at a 6.7px
 	# glyph budget, up to four lines and cut past them; flipped left when
 	# the cursor nears the right edge. A projected day says so in its
-	# header and reads its load as the plan's, and a day holding a session
-	# the engine could not price says that rather than showing a load; it
+	# header and names where its load came from (planned_load_row); it
 	# carries no done line, since nothing on it has been done yet.
 	tip_card : Ui.Model, Geom, U64, Db.Point, Scene.Measure -> { box : Labels.Rect, lines : List(Labels.Label(Scene.Item)) }
 	tip_card = |model, g, i, hp, measure| {
@@ -563,7 +571,7 @@ Board :: [].{
 		box = { x: tip_x, y: tip_y, w: tip_w, h: tip_h }
 		fix = |it, x, y, align| Scene.fixed(measure, it, { x, y, align }, box)
 		load_row = match planned {
-			Ok(pd) => { lbl: "Planned load", v: planned_load_text(pd) }
+			Ok(pd) => planned_load_row(pd)
 			Err(_) => { lbl: "Load", v: Db.fmt_f(hp.tss) }
 		}
 		head = match planned {
@@ -589,18 +597,17 @@ Board :: [].{
 		{ box, lines: List.join([[fix(Scene.data(head, 12.0, Color.white), tip_x + 10.0, tip_y + 8.0, Left)], row_lines, notes]) }
 	}
 
-	# a projected day's load as the card reads it: the priced load, with
-	# "+ unpriced" when a session on the day carries none, or only
-	# "unpriced" when nothing on it was priced
-	planned_load_text : Db.ProjDay -> Str
-	planned_load_text = |pd|
-		if pd.known {
-			Db.fmt_f(pd.tss)
-		} else if pd.tss > 0.0 {
-			"${Db.fmt_f(pd.tss)} + no target load"
-		} else {
-			"no target load"
-		}
+	# a projected day's load row as the card reads it, named by where the
+	# load came from: a target's planned load, an estimate from the
+	# athlete's history, the recent daily average on a day with nothing
+	# planned, a rest session, or no estimate when the history is missing
+	planned_load_row : Db.ProjDay -> { lbl : Str, v : Str }
+	planned_load_row = |pd|
+		if (pd.source == "estimate") { lbl: "Estimated load", v: Db.fmt_f(pd.tss) }
+		else if (pd.source == "habit") { lbl: "Recent daily avg", v: Db.fmt_f(pd.tss) }
+		else if (pd.source == "rest") { lbl: "Planned load", v: "rest" }
+		else if (pd.source == "none") { lbl: "Planned load", v: "no estimate" }
+		else { lbl: "Planned load", v: Db.fmt_f(pd.tss) }
 
 	# ── every string the view writes, placed ───────────────────────────────
 	# Fixed text first: the chips, the tiles and the event tile, the
@@ -959,16 +966,23 @@ expect {
 }
 expect Str.ends_with(Str.join_with(Board.ev_lines(Text.font_stub, "one two three four five six seven eight nine ten eleven twelve thirteen", 10.0), " "), "...")
 
-# the projection names where it ends - the event only when the plan reaches
-# it - and how many of the window's sessions carry load
-expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.True, ctl: 46.0, tsb: 14.3, considered: 4, projected: 1, days: [] }) == ["11-08: fitness 46.0, form 14.3", "plan's last day, 1 of 4 from targets"]
-expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 40, projected: 12, days: [] }) == ["06-26: fitness 52.5, form -3.2", "event day, 12 of 40 from targets"]
+# the projection names where it ends - the event only when the projection
+# reaches it - and how much of it was estimated from the athlete's history
+proj_day_of : Str, F32, Bool, Str -> Db.ProjDay
+proj_day_of = |day, tss, known, source| { day, ctl: 1.0, atl: 1.0, tsb: 0.0, tss, known, source }
+
+prose_plan : List(Db.ProjDay)
+prose_plan = List.concat(List.repeat(proj_day_of("2026-12-01", 60.0, Bool.True, "estimate"), 30), [proj_day_of("2026-12-02", 0.0, Bool.True, "rest"), proj_day_of("2026-12-03", 45.0, Bool.True, "habit")])
+
+expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.True, ctl: 46.0, tsb: 14.3, considered: 4, projected: 1, days: prose_plan }) == ["11-08: fitness 46.0, form 14.3", "plan's last day, 31 days estimated"]
+expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 2, projected: 2, days: [proj_day_of("2027-06-25", 80.0, Bool.True, "target"), proj_day_of("2027-06-26", 0.0, Bool.True, "rest")] }) == ["06-26: fitness 52.5, form -3.2", "event day, all from targets"]
+expect Board.proj_lines("2027-06-26", "2027-06-26", { ok: Bool.True, ctl: 52.5, tsb: -3.2, considered: 2, projected: 0, days: [proj_day_of("2027-06-25", 0.0, Bool.False, "none"), proj_day_of("2027-06-26", 40.0, Bool.True, "habit")] }) == ["06-26: fitness 52.5, form -3.2", "event day, 1 day with no estimate"]
 expect Board.proj_lines("2026-11-08", "2027-06-26", { ok: Bool.False, ctl: 0.0, tsb: 0.0, considered: 0, projected: 0, days: [] }) == []
 expect Board.proj_lines("", "", { ok: Bool.True, ctl: 1.0, tsb: 1.0, considered: 1, projected: 1, days: [] }) == []
 # the plan ending 2026-12-15 short of a June event reads the numbers `stride
 # project 2026-12-15` returns, in the text `stride events` prints beside
 # "plan's last day 2026-12-15" for them (pinned in the e2e suite)
-expect Board.proj_lines("2026-12-15", "2027-06-26", { ok: Bool.True, ctl: 54.94, tsb: 1.26, considered: 20, projected: 16, days: [] }) == ["12-15: fitness 54.9, form 1.3", "plan's last day, 16 of 20 from targets"]
+expect Board.proj_lines("2026-12-15", "2027-06-26", { ok: Bool.True, ctl: 54.94, tsb: 1.26, considered: 20, projected: 16, days: List.concat(List.repeat(proj_day_of("2026-12-01", 70.0, Bool.True, "target"), 16), List.repeat(proj_day_of("2026-12-02", 50.0, Bool.True, "estimate"), 4)) }) == ["12-15: fitness 54.9, form 1.3", "plan's last day, 4 days estimated"]
 
 # the zero rule's caption keeps the right end of the rule unless a series
 # crosses it there and the left end is clear; a series along the whole rule
@@ -1005,10 +1019,15 @@ expect {
 		and same(Board.dashes_along([{ x: 0.0, y: 0.0 }, { x: 7.0, y: 0.0 }, { x: 7.0, y: 10.0 }], 5.0, 4.0), [[0.0, 0.0, 5.0, 0.0], [7.0, 2.0, 7.0, 7.0]])
 }
 
-# the key names the dashed part and how many sessions are priced; a
-# projected day's card reads the priced load, says when a session on it
-# went unpriced, and never prints a load for a day nothing was priced onto
-expect Board.proj_key_text(20, 17) == "dashed: projected, 17 of 20 sessions from targets"
-expect Board.planned_load_text({ day: "2026-12-01", ctl: 1.0, atl: 1.0, tsb: 0.0, tss: 45.0, known: Bool.True }) == "45.0"
-expect Board.planned_load_text({ day: "2026-12-01", ctl: 1.0, atl: 1.0, tsb: 0.0, tss: 45.0, known: Bool.False }) == "45.0 + no target load"
-expect Board.planned_load_text({ day: "2026-12-01", ctl: 1.0, atl: 1.0, tsb: 0.0, tss: 0.0, known: Bool.False }) == "no target load"
+# the key names the dashed part and where its days' loads came from, in
+# the words `stride project` prints; a projected day's card names its
+# load by its source, and never prints a load for a day nothing could
+# estimate
+expect Board.proj_key_text(prose_plan) == "dashed: projected - 30 estimated from your history, 1 from your recent training, 1 at rest"
+expect Board.proj_key_text([proj_day_of("2026-12-01", 80.0, Bool.True, "target"), proj_day_of("2026-12-02", 0.0, Bool.False, "none")]) == "dashed: projected - 1 from a target, 1 with nothing to estimate from"
+expect Board.proj_key_text([]) == "dashed: projected"
+expect Board.planned_load_row(proj_day_of("2026-12-01", 45.0, Bool.True, "target")) == { lbl: "Planned load", v: "45.0" }
+expect Board.planned_load_row(proj_day_of("2026-12-01", 62.5, Bool.True, "estimate")) == { lbl: "Estimated load", v: "62.5" }
+expect Board.planned_load_row(proj_day_of("2026-12-01", 41.2, Bool.True, "habit")) == { lbl: "Recent daily avg", v: "41.2" }
+expect Board.planned_load_row(proj_day_of("2026-12-01", 0.0, Bool.True, "rest")) == { lbl: "Planned load", v: "rest" }
+expect Board.planned_load_row(proj_day_of("2026-12-01", 0.0, Bool.False, "none")) == { lbl: "Planned load", v: "no estimate" }
