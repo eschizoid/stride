@@ -1667,9 +1667,10 @@ Render :: [].{
 		}
 	}
 
-	## taper projection: one horizon, its numbers, and which plan produced
-	## them — no verdict, same rule as events_screen (ADR 0010/0012)
-	project_screen : { target_date : Str, days_away : I64, projected_from : Str, baseline_known : Bool, ftp_known : Bool, plan_source : Str, ctl : F64, atl : F64, tsb : F64, sessions_considered : U64, sessions_projected : U64, unprojected : List({ date : Str, target_literal : Str, reason : Str }), hypothetical : List({ date : Str, target_kind : Str, target_literal : Str, reps : I64, dur_s : I64, watts : F64 }) } -> Str
+	## taper projection: one horizon, its numbers, which plan produced them
+	## and where each projected day's load came from — no verdict, same rule
+	## as events_screen (ADR 0010/0012/0022)
+	project_screen : { target_date : Str, days_away : I64, projected_from : Str, baseline_known : Bool, ftp_known : Bool, plan_source : Str, ctl : F64, atl : F64, tsb : F64, sessions_considered : U64, sessions_projected : U64, unprojected : List({ date : Str, target_literal : Str, reason : Str }), hypothetical : List({ date : Str, target_kind : Str, target_literal : Str, reps : I64, dur_s : I64, watts : F64 }), load_sources : Load.Mix } -> Str
 	project_screen = |p| {
 		# a PAST horizon states the current baseline, not a projection — same arm
 		# events_screen carries, same wording convention
@@ -1681,19 +1682,27 @@ Render :: [].{
 		# the projected state in the text `stride events` and the window's event
 		# card print for the same date (core Load.projected_on); a past horizon
 		# shows the baseline, so it names the baseline's own day
-		nums = "  ${Load.projected_on(if (p.days_away < 0) p.projected_from else p.target_date, p.ctl, p.tsb)} (fatigue ${fmt1(p.atl)}) — ${(p.sessions_projected).to_str()} of ${(p.sessions_considered).to_str()} sessions in the window carry a load from a target"
+		nums = "  ${Load.projected_on(if (p.days_away < 0) p.projected_from else p.target_date, p.ctl, p.tsb)} (fatigue ${fmt1(p.atl)})"
 		hyp =
 			if (List.is_empty(p.hypothetical)) ""
 			else Str.join_with(List.map(p.hypothetical, |h| "\n  hypothetical: ${h.date} ${h.target_literal}"), "")
 		unpriced =
-			Str.join_with(List.map(p.unprojected, |u| "\n  no load: ${u.date} ${unprojected_reason(u.target_literal, u.reason)}"), "")
+			Str.join_with(List.map(List.keep_if(p.unprojected, |u| u.reason != "no_target"), |u| "\n  not from its target: ${u.date} ${unprojected_reason(u.target_literal, u.reason)}"), "")
 		note =
 			if (!(p.baseline_known)) "\nno computed history to project from — the numbers are decay over zero; with activities on record `stride analyze` builds it, and with none `stride setup` syncs your history"
 			else ""
-		"${head}\n${nums}${hyp}${unpriced}${note}"
+		"${head}\n${nums}${mix_line("\n  ", p.load_sources)}${hyp}${unpriced}${note}"
 	}
 
-	# why a planned session adds no load to a projection, with its target when it has one
+	# the projected days counted by where their load came from, on a line of
+	# its own after `lead`; nothing when no day was projected
+	mix_line : Str, Load.Mix -> Str
+	mix_line = |lead, m| {
+		total = m.target + m.estimate + m.habit + m.rest + m.none
+		if (total == 0) "" else "${lead}${if (total == 1) "1 projected day" else "${total.to_str()} projected days"}: ${Load.mix_text(m)}"
+	}
+
+	# why a planned session's target adds no load of its own
 	unprojected_reason : Str, Str -> Str
 	unprojected_reason = |lit, reason| {
 		why =
@@ -1705,19 +1714,20 @@ Render :: [].{
 		if (lit == "") why else "${lit}: ${why}"
 	}
 
-	# why an event's unpriced sessions add no load, counted per reason in a fixed
-	# order: an event window can span months of untargeted rest days, so a count
-	# reads where a list of every session would not
+	# the targets in an event's window that could not price their session,
+	# counted per reason in a fixed order: an event window can span months,
+	# so a count reads where a list of every session would not. A session
+	# with no target is counted in the mix line instead.
 	unprojected_tally : List({ date : Str, target_literal : Str, reason : Str }) -> Str
 	unprojected_tally = |ups| {
 		parts = List.keep_oks(
-			["no_target", "no_ftp", "no_hr_zones", "no_threshold_pace"],
+			["no_ftp", "no_hr_zones", "no_threshold_pace"],
 			|r| {
 				n = List.count_if(ups, |u| u.reason == r)
 				if (n == 0) Err(None) else Ok("${n.to_str()} with ${unprojected_reason("", r)}")
 			},
 		)
-		if (List.is_empty(parts)) "" else "\n      no load: ${Str.join_with(parts, ", ")}"
+		if (List.is_empty(parts)) "" else "\n      not from their targets: ${Str.join_with(parts, ", ")}"
 	}
 
 	## event targets: the projection as numbers in plain indented rows, its inputs
@@ -1725,9 +1735,9 @@ Render :: [].{
 	## track" is the coach's sentence, and ADR 0010 notes the denylist would not even
 	## catch it, so nothing here says it. Each projected state names the date it is
 	## for (core Load.projected_on, the text the window's event card reads): the event
-	## day, and the plan's last day when the written plan stops short of the event,
-	## since past that day the event-day numbers are decay alone.
-	events_screen : { projected_from : Str, baseline_known : Bool, ftp_known : Bool, events : List({ id : I64, event_date : Str, name : Str, days_away : I64, ctl : F64, atl : F64, tsb : F64, planned_in_window : U64, sessions_projected : U64, unprojected : List({ date : Str, target_literal : Str, reason : Str }), plan_end : { known : Bool, date : Str, ctl : F64, atl : F64, tsb : F64 } }) } -> Str
+	## day, and the plan's last day when the written plan stops short of the event.
+	## The mix line says where the projected days' loads came from (ADR 0022).
+	events_screen : { projected_from : Str, baseline_known : Bool, ftp_known : Bool, events : List({ id : I64, event_date : Str, name : Str, days_away : I64, ctl : F64, atl : F64, tsb : F64, planned_in_window : U64, sessions_projected : U64, unprojected : List({ date : Str, target_literal : Str, reason : Str }), plan_end : { known : Bool, date : Str, ctl : F64, atl : F64, tsb : F64 }, load_sources : Load.Mix }) } -> Str
 	events_screen = |p|
 		if List.is_empty(p.events) {
 			"no event targets on file — `stride event add <YYYY-MM-DD> \"<name>\"` records one"
@@ -1740,15 +1750,15 @@ Render :: [].{
 					if (e.days_away < 0)
 						"  #${I64.to_str(e.id)}  ${e.event_date}  ${I64.to_str(-e.days_away)}d ago — baseline shown, `stride load` holds the event-day reading  ${e.name}"
 					else {
-						plan_end = if (e.plan_end.known) "\n      plan's last day ${Load.projected_on(e.plan_end.date, e.plan_end.ctl, e.plan_end.tsb)} (fatigue ${fmt1(e.plan_end.atl)}); nothing is planned after it" else ""
-						"  #${I64.to_str(e.id)}  ${e.event_date}  in ${I64.to_str(e.days_away)}d  ${e.name}\n      event day ${Load.projected_on(e.event_date, e.ctl, e.tsb)} (fatigue ${fmt1(e.atl)}) — ${(e.sessions_projected).to_str()} of ${(e.planned_in_window).to_str()} planned sessions carry a load from a target${plan_end}${unprojected_tally(e.unprojected)}"
+						plan_end = if (e.plan_end.known) "\n      plan's last day ${Load.projected_on(e.plan_end.date, e.plan_end.ctl, e.plan_end.tsb)} (fatigue ${fmt1(e.plan_end.atl)})" else ""
+						"  #${I64.to_str(e.id)}  ${e.event_date}  in ${I64.to_str(e.days_away)}d  ${e.name}\n      event day ${Load.projected_on(e.event_date, e.ctl, e.tsb)} (fatigue ${fmt1(e.atl)})${plan_end}${mix_line("\n      ", e.load_sources)}${unprojected_tally(e.unprojected)}"
 					},
 			)
 			base_note =
 				if (!(p.baseline_known)) "\nno computed history to project from — every number above is decay over zero; with activities on record `stride analyze` builds it, and with none `stride setup` syncs your history"
 				else ""
 			body = Str.join_with(
-				List.concat(["projected fitness, fatigue and form from ${p.projected_from} over the open plan's targets"], rows),
+				List.concat(["projected fitness, fatigue and form from ${p.projected_from} over the open plan"], rows),
 				"\n",
 			)
 			"${body}${base_note}"
@@ -3050,6 +3060,8 @@ expect {
 # because someone judged it exempt is how the gap recurs.
 expect {
 	no_end = { known: Bool.False, date: "", ctl: 0.0, atl: 0.0, tsb: 0.0 }
+	mix = { target: 2, estimate: 20, habit: 4, rest: 1, none: 1 }
+	no_mix = { target: 0, estimate: 0, habit: 0, rest: 0, none: 0 }
 	# the complete clause's input with nothing known: each target row below overrides
 	# only what its kind carries
 	tm_base = { target_kind: "", target_literal: "", target_pace_unit: "", target_rpe: 0, detected_known: Bool.False, detected_reps: 0, detected_mean_dur_s: 0, detected_mean_watts: 0.0, exec_known: Bool.False, exec_reason: "", hr_under_s: 0, hr_in_s: 0, hr_over_s: 0, hr_mean: 0.0, zone_below_s: 0, zone_in_s: 0, zone_above_s: 0, pace_basis: "", pace_actual_s: 0.0, pace_reps: 0, rpe_actual: 0.0 }
@@ -3102,16 +3114,16 @@ expect {
 		# the denylist, which is why the screen carries no verdict line AT ALL, and the
 		# sweep is backstop rather than proof
 		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [] }),
-		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 38.2, atl: 22.1, tsb: 16.1, planned_in_window: 4, sessions_projected: 2, unprojected: [{ date: "2026-09-02", target_literal: "", reason: "no_target" }, { date: "2026-09-03", target_literal: "1x1:00:00@4:10/km", reason: "no_threshold_pace" }], plan_end: no_end }] }),
-		Render.events_screen({ projected_from: "2026-08-30", baseline_known: False, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 0.0, atl: 0.0, tsb: 0.0, planned_in_window: 0, sessions_projected: 0, unprojected: [], plan_end: no_end }] }),
-		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 12.0, atl: 3.0, tsb: 9.0, planned_in_window: 2, sessions_projected: 0, unprojected: [{ date: "2026-09-02", target_literal: "3x12:00@230W", reason: "no_ftp" }, { date: "2026-09-04", target_literal: "3x12:00@230W", reason: "no_ftp" }], plan_end: no_end }] }),
-		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [{ id: 2, event_date: "2026-08-01", name: "Past Race", days_away: -29, ctl: 40.0, atl: 50.0, tsb: -10.0, planned_in_window: 0, sessions_projected: 0, unprojected: [], plan_end: no_end }] }),
+		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 38.2, atl: 22.1, tsb: 16.1, planned_in_window: 4, sessions_projected: 2, unprojected: [{ date: "2026-09-02", target_literal: "", reason: "no_target" }, { date: "2026-09-03", target_literal: "1x1:00:00@4:10/km", reason: "no_threshold_pace" }], plan_end: no_end, load_sources: mix }] }),
+		Render.events_screen({ projected_from: "2026-08-30", baseline_known: False, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 0.0, atl: 0.0, tsb: 0.0, planned_in_window: 0, sessions_projected: 0, unprojected: [], plan_end: no_end, load_sources: mix }] }),
+		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: False, events: [{ id: 1, event_date: "2026-10-15", name: "Fall Century", days_away: 46, ctl: 12.0, atl: 3.0, tsb: 9.0, planned_in_window: 2, sessions_projected: 0, unprojected: [{ date: "2026-09-02", target_literal: "3x12:00@230W", reason: "no_ftp" }, { date: "2026-09-04", target_literal: "3x12:00@230W", reason: "no_ftp" }], plan_end: no_end, load_sources: mix }] }),
+		Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [{ id: 2, event_date: "2026-08-01", name: "Past Race", days_away: -29, ctl: 40.0, atl: 50.0, tsb: -10.0, planned_in_window: 0, sessions_projected: 0, unprojected: [], plan_end: no_end, load_sources: mix }] }),
 		# project_screen joins on arrival: recorded, hypothetical, and both notes
-		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "recorded", ctl: 30.0, atl: 20.0, tsb: 10.0, sessions_considered: 3, sessions_projected: 2, unprojected: [], hypothetical: [] }),
-		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "hypothetical", ctl: 30.0, atl: 20.0, tsb: 10.0, sessions_considered: 1, sessions_projected: 1, unprojected: [{ date: "2026-09-20", target_literal: "1x1:00:00@HR125-147", reason: "no_hr_zones" }, { date: "2026-09-21", target_literal: "", reason: "no_target" }], hypothetical: [{ date: "2026-09-15", target_kind: "power", target_literal: "3x12:00@230W", reps: 3, dur_s: 720, watts: 230.0 }] }),
-		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: False, ftp_known: False, plan_source: "recorded", ctl: 0.0, atl: 0.0, tsb: 0.0, sessions_considered: 0, sessions_projected: 0, unprojected: [], hypothetical: [] }),
-		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: False, plan_source: "recorded", ctl: 12.0, atl: 3.0, tsb: 9.0, sessions_considered: 2, sessions_projected: 0, unprojected: [], hypothetical: [] }),
-		Render.project_screen({ target_date: "2020-01-01", days_away: -2433, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "recorded", ctl: 40.9, atl: 50.0, tsb: -9.1, sessions_considered: 0, sessions_projected: 0, unprojected: [], hypothetical: [] }),
+		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "recorded", ctl: 30.0, atl: 20.0, tsb: 10.0, sessions_considered: 3, sessions_projected: 2, unprojected: [], hypothetical: [], load_sources: no_mix }),
+		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "hypothetical", ctl: 30.0, atl: 20.0, tsb: 10.0, sessions_considered: 1, sessions_projected: 1, unprojected: [{ date: "2026-09-20", target_literal: "1x1:00:00@HR125-147", reason: "no_hr_zones" }, { date: "2026-09-21", target_literal: "", reason: "no_target" }], hypothetical: [{ date: "2026-09-15", target_kind: "power", target_literal: "3x12:00@230W", reps: 3, dur_s: 720, watts: 230.0 }], load_sources: mix }),
+		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: False, ftp_known: False, plan_source: "recorded", ctl: 0.0, atl: 0.0, tsb: 0.0, sessions_considered: 0, sessions_projected: 0, unprojected: [], hypothetical: [], load_sources: no_mix }),
+		Render.project_screen({ target_date: "2026-10-15", days_away: 46, projected_from: "2026-08-30", baseline_known: True, ftp_known: False, plan_source: "recorded", ctl: 12.0, atl: 3.0, tsb: 9.0, sessions_considered: 2, sessions_projected: 0, unprojected: [], hypothetical: [], load_sources: no_mix }),
+		Render.project_screen({ target_date: "2020-01-01", days_away: -2433, projected_from: "2026-08-30", baseline_known: True, ftp_known: True, plan_source: "recorded", ctl: 40.9, atl: 50.0, tsb: -9.1, sessions_considered: 0, sessions_projected: 0, unprojected: [], hypothetical: [], load_sources: no_mix }),
 	]
 	List.all(notes, |p| !(Metrics.has_coaching_language(p)))
 }
@@ -3216,8 +3228,9 @@ expect
 expect Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [] }) == "no event targets on file — `stride event add <YYYY-MM-DD> \"<name>\"` records one"
 # an event whose window holds unpriced sessions names why, counted per reason in a
 # fixed order; a window with none adds no line
-expect Render.unprojected_tally([{ date: "2026-09-04", target_literal: "3x12:00@230W", reason: "no_ftp" }, { date: "2026-09-02", target_literal: "", reason: "no_target" }, { date: "2026-09-05", target_literal: "3x12:00@230W", reason: "no_ftp" }]) == "\n      no load: 1 with no target, 2 with no FTP from the last 60 days"
+expect Render.unprojected_tally([{ date: "2026-09-04", target_literal: "3x12:00@230W", reason: "no_ftp" }, { date: "2026-09-02", target_literal: "", reason: "no_target" }, { date: "2026-09-05", target_literal: "3x12:00@230W", reason: "no_ftp" }]) == "\n      not from their targets: 2 with no FTP from the last 60 days"
 expect Render.unprojected_tally([]) == ""
+expect Render.unprojected_tally([{ date: "2026-09-02", target_literal: "", reason: "no_target" }]) == ""
 
 # the verdict line analyze and sync both print, and none before there is form
 expect Render.today_verdict(Some(-1.2), Known(-4.0)) == "→ today: form -1, down 4 from a week ago — balanced"
@@ -3259,11 +3272,11 @@ expect Render.progress_bar("scoring", 85, 85) == "scoring             [███
 
 # an event the written plan stops short of names both dates its numbers are
 # for, each through Load.projected_on, the text the window's event card reads
-# for the same date and numbers (Board.proj_lines, in the window's expects)
+# for the same date and numbers (Board.proj_lines, in the window's expects),
+# then where the projected days' loads came from
 expect {
-	s = Render.events_screen({ projected_from: "2026-11-25", baseline_known: True, ftp_known: True, events: [{ id: 2, event_date: "2027-06-26", name: "Tour de Chi", days_away: 212, ctl: 0.6, atl: 0.0, tsb: 0.6, planned_in_window: 20, sessions_projected: 16, unprojected: [], plan_end: { known: Bool.True, date: "2026-12-15", ctl: 54.94, atl: 53.6, tsb: 1.26 } }] })
-	Str.contains(s, "event day 2027-06-26: fitness 0.6, form 0.6 (fatigue 0.0)")
-		and Str.contains(s, "plan's last day 2026-12-15: fitness 54.9, form 1.3 (fatigue 53.6); nothing is planned after it")
+	s = Render.events_screen({ projected_from: "2026-11-25", baseline_known: True, ftp_known: True, events: [{ id: 2, event_date: "2027-06-26", name: "Tour de Chi", days_away: 212, ctl: 0.6, atl: 0.0, tsb: 0.6, planned_in_window: 20, sessions_projected: 16, unprojected: [], plan_end: { known: Bool.True, date: "2026-12-15", ctl: 54.94, atl: 53.6, tsb: 1.26 }, load_sources: { target: 16, estimate: 4, habit: 192, rest: 0, none: 0 } }] })
+	Str.contains(s, "event day 2027-06-26: fitness 0.6, form 0.6 (fatigue 0.0)\n      plan's last day 2026-12-15: fitness 54.9, form 1.3 (fatigue 53.6)\n      212 projected days: 16 from targets, 4 estimated from your history, 192 from your recent training")
 		and !(Str.contains(s, "ctl 0.6"))
 }
 
@@ -3335,3 +3348,10 @@ expect Render.viz_focus_line({ present: Bool.False, live: Bool.False, view: -1, 
 expect Render.tick_line({ id: 7, status: "applied", view: 2, range: -1, trace_day: "2026-11-25", trace_id: -1, ghost_day: "", ghost_id: -1 }) == "tick: request 7 applied (view 2, trace 2026-11-25)"
 expect Render.tick_line({ id: 8, status: "superseded", view: -1, range: -1, trace_day: "", trace_id: -1, ghost_day: "", ghost_id: -1 }) == "tick: request 8 superseded"
 expect Render.viz_head({ protocol: 1, published: "2026-11-26 19:45:05", staleness: 600, fstale: 90 }) == "window protocol 1, published 2026-11-26 19:45:05; a request expires after 600s, the focus after 90s"
+
+# a plan written without targets: the projection's days say they were
+# estimated from the athlete's history, and the untargeted sessions are not
+# listed one by one; a target its inputs cannot price is named with why
+expect
+	Render.project_screen({ target_date: "2026-12-27", days_away: 31, projected_from: "2026-11-26", baseline_known: True, ftp_known: True, plan_source: "recorded", ctl: 37.1, atl: 39.0, tsb: -1.9, sessions_considered: 32, sessions_projected: 0, unprojected: [{ date: "2026-11-27", target_literal: "", reason: "no_target" }, { date: "2026-11-28", target_literal: "1x1:00:00@HR125-147", reason: "no_hr_zones" }], hypothetical: [], load_sources: { target: 0, estimate: 30, habit: 0, rest: 1, none: 0 } })
+		== "projected to 2026-12-27 (in 31d) from 2026-11-26, over the recorded plan\n  2026-12-27: fitness 37.1, form -1.9 (fatigue 39.0)\n  31 projected days: 30 estimated from your history, 1 rest\n  not from its target: 2026-11-28 1x1:00:00@HR125-147: no heart-rate zones set"

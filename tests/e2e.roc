@@ -417,7 +417,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1590)?
+	checks_ran_exactly!(1606)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -457,6 +457,7 @@ run_scenarios! = |ctx| {
 	b_viz_tick!(ctx)?
 	b_cross_surface!(ctx)?
 	b_window_agrees!(ctx)?
+	b_forecast!(ctx)?
 	b_human!(ctx)?
 	b_command_schemas!(ctx)?
 	# LAST of the substantive scenarios: the loop needs a rich, analyzed fixture — real
@@ -6987,25 +6988,34 @@ b_events! = |ctx| {
 	check!("...and a malformed one", strjq!(ctx, ["event", "add", "not-a-date", "x"], ".error.code") == "bad_date")?
 	eid = Str.trim(strjq!(ctx, ["event", "add", "2099-12-01", "Terminal Century"], ".data.id"))
 	check!("the add echoes a real id", !(Str.is_empty(eid)) and eid != "null")?
-	# the DECAY leg: no open session between the baseline and today+10 (every 2099-01
-	# fixture row is outside a +10d window, and b_week_plan/b_targets cleaned theirs),
-	# so the projection must equal the closed form from the SAME baseline row
+	# the RECENT-TRAINING leg: no open session between the baseline and today+10
+	# (every 2099-01 fixture row is outside a +10d window, and b_week_plan/b_targets
+	# cleaned theirs), so every projected day carries the mean daily load of the 28
+	# days ending on the baseline (ADR 0022), and the projection must equal that
+	# constant load's closed form from the SAME baseline row, h + (ctl - h)(1-a)^10.
+	# A hypothetical plan is taken as written, so the pure decay ctl(1-a)^10 is
+	# pinned below for it.
 	eid10 = Str.trim(strjq!(ctx, ["event", "add", ten_days_out!(ctx), "Decay Probe"], ".data.id"))
-	# the closed form as TEN explicit multiplications, not power(): macOS CI's system
+	# the closed forms as TEN explicit multiplications, not power(): macOS CI's system
 	# sqlite3 ships without the math functions and the check failed closed there —
 	# "6.78 vs " with the fixture-error report naming `no such function: power`
-	expected_ctl = Str.trim(sql!(ctx.db, "SELECT round(ctl * (1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133), 2) FROM daily_load ORDER BY day DESC LIMIT 1;"))
+	r10 = "(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)*(1 - 0.0235283133)"
+	expected_ctl = Str.trim(sql!(ctx.db, "SELECT round(ctl * ${r10}, 2) FROM daily_load ORDER BY day DESC LIMIT 1;"))
+	expected_hab = Str.trim(sql!(ctx.db, "WITH b AS (SELECT day, ctl FROM daily_load ORDER BY day DESC LIMIT 1), h AS (SELECT AVG(COALESCE(dl.tss, 0)) AS m FROM daily_load dl, b WHERE dl.day >= date(b.day, '-27 days') AND dl.day <= b.day) SELECT round(h.m + (b.ctl - h.m) * ${r10}, 2) FROM b, h;"))
 	got_ctl = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' events | jq -r '[.data.events[] | select(.id == ${eid10})][0].ctl * 100 | round / 100'"))
-	check!("a windowless projection IS the closed-form decay (${got_ctl} vs ${expected_ctl})", got_ctl == expected_ctl)?
+	check!("a windowless projection IS the closed form of the recent daily mean (${got_ctl} vs ${expected_hab})", got_ctl == expected_hab)?
+	check!("...and every one of its days says it came from recent training", strjq!(ctx, ["events"], "[.data.events[] | select(.id == ${eid10})][0].load_sources | (.habit > 0 and .habit == .target + .estimate + .habit + .rest + .none)") == "true")?
 	check!("...projected from a computed baseline, and it says so", strjq!(ctx, ["events"], ".data.baseline_known") == "true")?
-	# the TARGET leg: a targeted session inside the window raises CTL above pure decay
-	# iff an FTP exists — pin the fixture's actual ftp_known and the count with it
+	# the TARGET leg: a targeted session inside the window takes its day's load
+	# from its target iff an FTP exists, and from the athlete's history otherwise —
+	# pin the fixture's actual ftp_known and the count with it
 	tsid = Str.trim(strjq!(ctx, ["week", "add", five_days_out!(ctx), "threshold", "3x12 for projection", "build", "3x12:00@230W"], ".data.id"))
 	fknown = Str.trim(strjq!(ctx, ["events"], ".data.ftp_known"))
 	counted = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' events | jq -r '[.data.events[] | select(.id == ${eid10})][0] | \"\\(.planned_in_window),\\(.sessions_projected)\"'"))
 	check!("the projection counts the window's plan and its own coverage (ftp_known ${fknown}, got ${counted})", if (fknown == "true") counted == "1,1" else counted == "1,0")?
 	ctl2 = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' events | jq -r '[.data.events[] | select(.id == ${eid10})][0].ctl * 100 | round / 100'"))
-	check!("a projectable target RAISES the projection above decay (or cannot, and does not)", if (fknown == "true") sfloat(ctl2) > sfloat(expected_ctl) else ctl2 == expected_ctl)?
+	tsrc = strjq!(ctx, ["project", ten_days_out!(ctx)], ".data.series[] | select(.date == \"${five_days_out!(ctx)}\") | .load_source")
+	check!("a session replaces its day's recent-training load, priced by its target when it can be (${tsrc}, ${ctl2} vs ${expected_hab})", ctl2 != expected_hab and (if (fknown == "true") tsrc == "target" else tsrc != "target"))?
 	# ...and a DONE session's target must stop contributing, or the projection
 	# double-counts: completed load is already inside the measured baseline.
 	# Every non-open fixture row carries NULL targets, so the fixture alone
@@ -7013,7 +7023,7 @@ b_events! = |ctx| {
 	_ = sql!(ctx.db, "UPDATE planned_sessions SET status = 'done' WHERE id = ${tsid};")
 	ctl3 = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' events | jq -r '[.data.events[] | select(.id == ${eid10})][0].ctl * 100 | round / 100'"))
 	counted3 = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' events | jq -r '[.data.events[] | select(.id == ${eid10})][0] | \"\\(.planned_in_window),\\(.sessions_projected)\"'"))
-	check!("a DONE session's target stops contributing — the projection never double-counts", ctl3 == expected_ctl and counted3 == "0,0")?
+	check!("a DONE session's target stops contributing — the projection never double-counts", ctl3 == expected_hab and counted3 == "0,0")?
 	check!("the events payload conforms to its schema", validate_schema!(ctx, "events", "events") == "")?
 	check!("event remove refuses an unknown id", strjq!(ctx, ["event", "remove", "99999"], ".error.code") == "event_not_found")?
 	check!("...and a non-numeric one", strjq!(ctx, ["event", "remove", "abc"], ".error.code") == "bad_id")?
@@ -7025,14 +7035,15 @@ b_events! = |ctx| {
 	# a bare project must equal the SAME closed form events was pinned against —
 	# two commands, one arithmetic, cross-pinned through one expected value.
 	p_ctl = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' project ${ten_days_out!(ctx)} | jq -r '.data.ctl * 100 | round / 100'"))
-	check!("bare project agrees with events' closed form (${p_ctl} vs ${expected_ctl})", p_ctl == expected_ctl)?
-	# re-open the targeted session: the recorded plan now raises a bare project...
+	check!("bare project agrees with events' closed form (${p_ctl} vs ${expected_hab})", p_ctl == expected_hab)?
+	# re-open the targeted session: the recorded plan moves a bare project again...
 	_ = sql!(ctx.db, "UPDATE planned_sessions SET status = 'open' WHERE id = ${tsid};")
 	p_rec = Str.trim(sh!("HOME='${ctx.home}' STRIDE_FORMAT=json '${ctx.bin}' project ${ten_days_out!(ctx)} | jq -r '.data.ctl * 100 | round / 100'"))
-	check!("...a re-opened recorded target raises the bare projection", if (fknown == "true") sfloat(p_rec) > sfloat(expected_ctl) else p_rec == expected_ctl)?
-	# ...and a hypothetical plan REPLACES it: one pair BEYOND the horizon carries no
-	# load, so the projection must fall back to pure decay DESPITE the open recorded
-	# target — proof the recorded plan left the walk entirely
+	check!("...a re-opened recorded session moves the bare projection", p_rec == ctl2)?
+	# ...and a hypothetical plan REPLACES it and is taken as written: one pair
+	# BEYOND the horizon carries no load and no day is filled from history, so the
+	# projection must fall back to pure decay DESPITE the open recorded target —
+	# proof the recorded plan left the walk entirely
 	# the pair list probes BOTH window edges: one pair beyond the horizon, one ON the
 	# base day. The walk starts at base+1 and stops at the horizon, so neither can
 	# contribute ctl — the counts are each edge's only observable, and each edge has
@@ -7078,21 +7089,22 @@ b_events! = |ctx| {
 	kid = Str.trim(strjq!(ctx, ["event", "add", ten, "Kinds Probe"], ".data.id"))
 	check!("...and events counts the same coverage", strjq!(ctx, ["events"], "[.data.events[] | select(.id == ${kid})][0] | [.planned_in_window, .sessions_projected] | map(tostring) | join(\",\")") == "4,3")?
 	check!("the project payload conforms to its schema with every kind priced", validate_schema!(ctx, "project ${ten}", "project") == "")?
-	# the series: the walk day by day from the day after the baseline, stopping
-	# on the plan's last day rather than running on to the horizon
+	# the series: the walk day by day from the day after the baseline through
+	# the horizon, every day carrying a load and its source
 	ends = strjq!(ctx, ["project", ten], "[(.data.projected_from | strptime(\"%Y-%m-%d\") | mktime + 86400 | strftime(\"%Y-%m-%d\")) == .data.series[0].date, .data.series[-1].date] | map(tostring) | join(\",\")")
-	check!("the series runs from the day after the baseline to the plan's last day, not the horizon (got ${ends})", ends == "true,${five}")?
-	# the unpriced session projects as if it were absent: without it the plan
-	# ends a day sooner, every day both series hold is the same row, and the
-	# state on the horizon is the same
-	with_rows = strjq!(ctx, ["project", ten], "[[.data.series[] | select(.date != \"${five}\")], .data.ctl, .data.atl, .data.tsb] | tostring")
+	check!("the series runs from the day after the baseline to the horizon (got ${ends})", ends == "true,${ten}")?
+	# the untargeted session is estimated from the athlete's history, or flagged
+	# when the fixture's history is too thin; skipped, its day is an empty one
+	# and carries the recent daily mean
+	five_src = strjq!(ctx, ["project", ten], ".data.series[] | select(.date == \"${five}\") | \"\\(.load_source):\\(.load_known)\"")
+	check!("the untargeted session's day is estimated from history, or flagged with nothing to go on (got ${five_src})", five_src == "estimate:true" or five_src == "none:false")?
 	_ = sql!(ctx.db, "UPDATE planned_sessions SET status = 'skipped' WHERE id = ${r4};")
-	without_rows = strjq!(ctx, ["project", ten], "[.data.series, .data.ctl, .data.atl, .data.tsb] | tostring")
+	skipped_src = strjq!(ctx, ["project", ten], ".data.series[] | select(.date == \"${five}\") | .load_source")
 	_ = sql!(ctx.db, "UPDATE planned_sessions SET status = 'open' WHERE id = ${r4};")
-	check!("the unpriced session projects as if it were absent", with_rows == without_rows and Str.contains(without_rows, d4))?
+	check!("...and with the session skipped, the empty day carries recent training (got ${skipped_src})", skipped_src == "habit")?
 	# every row is what `project` returns for its own date, so the series and
 	# the command share one walk
-	row_of = "\"\\(.date) \\(.load) \\(.load_known) \\(.ctl) \\(.atl) \\(.tsb)\""
+	row_of = "\"\\(.date) \\(.load) \\(.load_known) \\(.load_source) \\(.ctl) \\(.atl) \\(.tsb)\""
 	rows = Str.split_on(Str.trim(strjq!(ctx, ["project", ten], ".data.series[] | ${row_of} + \"|\\(.date) \\(.ctl) \\(.atl) \\(.tsb)\"")), "\n")
 	answers = List.map_try!(
 		rows,
@@ -7103,7 +7115,7 @@ b_events! = |ctx| {
 	)?
 	mismatched = List.map(List.keep_if(answers, |a| a.got != a.row), |a| "${a.row} vs ${a.got}")
 	check!("each of the ${U64.to_str(List.len(rows))} series days equals what project returns for that date (mismatched: ${Str.join_with(mismatched, "; ")})", List.len(rows) >= 4 and List.is_empty(mismatched))?
-	check!("...and only the untargeted day says its load is not known", strjq!(ctx, ["project", ten], "[.data.series[] | select(.load_known | not) | \"\\(.date):\\(.load)\"] | join(\",\")") == "${five}:0")?
+	check!("...and only a day with nothing to go on says its load is not known", strjq!(ctx, ["project", ten], "[.data.series[] | select(.load_known | not) | .date] | join(\",\")") == (if (five_src == "none:false") five else ""))?
 	_ = sql!(ctx.db, "DELETE FROM events WHERE name = 'Kinds Probe'; DELETE FROM planned_sessions WHERE id IN (${r1}, ${r2}, ${r3}, ${r4}); DELETE FROM activity_metrics WHERE activity_id IN (9811, 9812); DELETE FROM activities WHERE id IN (9811, 9812);")
 	# a planned session names no sport: a power target is priced at the FTP of the
 	# power family the athlete trains most. A rower with no ride power still gets
@@ -8546,6 +8558,86 @@ b_compare! = |ctx| {
 	_ = sql!(ctx.db, "DROP TABLE zsave;")
 	check!("polarization_known lights back up once the zone seconds return", strjq!(ctx, ["compare", "week"], ".data.current.polarization_known") == "true")?
 	_ = sql!(ctx.db, "DELETE FROM activity_metrics WHERE activity_id = 9602; DELETE FROM activities WHERE id = 9602;")
+	Ok({})
+}
+
+# ── a forecast fills what the plan leaves unpriced (ADR 0022) ──────────────
+# A home of its own whose history is exactly what each estimate reads: 28
+# computed days alternating 30 and 50 (a mean of 40) ending today at fitness
+# 40 and fatigue 45, three runs that completed planned endurance sessions at
+# 50, 60 and 70 load for an hour each, and three half-hour rides at 40 load
+# (80 an hour). The plan is written the way a coach writing prose writes
+# it: no targets, a rest session, an empty day and a heart-rate band with no
+# zones to price it. Each projected day's load is then a number the rule
+# fixes: the endurance median 60, the ride rate over the rides' median half
+# hour 40, rest 0, the median of every session 75 an hour over their median
+# 45 minutes 56.25, the recent mean 40, and the endurance median at the
+# band's own hour 60.
+b_forecast! : Ctx => Try({}, _)
+b_forecast! = |ctx| {
+	fh = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+	fctx = { ..ctx, home: fh, db: "${fh}/.stride/db.sqlite" }
+	_ = stride!(fctx.bin, fctx.home, ["init"])
+	_ = sql!(fctx.db, "INSERT OR REPLACE INTO config (key,value) VALUES ('timezone','${ctx.tz}');")
+	day! = |n| Str.trim(sh!("TZ='${ctx.tz}' date -v${n}d +%F 2>/dev/null || TZ='${ctx.tz}' date -d '${n} days' +%F"))
+	today = ctx.today
+	d! = |n| day!("+${I64.to_str(n)}")
+	human! = |args| stride_human!(fctx.bin, fctx.home, args)
+	_ = sql!(fctx.db, "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 27) INSERT INTO daily_load (day, tss, ctl, atl, tsb) SELECT date('${today}', '-' || i || ' day'), CASE WHEN i % 2 = 0 THEN 30.0 ELSE 50.0 END, 40.0, 45.0, -5.0 FROM n;")
+	_ = sql!(fctx.db, "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance) VALUES (9951,'run a','Run','${day!("-10")}T07:00:00Z',3600,10000),(9952,'run b','Run','${day!("-9")}T07:00:00Z',3600,10000),(9953,'run c','Run','${day!("-8")}T07:00:00Z',3600,10000),(9954,'ride a','Ride','${day!("-7")}T07:00:00Z',1800,15000),(9955,'ride b','Ride','${day!("-6")}T07:00:00Z',1800,15000),(9956,'ride c','Ride','${day!("-5")}T07:00:00Z',1800,15000); INSERT INTO activity_metrics (activity_id,tss,load_model,metrics_rev) VALUES (9951,50.0,'hr_avg',1),(9952,60.0,'hr_avg',1),(9953,70.0,'hr_avg',1),(9954,40.0,'hr_avg',1),(9955,40.0,'hr_avg',1),(9956,40.0,'hr_avg',1); INSERT INTO planned_sessions (created_at,target_date,session_type,detail,rationale,status,completed_activity_id) VALUES ('2099-01-01','${day!("-10")}','endurance','easy run','base','done',9951),('2099-01-01','${day!("-9")}','endurance','easy run','base','done',9952),('2099-01-01','${day!("-8")}','endurance','easy run','base','done',9953);")
+	_ = stride!(fctx.bin, fctx.home, ["week", "add", d!(1), "endurance", "Easy 60 min, conversational", "base"])
+	_ = stride!(fctx.bin, fctx.home, ["week", "add", d!(2), "recovery", "Easy spin on the bike", "base"])
+	_ = stride!(fctx.bin, fctx.home, ["week", "add", d!(3), "rest", "Off", "recover"])
+	_ = stride!(fctx.bin, fctx.home, ["week", "add", d!(4), "threshold", "Tempo 3x10", "build"])
+	_ = stride!(fctx.bin, fctx.home, ["week", "add", d!(6), "endurance", "Steady hour", "base", "1x1:00:00@HR125-147"])
+	six = d!(6)
+	srcs = strjq!(fctx, ["project", six], "[.data.series[] | \"\\(.load_source):\\(.load * 100 | round / 100):\\(.load_known)\"] | join(\",\")")
+	check!("a prose plan's days carry loads from the athlete's history, each by its rule (got ${srcs})", srcs == "estimate:60:true,estimate:40:true,rest:0:true,estimate:56.25:true,habit:40:true,estimate:60:true")?
+	check!("...and the payload counts them by source", strjq!(fctx, ["project", six], ".data.load_sources | [.target, .estimate, .habit, .rest, .none] | map(tostring) | join(\",\")") == "0,4,1,1,0")?
+	check!("...while the target coverage fields keep their meaning", strjq!(fctx, ["project", six], "[.data.sessions_considered, .data.sessions_projected, (.data.unprojected | map(.reason) | join(\";\"))] | map(tostring) | join(\",\")") == "5,0,no_target;no_target;no_target;no_target;no_hr_zones")?
+	check!("the project payload conforms to its schema with every source in it", validate_schema!(fctx, "project ${six}", "project") == "")?
+	# the same plan read the old way, every untargeted day at zero, is pure
+	# decay: a hypothetical naming one session past the horizon reproduces it
+	before = strjq!(fctx, ["project", six, "2099-01-01=1x30:00@RPE3"], "[.data.ctl, .data.tsb] | map(. * 100 | round / 100 | tostring) | join(\",\")")
+	after = strjq!(fctx, ["project", six], "[.data.ctl, .data.tsb] | map(. * 100 | round / 100 | tostring) | join(\",\")")
+	split = |s| List.map(Str.split_on(s, ","), sfloat)
+	check!(
+		"the prose plan holds fitness where decay would drop it, and keeps form from soaring (before ${before}, after ${after})",
+		match (split(before), split(after)) {
+			([bc, bt], [ac, at]) => ac > bc and at < bt and ac > 39.0
+			_ => Bool.False
+		},
+	)?
+	ph = human!(["project", six])
+	check!("project says where the projected days came from, and names only the target it could not price", Str.contains(ph, "\n  6 projected days: 4 estimated from your history, 1 from your recent training, 1 at rest\n  not from its target: ${six} 1x1:00:00@HR125-147: no HR zones configured") and !(Str.contains(ph, "no structured target")))?
+	_ = stride!(fctx.bin, fctx.home, ["event", "add", d!(20), "Near Race"])
+	check!("events counts an event's days by source, the days after the plan from recent training", strjq!(fctx, ["events"], ".data.events[0] | [.load_sources.estimate, .load_sources.habit, .load_sources.rest, .plan_end.known, .plan_end.date] | map(tostring) | join(\",\")") == "4,15,1,true,${six}")?
+	check!("...and says so in words", Str.contains(human!(["events"]), "\n      20 projected days: 4 estimated from your history, 15 from your recent training, 1 at rest"))?
+	check!("the events payload conforms to its schema with every source in it", validate_schema!(fctx, "events", "events") == "")?
+	# a well-targeted plan: every session priced by its target, the rest
+	# session still at rest and no day estimated
+	_ = stride!(fctx.bin, fctx.home, ["week", "add", d!(1), "endurance", "Easy 60 min, conversational", "base", "1x1:00:00@RPE5"])
+	_ = stride!(fctx.bin, fctx.home, ["week", "add", d!(2), "recovery", "Easy spin on the bike", "base", "1x1:00:00@RPE5"])
+	_ = stride!(fctx.bin, fctx.home, ["week", "add", d!(4), "threshold", "Tempo 3x10", "build", "1x1:00:00@RPE5"])
+	_ = stride!(fctx.bin, fctx.home, ["week", "add", d!(5), "recovery", "Walk", "base", "1x30:00@RPE4"])
+	_ = stride!(fctx.bin, fctx.home, ["week", "add", d!(6), "endurance", "Steady hour", "base", "1x1:00:00@RPE5"])
+	tsrcs = strjq!(fctx, ["project", six], "[.data.series[] | \"\\(.load_source):\\(.load * 100 | round / 100)\"] | join(\",\")")
+	check!("a well-targeted plan's days are all from targets but the rest session (got ${tsrcs})", tsrcs == "target:50,target:50,rest:0,target:50,target:20,target:50")?
+	check!("...its target fields read as they always have", strjq!(fctx, ["project", six], "[.data.sessions_considered, .data.sessions_projected, (.data.unprojected | map(.date + \":\" + .reason) | join(\";\"))] | map(tostring) | join(\",\")") == "6,5,${d!(3)}:no_target")?
+	th = human!(["project", six])
+	check!("...and the screen says so, with no target left unpriced", Str.contains(th, "\n  6 projected days: 5 from targets, 1 at rest") and !(Str.contains(th, "not from its target")))?
+	_ = sh!("rm -rf '${fh}'")
+	# no history at all: nothing to estimate from, and the projection says so
+	# rather than inventing a load
+	nh = need("mktemp -d", Str.trim(sh!("mktemp -d")))?
+	nctx = { ..ctx, home: nh, db: "${nh}/.stride/db.sqlite" }
+	_ = stride!(nctx.bin, nctx.home, ["init"])
+	_ = sql!(nctx.db, "INSERT OR REPLACE INTO config (key,value) VALUES ('timezone','${ctx.tz}');")
+	_ = stride!(nctx.bin, nctx.home, ["week", "add", d!(1), "endurance", "Easy run", "base"])
+	_ = stride!(nctx.bin, nctx.home, ["week", "add", d!(2), "endurance", "Easy run", "base"])
+	check!("with no history, an untargeted day and an empty one carry nothing and are flagged", strjq!(nctx, ["project", d!(3)], "[.data.series[] | \"\\(.load_source):\\(.load):\\(.load_known)\"] | join(\",\")") == "none:0:false,none:0:false,none:0:false")?
+	check!("...and the screen names it", Str.contains(stride_human!(nctx.bin, nctx.home, ["project", d!(3)]), "\n  3 projected days: 3 with nothing to estimate from"))?
+	_ = sh!("rm -rf '${nh}'")
 	Ok({})
 }
 

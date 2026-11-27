@@ -228,6 +228,63 @@ Load :: [].{
 	projected_on : Str, F64, F64 -> Str
 	projected_on = |date, ctl, tsb| "${date}: fitness ${Fmt.tenths((ctl * 10.0).round_to_i64_try().ok_or(0))}, form ${Fmt.tenths((tsb * 10.0).round_to_i64_try().ok_or(0))}"
 
+	# ── where a projected day's load comes from (ADR 0022) ────────────────
+	# Every projected day names one source: a target its inputs price, a
+	# rest session, an estimate from the athlete's own history, the recent
+	# daily average on a day nothing is planned, or none when the history
+	# that would estimate it is missing. The mix counts the days of each.
+	Mix : { target : U64, estimate : U64, habit : U64, rest : U64, none : U64 }
+
+	mix_of : List(Str) -> Mix
+	mix_of = |sources| {
+		n = |s| List.count_if(sources, |x| x == s)
+		{ target: n("target"), estimate: n("estimate"), habit: n("habit"), rest: n("rest"), none: n("none") }
+	}
+
+	# the mix in words, sources in a fixed order and empty ones left out,
+	# read by the CLI's projection screens and the board's key alike
+	mix_text : Mix -> Str
+	mix_text = |m| {
+		part = |n, one, many| if (n == 0) Err(Empty) else Ok(if (n == 1) "1 ${one}" else "${n.to_str()} ${many}")
+		Str.join_with(
+			List.keep_oks(
+				[
+					part(m.target, "from a target", "from targets"),
+					part(m.estimate, "estimated from your history", "estimated from your history"),
+					part(m.habit, "from your recent training", "from your recent training"),
+					part(m.rest, "at rest", "at rest"),
+					part(m.none, "with nothing to estimate from", "with nothing to estimate from"),
+				],
+				|p| p,
+			),
+			", ",
+		)
+	}
+
+	# the mix in the few words a tile holds: the days nothing could
+	# estimate when there are any, else the days estimated from history
+	# (sessions and unplanned days alike), else that every load came from
+	# targets or rest
+	mix_short : Mix -> Str
+	mix_short = |m| {
+		est = m.estimate + m.habit
+		days = |n| if (n == 1) "1 day" else "${n.to_str()} days"
+		if (m.none > 0) "${days(m.none)} with no estimate"
+		else if (est > 0) "${days(est)} estimated"
+		else if (m.target > 0) "all from targets"
+		else if (m.rest > 0) "all rest"
+		else ""
+	}
+
+	expect mix_of(["target", "estimate", "estimate", "habit", "rest", "none", "other"]) == { target: 1, estimate: 2, habit: 1, rest: 1, none: 1 }
+	expect mix_text({ target: 12, estimate: 20, habit: 0, rest: 0, none: 0 }) == "12 from targets, 20 estimated from your history"
+	expect mix_text({ target: 1, estimate: 1, habit: 3, rest: 1, none: 2 }) == "1 from a target, 1 estimated from your history, 3 from your recent training, 1 at rest, 2 with nothing to estimate from"
+	expect mix_text({ target: 0, estimate: 0, habit: 0, rest: 0, none: 0 }) == ""
+	expect mix_short({ target: 12, estimate: 20, habit: 3, rest: 2, none: 0 }) == "23 days estimated"
+	expect mix_short({ target: 12, estimate: 20, habit: 3, rest: 2, none: 1 }) == "1 day with no estimate"
+	expect mix_short({ target: 4, estimate: 0, habit: 0, rest: 2, none: 0 }) == "all from targets"
+	expect mix_short({ target: 0, estimate: 0, habit: 0, rest: 2, none: 0 }) == "all rest" and mix_short({ target: 0, estimate: 0, habit: 0, rest: 0, none: 0 }) == ""
+
 	expect projected_on("2026-12-15", 54.94, 1.26) == "2026-12-15: fitness 54.9, form 1.3"
 	expect projected_on("2027-06-26", 0.6, -0.04) == "2027-06-26: fitness 0.6, form 0.0"
 

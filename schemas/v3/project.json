@@ -1,6 +1,6 @@
 {
   "title": "project",
-  "description": "Result of `stride project <YYYY-MM-DD> [\"<date>=<target>,...\"]` (ADR 0010, ADR 0019): CTL/ATL/TSB on the target date, folded by the same recurrence daily_load runs — over the RECORDED open plan (plan_source: recorded), or over a caller-passed hypothetical plan that REPLACES it in the walk (plan_source: hypothetical). Every target kind is priced on its own rung: power as TSS against the ride FTP, pace as rTSS against its family's threshold speed, a heart-rate band or zone as hrTSS, a session rating as session-RPE load. A session the inputs cannot price adds nothing and is listed in unprojected with its reason. The hypothetical is echoed back (dates as given, targets in canonical form, so 1x60:00@Z2 echoes as 1x1:00:00@Z2) and never stored — the recorded plan stays the single source of adherence truth. stride never solves for the plan that reaches a target: plan to consequences only.",
+  "description": "Result of `stride project <YYYY-MM-DD> [\"<date>=<target>,...\"]` (ADR 0010, ADR 0019, ADR 0022): CTL/ATL/TSB on the target date, folded by the same recurrence daily_load runs — over the RECORDED open plan (plan_source: recorded), or over a caller-passed hypothetical plan that REPLACES it in the walk (plan_source: hypothetical). Every target kind is priced on its own rung: power as TSS against the ride FTP, pace as rTSS against its family's threshold speed, a heart-rate band or zone as hrTSS, a session rating as session-RPE load. A session its target cannot price is listed in unprojected with its reason. Over the recorded plan every day no target prices is filled from the athlete's own history and says so: a session by its estimate, a day with no session at the recent daily mean (series[].load_source, load_sources). A hypothetical plan is taken as written. The hypothetical is echoed back (dates as given, targets in canonical form, so 1x60:00@Z2 echoes as 1x1:00:00@Z2) and never stored — the recorded plan stays the single source of adherence truth. stride never solves for the plan that reaches a target: plan to consequences only.",
   "type": "object",
   "additionalKeys": false,
   "required": [
@@ -17,7 +17,8 @@
     "sessions_projected",
     "unprojected",
     "hypothetical",
-    "series"
+    "series",
+    "load_sources"
   ],
   "properties": {
     "target_date": {
@@ -59,7 +60,7 @@
     },
     "unprojected": {
       "type": "array",
-      "description": "Each session in the window that adds no load, with why: no_target (no structured target), no_ftp (a power target with no ride FTP on file), no_hr_zones (a heart-rate band with no zones configured), no_threshold_pace (a pace target whose sport families have no 60-day threshold on file, or whose intensity against the nearest one exceeds the 1.5 bound analyze enforces). sessions_considered minus sessions_projected counts them.",
+      "description": "Each session in the window whose target adds no load of its own, with why: no_target (no structured target), no_ftp (a power target with no ride FTP on file), no_hr_zones (a heart-rate band with no zones configured), no_threshold_pace (a pace target whose sport families have no 60-day threshold on file, or whose intensity against the nearest one exceeds the 1.5 bound analyze enforces). sessions_considered minus sessions_projected counts them. Over the recorded plan each is estimated from the athlete's history unless it is typed rest; its day's load_source says which.",
       "items": {
         "type": "object",
         "additionalKeys": false,
@@ -136,7 +137,7 @@
     },
     "series": {
       "type": "array",
-      "description": "The projection day by day: one row per day from the day after projected_from through the plan's last day, or through target_date when the plan reaches past it, from the same walk that gives ctl, atl and tsb, so the row on target_date carries those values. Empty when the plan has no session after projected_from. load is what the plan prices onto the day; load_known is false when a session on the day is in unprojected, and its load then counts only the sessions that were priced.",
+      "description": "The projection day by day: one row per day from the day after projected_from through target_date, from the same walk that gives ctl, atl and tsb, so the row on target_date carries those values. Empty when target_date is not after projected_from. load is the day's load and load_source where it came from; load_known is false only when load_source is none, and the day then adds nothing.",
       "items": {
         "type": "object",
         "additionalKeys": false,
@@ -146,7 +147,8 @@
           "load_known",
           "ctl",
           "atl",
-          "tsb"
+          "tsb",
+          "load_source"
         ],
         "properties": {
           "date": {
@@ -166,7 +168,46 @@
           },
           "tsb": {
             "type": "number"
+          },
+          "load_source": {
+            "type": "string",
+            "enum": [
+              "target",
+              "estimate",
+              "habit",
+              "rest",
+              "none"
+            ]
           }
+        }
+      }
+    },
+    "load_sources": {
+      "type": "object",
+      "description": "The projected days counted by where their load came from (ADR 0022), the sources series[].load_source names: target (priced by its target), estimate (a session no target prices, estimated from the athlete's own history), habit (a day with no open session, at the mean daily load of the 28 days ending on projected_from), rest (a session typed rest, or in a hypothetical plan a day it does not name), none (the history an estimate needs is missing; the day adds nothing). They sum to the number of projected days.",
+      "additionalKeys": false,
+      "required": [
+        "target",
+        "estimate",
+        "habit",
+        "rest",
+        "none"
+      ],
+      "properties": {
+        "target": {
+          "type": "integer"
+        },
+        "estimate": {
+          "type": "integer"
+        },
+        "habit": {
+          "type": "integer"
+        },
+        "rest": {
+          "type": "integer"
+        },
+        "none": {
+          "type": "integer"
         }
       }
     }

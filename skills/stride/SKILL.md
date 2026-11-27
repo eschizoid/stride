@@ -156,6 +156,11 @@ reason `--json` and still answers in JSON).
 5. **Plan** with `stride week add <YYYY-MM-DD> <type> "<detail>" "<rationale>" ["<target>"] --json`.
    - `type` is the intensity intent, not the sport: vo2max | threshold | endurance |
      recovery | strength | rest (free-form accepted). The sport goes in `detail`.
+   - Give every non-rest session a target: a target gives the most accurate forecast.
+     At the least, give a session rating (`1x30:00@RPE3`) and keep the detail text for
+     the athlete. A session without a target is estimated from the athlete's own
+     history, and a day with no session counts as an ordinary recent day, so write each
+     planned day off as a `rest` session.
    - The optional target is a strict literal `<reps>x<rep>@<signal>` on any signal, for
      any sport, stored beside the prose:
      - power `3x12:00@230W` (rep `mm:ss`, at least 0:30; watts 1-2500)
@@ -226,8 +231,8 @@ reason `--json` and still answers in JSON).
 - `stride event add <YYYY-MM-DD> "<name>" --json` (future dates only, else `bad_date`)
   returns `{id, event_date, name, days_away}`; `stride event remove <id> --json` deletes
   it. `stride events --json` returns
-  `{projected_from, baseline_known, ftp_known, events:[{id, event_date, name, days_away, ctl, atl, tsb, planned_in_window, sessions_projected, unprojected, plan_end}]}`:
-  CTL/ATL/TSB projected onto each event date over the open plan's targets, window
+  `{projected_from, baseline_known, ftp_known, events:[{id, event_date, name, days_away, ctl, atl, tsb, planned_in_window, sessions_projected, unprojected, plan_end, load_sources}]}`:
+  CTL/ATL/TSB projected onto each event date over the open plan, window
   `(projected_from, event_date]`. Each target kind is priced on the rung analyze scores
   by: power as TSS against the FTP of the power family trained most (in 90 days; the
   next family with an FTP when that one has none), pace as rTSS against the 60-day threshold
@@ -235,26 +240,35 @@ reason `--json` and still answers in JSON).
   whose threshold puts the target between 0.45 and 1.5 intensity;
   analyze prices the finished session against its own sport type, so a treadmill,
   trail or virtual session can differ), a heart-rate band or zone as hrTSS (a band at
-  its midpoint's zone, under the global zones), a rating as session-RPE load. A session
-  with no target, or none its inputs can price, contributes zero, so the gap between
-  `planned_in_window` and `sessions_projected` is how blind the projection is, and
-  `unprojected` names each such session with its reason, as `project` does. `plan_end`
+  its midpoint's zone, under the global zones), a rating as session-RPE load.
+  Every other projected day is filled from the athlete's own history and labeled
+  (ADR 0022): a session with no target, or one its inputs cannot price, is estimated
+  as the median load per hour of the last 90 days' sessions (those that completed a
+  planned session of the same type, else those of the first sport its type or detail
+  names, else all; three at least) times its target's duration or else their median
+  duration; a day with no session carries the mean daily load of the last 28 days; a
+  `rest` session carries zero. With too little history the day carries nothing and
+  says so. `load_sources` is `{target, estimate, habit, rest, none}`, the days counted
+  by source. `sessions_projected` still counts the sessions priced by their target, and
+  `unprojected` names each other session with its reason, as `project` does. `plan_end`
   is `{known, date, ctl, atl, tsb}` on the written plan's last day when the plan stops
-  short of the event (past it the event-day numbers are decay alone); the window's
-  event card shows that day, and `project <date>` returns the same numbers for it.
-  `ftp_known: false` means power targets add nothing. `baseline_known: false` means no computed history. A
+  short of the event (past it every day is filled from recent training); the window's
+  event card shows that day when the event is more than 42 days away, and
+  `project <date>` returns the same numbers for it.
+  `ftp_known: false` means power targets cannot price their sessions. `baseline_known: false` means no computed history. A
   session dated on the baseline day is excluded because the baseline already contains
   today. Negative `days_away` echoes the current baseline, not a projection.
 - `stride project <YYYY-MM-DD> ["<date>=<target>,..."] --json` returns
-  `{target_date, days_away, projected_from, baseline_known, ftp_known, plan_source, ctl, atl, tsb, sessions_considered, sessions_projected, unprojected, hypothetical, series}`.
-  `series` is the same walk day by day, `{date, load, load_known, ctl, atl, tsb}`, from
-  the day after `projected_from` to the plan's last day (or `target_date`, when the plan
-  reaches past it); `load_known: false` marks a day holding an `unprojected` session.
-  The form board draws it.
+  `{target_date, days_away, projected_from, baseline_known, ftp_known, plan_source, ctl, atl, tsb, sessions_considered, sessions_projected, unprojected, hypothetical, series, load_sources}`.
+  `series` is the same walk day by day, `{date, load, load_known, load_source, ctl, atl, tsb}`, from
+  the day after `projected_from` through `target_date`; `load_source` is `target`,
+  `estimate`, `habit`, `rest` or `none` by the rules above, and `load_known: false`
+  marks only a `none` day. The form board draws it.
   Bare, it walks the recorded plan; with pairs (any target kind) it walks your
-  hypothetical plan instead, echoed in `hypothetical` as
+  hypothetical plan instead, taken as written (a day it does not name is `rest`, and
+  nothing is estimated), echoed in `hypothetical` as
   `{date, target_kind, target_literal, reps, dur_s, watts}` and never stored.
-  `unprojected` lists each session in the window that added nothing as
+  `unprojected` lists each session in the window whose target added nothing of its own as
   `{date, target_literal, reason}`, reason `no_target`, `no_ftp`, `no_hr_zones` or
   `no_threshold_pace`. Compare tapers by calling once per candidate. Stride never
   solves for the plan that reaches a TSB; that is your call.

@@ -998,10 +998,10 @@ Metrics :: [].{
 			Err(_) => { ctl: base.ctl, atl: base.atl, tsb: base.ctl - base.atl }
 		}
 
-	## price each session in a window: the (day, load) pairs the walk folds,
-	## and the sessions it could not price with the reason (ADR 0009: unpriced
-	## is stated, never a silent zero)
-	price_sessions : List({ date : Str, d : I64, target : Target }), ProjectionInputs -> { loads : List({ d : I64, tss : F64 }), unprojected : List({ date : Str, target_literal : Str, reason : Str }) }
+	## price each session in a window by its target: the (day, load) pairs,
+	## and the sessions whose target could not price them, with the reason
+	## (ADR 0009: unpriced is stated, never a silent zero)
+	price_sessions : List(PlanSession), ProjectionInputs -> { loads : List({ d : I64, tss : F64 }), unprojected : List({ date : Str, target_literal : Str, reason : Str }) }
 	price_sessions = |sessions, inp|
 		List.fold(
 			sessions,
@@ -1013,38 +1013,178 @@ Metrics :: [].{
 				},
 		)
 
-	## one day of a projection: the load the plan prices onto it and the state
-	## the walk leaves. `load_known` is false when a session on the day could
-	## not be priced, so its load counts only the sessions that were.
-	ProjectedDay : { date : Str, load : F64, load_known : Bool, ctl : F64, atl : F64, tsb : F64 }
+	## a planned session as a projection reads it: its day and target, and
+	## the words that say what kind of session it is, its type and detail
+	PlanSession : { date : Str, d : I64, target : Target, kind : Str, detail : Str }
 
-	## A plan projected onto a horizon (ADR 0010, ADR 0019): the sessions after
-	## the baseline day through the horizon are priced, and one walk from the
-	## baseline gives both the state on the horizon and the day-by-day series.
-	## The series stops on the plan's last day when that comes before the
-	## horizon, since past it the walk is the decay of days nobody planned; a
-	## plan with no session after the baseline has no series. An unpriced
-	## session adds no load to its day.
-	project_plan : { ctl : F64, atl : F64 }, I64, I64, List({ date : Str, d : I64, target : Target }), ProjectionInputs -> { ctl : F64, atl : F64, tsb : F64, considered : U64, projected : U64, unprojected : List({ date : Str, target_literal : Str, reason : Str }), series : List(ProjectedDay) }
-	project_plan = |base, base_days, horizon, sessions, inp| {
+	## one scored session of the athlete's history as an estimate reads it:
+	## the type of the planned session it completed ("" when none), its
+	## sport family, its load and its moving time
+	HistorySession : { kind : Str, family : Str, load : F64, moving_s : I64 }
+
+	## what a projection does with a day its plan does not price (ADR 0022):
+	## the recorded plan is filled from the athlete's own history, the
+	## sessions of the last estimate_window_days and the mean daily load of
+	## the last habit_window_days; a hypothetical plan is taken as written,
+	## so a day it does not name is a rest day of that plan
+	Fill : [AsWritten, FromHistory({ sessions : List(HistorySession), habit : [NoHabit, Habit(F64)] })]
+
+	## the days of history an estimate reads, ending on the baseline day
+	estimate_window_days : I64
+	estimate_window_days = 90
+
+	## the fewest sessions a group of history needs before its median stands
+	## for a planned session, so one odd session does not set the estimate
+	estimate_min_sessions : U64
+	estimate_min_sessions = 3
+
+	## the days whose mean daily load an unplanned day carries, ending on
+	## the baseline day
+	habit_window_days : I64
+	habit_window_days = 28
+
+	## The load a session no target prices is expected to carry, from the
+	## athlete's own history: the median load per hour of the first group
+	## holding estimate_min_sessions sessions, of the sessions that completed
+	## a planned session of the same type (case folded), then the sessions
+	## of the first sport a word of the type or detail names, then every
+	## session; times the session's duration, `dur_s` when it is known
+	## (above 0), else that group's median moving time. No group large
+	## enough is NoHistory: nothing stands in for a missing history.
+	estimate_load : List(HistorySession), Str, Str, I64 -> [Estimated(F64), NoHistory]
+	estimate_load = |hist, kind, detail, dur_s| {
+		usable = List.keep_if(hist, |h| h.moving_s > 0 and h.load >= 0.0)
+		low = Str.with_ascii_lowercased(kind)
+		by_kind = if (low == "") [] else List.keep_if(usable, |h| Str.with_ascii_lowercased(h.kind) == low)
+		by_sport = sport_sessions(usable, session_words("${kind} ${detail}"))
+		match List.first(List.keep_if([by_kind, by_sport, usable], |g| List.len(g) >= estimate_min_sessions)) {
+			Ok(g) => {
+				rate = median_of(List.map(g, |h| h.load * 3600.0 / (h.moving_s).to_f64()))
+				secs = if (dur_s > 0) (dur_s).to_f64() else median_of(List.map(g, |h| (h.moving_s).to_f64()))
+				Estimated(rate * secs / 3600.0)
+			}
+			Err(_) => NoHistory
+		}
+	}
+
+	# the sessions of the first word that names a sport the history holds:
+	# the word read as a family word or a sport's spelling (Sports.family_head),
+	# compared with each session's family case folded
+	sport_sessions : List(HistorySession), List(Str) -> List(HistorySession)
+	sport_sessions = |hist, words|
+		match words {
+			[] => []
+			[w, .. as rest] => {
+				head = Str.with_ascii_lowercased(Sports.family_head(w))
+				found = List.keep_if(hist, |h| Str.with_ascii_lowercased(h.family) == head)
+				if (List.is_empty(found)) sport_sessions(hist, rest) else found
+			}
+		}
+
+	# the words of a text: runs of ASCII letters, in order
+	session_words : Str -> List(Str)
+	session_words = |text| {
+		spaced = List.map(Str.to_utf8(text), |b| if ((b >= 'a' and b <= 'z') or (b >= 'A' and b <= 'Z')) b else ' ')
+		List.keep_if(Str.split_on(Str.from_utf8_lossy(spaced), " "), |w| w != "")
+	}
+
+	# the middle value of a list, the mean of the two middle ones for an even
+	# count, 0.0 for none
+	median_of : List(F64) -> F64
+	median_of = |xs| {
+		sorted = List.sort_with(xs, |a, b| if (a < b) Before else if (a > b) After else Same)
+		n = List.len(sorted)
+		if (n == 0) 0.0
+		else if (n % 2 == 1) (List.get(sorted, n // 2)) ?? 0.0
+		else {
+			lo = (List.get(sorted, n // 2 - 1)) ?? 0.0
+			hi = (List.get(sorted, n // 2)) ?? 0.0
+			(lo + hi) / 2.0
+		}
+	}
+
+	# one session's load and where it came from: its target when the inputs
+	# price it, zero for a rest session, else the estimate from history
+	# when the plan is filled from it, else nothing
+	session_load : PlanSession, ProjectionInputs, Fill -> { d : I64, tss : F64, source : Str }
+	session_load = |s, inp, fill|
+		match projected_load(s.target, inp) {
+			Load(x) => { d: s.d, tss: x, source: "target" }
+			Unprojected(_) =>
+				if Str.with_ascii_lowercased(s.kind) == "rest" {
+					{ d: s.d, tss: 0.0, source: "rest" }
+				} else {
+					match fill {
+						AsWritten => { d: s.d, tss: 0.0, source: "none" }
+						FromHistory(h) =>
+							match estimate_load(h.sessions, s.kind, s.detail, s.target.reps * s.target.dur_s) {
+								Estimated(x) => { d: s.d, tss: x, source: "estimate" }
+								NoHistory => { d: s.d, tss: 0.0, source: "none" }
+							}
+					}
+				}
+		}
+
+	# a day no session names: the recent daily mean when the plan is filled
+	# from history, a rest day of a plan taken as written
+	unplanned_day : Fill -> { tss : F64, source : Str }
+	unplanned_day = |fill|
+		match fill {
+			AsWritten => { tss: 0.0, source: "rest" }
+			FromHistory(h) =>
+				match h.habit {
+					Habit(x) => { tss: x, source: "habit" }
+					NoHabit => { tss: 0.0, source: "none" }
+				}
+		}
+
+	# a day holding several sessions names the least certain of their
+	# sources: none, then estimate, then target, then rest
+	source_rank : Str -> U64
+	source_rank = |s| if (s == "none") 0 else if (s == "estimate") 1 else if (s == "target") 2 else 3
+
+	## one day of a projection: its load, where that load came from (ADR
+	## 0022), and the state the walk leaves. `load_known` is false only for a
+	## day whose source is none.
+	ProjectedDay : { date : Str, load : F64, load_known : Bool, load_source : Str, ctl : F64, atl : F64, tsb : F64 }
+
+	## A plan projected onto a horizon (ADR 0010, ADR 0019, ADR 0022): every
+	## day after the baseline day through the horizon carries a load and its
+	## source, and one walk from the baseline gives both the state on the
+	## horizon and the day-by-day series. A horizon at or before the baseline
+	## has no series and states the baseline. `projected` counts the sessions
+	## their target priced and `unprojected` names the rest with the reason.
+	project_plan : { ctl : F64, atl : F64 }, I64, I64, List(PlanSession), ProjectionInputs, Fill -> { ctl : F64, atl : F64, tsb : F64, considered : U64, projected : U64, unprojected : List({ date : Str, target_literal : Str, reason : Str }), series : List(ProjectedDay), sources : Load.Mix }
+	project_plan = |base, base_days, horizon, sessions, inp, fill| {
 		in_window = List.keep_if(sessions, |s| s.d > base_days and s.d <= horizon)
 		priced = price_sessions(in_window, inp)
-		walked = Load.days_from(base, base_days, horizon, priced.loads)
-		at = walk_end(base, walked)
-		plan_end = List.fold(sessions, base_days, |m, s| if (s.d > m) s.d else m)
-		unpriced_days = List.keep_oks(priced.unprojected, |u| date_str_to_days(u.date))
-		series = List.keep_oks(
-			walked,
-			|x|
-				if x.d <= plan_end {
-					load_known : Bool
-					load_known = !(List.contains(unpriced_days, x.d))
-					Ok({ date: days_to_date_str(x.d), load: x.load, load_known, ctl: x.ctl, atl: x.atl, tsb: x.tsb })
-				} else {
-					Err(PastPlan)
-				},
+		loaded = List.map(in_window, |s| session_load(s, inp, fill))
+		span = if (horizon > base_days) (horizon - base_days).to_u64_wrap() else 0
+		walked = Iter.fold(
+			(0.U64..<span).iter(),
+			{ ctl: base.ctl, atl: base.atl, out: List.with_capacity(span) },
+			|acc, i| {
+				d = base_days + 1 + i.to_i64_wrap()
+				on = List.keep_if(loaded, |x| x.d == d)
+				day =
+					match on {
+						[] => unplanned_day(fill)
+						[first, ..] => {
+							worst = List.fold(on, first.source, |w, x| if (source_rank(x.source) < source_rank(w)) x.source else w)
+							{ tss: List.fold(on, 0.0, |t, x| t + x.tss), source: worst }
+						}
+					}
+				s = Load.step({ ctl_prev: acc.ctl, atl_prev: acc.atl, tss: day.tss })
+				load_known : Bool
+				load_known = day.source != "none"
+				{ ctl: s.ctl, atl: s.atl, out: List.append(acc.out, { date: days_to_date_str(d), load: day.tss, load_known, load_source: day.source, ctl: s.ctl, atl: s.atl, tsb: s.tsb }) }
+			},
 		)
-		{ ctl: at.ctl, atl: at.atl, tsb: at.tsb, considered: List.len(in_window), projected: List.len(priced.loads), unprojected: priced.unprojected, series }
+		at = match List.last(walked.out) {
+			Ok(x) => { ctl: x.ctl, atl: x.atl, tsb: x.tsb }
+			Err(_) => { ctl: base.ctl, atl: base.atl, tsb: base.ctl - base.atl }
+		}
+		{ ctl: at.ctl, atl: at.atl, tsb: at.tsb, considered: List.len(in_window), projected: List.len(priced.loads), unprojected: priced.unprojected, series: walked.out, sources: Load.mix_of(List.map(walked.out, |x| x.load_source)) }
 	}
 
 	load_step : { ctl_prev : F64, atl_prev : F64, tss : F64 } -> { ctl : F64, atl : F64, tsb : F64 }
@@ -6308,68 +6448,156 @@ proj_base = (Metrics.date_str_to_days("2026-11-25")).ok_or(0)
 proj_inputs : Metrics.ProjectionInputs
 proj_inputs = { ftp: 230.0, zones: NoZones, pace_thresholds: [] }
 
-proj_session : I64, Str -> { date : Str, d : I64, target : Metrics.Target }
-proj_session = |k, lit| { date: Metrics.days_to_date_str(proj_base + k), d: proj_base + k, target: (Metrics.parse_any_target(lit)).ok_or(Metrics.no_target) }
+proj_session : I64, Str -> Metrics.PlanSession
+proj_session = |k, lit| { date: Metrics.days_to_date_str(proj_base + k), d: proj_base + k, target: (Metrics.parse_any_target(lit)).ok_or(Metrics.no_target), kind: "", detail: "" }
 
-proj_plan : List({ date : Str, d : I64, target : Metrics.Target })
+proj_plan : List(Metrics.PlanSession)
 proj_plan = [proj_session(1, "3x12:00@230W"), proj_session(2, ""), proj_session(3, "1x1:00:00@HR125-147"), proj_session(3, "1x45:00@RPE6"), proj_session(7, "4x8:00@250W")]
 
 proj_close : { ctl : F64, atl : F64, tsb : F64 }, { ctl : F64, atl : F64, tsb : F64 } -> Bool
 proj_close = |a, b| (a.ctl - b.ctl).abs() < 0.000001 and (a.atl - b.atl).abs() < 0.000001 and (a.tsb - b.tsb).abs() < 0.000001
 
+# an athlete's history: three endurance sessions at 50, 60 and 70 an hour
+# for an hour each, three runs at 80 an hour for half an hour each, and one
+# session of a type seen only once
+proj_history : List(Metrics.HistorySession)
+proj_history = [
+	{ kind: "endurance", family: "Ride", load: 50.0, moving_s: 3600 },
+	{ kind: "Endurance", family: "Ride", load: 70.0, moving_s: 3600 },
+	{ kind: "endurance", family: "Ride", load: 60.0, moving_s: 3600 },
+	{ kind: "", family: "Run", load: 40.0, moving_s: 1800 },
+	{ kind: "", family: "Run", load: 40.0, moving_s: 1800 },
+	{ kind: "", family: "Run", load: 40.0, moving_s: 1800 },
+	{ kind: "vo2max", family: "Ride", load: 100.0, moving_s: 3600 },
+]
+
+proj_fill : Metrics.Fill
+proj_fill = FromHistory({ sessions: proj_history, habit: Habit(45.0) })
+
+proj_day0 : Metrics.ProjectedDay
+proj_day0 = { date: "", load: -1.0, load_known: Bool.False, load_source: "", ctl: 0.0, atl: 0.0, tsb: 0.0 }
+
 # every day of the series is what the projection to that day returns, the
-# state and the load alike, and the last day is the plan's last day
+# state, the load and its source alike, the series runs from the day after
+# the baseline to the horizon, and a filled plan agrees with itself the same
+# way a plan taken as written does
 expect {
 	base = { ctl: 42.0, atl: 51.0 }
-	full = Metrics.project_plan(base, proj_base, proj_base + 30, proj_plan, proj_inputs)
-	List.len(full.series) == 7
-		and List.all(
-			full.series,
-			|day| {
-				d = (Metrics.date_str_to_days(day.date)).ok_or(0)
-				at = Metrics.project_plan(base, proj_base, d, proj_plan, proj_inputs)
-				last = (List.last(at.series)) ?? { date: "", load: -1.0, load_known: Bool.False, ctl: 0.0, atl: 0.0, tsb: 0.0 }
-				proj_close({ ctl: day.ctl, atl: day.atl, tsb: day.tsb }, { ctl: at.ctl, atl: at.atl, tsb: at.tsb }) and last.date == day.date and (last.load - day.load).abs() < 0.000001
-			},
-		)
-		and (List.first(full.series) ?? { date: "", load: 0.0, load_known: Bool.False, ctl: 0.0, atl: 0.0, tsb: 0.0 }).date == "2026-11-26"
-		and (List.last(full.series) ?? { date: "", load: 0.0, load_known: Bool.False, ctl: 0.0, atl: 0.0, tsb: 0.0 }).date == "2026-12-02"
+	agrees = |fill| {
+		full = Metrics.project_plan(base, proj_base, proj_base + 10, proj_plan, proj_inputs, fill)
+		List.len(full.series) == 10
+			and List.all(
+				full.series,
+				|day| {
+					d = (Metrics.date_str_to_days(day.date)).ok_or(0)
+					at = Metrics.project_plan(base, proj_base, d, proj_plan, proj_inputs, fill)
+					last = (List.last(at.series)) ?? proj_day0
+					proj_close({ ctl: day.ctl, atl: day.atl, tsb: day.tsb }, { ctl: at.ctl, atl: at.atl, tsb: at.tsb }) and last.date == day.date and (last.load - day.load).abs() < 0.000001 and last.load_source == day.load_source
+				},
+			)
+			and (List.first(full.series) ?? proj_day0).date == "2026-11-26"
+			and (List.last(full.series) ?? proj_day0).date == "2026-12-05"
+	}
+	agrees(AsWritten) and agrees(proj_fill)
 }
 
-# the sessions it cannot price project as if they were absent: the same
-# series day for day and the same state on the horizon, their day's load
-# only what was priced and flagged, and each one named with its reason
+# a plan taken as written: the sessions no target prices add nothing and
+# are flagged, a day it names nothing on is a rest day of that plan, and
+# the coverage counts are the target's own
 expect {
 	base = { ctl: 42.0, atl: 51.0 }
-	priced = Metrics.project_plan(base, proj_base, proj_base + 10, proj_plan, proj_inputs)
-	without = Metrics.project_plan(base, proj_base, proj_base + 10, [proj_session(1, "3x12:00@230W"), proj_session(3, "1x45:00@RPE6"), proj_session(7, "4x8:00@250W")], proj_inputs)
-	known = List.map(priced.series, |x| x.load_known)
-	List.len(priced.series) == List.len(without.series)
-		and List.all(List.map2(priced.series, without.series, |a, b| a.date == b.date and (a.load - b.load).abs() < 0.000001 and proj_close({ ctl: a.ctl, atl: a.atl, tsb: a.tsb }, { ctl: b.ctl, atl: b.atl, tsb: b.tsb })), |ok| ok)
-		and proj_close({ ctl: priced.ctl, atl: priced.atl, tsb: priced.tsb }, { ctl: without.ctl, atl: without.atl, tsb: without.tsb })
-		and known == [Bool.True, Bool.False, Bool.False, Bool.True, Bool.True, Bool.True, Bool.True]
-		and List.map(priced.unprojected, |u| u.reason) == ["no_target", "no_hr_zones"]
-		and priced.considered == 5
-		and priced.projected == 3
+	p = Metrics.project_plan(base, proj_base, proj_base + 8, proj_plan, proj_inputs, AsWritten)
+	List.map(p.series, |x| x.load_source) == ["target", "none", "none", "rest", "rest", "rest", "target", "rest"]
+		and List.map(p.series, |x| x.load_known) == [Bool.True, Bool.False, Bool.False, Bool.True, Bool.True, Bool.True, Bool.True, Bool.True]
+		and List.map(p.unprojected, |u| u.reason) == ["no_target", "no_hr_zones"]
+		and p.considered == 5
+		and p.projected == 3
+		and p.sources == { target: 2, estimate: 0, habit: 0, rest: 4, none: 2 }
 }
 
-# no series past the plan's last day: a horizon beyond it stops the series
-# there while the state still walks on to the horizon, a horizon inside the
-# plan stops it on the horizon, and a plan with nothing after the baseline
-# day has no series and states the baseline
+# the same plan filled from history: the untargeted session is estimated
+# from every session (it names no type or sport), the heart-rate band no
+# zones price is estimated at its own hour, the day it shares with a
+# session rating takes the less certain source and both loads, and the
+# unplanned days carry the recent daily mean
 expect {
 	base = { ctl: 42.0, atl: 51.0 }
-	beyond = Metrics.project_plan(base, proj_base, proj_base + 20, proj_plan, proj_inputs)
-	inside = Metrics.project_plan(base, proj_base, proj_base + 4, proj_plan, proj_inputs)
-	past = Metrics.project_plan(base, proj_base, proj_base + 20, [proj_session(0, "3x12:00@230W"), proj_session(-3, "1x45:00@RPE6")], proj_inputs)
-	end = (List.last(beyond.series)) ?? { date: "", load: 0.0, load_known: Bool.False, ctl: 0.0, atl: 0.0, tsb: 0.0 }
-	List.len(beyond.series) == 7
-		and end.date == "2026-12-02"
-		and beyond.ctl < end.ctl
-		and List.len(inside.series) == 4
-		and (List.last(inside.series) ?? end).date == "2026-11-29"
+	p = Metrics.project_plan(base, proj_base, proj_base + 8, proj_plan, proj_inputs, proj_fill)
+	loads = List.map(p.series, |x| x.load)
+	all_rate = 80.0
+	expected = [{ i: 1, l: all_rate }, { i: 2, l: all_rate + 45.0 }, { i: 3, l: 45.0 }, { i: 4, l: 45.0 }, { i: 5, l: 45.0 }, { i: 7, l: 45.0 }]
+	at = |i| (List.get(loads, i)) ?? 0.0
+	List.map(p.series, |x| x.load_source) == ["target", "estimate", "estimate", "habit", "habit", "habit", "target", "habit"]
+		and List.all(List.map(p.series, |x| x.load_known), |k| k)
+		and List.all(expected, |e| (at(e.i) - e.l).abs() < 0.000001)
+		and at(0) > 0.0 and at(6) > 0.0
+		and p.projected == 3
+		and List.map(p.unprojected, |u| u.reason) == ["no_target", "no_hr_zones"]
+		and p.sources == { target: 2, estimate: 2, habit: 4, rest: 0, none: 0 }
+}
+
+# the estimate's groups, in order: the planned type (case folded) when it
+# holds three sessions, else the first sport a word of the type or detail
+# names, else every session; the duration is the session's own when known,
+# else the group's median; no group of three is no estimate at all
+proj_est : [Estimated(F64), NoHistory], F64 -> Bool
+proj_est = |r, v|
+	match r {
+		Estimated(x) => (x - v).abs() < 0.000001
+		NoHistory => Bool.False
+	}
+
+proj_no_est : [Estimated(F64), NoHistory] -> Bool
+proj_no_est = |r|
+	match r {
+		Estimated(_) => Bool.False
+		NoHistory => Bool.True
+	}
+
+expect proj_est(Metrics.estimate_load(proj_history, "Endurance", "", 0), 60.0)
+expect proj_est(Metrics.estimate_load(proj_history, "endurance", "", 5400), 90.0)
+expect proj_est(Metrics.estimate_load(proj_history, "tempo", "easy run, 30 min", 0), 40.0)
+expect proj_est(Metrics.estimate_load(proj_history, "tempo", "easy RUN", 3600), 80.0)
+expect proj_est(Metrics.estimate_load(proj_history, "vo2max", "intervals", 0), 80.0)
+expect proj_est(Metrics.estimate_load(proj_history, "", "", 0), 80.0)
+expect proj_no_est(Metrics.estimate_load([], "endurance", "ride", 3600))
+expect proj_no_est(Metrics.estimate_load(List.take_first(proj_history, 2), "endurance", "ride", 3600))
+expect (Metrics.median_of([3.0, 1.0, 2.0]) - 2.0).abs() < 0.000001 and (Metrics.median_of([4.0, 1.0, 3.0, 2.0]) - 2.5).abs() < 0.000001 and Metrics.median_of([]).abs() < 0.000001
+expect Metrics.session_words("Run: easy 40' (Z2)") == ["Run", "easy", "Z"]
+
+# a rest session adds zero whether the plan is filled or not, and a plan
+# with no history to fill from adds nothing on the days it would estimate
+# or fill, and flags each of them
+expect {
+	base = { ctl: 42.0, atl: 51.0 }
+	rest = { ..proj_session(1, ""), kind: "Rest" }
+	easy = { ..proj_session(2, ""), kind: "endurance", detail: "ride" }
+	p = Metrics.project_plan(base, proj_base, proj_base + 3, [rest, easy], proj_inputs, proj_fill)
+	bare = Metrics.project_plan(base, proj_base, proj_base + 3, [rest, easy], proj_inputs, FromHistory({ sessions: [], habit: NoHabit }))
+	List.map(p.series, |x| x.load_source) == ["rest", "estimate", "habit"]
+		and List.all(List.map2(List.map(p.series, |x| x.load), [0.0, 60.0, 45.0], |a, b| (a - b).abs() < 0.000001), |ok| ok)
+		and List.map(bare.series, |x| x.load_source) == ["rest", "none", "none"]
+		and List.map(bare.series, |x| x.load_known) == [Bool.True, Bool.False, Bool.False]
+		and proj_close({ ctl: bare.ctl, atl: bare.atl, tsb: bare.tsb }, Metrics.project_walk(base, proj_base, proj_base + 3, []))
+		and bare.sources == { target: 0, estimate: 0, habit: 0, rest: 1, none: 2 }
+}
+
+# an empty plan filled from history holds the recent daily mean every day,
+# so fitness closes on it by the step's closed form; taken as written it
+# is pure decay; a horizon at or before the baseline has no series and
+# states the baseline
+expect {
+	base = { ctl: 42.0, atl: 51.0 }
+	h = Metrics.project_plan(base, proj_base, proj_base + 10, [], proj_inputs, proj_fill)
+	r = 1.0 - Metrics.ctl_alpha
+	r10 = r * r * r * r * r * r * r * r * r * r
+	decay = Metrics.project_plan(base, proj_base, proj_base + 10, [], proj_inputs, AsWritten)
+	past = Metrics.project_plan(base, proj_base, proj_base, proj_plan, proj_inputs, proj_fill)
+	(h.ctl - (45.0 + (42.0 - 45.0) * r10)).abs() < 0.000001
+		and h.sources == { target: 0, estimate: 0, habit: 10, rest: 0, none: 0 }
+		and proj_close({ ctl: decay.ctl, atl: decay.atl, tsb: decay.tsb }, Metrics.project_walk(base, proj_base, proj_base + 10, []))
 		and List.is_empty(past.series)
-		and proj_close({ ctl: past.ctl, atl: past.atl, tsb: past.tsb }, Metrics.project_walk(base, proj_base, proj_base + 20, []))
+		and proj_close({ ctl: past.ctl, atl: past.atl, tsb: past.tsb }, { ctl: 42.0, atl: 51.0, tsb: -9.0 })
 }
 
 expect {
