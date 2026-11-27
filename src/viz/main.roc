@@ -331,16 +331,25 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 	# the fit, which runs the engine, so the skeleton skips it
 	cf = if (boot) curve_family else if (loaded.cf == "") "Ride" else loaded.cf
 	ft = if (boot) ({ fit: { cp: 0.0, w_prime: 0.0, r2: 0.0, points: 0.0, ok: Bool.False }, test: { value: 0.0, kind: "none", date: "none" }, thr: 0.0, thr_known: Bool.False, from_test: Bool.False }) else Db.load_fit!(acc.io.commands(), curve_days, cf)
-	# the board projects as far as the written plan reaches, never past the
-	# next event (load_plan_horizon! caps it there), and reads the numbers
-	# and the day-by-day series from the engine's own walk
+	# the projection runs to the day load_plan_horizon! names, the later of
+	# the written plan's last day and the next event, and the numbers and
+	# the day-by-day series are the engine's own walk; each range draws its
+	# own share of it (Board.shown_proj)
 	proj = if (boot or loaded.ph == "") Db.no_projection else Db.load_projection!(acc.io.commands(), loaded.ph)
 	proj_days = if (proj.ok) proj.days else []
+	# the event tile reads the engine's projection to the next event's own
+	# date, the same walk when the horizon is that date and its own call
+	# when the plan runs past it
+	ev_proj =
+		if (boot or loaded.e.day == "") Db.no_projection
+		else if (loaded.e.day == loaded.ph) proj
+		else Db.load_projection!(acc.io.commands(), loaded.e.day)
+	ranges = [30.U64, 60, 90]
 	# the event marker finds its day among the measured days and then the
 	# projected ones, so an event the plan reaches is marked where it falls
 	ev = Db.find_idx(List.concat(loaded.s.days, List.map(proj_days, |d| d.day)), loaded.e.day)
-	# the lines end on the projection's last day when there is one
-	line_data = List.concat(loaded.s.data, List.map(proj_days, Board.proj_point))
+	# the lines end on the last projected day each range draws, when there is one
+	line_data = |r| List.concat(loaded.s.data, List.map(List.take_first(proj_days, r), Board.proj_point))
 	# Quicksand carries prose; JetBrains Mono carries data. Small labels
 	# use an atlas close to their displayed size: shrinking title-sized
 	# glyphs to captions loses thin strokes between samples. Titles and
@@ -363,14 +372,10 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 		},
 	)?
 	ends = List.map_try!(
-		[
-			{ s: Board.end_text(line_data, 0), k: 0.U8 },
-			{ s: Board.end_text(line_data, 1), k: 1.U8 },
-			{ s: Board.end_text(line_data, 2), k: 2.U8 },
-		],
+		List.join(List.map(ranges, |r| List.map([0.U8, 1, 2], |k| { s: Board.end_text(line_data(r), k), k, r }))),
 		|e| {
 			p = mkm!(e.s, 13)?
-			Ok({ p, sel: e.k })
+			Ok({ p, sel: e.k, r: e.r })
 		},
 	)?
 	as_of = Board.as_of(loaded.s.days)
@@ -449,9 +454,9 @@ load_model! = |acc, cwd, font, curve_days, curve_family, boot| {
 			{ v: mkb!(Board.kpi_value(loaded.s.data, 2), 27)?, cap: mk!(Board.kpi_caption(2), 11)?, sel: 2.U8 },
 		],
 		ev_tile_name: List.map_try!(ev_name.lines, |l| mkt!(l, ev_name.size))?,
-		ev_tile_proj: List.map_try!(Board.proj_lines(loaded.ph, loaded.e.day, proj), |l| mkt!(l, 10))?,
+		ev_tile_proj: List.map_try!(Board.tile_lines(loaded.e.day, loaded.ph, proj, ev_proj), |l| mkt!(l, 10))?,
 		proj: proj_days,
-		proj_key: mkt!(Board.proj_key_text(proj.considered, proj.projected), 11)?,
+		proj_keys: List.map_try!(ranges, |r| mkt!(Board.proj_key_text(List.take_first(proj_days, r)), 11).map_ok(|t| { r, t }))?,
 		ev_tile_sub: mkt!(ev_tile.sub, 11)?,
 		zero_note: mk!(Board.zero_text, 11)?,
 		ridden_found: loaded.rd.ago >= 0 and loaded.rd.ago <= 7 and loaded.e.day != "",

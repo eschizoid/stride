@@ -1,6 +1,8 @@
 # ADR 0009. Missing values are flagged, not nulled
 
-Date: 2026-08-16. Status: accepted. Issue: #156. PR: #168.
+Date: 2026-08-16. Status: accepted. Issue: #156. PR: #168. Amended by ADR 0022: a
+projected day, and only a projected day, may carry a load estimated from the
+athlete's own history, labeled by its source; a measured day never does.
 
 ## Context
 

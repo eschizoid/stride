@@ -1,6 +1,6 @@
 {
   "title": "events",
-  "description": "Result of `stride events` — projected CTL/ATL/TSB on each event date (ADR 0010: the arithmetic consequences of the recorded open plan, never a proposed one). The projection folds Metrics.load_step forward from the last computed daily_load row; each open session with a structured target contributes the load its kind prices to (Metrics.projected_load, ADR 0019: power TSS, pace rTSS, heart-rate hrTSS, session-RPE load), and a session with no target or no input to price it contributes zero and is counted. baseline_known false = no computed history, every number is decay over zero. ftp_known false = no 60d best-20min power, so power targets contribute nothing (each is listed in its event's unprojected as no_ftp).",
+  "description": "Result of `stride events` — projected CTL/ATL/TSB on each event date (ADR 0010: the arithmetic consequences of the recorded open plan, never a proposed one). The projection folds Metrics.load_step forward from the last computed daily_load row; each open session with a structured target contributes the load its kind prices to (Metrics.projected_load, ADR 0019: power TSS, pace rTSS, heart-rate hrTSS, session-RPE load), and every other day is filled from the athlete's own history and labeled (ADR 0022): a session no target prices by its estimate, a day with no session at the recent daily mean, a session typed rest at zero. load_sources counts the days by source. baseline_known false = no computed history, every number is decay over zero. ftp_known false = no 60d best-20min power, so power targets do not price their sessions (each is listed in its event's unprojected as no_ftp).",
   "type": "object",
   "additionalKeys": false,
   "required": [
@@ -35,7 +35,8 @@
           "planned_in_window",
           "sessions_projected",
           "unprojected",
-          "plan_end"
+          "plan_end",
+          "load_sources"
         ],
         "properties": {
           "id": {
@@ -66,11 +67,11 @@
           },
           "sessions_projected": {
             "type": "integer",
-            "description": "How many of those carried a target the projection could price — the sessions whose load the projection actually contains. The gap to planned_in_window is the projection's stated blindness, and unprojected names each unpriced session and why."
+            "description": "How many of those carried a target the projection could price. unprojected names each of the others and why; the days they fall on are estimated from history unless typed rest, as load_sources counts."
           },
           "plan_end": {
             "type": "object",
-            "description": "The written plan's last day before the event, projected the same way, when the plan stops short of the event: past that day the event-day numbers above are decay alone. It is the horizon the window's event card projects to, and `stride project <date>` returns the same numbers for it. known false (date empty, numbers 0) when the plan reaches the event day or nothing is planned ahead.",
+            "description": "The written plan's last day before the event, projected the same way, when the plan stops short of the event: past that day every day is filled from the athlete's recent training. `stride project <date>` returns the same numbers for it. known false (date empty, numbers 0) when the plan reaches the event day or nothing is planned ahead.",
             "additionalKeys": false,
             "required": [
               "known",
@@ -99,7 +100,7 @@
           },
           "unprojected": {
             "type": "array",
-            "description": "Each session in (projected_from, event_date] that adds no load, with why, the same entries `stride project` lists: no_target, no_ftp, no_hr_zones, no_threshold_pace. planned_in_window minus sessions_projected counts them.",
+            "description": "Each session in (projected_from, event_date] whose target adds no load of its own, with why, the same entries `stride project` lists: no_target, no_ftp, no_hr_zones, no_threshold_pace. planned_in_window minus sessions_projected counts them.",
             "items": {
               "type": "object",
               "additionalKeys": false,
@@ -125,6 +126,35 @@
                     "no_threshold_pace"
                   ]
                 }
+              }
+            }
+          },
+          "load_sources": {
+            "type": "object",
+            "description": "The days from projected_from to the event day counted by where their load came from, as `stride project` counts them (target, estimate, habit, rest, none); they sum to the days projected.",
+            "additionalKeys": false,
+            "required": [
+              "target",
+              "estimate",
+              "habit",
+              "rest",
+              "none"
+            ],
+            "properties": {
+              "target": {
+                "type": "integer"
+              },
+              "estimate": {
+                "type": "integer"
+              },
+              "habit": {
+                "type": "integer"
+              },
+              "rest": {
+                "type": "integer"
+              },
+              "none": {
+                "type": "integer"
               }
             }
           }

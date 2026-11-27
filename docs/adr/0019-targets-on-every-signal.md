@@ -1,6 +1,6 @@
 # 0019. targets on every signal: heart rate, zone and pace beside power
 
-Accepted 2026-11-05 (#636). Amends ADR 0014 §2 and its first "Not doing" line. Amended 2026-11-05 (#636): session ratings and projected load.
+Accepted 2026-11-05 (#636). Amends ADR 0014 §2 and its first "Not doing" line. Amended 2026-11-05 (#636): session ratings and projected load. Amended by ADR 0022: a session its target cannot price is estimated from the athlete's own history in a projection of the recorded plan.
 
 ## Context
 
@@ -79,8 +79,12 @@ Each of those forms has a literal athletes already write: `HR125-147`, `Z2`,
    - **rpe:** session-RPE load, hours × RPE × 10.
 
    A target its inputs cannot price (no FTP, no zones, no threshold pace for its
-   families, or an implausible intensity against it) adds nothing, and `project` names it in `unprojected` with the reason,
-   beside every untargeted session. A projection never invents a load to fill the gap.
+   families, or an implausible intensity against it) adds no load of its own, and
+   `project` names it in `unprojected` with the reason, beside every untargeted
+   session. Over the recorded plan such a session is estimated from the athlete's
+   own history and labeled `estimate` (ADR 0022); in a hypothetical plan it is
+   labeled `none` and adds nothing. No load is filled in without a label saying
+   where it came from.
 
 ## Not doing
 

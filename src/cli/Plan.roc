@@ -1509,16 +1509,19 @@ Plan :: [].{
 			}
 		}
 
-	# every open session's date and target, the target read back through
-	# stored_target so a row from before schema v42 keeps its power numbers
-	open_targets! : Str => Try(List({ date : Str, d : I64, target : Metrics.Target }), _)
+	# every open session's date, target, type and detail, the target read
+	# back through stored_target so a row from before schema v42 keeps its
+	# power numbers
+	open_targets! : Str => Try(List(Metrics.PlanSession), _)
 	open_targets! = |path| {
 		opens = Sql.query_many!({
 			path: Path.utf8(path),
 			query: \\SELECT COALESCE(CAST(target_date AS TEXT), '') AS target_date,
 				\\       COALESCE(target_reps, 0) AS treps, COALESCE(target_dur_s, 0) AS tdur,
 				\\       CAST(COALESCE(target_watts, 0) AS REAL) AS twatts,
-				\\       COALESCE(CAST(target_literal AS TEXT), '') AS tlit
+				\\       COALESCE(CAST(target_literal AS TEXT), '') AS tlit,
+				\\       COALESCE(CAST(session_type AS TEXT), '') AS kind,
+				\\       COALESCE(CAST(detail AS TEXT), '') AS detail
 				\\FROM planned_sessions WHERE COALESCE(status, 'open') = 'open'
 				\\ORDER BY target_date, id
 			,
@@ -1529,10 +1532,60 @@ Plan :: [].{
 				tdur = Sql.i64("tdur")(cols)(stmt)?
 				twatts = Sql.f64("twatts")(cols)(stmt)?
 				tlit = Sql.str("tlit")(cols)(stmt)?
-				Ok({ target_date, treps, tdur, twatts, tlit })
+				kind = Sql.str("kind")(cols)(stmt)?
+				detail = Sql.str("detail")(cols)(stmt)?
+				Ok({ target_date, treps, tdur, twatts, tlit, kind, detail })
 			},
 		})?
-		Ok(List.keep_oks(opens, |o| (Metrics.date_str_to_days(o.target_date)).map_ok(|d| { date: o.target_date, d, target: Metrics.stored_target(o.tlit, o.treps, o.tdur, o.twatts) })))
+		Ok(List.keep_oks(opens, |o| (Metrics.date_str_to_days(o.target_date)).map_ok(|d| { date: o.target_date, d, target: Metrics.stored_target(o.tlit, o.treps, o.tdur, o.twatts), kind: o.kind, detail: o.detail })))
+	}
+
+	# The history a recorded plan is filled from (ADR 0022), read up to the
+	# baseline day: every scored session that started in the
+	# estimate_window_days ending on it, with the type of the planned session
+	# it completed, and the mean daily load of the habit_window_days ending
+	# on it. A session is scored when analyze gave it a load model; an
+	# unrated strength session has none and is left out.
+	projection_history! : Str, I64 => Try(Metrics.Fill, _)
+	projection_history! = |path, base_days| {
+		from_day = Metrics.days_to_date_str(base_days - Metrics.estimate_window_days + 1)
+		through = Metrics.days_to_date_str(base_days + 1)
+		sessions = Sql.query_many!({
+			path: Path.utf8(path),
+			query: \\SELECT COALESCE((SELECT CAST(p.session_type AS TEXT) FROM planned_sessions p WHERE p.completed_activity_id = a.id ORDER BY p.id DESC LIMIT 1), '') AS kind,
+				\\       COALESCE(CAST(a.sport_family AS TEXT), '') AS family,
+				\\       CAST(COALESCE(m.tss, 0) AS REAL) AS load,
+				\\       COALESCE(a.moving_time, 0) AS moving_s
+				\\FROM activities a JOIN activity_metrics m ON m.activity_id = a.id
+				\\WHERE a.start_local >= :from_day AND a.start_local < :through
+				\\  AND COALESCE(m.load_model, '') NOT IN ('', 'none')
+				\\  AND COALESCE(a.moving_time, 0) > 0
+			,
+			bindings: [{ name: ":from_day", value: String(from_day) }, { name: ":through", value: String(through) }],
+			rows: |cols| |stmt| {
+				kind = Sql.str("kind")(cols)(stmt)?
+				family = Sql.str("family")(cols)(stmt)?
+				load = Sql.f64("load")(cols)(stmt)?
+				moving_s = Sql.i64("moving_s")(cols)(stmt)?
+				Ok({ kind, family, load, moving_s })
+			},
+		})?
+		habit_rows = Sql.query_many!({
+			path: Path.utf8(path),
+			query: "SELECT COUNT(*) AS n, CAST(COALESCE(AVG(COALESCE(tss, 0)), 0) AS REAL) AS mean FROM daily_load WHERE day >= :habit_from AND day <= :base_day",
+			bindings: [{ name: ":habit_from", value: String(Metrics.days_to_date_str(base_days - Metrics.habit_window_days + 1)) }, { name: ":base_day", value: String(Metrics.days_to_date_str(base_days)) }],
+			rows: |cols| |stmt| {
+				n = Sql.i64("n")(cols)(stmt)?
+				mean = Sql.f64("mean")(cols)(stmt)?
+				Ok({ n, mean })
+			},
+		})?
+		habit =
+			match List.first(habit_rows) {
+				Ok(h) if h.n > 0 => Habit(h.mean)
+				_ => NoHabit
+			}
+		Ok(FromHistory({ sessions, habit }))
 	}
 
 	events! : {} => Try({}, _)
@@ -1556,20 +1609,22 @@ Plan :: [].{
 			},
 		})?
 		opens = open_targets!(path)?
+		fill = projection_history!(path, base_days)?
 		projected = List.map(
 			evs,
 			|ev| {
 				ev_days = (Metrics.date_str_to_days(ev.event_date)).ok_or(today)
-				proj = Metrics.project_plan({ ctl: base.ctl, atl: base.atl }, base_days, ev_days, opens, inp)
+				proj = Metrics.project_plan({ ctl: base.ctl, atl: base.atl }, base_days, ev_days, opens, inp, fill)
 				# the written plan's last day before the event, the horizon the
-				# window's event card projects to: past it the event-day numbers
-				# are decay alone, so the plan's own end is reported beside them
+				# window's event card projects to when the event is far: past it
+				# every day is filled from the athlete's history, so the plan's
+				# own end is reported beside the event day
 				last_d = List.fold(opens, today, |acc, o| if (o.d > acc and o.d < ev_days) o.d else acc)
 				ends_early : Bool
 				ends_early = last_d > today and !(List.any(opens, |o| o.d >= ev_days))
-				pe = if (ends_early) Metrics.project_plan({ ctl: base.ctl, atl: base.atl }, base_days, last_d, opens, inp) else proj
+				pe = if (ends_early) Metrics.project_plan({ ctl: base.ctl, atl: base.atl }, base_days, last_d, opens, inp, fill) else proj
 				plan_end = { known: ends_early, date: if (ends_early) Metrics.days_to_date_str(last_d) else "", ctl: if (ends_early) pe.ctl else 0.0, atl: if (ends_early) pe.atl else 0.0, tsb: if (ends_early) pe.tsb else 0.0 }
-				{ id: ev.id, event_date: ev.event_date, name: ev.name, days_away: ev_days - today, ctl: proj.ctl, atl: proj.atl, tsb: proj.tsb, planned_in_window: proj.considered, sessions_projected: proj.projected, unprojected: proj.unprojected, plan_end }
+				{ id: ev.id, event_date: ev.event_date, name: ev.name, days_away: ev_days - today, ctl: proj.ctl, atl: proj.atl, tsb: proj.tsb, planned_in_window: proj.considered, sessions_projected: proj.projected, unprojected: proj.unprojected, plan_end, load_sources: proj.sources }
 			},
 		)
 		Output.out!({ projected_from: base.day, baseline_known: base.known, ftp_known, events: projected }, |p| Render.events_screen(p))
@@ -1582,7 +1637,9 @@ Plan :: [].{
 	# back in the payload (dates verbatim, targets as parsed canonical fields), never
 	# stored, so the recorded plan stays the single source of adherence truth (ADR
 	# 0010). Every target kind is priced (projected_load); one the inputs cannot
-	# price is listed in `unprojected` with its reason. The direction rule holds
+	# price is listed in `unprojected` with its reason. The recorded plan fills
+	# every day no target prices from the athlete's own history, and a
+	# hypothetical plan is taken as written (ADR 0022). The direction rule holds
 	# whole: plan → consequences only; stride never solves for the plan that reaches
 	# a target TSB, even when the caller names one — that inverse is prescription.
 	project! : Str, [Recorded, Hypothetical(Str)] => Try({}, _)
@@ -1616,14 +1673,15 @@ Plan :: [].{
 							source = match plan_mode {
 								Recorded => {
 									opens = open_targets!(path)?
-									{ sessions: opens, label: "recorded", echo: [] }
+									fill = projection_history!(path, base_days)?
+									{ sessions: opens, label: "recorded", echo: [], fill }
 								}
 								Hypo(pairs) => {
-									sessions = List.map(pairs, |p2| { date: p2.date, d: p2.days, target: p2.target })
-									{ sessions, label: "hypothetical", echo: List.map(pairs, |p2| { date: p2.date, target_kind: p2.target.kind, target_literal: Metrics.target_literal(p2.target), reps: p2.target.reps, dur_s: p2.target.dur_s, watts: p2.target.watts }) }
+									sessions = List.map(pairs, |p2| { date: p2.date, d: p2.days, target: p2.target, kind: "", detail: "" })
+									{ sessions, label: "hypothetical", echo: List.map(pairs, |p2| { date: p2.date, target_kind: p2.target.kind, target_literal: Metrics.target_literal(p2.target), reps: p2.target.reps, dur_s: p2.target.dur_s, watts: p2.target.watts }), fill: AsWritten }
 								}
 							}
-							proj = Metrics.project_plan({ ctl: base.ctl, atl: base.atl }, base_days, horizon, source.sessions, inp)
+							proj = Metrics.project_plan({ ctl: base.ctl, atl: base.atl }, base_days, horizon, source.sessions, inp, source.fill)
 							Output.out!(
 								{
 									target_date: date_str,
@@ -1640,9 +1698,10 @@ Plan :: [].{
 									unprojected: proj.unprojected,
 									hypothetical: source.echo,
 									series: proj.series,
+									load_sources: proj.sources,
 								},
 								# the human screen states the horizon; the series is for the window and the coach
-								|p| Render.project_screen({ target_date: p.target_date, days_away: p.days_away, projected_from: p.projected_from, baseline_known: p.baseline_known, ftp_known: p.ftp_known, plan_source: p.plan_source, ctl: p.ctl, atl: p.atl, tsb: p.tsb, sessions_considered: p.sessions_considered, sessions_projected: p.sessions_projected, unprojected: p.unprojected, hypothetical: p.hypothetical }),
+								|p| Render.project_screen({ target_date: p.target_date, days_away: p.days_away, projected_from: p.projected_from, baseline_known: p.baseline_known, ftp_known: p.ftp_known, plan_source: p.plan_source, ctl: p.ctl, atl: p.atl, tsb: p.tsb, sessions_considered: p.sessions_considered, sessions_projected: p.sessions_projected, unprojected: p.unprojected, hypothetical: p.hypothetical, load_sources: p.load_sources }),
 							)
 						}
 					}

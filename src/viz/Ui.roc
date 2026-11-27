@@ -20,7 +20,7 @@ Ui :: [].{
 	# and the tick the wait began
 	CaptureWait : { id : I64, refused : Str, path : Str, name : Str, since : U64 }
 	PendingCapture : [NoCapture, ArmedShot(CaptureWait), AwaitingShot(CaptureWait), AwaitingStart(CaptureWait), AwaitingStop(CaptureWait)]
-	EndLabel : { p : Text.Prepared, sel : U8 }
+	EndLabel : { p : Text.Prepared, sel : U8, r : U64 }
 	# a left press that began on the map: where the cursor was last, where
 	# the press began, and whether the cursor has since strayed past the
 	# distance a click allows, which makes the press a drag
@@ -64,9 +64,10 @@ Ui :: [].{
 		ev_tile_name : List(Txt),
 		ev_tile_proj : List(Txt),
 		# the engine's projected series past the plot's last day, empty when
-		# nothing is planned ahead, and the board's key naming it
+		# nothing is planned ahead, and the board's key for each range,
+		# naming the days that range draws
 		proj : List(Db.ProjDay),
-		proj_key : Txt,
+		proj_keys : List({ r : U64, t : Txt }),
 		ev_tile_sub : Txt,
 		zero_note : Text.Prepared,
 		ridden_found : Bool,
