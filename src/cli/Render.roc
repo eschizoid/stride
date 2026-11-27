@@ -2,8 +2,13 @@ import core.Fmt
 import core.Units
 import core.Sports
 import core.Load
+import core.Words
 import Metrics
 import Drain
+import "Render.roc" as render_src : Str
+import "main.roc" as main_src : Str
+import "ReportHealth.roc" as report_health_src : Str
+import "Setup.roc" as setup_src : Str
 
 Render :: [].{
 	# ── pure text-rendering helpers for human CLI output ────────────────
@@ -3230,6 +3235,13 @@ expect {
 		and Str.contains(s, "plan's last day 2026-12-15: fitness 54.9, form 1.3 (fatigue 53.6); nothing is planned after it")
 		and !(Str.contains(s, "ctl 0.6"))
 }
+
+# the source guard: no string literal in the modules that write the CLI's
+# human screens, help and setup steps uses an internal term bare
+# (core.Words.bare, the list and matcher the window's label gate runs). A
+# load a power or heart-rate session scored stays "TSS" here, which is why
+# the list leaves that term to the window's own rule.
+expect List.join([Words.findings("Render", render_src), Words.findings("main", main_src), Words.findings("ReportHealth", report_health_src), Words.findings("Setup", setup_src)]) == []
 
 # the config listing names who owns each key and never shows a value, a
 # secret included, and says which command reads one
