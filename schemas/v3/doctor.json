@@ -41,7 +41,8 @@
     "with_streams",
     "zero_load",
     "zones_set",
-    "timezone_known"
+    "timezone_known",
+    "forecast_check"
   ],
   "additionalKeys": false,
   "properties": {
@@ -200,6 +201,81 @@
     "timezone_known": {
       "type": "boolean",
       "description": "false while no recognised IANA `timezone` is configured: today is then a fixed `utc_offset_minutes` day at best and the UTC day at worst, so west of UTC the evening reads as tomorrow. `stride setup` or `config set timezone` fixes it."
+    },
+    "forecast_check": {
+      "type": "object",
+      "description": "How close the projection's forecast of the recorded plan has been, the check `project` reports in its own forecast_check (see schemas/v3/project.json for how it is built). A check that cannot be read reports every distance known: false with weeks_checked 0.",
+      "additionalKeys": false,
+      "required": [
+        "weeks",
+        "horizons"
+      ],
+      "properties": {
+        "weeks": {
+          "type": "integer",
+          "description": "The weeks each distance ahead is checked over."
+        },
+        "horizons": {
+          "type": "array",
+          "description": "One entry per distance ahead: 7, 14 and 28 days.",
+          "items": {
+            "type": "object",
+            "additionalKeys": false,
+            "required": [
+              "days_out",
+              "weeks_checked",
+              "known",
+              "fitness_mae",
+              "fitness_bias",
+              "fitness_max",
+              "fatigue_mae",
+              "fatigue_bias",
+              "fatigue_max",
+              "form_mae",
+              "form_bias",
+              "form_max"
+            ],
+            "properties": {
+              "days_out": {
+                "type": "integer"
+              },
+              "weeks_checked": {
+                "type": "integer"
+              },
+              "known": {
+                "type": "boolean"
+              },
+              "fitness_mae": {
+                "type": "number"
+              },
+              "fitness_bias": {
+                "type": "number"
+              },
+              "fitness_max": {
+                "type": "number"
+              },
+              "fatigue_mae": {
+                "type": "number"
+              },
+              "fatigue_bias": {
+                "type": "number"
+              },
+              "fatigue_max": {
+                "type": "number"
+              },
+              "form_mae": {
+                "type": "number"
+              },
+              "form_bias": {
+                "type": "number"
+              },
+              "form_max": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

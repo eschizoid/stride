@@ -1022,45 +1022,54 @@ Metrics :: [].{
 	## sport family, its load and its moving time
 	HistorySession : { kind : Str, family : Str, load : F64, moving_s : I64 }
 
+	## how an estimate averages a group of sessions: the middle value or
+	## the mean
+	Average : [Median, Mean]
+
 	## what a projection does with a day its plan does not price (ADR 0022):
 	## the recorded plan is filled from the athlete's own history, the
-	## sessions of the last estimate_window_days and the mean daily load of
-	## the last habit_window_days; a hypothetical plan is taken as written,
-	## so a day it does not name is a rest day of that plan
-	Fill : [AsWritten, FromHistory({ sessions : List(HistorySession), habit : [NoHabit, Habit(F64)] })]
+	## sessions of the estimate's window averaged as `average` says and the
+	## mean daily load of the habit's window; a hypothetical plan is taken
+	## as written, so a day it does not name is a rest day of that plan
+	Fill : [AsWritten, FromHistory({ sessions : List(HistorySession), habit : [NoHabit, Habit(F64)], average : Average })]
 
-	## the days of history an estimate reads, ending on the baseline day
-	estimate_window_days : I64
-	estimate_window_days = 90
+	## the settings a recorded plan is filled by (ADR 0022): the days of
+	## sessions an estimate reads, how it averages them, and the days of
+	## daily load whose mean an unplanned day carries, each window ending
+	## on the baseline day
+	EstimateSettings : { window_days : I64, average : Average, habit_days : I64 }
 
-	## the fewest sessions a group of history needs before its median stands
+	estimate_settings : EstimateSettings
+	estimate_settings = { window_days: 90, average: Median, habit_days: 28 }
+
+	## the fewest sessions a group of history needs before its average stands
 	## for a planned session, so one odd session does not set the estimate
 	estimate_min_sessions : U64
 	estimate_min_sessions = 3
 
-	## the days whose mean daily load an unplanned day carries, ending on
-	## the baseline day
-	habit_window_days : I64
-	habit_window_days = 28
-
 	## The load a session no target prices is expected to carry, from the
-	## athlete's own history: the median load per hour of the first group
+	## athlete's own history: the average load per hour of the first group
 	## holding estimate_min_sessions sessions, of the sessions that completed
 	## a planned session of the same type (case folded), then the sessions
 	## of the first sport a word of the type or detail names, then every
 	## session; times the session's duration, `dur_s` when it is known
-	## (above 0), else that group's median moving time. No group large
+	## (above 0), else that group's average moving time. No group large
 	## enough is NoHistory: nothing stands in for a missing history.
-	estimate_load : List(HistorySession), Str, Str, I64 -> [Estimated(F64), NoHistory]
-	estimate_load = |hist, kind, detail, dur_s| {
+	estimate_load : List(HistorySession), Str, Str, I64, Average -> [Estimated(F64), NoHistory]
+	estimate_load = |hist, kind, detail, dur_s, average| {
 		usable = List.keep_if(hist, |h| h.moving_s > 0 and h.load >= 0.0)
 		low = Str.with_ascii_lowercased(kind)
 		by_kind = if (low == "") [] else List.keep_if(usable, |h| Str.with_ascii_lowercased(h.kind) == low)
 		by_sport = sport_sessions(usable, session_words("${kind} ${detail}"))
+		avg = |xs|
+			match average {
+				Median => median_of(xs)
+				Mean => mean_of(xs)
+			}
 		match List.first(List.keep_if([by_kind, by_sport, usable], |g| List.len(g) >= estimate_min_sessions)) {
 			Ok(g) => {
-				rate = median_of(List.map(g, |h| h.load * 3600.0 / (h.moving_s).to_f64()))
-				secs = if (dur_s > 0) (dur_s).to_f64() else median_of(List.map(g, |h| (h.moving_s).to_f64()))
+				rate = avg(List.map(g, |h| h.load * 3600.0 / (h.moving_s).to_f64()))
+				secs = if (dur_s > 0) (dur_s).to_f64() else avg(List.map(g, |h| (h.moving_s).to_f64()))
 				Estimated(rate * secs / 3600.0)
 			}
 			Err(_) => NoHistory
@@ -1103,6 +1112,10 @@ Metrics :: [].{
 		}
 	}
 
+	# the mean of a list, 0.0 for none
+	mean_of : List(F64) -> F64
+	mean_of = |xs| if (List.is_empty(xs)) 0.0 else List.fold(xs, 0.0, |t, x| t + x) / (List.len(xs)).to_f64()
+
 	# one session's load and where it came from: its target when the inputs
 	# price it, zero for a rest session, else the estimate from history
 	# when the plan is filled from it, else nothing
@@ -1117,7 +1130,7 @@ Metrics :: [].{
 					match fill {
 						AsWritten => { d: s.d, tss: 0.0, source: "none" }
 						FromHistory(h) =>
-							match estimate_load(h.sessions, s.kind, s.detail, target_work_s(s.target)) {
+							match estimate_load(h.sessions, s.kind, s.detail, target_work_s(s.target), h.average) {
 								Estimated(x) => { d: s.d, tss: x, source: "estimate" }
 								NoHistory => { d: s.d, tss: 0.0, source: "none" }
 							}
@@ -1209,6 +1222,152 @@ Metrics :: [].{
 		}
 		{ ctl: at.ctl, atl: at.atl, tsb: at.tsb, considered: List.len(in_window), projected: List.len(priced.loads), unprojected: priced.unprojected, series: walked.out, sources: Load.mix_of(List.map(walked.out, |x| x.load_source)) }
 	}
+
+	# ── the forecast check (ADR 0022) ───────────────────────────────────
+	# The projection's forecast measured against the record: at the end of
+	# each past week the engine is given only what it knew that day, the
+	# history through the day and the plan as it then stood, and the state
+	# project_plan forecasts some days ahead is compared with the state
+	# daily_load recorded on that day. Arithmetic only: errors, no verdict
+	# (ADR 0012).
+
+	## a scored session of the history with the day it started on
+	HistoryRow : { day : I64, session : HistorySession }
+
+	## one recorded day of daily load and the state the record gives it
+	RecordedDay : { d : I64, tss : F64, ctl : F64, atl : F64, tsb : F64 }
+
+	## a planned session with its row id and the day it was written,
+	## Unknown when its creation time does not read as a date
+	PlanRow : { id : I64, created : [On(I64), Unknown], session : PlanSession }
+
+	## The fill a recorded plan gets at the end of a baseline day: the
+	## sessions that started in the estimate's window and the mean daily
+	## load of the recorded days in the habit's window, both ending on the
+	## baseline day. No recorded day in the habit's window is NoHabit.
+	fill_at : List(HistoryRow), List(RecordedDay), I64, EstimateSettings -> Fill
+	fill_at = |hist, days, base, set| {
+		sessions = List.map(List.keep_if(hist, |h| h.day > base - set.window_days and h.day <= base), |h| h.session)
+		span = List.keep_if(days, |x| x.d > base - set.habit_days and x.d <= base)
+		habit = if (List.is_empty(span)) NoHabit else Habit(mean_of(List.map(span, |x| x.tss)))
+		FromHistory({ sessions, habit, average: set.average })
+	}
+
+	## The plan as it stood at the end of a baseline day: every session
+	## written on or before that day for a later one, whatever became of it
+	## since, done and skipped alike. A day written more than once keeps
+	## its latest session, the one the rule of one open session per day
+	## leaves open. A session whose creation day is Unknown is left out.
+	plan_at : List(PlanRow), I64 -> List(PlanSession)
+	plan_at = |rows, base| {
+		known = List.keep_if(
+			rows,
+			|r|
+				match r.created {
+					On(c) => c <= base and r.session.d > base
+					Unknown => Bool.False
+				},
+		)
+		List.map(List.keep_if(known, |r| !(List.any(known, |o| o.session.d == r.session.d and o.id > r.id))), |r| r.session)
+	}
+
+	## what a forecast check reads: the recorded days, the scored sessions,
+	## every planned session, the inputs targets are priced against, and
+	## the settings the plan is filled by
+	CheckSource : { days : List(RecordedDay), hist : List(HistoryRow), plan : List(PlanRow), inp : ProjectionInputs, settings : EstimateSettings }
+
+	## one forecast and what was recorded on the day it was made for
+	Checked : { base : I64, forecast : { ctl : F64, atl : F64, tsb : F64 }, recorded : { ctl : F64, atl : F64, tsb : F64 } }
+
+	## The forecast each baseline day would have made for the day
+	## `days_out` after it, beside what the record holds for that day. The
+	## walk is project_plan from the recorded state of the baseline day,
+	## over the plan and the fill as they stood then. A baseline or a
+	## forecast day the record does not hold is left out.
+	backtest : CheckSource, List(I64), I64 -> List(Checked)
+	backtest = |src, bases, days_out|
+		List.keep_oks(
+			bases,
+			|b|
+				match (List.find_first(src.days, |x| x.d == b), List.find_first(src.days, |x| x.d == b + days_out)) {
+					(Ok(at), Ok(then)) => {
+						p = project_plan({ ctl: at.ctl, atl: at.atl }, b, b + days_out, plan_at(src.plan, b), src.inp, fill_at(src.hist, src.days, b, src.settings))
+						Ok({ base: b, forecast: { ctl: p.ctl, atl: p.atl, tsb: p.tsb }, recorded: { ctl: then.ctl, atl: then.atl, tsb: then.tsb } })
+					}
+					_ => Err(NotRecorded)
+				},
+		)
+
+	## errors, each a forecast minus its record: the mean of their sizes,
+	## their mean, and the largest size; all 0.0 for none
+	ErrorSummary : { mae : F64, bias : F64, max : F64 }
+
+	errors_of : List(F64) -> ErrorSummary
+	errors_of = |es| { mae: mean_of(List.map(es, |e| e.abs())), bias: mean_of(es), max: List.fold(es, 0.0, |m, e| if (e.abs() > m) e.abs() else m) }
+
+	## the weeks a forecast check reads at each distance ahead
+	check_weeks : U64
+	check_weeks = 8
+
+	## the days ahead a forecast is checked at
+	check_days_out : List(I64)
+	check_days_out = [7, 14, 28]
+
+	## The baselines a forecast check reads, oldest first: the last `weeks`
+	## Sundays, the last day of a Monday-to-Sunday week, whose day `days_out`
+	## ahead falls before `last`, the last recorded day, which may still be
+	## under way.
+	check_bases : I64, I64, U64 -> List(I64)
+	check_bases = |last, days_out, weeks| {
+		latest = last - 1 - days_out
+		sunday = week_monday(latest + 1) - 1
+		Iter.fold((0.U64..<weeks).iter(), List.with_capacity(weeks), |acc, i| List.append(acc, sunday - 7 * (weeks - 1 - i).to_i64_wrap()))
+	}
+
+	## one distance ahead of a forecast check: how many weeks the record
+	## could check, whether that is every week the check reads, and the
+	## errors of fitness, fatigue and form, 0.0 when it is not
+	CheckRow : { days_out : I64, weeks_checked : U64, known : Bool, fitness_mae : F64, fitness_bias : F64, fitness_max : F64, fatigue_mae : F64, fatigue_bias : F64, fatigue_max : F64, form_mae : F64, form_bias : F64, form_max : F64 }
+
+	ForecastCheck : { weeks : U64, horizons : List(CheckRow) }
+
+	## The forecast check at each of check_days_out over the last
+	## check_weeks weeks before `last`, the last recorded day. A distance
+	## the record cannot check for every one of those weeks is not known,
+	## and states no errors.
+	forecast_check : CheckSource, I64 -> ForecastCheck
+	forecast_check = |src, last| {
+		row = |days_out| {
+			got = backtest(src, check_bases(last, days_out, check_weeks), days_out)
+			n = List.len(got)
+			known : Bool
+			known = n == check_weeks
+			e = |f| if (known) errors_of(List.map(got, f)) else { mae: 0.0, bias: 0.0, max: 0.0 }
+			fit = e(|c| c.forecast.ctl - c.recorded.ctl)
+			fat = e(|c| c.forecast.atl - c.recorded.atl)
+			frm = e(|c| c.forecast.tsb - c.recorded.tsb)
+			{ days_out, weeks_checked: n, known, fitness_mae: fit.mae, fitness_bias: fit.bias, fitness_max: fit.max, fatigue_mae: fat.mae, fatigue_bias: fat.bias, fatigue_max: fat.max, form_mae: frm.mae, form_bias: frm.bias, form_max: frm.max }
+		}
+		{ weeks: check_weeks, horizons: List.map(check_days_out, row) }
+	}
+
+	## a forecast check that could check no week at any distance
+	check_unknown : ForecastCheck
+	check_unknown = { weeks: check_weeks, horizons: List.map(check_days_out, |days_out| { days_out, weeks_checked: 0, known: Bool.False, fitness_mae: 0.0, fitness_bias: 0.0, fitness_max: 0.0, fatigue_mae: 0.0, fatigue_bias: 0.0, fatigue_max: 0.0, form_mae: 0.0, form_bias: 0.0, form_max: 0.0 }) }
+
+	## the earliest day a forecast check reads history from: the estimate's
+	## or the habit's window, whichever is longer, before the oldest
+	## baseline it checks
+	check_history_from : I64, EstimateSettings -> I64
+	check_history_from = |last, set| {
+		oldest = List.fold(check_days_out, last, |m, h| List.fold(check_bases(last, h, check_weeks), m, |m2, b| if (b < m2) b else m2))
+		oldest - history_days(set) + 1
+	}
+
+	## the days of history a fill reads back from its baseline day: the
+	## longer of the estimate's and the habit's windows
+	history_days : EstimateSettings -> I64
+	history_days = |set| if (set.window_days > set.habit_days) set.window_days else set.habit_days
 
 	load_step : { ctl_prev : F64, atl_prev : F64, tss : F64 } -> { ctl : F64, atl : F64, tsb : F64 }
 	load_step = Load.step
@@ -6495,7 +6654,7 @@ proj_history = [
 ]
 
 proj_fill : Metrics.Fill
-proj_fill = FromHistory({ sessions: proj_history, habit: Habit(45.0) })
+proj_fill = FromHistory({ sessions: proj_history, habit: Habit(45.0), average: Median })
 
 proj_day0 : Metrics.ProjectedDay
 proj_day0 = { date: "", load: -1.0, load_known: Bool.False, load_source: "", ctl: 0.0, atl: 0.0, tsb: 0.0 }
@@ -6582,14 +6741,14 @@ proj_no_est = |r|
 		NoHistory => Bool.True
 	}
 
-expect proj_est(Metrics.estimate_load(proj_history, "Endurance", "", 0), 60.0)
-expect proj_est(Metrics.estimate_load(proj_history, "endurance", "", 5400), 90.0)
-expect proj_est(Metrics.estimate_load(proj_history, "tempo", "easy run, 30 min", 0), 40.0)
-expect proj_est(Metrics.estimate_load(proj_history, "tempo", "easy RUN", 3600), 80.0)
-expect proj_est(Metrics.estimate_load(proj_history, "vo2max", "intervals", 0), 80.0)
-expect proj_est(Metrics.estimate_load(proj_history, "", "", 0), 80.0)
-expect proj_no_est(Metrics.estimate_load([], "endurance", "ride", 3600))
-expect proj_no_est(Metrics.estimate_load(List.take_first(proj_history, 2), "endurance", "ride", 3600))
+expect proj_est(Metrics.estimate_load(proj_history, "Endurance", "", 0, Median), 60.0)
+expect proj_est(Metrics.estimate_load(proj_history, "endurance", "", 5400, Median), 90.0)
+expect proj_est(Metrics.estimate_load(proj_history, "tempo", "easy run, 30 min", 0, Median), 40.0)
+expect proj_est(Metrics.estimate_load(proj_history, "tempo", "easy RUN", 3600, Median), 80.0)
+expect proj_est(Metrics.estimate_load(proj_history, "vo2max", "intervals", 0, Median), 80.0)
+expect proj_est(Metrics.estimate_load(proj_history, "", "", 0, Median), 80.0)
+expect proj_no_est(Metrics.estimate_load([], "endurance", "ride", 3600, Median))
+expect proj_no_est(Metrics.estimate_load(List.take_first(proj_history, 2), "endurance", "ride", 3600, Median))
 expect (Metrics.median_of([3.0, 1.0, 2.0]) - 2.0).abs() < 0.000001 and (Metrics.median_of([4.0, 1.0, 3.0, 2.0]) - 2.5).abs() < 0.000001 and Metrics.median_of([]).abs() < 0.000001
 expect Metrics.session_words("Run: easy 40' (Z2)") == ["Run", "easy", "Z"]
 
@@ -6615,7 +6774,7 @@ expect {
 	rest = { ..proj_session(1, ""), kind: "Rest" }
 	easy = { ..proj_session(2, ""), kind: "endurance", detail: "ride" }
 	p = Metrics.project_plan(base, proj_base, proj_base + 3, [rest, easy], proj_inputs, proj_fill)
-	bare = Metrics.project_plan(base, proj_base, proj_base + 3, [rest, easy], proj_inputs, FromHistory({ sessions: [], habit: NoHabit }))
+	bare = Metrics.project_plan(base, proj_base, proj_base + 3, [rest, easy], proj_inputs, FromHistory({ sessions: [], habit: NoHabit, average: Median }))
 	List.map(p.series, |x| x.load_source) == ["rest", "estimate", "habit"]
 		and List.all(List.map2(List.map(p.series, |x| x.load), [0.0, 60.0, 45.0], |a, b| (a - b).abs() < 0.000001), |ok| ok)
 		and List.map(bare.series, |x| x.load_source) == ["rest", "none", "none"]
@@ -6965,3 +7124,155 @@ expect Metrics.rescore_cap(0) == 64 and Metrics.rescore_cap(1000) == 8064
 expect Metrics.sql_names(Metrics.high_load_models) == "'power_stream','weighted_watts','avg_watts','rtss'"
 expect Metrics.sql_names(Metrics.medium_load_models) == "'hr_zones','hr_avg','session_rpe'"
 expect Metrics.sql_names(Metrics.low_load_models) == "'relative_effort'"
+
+# ── the forecast check ───────────────────────────────────────────────────
+# a record walked by the load step from a steady 60 the day before
+# `first`, one recorded day per load
+bt_record : I64, List(F64) -> List(Metrics.RecordedDay)
+bt_record = |first, loads|
+	(
+		List.fold_with_index(
+			loads,
+			{ ctl: 60.0, atl: 60.0, out: [] },
+			|acc, tss, i| {
+				s = Metrics.load_step({ ctl_prev: acc.ctl, atl_prev: acc.atl, tss })
+				{ ctl: s.ctl, atl: s.atl, out: List.append(acc.out, { d: first + i.to_i64_wrap(), tss, ctl: s.ctl, atl: s.atl, tsb: s.tsb }) }
+			},
+		)
+	).out
+
+bt_loads : U64, F64 -> List(F64)
+bt_loads = |n, x| List.repeat(x, n)
+
+bt_source : List(Metrics.RecordedDay), List(Metrics.PlanRow) -> Metrics.CheckSource
+bt_source = |days, plan| { days, hist: [], plan, inp: proj_inputs, settings: Metrics.estimate_settings }
+
+bt_row : I64, [On(I64), Unknown], I64, Str, Str -> Metrics.PlanRow
+bt_row = |id, created, k, kind, lit| { id, created, session: { ..proj_session(k, lit), kind } }
+
+# an athlete who trained at a steady 60 a day and then stopped: at the
+# last day of training the forecast holds fitness at the recent mean of
+# 60, and the record decays from 60 by the step's closed form, so the
+# error 14 days out is 60 less 60 times the decay over those days
+expect {
+	first = proj_base - 59
+	days = bt_record(first, List.concat(bt_loads(60, 60.0), bt_loads(28, 0.0)))
+	got = Metrics.backtest(bt_source(days, []), [proj_base], 14)
+	pow = |r, n| List.fold(List.repeat(r, n), 1.0, |p, x| p * x)
+	rc = pow(1.0 - Metrics.ctl_alpha, 14)
+	ra = pow(1.0 - Metrics.atl_alpha, 14)
+	match got {
+		[c] =>
+			c.base == proj_base
+				and (c.forecast.ctl - 60.0).abs() < 0.000001
+				and (c.forecast.atl - 60.0).abs() < 0.000001
+				and ((c.forecast.ctl - c.recorded.ctl) - (60.0 - 60.0 * rc)).abs() < 0.000001
+				and ((c.forecast.atl - c.recorded.atl) - (60.0 - 60.0 * ra)).abs() < 0.000001
+				and ((c.forecast.tsb - c.recorded.tsb) - (60.0 * ra - 60.0 * rc)).abs() < 0.000001
+		_ => Bool.False
+	}
+}
+
+# the plan as it stood: a rest session written before the baseline day
+# for the day after it takes that day's load to zero, so with a steady
+# record the forecast 7 days out lies below it by 60 times the step's
+# weight, decayed over the six days of recent mean that follow; a
+# session written after the baseline day changes nothing
+expect {
+	days = bt_record(proj_base - 59, bt_loads(90, 60.0))
+	rest = [bt_row(1, On(proj_base - 3), 1, "rest", "")]
+	late = [bt_row(1, On(proj_base + 1), 1, "rest", "")]
+	r6 = List.fold(List.repeat(1.0 - Metrics.ctl_alpha, 6), 1.0, |p, x| p * x)
+	err = |plan|
+		match Metrics.backtest(bt_source(days, plan), [proj_base], 7) {
+			[c] => c.forecast.ctl - c.recorded.ctl
+			_ => 99.0
+		}
+	(err(rest) - (-60.0 * Metrics.ctl_alpha * r6)).abs() < 0.000001 and err(late).abs() < 0.000001 and err([]).abs() < 0.000001
+}
+
+# a baseline or a forecast day the record does not hold is not checked
+expect {
+	days = bt_record(proj_base - 59, bt_loads(70, 60.0))
+	List.map(Metrics.backtest(bt_source(days, []), [proj_base - 100, proj_base, proj_base + 5], 7), |c| c.base) == [proj_base]
+}
+
+# the plan as it stood at the end of a day: sessions written by then for
+# a later day, done or skipped alike, the latest of a day written twice,
+# and nothing written after, dated on or before the day, or of no known
+# creation day
+expect {
+	rows = [
+		bt_row(1, On(proj_base - 3), 1, "endurance", "3x12:00@230W"),
+		bt_row(2, On(proj_base + 1), 2, "endurance", ""),
+		bt_row(3, On(proj_base - 10), 3, "tempo", ""),
+		bt_row(4, On(proj_base - 1), 3, "threshold", ""),
+		bt_row(5, Unknown, 4, "endurance", ""),
+		bt_row(6, On(proj_base - 5), 0, "endurance", ""),
+		bt_row(7, On(proj_base), 5, "vo2max", ""),
+	]
+	List.map(Metrics.plan_at(rows, proj_base), |s| { d: s.d - proj_base, kind: s.kind }) == [{ d: 1, kind: "endurance" }, { d: 3, kind: "threshold" }, { d: 5, kind: "vo2max" }]
+}
+
+# the fill at a baseline day reads the sessions of the estimate's window
+# and the mean load of the recorded days in the habit's window, both
+# ending on that day
+expect {
+	s = |load| { kind: "", family: "Ride", load, moving_s: 3600 }
+	hist = [{ day: proj_base - 90, session: s(1.0) }, { day: proj_base - 89, session: s(2.0) }, { day: proj_base, session: s(3.0) }, { day: proj_base + 1, session: s(4.0) }]
+	days = List.map([{ k: -28, t: 100.0 }, { k: -27, t: 10.0 }, { k: 0, t: 20.0 }, { k: 1, t: 500.0 }], |x| { d: proj_base + x.k, tss: x.t, ctl: 0.0, atl: 0.0, tsb: 0.0 })
+	match Metrics.fill_at(hist, days, proj_base, { window_days: 90, average: Mean, habit_days: 28 }) {
+		FromHistory(f) =>
+			List.map(f.sessions, |x| x.load) == [2.0, 3.0]
+				and f.average == Mean
+				and (
+					match f.habit {
+						Habit(x) => (x - 15.0).abs() < 0.000001
+						NoHabit => Bool.False
+					}
+				)
+		AsWritten => Bool.False
+	}
+}
+
+# a mean average takes the mean where a median takes the middle value
+expect proj_est(Metrics.estimate_load(proj_history, "", "", 3600, Mean), (50.0 + 70.0 + 60.0 + 80.0 + 80.0 + 80.0 + 100.0) / 7.0)
+
+expect Metrics.errors_of([1.0, -3.0, 2.0]) == { mae: 2.0, bias: 0.0, max: 3.0 } and Metrics.errors_of([]) == { mae: 0.0, bias: 0.0, max: 0.0 }
+
+# the baselines are the last Sundays whose day ahead falls before the
+# last recorded day, oldest first
+expect {
+	d = |s| (Metrics.date_str_to_days(s)).ok_or(0)
+	Metrics.check_bases(d("2026-11-26"), 14, 3) == [d("2026-10-25"), d("2026-11-01"), d("2026-11-08")]
+		and Metrics.check_bases(d("2026-11-23"), 14, 2) == [d("2026-11-01"), d("2026-11-08")]
+		and List.all(Metrics.check_bases(d("2026-11-26"), 7, 8), |b| Metrics.day_of_week(b) == "Sun")
+}
+
+# a steady record long enough for every week checks every distance with
+# no error; one too short for the farthest distance's weeks states it
+# not known, with the weeks it could check and no errors
+expect {
+	long = bt_record(proj_base - 119, bt_loads(120, 60.0))
+	short = bt_record(proj_base - 69, bt_loads(70, 60.0))
+	ok = Metrics.forecast_check(bt_source(long, []), proj_base)
+	part = Metrics.forecast_check(bt_source(short, []), proj_base)
+	far = List.find_first(part.horizons, |h| h.days_out == 28)
+	ok.weeks == 8
+		and List.map(ok.horizons, |h| h.days_out) == [7, 14, 28]
+		and List.all(ok.horizons, |h| h.known and h.weeks_checked == 8 and h.fitness_max < 0.000001 and h.form_max < 0.000001)
+		and (
+			match far {
+				Ok(h) => !(h.known) and h.weeks_checked > 0 and h.weeks_checked < 8 and h.fitness_mae == 0.0 and h.fitness_max == 0.0
+				Err(_) => Bool.False
+			}
+		)
+}
+
+# the history a check reads starts the longer window before its oldest
+# baseline
+expect {
+	last = proj_base
+	oldest = List.fold(Metrics.check_bases(last, 28, 8), last, |m, b| if (b < m) b else m)
+	Metrics.check_history_from(last, Metrics.estimate_settings) == oldest - 89
+}

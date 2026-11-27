@@ -228,6 +228,42 @@ Load :: [].{
 	projected_on : Str, F64, F64 -> Str
 	projected_on = |date, ctl, tsb| "${date}: fitness ${Fmt.tenths((ctl * 10.0).round_to_i64_try().ok_or(0))}, form ${Fmt.tenths((tsb * 10.0).round_to_i64_try().ok_or(0))}"
 
+	# ── how close the forecast has been (ADR 0022) ─────────────────────────
+	# The forecast check measures, for each of the last weeks, how far the
+	# fitness the projection forecast some days ahead lay from the fitness
+	# then recorded. One line states the largest of those errors at one
+	# distance ahead, or that the record is too short to check it; `stride
+	# project`, `stride doctor` and the board's key print the same line.
+	check_text : { known : Bool, weeks : U64, days_out : I64, max : F64 } -> Str
+	check_text = |c|
+		if (c.known) "last ${c.weeks.to_str()} weeks: fitness forecast within ${tenths_up(c.max)} at ${ahead_text(c.days_out)}"
+		else "too little history yet to check the forecast at ${ahead_text(c.days_out)}"
+
+	# the distance ahead the one-line check states
+	check_line_days : I64
+	check_line_days = 14
+
+	# a distance ahead in whole weeks when it is one, else in days
+	ahead_text : I64 -> Str
+	ahead_text = |d|
+		if (d == 7) "1 week out"
+		else if (d > 0 and d % 7 == 0) "${(d // 7).to_str()} weeks out"
+		else if (d == 1) "1 day out"
+		else "${d.to_str()} days out"
+
+	# a size to one decimal, rounded up so a bound it states still holds
+	tenths_up : F64 -> Str
+	tenths_up = |x| {
+		t = (x * 10.0).round_to_i64_try().ok_or(0)
+		Fmt.tenths(if (t.to_f64() < x * 10.0 - 0.000001) t + 1 else t)
+	}
+
+	expect check_text({ known: Bool.True, weeks: 8, days_out: 14, max: 1.43 }) == "last 8 weeks: fitness forecast within 1.5 at 2 weeks out"
+	expect check_text({ known: Bool.True, weeks: 8, days_out: 7, max: 2.0 }) == "last 8 weeks: fitness forecast within 2.0 at 1 week out"
+	expect check_text({ known: Bool.False, weeks: 8, days_out: 28, max: 0.0 }) == "too little history yet to check the forecast at 4 weeks out"
+	expect ahead_text(10) == "10 days out" and ahead_text(1) == "1 day out"
+	expect tenths_up(1.41) == "1.5" and tenths_up(1.4) == "1.4" and tenths_up(0.0) == "0.0" and tenths_up(2.96) == "3.0"
+
 	# ── where a projected day's load comes from (ADR 0022) ────────────────
 	# Every projected day names one source: a target its inputs price, a
 	# rest session, an estimate from the athlete's own history, the recent

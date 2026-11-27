@@ -18,7 +18,8 @@
     "unprojected",
     "hypothetical",
     "series",
-    "load_sources"
+    "load_sources",
+    "forecast_check"
   ],
   "properties": {
     "target_date": {
@@ -208,6 +209,81 @@
         },
         "none": {
           "type": "integer"
+        }
+      }
+    },
+    "forecast_check": {
+      "type": "object",
+      "description": "How close the projection's forecast of the recorded plan has been (ADR 0022). For each of the last `weeks` weeks the engine is given only what it knew at the end of that week's Sunday: the recorded days through it, the sessions scored through it, and the plan as it then stood (every planned session written by that day for a later day, done and skipped ones included, the latest of a day written twice). It projects forward with the walk `project` runs, the estimate's settings and today's inputs included, and compares the state on the day `days_out` ahead with what daily_load recorded there. Errors are forecast minus recorded: _mae the mean of their sizes, _bias their mean, _max the largest size. A distance the record cannot check for every week is known: false, with weeks_checked saying how many it could and every error 0.",
+      "additionalKeys": false,
+      "required": [
+        "weeks",
+        "horizons"
+      ],
+      "properties": {
+        "weeks": {
+          "type": "integer",
+          "description": "The weeks each distance ahead is checked over."
+        },
+        "horizons": {
+          "type": "array",
+          "description": "One entry per distance ahead: 7, 14 and 28 days.",
+          "items": {
+            "type": "object",
+            "additionalKeys": false,
+            "required": [
+              "days_out",
+              "weeks_checked",
+              "known",
+              "fitness_mae",
+              "fitness_bias",
+              "fitness_max",
+              "fatigue_mae",
+              "fatigue_bias",
+              "fatigue_max",
+              "form_mae",
+              "form_bias",
+              "form_max"
+            ],
+            "properties": {
+              "days_out": {
+                "type": "integer"
+              },
+              "weeks_checked": {
+                "type": "integer"
+              },
+              "known": {
+                "type": "boolean"
+              },
+              "fitness_mae": {
+                "type": "number"
+              },
+              "fitness_bias": {
+                "type": "number"
+              },
+              "fitness_max": {
+                "type": "number"
+              },
+              "fatigue_mae": {
+                "type": "number"
+              },
+              "fatigue_bias": {
+                "type": "number"
+              },
+              "fatigue_max": {
+                "type": "number"
+              },
+              "form_mae": {
+                "type": "number"
+              },
+              "form_bias": {
+                "type": "number"
+              },
+              "form_max": {
+                "type": "number"
+              }
+            }
+          }
         }
       }
     }
