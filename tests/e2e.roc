@@ -415,7 +415,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1554)?
+	checks_ran_exactly!(1581)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -9342,18 +9342,28 @@ b_review! = |ctx| {
 # ── every report with nothing to show says so in one sentence ───────────
 # A throwaway HOME walks a new athlete's first two states: a database with
 # no activity, where every report names `stride setup` instead of drawing a
-# header row over nothing, and one with a single ride, where a report with
-# nothing of its kind names the session that fills it. JSON keeps its shape
-# throughout: an empty list stays an empty list. A week is Monday to Sunday
-# and holds what was done on its days beside what was planned, so `week`
-# and `week all`'s this-week section list the same unlinked ride.
+# header row over nothing or naming a command that has nothing to work on,
+# and one with a single ride, where a report with nothing of its kind names
+# the session that fills it and one that reads scored history names
+# `stride analyze`. JSON keeps its shape throughout: an empty list stays an
+# empty list, and an error envelope keeps its code and message. A week is
+# Monday to Sunday and holds what was done on its days beside what was
+# planned, so `week` and `week all`'s this-week section list the same
+# unlinked ride.
 b_empty_reports! : Ctx => Try({}, _)
 b_empty_reports! = |ctx| {
 	probe = "${ctx.home}/empty-reports"
 	_ = sh!("rm -rf '${probe}' && mkdir -p '${probe}'")
 	_ = stride!(ctx.bin, probe, ["init"])
 	_ = stride!(ctx.bin, probe, ["config", "set", "timezone", ctx.tz])
+	# zones set, so summary and plan reach the load series rather than
+	# stopping at the missing zone bounds
+	_ = stride!(ctx.bin, probe, ["config", "set", "hr_z1_max", "123"])
+	_ = stride!(ctx.bin, probe, ["config", "set", "hr_z2_max", "153"])
+	_ = stride!(ctx.bin, probe, ["config", "set", "hr_z3_max", "168"])
+	_ = stride!(ctx.bin, probe, ["config", "set", "hr_z4_max", "183"])
 	human! = |args| Str.trim(stride_human!(ctx.bin, probe, args))
+	json_err! = |args| Str.trim(sh!("HOME='${probe}' STRIDE_FORMAT=json '${ctx.bin}' ${args} | jq -r '.error.code + \": \" + .error.message'"))
 	first_run = "no activities yet — run `stride setup`: it connects your Strava account and syncs your history"
 	check!("an empty database's stats is the first-run sentence, not two empty tables", human!(["stats"]) == first_run)?
 	check!("...and so is its activities list", human!(["activities"]) == first_run)?
@@ -9362,6 +9372,32 @@ b_empty_reports! = |ctx| {
 	check!("...the load series", human!(["load"]) == first_run)?
 	check!("...this week", human!(["week"]) == first_run)?
 	check!("...and the whole plan log", human!(["week", "all"]) == first_run)?
+	check!("...the summary", human!(["summary"]) == first_run)?
+	check!("...the planning bundle", human!(["plan"]) == first_run)?
+	check!("...a period comparison", human!(["compare", "week"]) == first_run)?
+	check!("...the season", human!(["season"]) == first_run)?
+	check!("...the strength log", human!(["strength"]) == first_run)?
+	check!("...the progress table", human!(["progress"]) == first_run)?
+	check!("...the power zones", human!(["zones"]) == first_run)?
+	check!("...a week's review", human!(["review", "week"]) == first_run)?
+	check!("...the power curve", human!(["power-curve", "30", "Ride"]) == first_run)?
+	check!("...the pace curve", human!(["pace-curve", "30", "Run"]) == first_run)?
+	check!("...time to exhaustion at a power", human!(["tte", "300", "Ride"]) == first_run)?
+	check!("...time to exhaustion at a pace", human!(["tte", "pace", "4:10/km", "Run"]) == first_run)?
+	check!("...the interval reps", human!(["reps"]) == first_run)?
+	check!("...an activity looked up by id", human!(["activity", "9901"]) == first_run)?
+	check!("...doctor's activity count", Str.contains(human!(["doctor"]), "activities: 0 (${first_run})"))?
+	check!("...and a projection over no history names setup beside analyze", Str.contains(human!(["project", "2099-01-01"]), "with activities on record `stride analyze` builds it, and with none `stride setup` syncs your history"))?
+	_ = stride!(ctx.bin, probe, ["event", "add", "2099-01-01", "Probe race"])
+	check!("...as does an event projection over no history", Str.contains(human!(["events"]), "with activities on record `stride analyze` builds it, and with none `stride setup` syncs your history"))?
+	_ = sql!("${probe}/.stride/db.sqlite", "DELETE FROM events;")
+	check!("a zero-day load window is an empty table, not a claim about the history", Str.starts_with(human!(["load", "0"]), "╭"))?
+	check!("the error envelopes of the empty reports keep their codes and messages", json_err!("compare week") == "no_data: nothing analyzed yet — run `stride sync`, or after a `stride import`, `stride analyze`" and json_err!("season") == "no_activities: no scored training days yet — `stride sync` builds the history a season is read from" and json_err!("progress") == "no_scorable_workouts: nothing to compare yet — analyze activities first (and `stride rate` your strength sessions)")?
+	# a plan with no activity on record: the empty this-week section names
+	# setup as what brings activities in
+	_ = sql!("${probe}/.stride/db.sqlite", "INSERT INTO planned_sessions (id,created_at,target_date,session_type,detail,rationale,status,skipped_reason,target_literal) VALUES (9912,'2099-01-01','2099-01-01','endurance','probe ride','r','open','',NULL);")
+	check!("`week all` with a plan and no activity names setup in its empty this week", Str.contains(human!(["week", "all"]), "── this week ──\nnothing planned or recorded — `stride week add` plans a session, and `stride setup` syncs the activities that list here"))?
+	_ = sql!("${probe}/.stride/db.sqlite", "DELETE FROM planned_sessions WHERE id = 9912;")
 	check!("the JSON of the empty reports keeps its shape: empty lists stay empty lists", Str.trim(sh!("for c in 'stats' 'activities' 'top tss' 'load' 'week' 'week all'; do HOME='${probe}' STRIDE_FORMAT=json '${ctx.bin}' $c | jq -c '.data'; done | tr '\\n' ' '")) == "{\"all_time\":[],\"ytd\":[],\"ytd_year\":${Str.trim(sh!("TZ='${ctx.tz}' date +%Y"))}} [] [] [] [] []")?
 	# one ride today, one the week before, neither claimed by a plan
 	db = "${probe}/.stride/db.sqlite"
@@ -9370,6 +9406,12 @@ b_empty_reports! = |ctx| {
 	check!("a load series analyze has not built names analyze", human!(["load"]) == "no load history yet — run `stride analyze` to score your activities")?
 	check!("a filtered list with no such sport lists the sports there are", human!(["activities", "5", "Run"]) == "no 'Run' activities — sports in your data: Ride")?
 	check!("a top board no session carries names the session that fills it", human!(["top", "power"]) == "no session carries power (np) data yet — a ride recorded with a power meter fills it, once `stride analyze` scores it")?
+	check!("a summary over activities analyze has not scored names analyze", human!(["summary"]) == "nothing analyzed yet — run `stride analyze` to score your activities")?
+	check!("...the planning bundle", human!(["plan"]) == "nothing analyzed yet — run `stride analyze` to score your activities")?
+	check!("...and so does a period comparison", human!(["compare", "week"]) == "nothing analyzed yet — run `stride analyze` to score your activities")?
+	check!("...the season", human!(["season"]) == "no scored training days yet — run `stride analyze` to score your activities")?
+	check!("...and the progress table", human!(["progress"]) == "nothing to compare yet — run `stride analyze` to score your activities (and `stride rate` your strength sessions)")?
+	check!("a strength log with rides on record says where strength sessions come from", human!(["strength"]) == "no strength sessions yet — they arrive with `stride sync` like every other activity")?
 	week = human!(["week"])
 	all = human!(["week", "all"])
 	this_week = (List.first(Str.split_on((List.get(Str.split_on(all, "── this week ──"), 1)) ?? "", "── last week ──"))) ?? ""
@@ -9395,12 +9437,9 @@ b_empty_reports! = |ctx| {
 	_ = sql!(db, "DELETE FROM planned_sessions WHERE id = 9911; DELETE FROM activities WHERE id = 9903;")
 	_ = sql!(db, "DELETE FROM activities WHERE id = 9901;")
 	check!("an empty week with history on record names what fills it", Str.starts_with(human!(["week"]), "nothing planned or recorded this week (") and Str.ends_with(human!(["week"]), ") — `stride week add` plans a session, and an activity recorded this week lists here"))?
-	_ = stride!(ctx.bin, probe, ["config", "set", "hr_z1_max", "123"])
-	_ = stride!(ctx.bin, probe, ["config", "set", "hr_z2_max", "153"])
-	_ = stride!(ctx.bin, probe, ["config", "set", "hr_z3_max", "168"])
-	_ = stride!(ctx.bin, probe, ["config", "set", "hr_z4_max", "183"])
 	_ = stride!(ctx.bin, probe, ["analyze"])
 	check!("a plan with no open session says what opens one", Str.contains(human!(["plan"]), "OPEN PLAN\nno open session — `stride week add` plans one\n"))?
+	check!("a zero-day load window over an analyzed history is an empty table, not missing history", Str.starts_with(human!(["load", "0"]), "╭") and !(Str.contains(human!(["load", "0"]), "no load history")))?
 	_ = sh!("rm -rf '${probe}'")
 	Ok({})
 }

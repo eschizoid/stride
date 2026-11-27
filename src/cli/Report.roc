@@ -165,7 +165,7 @@ Report :: [].{
 			days = if (period == "month") 28 else 7
 			label = if (period == "month") "28d" else "7d"
 			match Sql.query!({ path: Path.utf8(path), query: "SELECT COALESCE(CAST(day AS TEXT), '') AS day FROM daily_load ORDER BY day DESC LIMIT 1", bindings: [], row: Sql.str("day") }) {
-				Err(NoRowsReturned) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync`, or after a `stride import`, `stride analyze`")
+				Err(NoRowsReturned) => Output.err_out!("no_data", no_series_msg!(path)?)
 				Err(e) => Err(e)
 				Ok(latest_day) => {
 					# PROPAGATE, through the same helper summary_payload! uses on the same anchor
@@ -430,6 +430,19 @@ Report :: [].{
 	empty_line! : Str, Str => Try(Str, _)
 	empty_line! = |path, otherwise| Ok(if (has_activities!(path)?) otherwise else no_activities_text)
 
+	# The message of the error a report raises when the history it reads is
+	# missing. The JSON envelope carries `json_msg` whatever the database
+	# holds; a human reads empty_line!'s sentence, so `otherwise` names what
+	# fills the report once an activity is on record.
+	empty_msg! : Str, Str, Str => Try(Str, _)
+	empty_msg! = |path, json_msg, otherwise|
+		if (Output.json_mode!({})) Ok(json_msg) else empty_line!(path, otherwise)
+
+	# summary, plan and compare read the load series analyze builds, so an
+	# activity on record with no series yet is one `stride analyze` away
+	no_series_msg! : Str => Try(Str, _)
+	no_series_msg! = |path| empty_msg!(path, "nothing analyzed yet — run `stride sync`, or after a `stride import`, `stride analyze`", "nothing analyzed yet — run `stride analyze` to score your activities")
+
 	has_activities! : Str => Try(Bool, _)
 	has_activities! = |path| {
 		n = Sql.query!({ path: Path.utf8(path), query: "SELECT COUNT(*) AS n FROM activities", bindings: [], row: Sql.i64("n") })?
@@ -449,7 +462,7 @@ Report :: [].{
 			Err(other) => Err(other)
 			Ok(zb) =>
 				match summary_payload!(path, zb) {
-					Err(NoDataYet) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync`, or after a `stride import`, `stride analyze`")
+					Err(NoDataYet) => Output.err_out!("no_data", no_series_msg!(path)?)
 					Err(e) => Err(e)
 					Ok(payload) => Output.out!(payload, |p| Render.summary_screen(units, p))
 				}
@@ -1067,9 +1080,11 @@ Report :: [].{
 		)
 		# an empty series is a sentence rather than a header row: `analyze`
 		# builds daily_load from the activities on record, and with none on
-		# record the first run is what is missing
-		empty = if (List.is_empty(payload)) empty_line!(path, "no load history yet — run `stride analyze` to score your activities")? else "-"
-		Output.out!(payload, |p| if (List.is_empty(p)) empty else Render.load_screen(List.map(p, |r| { day: r.day, tss: r.tss, ctl: r.ctl, atl: r.atl, tsb: r.tsb })))
+		# record the first run is what is missing. A zero-day window is empty
+		# by request, so it says nothing about what the history holds.
+		no_history = List.is_empty(payload) and days > 0
+		empty = if (no_history) empty_line!(path, "no load history yet — run `stride analyze` to score your activities")? else "-"
+		Output.out!(payload, |p| if (no_history) empty else Render.load_screen(List.map(p, |r| { day: r.day, tss: r.tss, ctl: r.ctl, atl: r.atl, tsb: r.tsb })))
 	}
 
 	# The athlete's CP/W' fit for ONE SPORT FAMILY as of a DATE, over the same

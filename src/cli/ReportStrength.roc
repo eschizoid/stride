@@ -1,4 +1,5 @@
 import Db
+import Report
 import Metrics
 import Output
 import Render
@@ -214,15 +215,18 @@ ReportStrength :: [].{
 		# a new key would otherwise ship undeclared in schemas/v3 (ADR §9c)
 		payload : { exercises : List({ exercise : Str, measure : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64, top_hold_s : I64, total_hold_s : I64, e1rm_kg : F64, e1rm_reps : I64, e1rm_known : Bool }) }), monthly : List({ month : Str, kg : F64, tonnage_known : Bool, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } }
 		payload = { exercises, monthly, sessions: counts }
-		Output.out!(payload, |p| screen(units, p))
+		# with no session of any kind on record the first run is what is missing
+		none_text = Report.empty_line!(path, "no strength sessions yet — they arrive with `stride sync` like every other activity")?
+		Output.out!(payload, |p| screen(units, none_text, p))
 	}
 
 	# numbers in tables, meaning in legends — and no verdict line at all:
-	# progression is exactly the number a coach must not have pre-judged
-	screen : [Metric, Imperial], { exercises : List({ exercise : Str, measure : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64, top_hold_s : I64, total_hold_s : I64, e1rm_kg : F64, e1rm_reps : I64, e1rm_known : Bool }) }), monthly : List({ month : Str, kg : F64, tonnage_known : Bool, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } } -> Str
-	screen = |units, p| {
+	# progression is exactly the number a coach must not have pre-judged.
+	# `none_text` is the whole screen while no strength session is on record.
+	screen : [Metric, Imperial], Str, { exercises : List({ exercise : Str, measure : Str, points : List({ date : Str, top_kg : F64, kg_reps : F64, top_reps : I64, total_reps : I64, top_hold_s : I64, total_hold_s : I64, e1rm_kg : F64, e1rm_reps : I64, e1rm_known : Bool }) }), monthly : List({ month : Str, kg : F64, tonnage_known : Bool, covered : I64, total : I64 }), sessions : { total : I64, with_sets : I64, pasted_unparsed : I64 } } -> Str
+	screen = |units, none_text, p| {
 		if p.sessions.total == 0 {
-			"no strength sessions yet — they arrive with `stride sync` like every other activity"
+			none_text
 		} else {
 			# repeated exercises only: a first-and-latest pair needs two days.
 			# The once-seen rest are counted, not hidden — the JSON has them.

@@ -1,9 +1,9 @@
 # ── the long view: blocks and months across a season (ADR 0011) ─────
 #
-# Split from Report.roc under ADR 0001, whose ~250-line command trigger season!
-# had passed. Fully self-contained: it shares no helper with any other read
-# command, which is why it went first.
+# A read command beside Report.roc under ADR 0001. Of the helpers the
+# other read commands share it uses only the empty-history error.
 import Db
+import Report
 import Output
 import Metrics
 import Render
@@ -106,7 +106,7 @@ ReportSeason :: [].{
 			},
 		})?
 		if List.is_empty(day_rows) {
-			Output.err_out!("no_activities", "no scored training days yet — `stride sync` builds the history a season is read from")
+			Output.err_out!("no_activities", Report.empty_msg!(path, "no scored training days yet — `stride sync` builds the history a season is read from", "no scored training days yet — run `stride analyze` to score your activities")?)
 		} else {
 			# Per date AND family. Block boundaries come from the weekly series
 			# and have no SQL expression, so the bucketing happens in Roc.

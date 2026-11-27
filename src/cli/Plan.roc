@@ -390,10 +390,12 @@ Plan :: [].{
 			} else {
 				"── ${title} ──\n${Render.render_table(plan_headers, List.map(srows, plan_cells))}"
 			}
-		# with no activity on record the first run is what is missing, whatever
-		# the plan holds; otherwise an empty week names the two things that fill it
+		# an empty week names the two things that fill it: a planned session,
+		# and an activity, which `stride setup` brings in while none is on
+		# record at all. With no activity and no plan the whole view is the
+		# first-run sentence.
 		first_run = !(Report.has_activities!(path)?)
-		fills_week = "`stride week add` plans a session, and an activity recorded this week lists here"
+		fills_week = "`stride week add` plans a session, and ${if (first_run) "`stride setup` syncs the activities that list here" else "an activity recorded this week lists here"}"
 		week_none = "nothing planned or recorded this week (${Metrics.days_to_date_str(mon)} to ${Metrics.days_to_date_str(mon + 6)}) — ${fills_week}"
 		Output.out!(
 			with_actuals,
@@ -1660,7 +1662,7 @@ Plan :: [].{
 			Err(other) => Err(other)
 			Ok(zb) =>
 				match Report.summary_payload!(path, zb) {
-					Err(NoDataYet) => Output.err_out!("no_data", "nothing analyzed yet — run `stride sync`, or after a `stride import`, `stride analyze`")
+					Err(NoDataYet) => Output.err_out!("no_data", Report.no_series_msg!(path)?)
 					Err(e) => Err(e)
 					Ok(s) => {
 						anchor = (Metrics.date_str_to_days(s.as_of)).ok_or(0)
