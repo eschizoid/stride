@@ -71,11 +71,14 @@ most likely future.
    its inputs cannot price is `none`. Nothing in a hypothetical plan is estimated,
    so a caller comparing two tapers compares only what the caller wrote.
 
-6. **The board projects to the plan's last day, or to the next event when that is
-   no more than 42 days away.** Habit days carry the projection past the plan's
-   end to an event in that span. A later event is reached by `stride events`,
-   which walks to the event day by the same rule. A plot that ran months past the
-   measured days would leave no room for the measured days.
+6. **The board draws no more of the projection than the range it shows.** The
+   window walks the projection to the later of the plan's last day and the next
+   event. The plot draws the first 30, 60 or 90 projected days, as many as the
+   range being viewed counts, or the whole walk when it is shorter. A forecast
+   longer than the history it continues would leave no room for that history.
+   The event tile always states fitness and form on the next event's own date,
+   from the engine's projection to that date, with how many of its days were
+   estimated, however far past the plot the event lies.
 
 ## Consequences
 

@@ -71,7 +71,7 @@
           },
           "plan_end": {
             "type": "object",
-            "description": "The written plan's last day before the event, projected the same way, when the plan stops short of the event: past that day every day is filled from the athlete's recent training. It is the horizon the window's event card projects to when the event is more than 42 days away, and `stride project <date>` returns the same numbers for it. known false (date empty, numbers 0) when the plan reaches the event day or nothing is planned ahead.",
+            "description": "The written plan's last day before the event, projected the same way, when the plan stops short of the event: past that day every day is filled from the athlete's recent training. `stride project <date>` returns the same numbers for it. known false (date empty, numbers 0) when the plan reaches the event day or nothing is planned ahead.",
             "additionalKeys": false,
             "required": [
               "known",

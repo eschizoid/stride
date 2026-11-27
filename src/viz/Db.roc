@@ -1874,16 +1874,15 @@ Db :: [].{
 	# `stride` in its grants, so no interpreter is handed an argument here. A
 	# field that does not parse is -1, and the view says the fit
 	# is unavailable rather than drawing a fit of zeros.
-	# The day the board projects to (ADR 0022): the next event when it is no
-	# more than 42 days after series_clock's today, else the latest open
-	# session after today capped at the next event, or "" when neither
-	# exists. Days the plan leaves empty are filled from the athlete's
-	# recent training, so a near event is reached past the plan's end; a far
-	# one is left to `stride events`, since a projection months long would
-	# leave the plot no room for the measured days.
+	# The day the window's projection runs to (ADR 0022): the later of the
+	# latest open session after series_clock's today and the next event on
+	# or after it, or "" when neither exists. Days the plan leaves empty are
+	# filled from the athlete's recent training, so an event past the
+	# plan's end is reached; the board draws only as much of the walk as
+	# its range counts (Board.shown_proj).
 	load_plan_horizon! : Sqlite.Db => Str
 	load_plan_horizon! = |db|
-		match db.query!("SELECT CAST(COALESCE((SELECT MIN(event_date) FROM events WHERE event_date >= (SELECT today FROM series_clock) AND event_date <= date((SELECT today FROM series_clock), '+42 days')), (SELECT MIN(MAX(target_date), COALESCE((SELECT MIN(event_date) FROM events WHERE event_date >= (SELECT today FROM series_clock)), '9999-12-31')) FROM planned_sessions WHERE COALESCE(status, 'open') = 'open' AND target_date > (SELECT today FROM series_clock)), '') AS TEXT) AS hz", []) {
+		match db.query!("SELECT CAST(MAX(COALESCE((SELECT MAX(target_date) FROM planned_sessions WHERE COALESCE(status, 'open') = 'open' AND target_date > (SELECT today FROM series_clock)), ''), COALESCE((SELECT MIN(event_date) FROM events WHERE event_date >= (SELECT today FROM series_clock)), '')) AS TEXT) AS hz", []) {
 			Err(_) => ""
 			Ok(rows) => match List.first(rows) {
 				Ok(r) => r.str("hz") ?? ""

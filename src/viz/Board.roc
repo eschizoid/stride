@@ -140,11 +140,11 @@ Board :: [].{
 		if (List.len(l14) <= 1) { lines: l14, size: 14.0 } else { lines: ev_lines(font, name, 12.0), size: 12.0 }
 	}
 
-	# the board's projection, as two tile lines: the day it ends on and the
-	# projected fitness and form there, in the text `stride events` prints
-	# for the same day and numbers (core Load.projected_on), then whether
-	# that day is the event or the written plan's last day, with how much of
-	# the projection was estimated from the athlete's history (core
+	# the board's projection, as two tile lines: a day and the projected
+	# fitness and form on it, in the text `stride events` prints for the
+	# same day and numbers (core Load.projected_on), then whether that day
+	# is the event or the written plan's last day, with how much of the
+	# projection was estimated from the athlete's history (core
 	# Load.mix_short over the series' sources)
 	proj_lines : Str, Str, Db.Projection -> List(Str)
 	proj_lines = |horizon, event_day, p| {
@@ -154,6 +154,13 @@ Board :: [].{
 		if (!p.ok or horizon == "") []
 		else [Load.projected_on(mmdd, p.ctl, p.tsb), if (short == "") which else "${which}, ${short}"]
 	}
+
+	# the event tile's projection lines: with an event ahead, the engine's
+	# projection to the event's own date, however far past the plot's reach
+	# it lies; with none, the projection to the plan's last day
+	tile_lines : Str, Str, Db.Projection, Db.Projection -> List(Str)
+	tile_lines = |event_day, horizon, plan_proj, event_proj|
+		if (event_day != "") proj_lines(event_day, event_day, event_proj) else proj_lines(horizon, "", plan_proj)
 
 	# the projected days counted by where their load came from
 	proj_mix : List(Db.ProjDay) -> Load.Mix
@@ -244,11 +251,20 @@ Board :: [].{
 		{ data, days, n: List.len(data), meas: take, off: List.len(model.data) - take, lo: lo_of(data), hi: hi_of(data), left: Theme.pad_l, top, pw: model.win.w - Theme.pad_l - Theme.pad_r, ph: model.win.h - top - Theme.pad_b }
 	}
 
-	# the projected days the plot draws after the measured ones: a
-	# projection continues a plotted series, so a board too short to plot
-	# draws none
+	# the projected days the plot draws after the measured ones: as many as
+	# the range being viewed counts, or the whole projection when it is
+	# shorter, so the forecast never takes more of the plot than the history
+	# it continues. A projection continues a plotted series, so a board too
+	# short to plot draws none
 	shown_proj : Ui.Model -> List(Db.ProjDay)
-	shown_proj = |model| if (U64.min(model.range, List.len(model.data)) >= 2) model.proj else []
+	shown_proj = |model| if (U64.min(model.range, List.len(model.data)) >= 2) List.take_first(model.proj, model.range) else []
+
+	# whether the plot marks the event: its day is among the days the range
+	# draws. ev_idx indexes the full series, measured and projected, so the
+	# range's cut from the front shifts it and the range's share of the
+	# projection bounds it
+	marks_event : Ui.Model, Geom -> Bool
+	marks_event = |model, g| model.ev_found and model.ev_idx >= g.off and model.ev_idx < g.off + g.n
 
 	# a projected day's index in the plot, when `i` is one
 	proj_day : Ui.Model, Geom, U64 -> Try(Db.ProjDay, [Measured])
@@ -744,26 +760,31 @@ Board :: [].{
 		# projection's last day when the board draws one, else the latest
 		# measured day. Each starts just past the plot and, in a face too
 		# wide for that, ends on the panel's edge instead
+		# The labels are prepared per range, since each range draws its own
+		# share of the projection.
 		last = last_point(g.data)
-		tops = end_tops(List.map(model.ends, |e| y_at(g, value_of(last, e.sel)) - 7.0), 15.0)
+		range_ends = List.keep_if(model.ends, |e| e.r == model.range)
+		tops = end_tops(List.map(range_ends, |e| y_at(g, value_of(last, e.sel)) - 7.0), 15.0)
 		ex2 = g.left + g.pw + 8.0
-		ends = List.map2(model.ends, tops, |e, top| Scene.kept(measure, Scene.prepared(e.p, end_text(g.data, e.sel), 13.0, Data, sel_color(e.sel)), [{ x: ex2, y: top, align: Left }, { x: panel.x + panel.w, y: top, align: Right }], prio_end, panel))
+		ends = List.map2(range_ends, tops, |e, top| Scene.kept(measure, Scene.prepared(e.p, end_text(g.data, e.sel), 13.0, Data, sel_color(e.sel)), [{ x: ex2, y: top, align: Left }, { x: panel.x + panel.w, y: top, align: Right }], prio_end, panel))
 		zero = Scene.kept(measure, Scene.prepared(model.zero_note, zero_text, 11.0, Prose, ink_faint), zero_spots(g), prio_zero, panel)
 		# the projection's key along the plot's top: just past the last
 		# measured day, then the plot's right end, then the same two a row
-		# lower
+		# lower, naming the days the range being viewed draws
 		key =
-			if g.n > g.meas {
-				kx = x_at(g, g.meas - 1) + 8.0
-				rx = g.left + g.pw - 6.0
-				[Scene.kept(measure, Scene.txt(model.proj_key, Prose, ink_faint), [{ x: kx, y: g.top + 4.0, align: Left }, { x: rx, y: g.top + 4.0, align: Right }, { x: kx, y: g.top + 22.0, align: Left }, { x: rx, y: g.top + 22.0, align: Right }], prio_key, plot_box(g))]
-			} else {
-				[]
+			match List.first(List.keep_if(model.proj_keys, |k| k.r == model.range)) {
+				Ok(k) if g.n > g.meas => {
+					kx = x_at(g, g.meas - 1) + 8.0
+					rx = g.left + g.pw - 6.0
+					[Scene.kept(measure, Scene.txt(k.t, Prose, ink_faint), [{ x: kx, y: g.top + 4.0, align: Left }, { x: rx, y: g.top + 4.0, align: Right }, { x: kx, y: g.top + 22.0, align: Left }, { x: rx, y: g.top + 22.0, align: Right }], prio_key, plot_box(g))]
+				}
+				_ => []
 			}
 		# the event marker's name beside its dashed line, left first. ev_idx
-		# indexes the full series, so it shifts by the days the range cut.
+		# indexes the full series, so it shifts by the days the range cut,
+		# and an event past the days the range draws has no marker.
 		event =
-			if model.ev_found and model.ev_idx >= g.off {
+			if marks_event(model, g) {
 				ex = x_at(g, model.ev_idx - g.off)
 				[Scene.free(measure, Scene.txt(model.ev_label, Prose, ink_muted), [{ x: ex - 6.0, y: g.top + 4.0, align: Right }, { x: ex + 6.0, y: g.top + 4.0, align: Left }], prio_event, plot_box(g))]
 			} else {
@@ -865,7 +886,7 @@ Board :: [].{
 					},
 			)
 			# the event marker: a dashed vertical, its name in the scene
-			if model.ev_found and model.ev_idx >= g.off {
+			if marks_event(model, g) {
 				ex = x_at(g, model.ev_idx - g.off)
 				List.for_each!(
 					List.map_with_index(List.repeat({}, 40), |_u, k| k),
@@ -984,6 +1005,17 @@ expect Board.proj_lines("", "", { ok: Bool.True, ctl: 1.0, tsb: 1.0, considered:
 # "plan's last day 2026-12-15" for them (pinned in the e2e suite)
 expect Board.proj_lines("2026-12-15", "2027-06-26", { ok: Bool.True, ctl: 54.94, tsb: 1.26, considered: 20, projected: 16, days: List.concat(List.repeat(proj_day_of("2026-12-01", 70.0, Bool.True, "target"), 16), List.repeat(proj_day_of("2026-12-02", 50.0, Bool.True, "estimate"), 4)) }) == ["12-15: fitness 54.9, form 1.3", "plan's last day, 4 days estimated"]
 
+# the event tile reads the projection to the event's own date when an event
+# is ahead, however far past the plot it lies, and the plan's last day when
+# none is
+expect {
+	plan_p = { ok: Bool.True, ctl: 54.94, tsb: 1.26, considered: 20, projected: 16, days: List.repeat(proj_day_of("2026-12-01", 70.0, Bool.True, "target"), 20) }
+	event_p = { ok: Bool.True, ctl: 61.4, tsb: 3.6, considered: 20, projected: 16, days: List.concat(List.repeat(proj_day_of("2026-12-01", 70.0, Bool.True, "target"), 20), List.repeat(proj_day_of("2027-01-01", 45.0, Bool.True, "habit"), 192)) }
+	Board.tile_lines("2027-06-26", "2026-12-15", plan_p, event_p) == ["06-26: fitness 61.4, form 3.6", "event day, 192 days estimated"]
+		and Board.tile_lines("", "2026-12-15", plan_p, event_p) == ["12-15: fitness 54.9, form 1.3", "plan's last day, all from targets"]
+		and Board.tile_lines("2027-06-26", "2026-12-15", plan_p, { ..event_p, ok: Bool.False }) == []
+}
+
 # the zero rule's caption keeps the right end of the rule unless a series
 # crosses it there and the left end is clear; a series along the whole rule
 # sends it past the rule's right end; a load bar under the right end sends
@@ -1023,7 +1055,7 @@ expect {
 # the words `stride project` prints; a projected day's card names its
 # load by its source, and never prints a load for a day nothing could
 # estimate
-expect Board.proj_key_text(prose_plan) == "dashed: projected - 30 estimated from your history, 1 from your recent training, 1 at rest"
+expect Board.proj_key_text(prose_plan) == "dashed: projected - 30 estimated from your history, 1 from your recent training, 1 rest"
 expect Board.proj_key_text([proj_day_of("2026-12-01", 80.0, Bool.True, "target"), proj_day_of("2026-12-02", 0.0, Bool.False, "none")]) == "dashed: projected - 1 from a target, 1 with nothing to estimate from"
 expect Board.proj_key_text([]) == "dashed: projected"
 expect Board.planned_load_row(proj_day_of("2026-12-01", 45.0, Bool.True, "target")) == { lbl: "Planned load", v: "45.0" }

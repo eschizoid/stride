@@ -252,9 +252,9 @@ reason `--json` and still answers in JSON).
   by source. `sessions_projected` still counts the sessions priced by their target, and
   `unprojected` names each other session with its reason, as `project` does. `plan_end`
   is `{known, date, ctl, atl, tsb}` on the written plan's last day when the plan stops
-  short of the event (past it every day is filled from recent training); the window's
-  event card shows that day when the event is more than 42 days away, and
-  `project <date>` returns the same numbers for it.
+  short of the event (past it every day is filled from recent training), and
+  `project <date>` returns the same numbers for it. The window's event card shows
+  the event day's own numbers, however far away the event is.
   `ftp_known: false` means power targets cannot price their sessions. `baseline_known: false` means no computed history. A
   session dated on the baseline day is excluded because the baseline already contains
   today. Negative `days_away` echoes the current baseline, not a projection.
