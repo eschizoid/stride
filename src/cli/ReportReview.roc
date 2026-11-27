@@ -305,7 +305,7 @@ ReportReview :: [].{
 			[head, "", "sessions"],
 			if (List.is_empty(session_lines)) ["  none planned"] else session_lines,
 			unplanned_lines,
-			["", "load  planned ${Render.fmt0(p.load.planned_total)} (${(p.load.sessions_priced).to_str()} of ${(p.load.sessions_planned).to_str()} estimated)  actual ${Render.fmt0(p.load.actual_total)}", intensity, "", "sports"],
+			["", "load  planned ${Render.fmt0(p.load.planned_total)} (${(p.load.sessions_priced).to_str()} of ${(p.load.sessions_planned).to_str()} from targets)  actual ${Render.fmt0(p.load.actual_total)}", intensity, "", "sports"],
 			if (List.is_empty(sport_lines)) ["  none"] else sport_lines,
 			[
 				"",

@@ -67,15 +67,15 @@ bar on the load rug's scale; a day it priced nothing onto draws no bar. The
 range chips still count measured days, and the projected days follow them.
 The line-end values read the projection's last day, an event the plan
 reaches is marked where it falls, and a key along the plot's top says the
-dashed part is projected and from how many of the window's sessions ("dashed:
-projected from 16 of 20 sessions"), the count the tile shows ("16 of 20
-estimated"). The pointer and the arrow cursor read projected
+dashed part is projected and how many of the window's sessions carry a load
+from a target ("dashed: projected, 16 of 20 sessions from targets"), the
+count the tile shows ("16 of 20 have a target"). The pointer and the arrow cursor read projected
 days too: → walks on past the last measured day into them, one day a
 press, and past the last one turns the cursor off; the table, which shows
 measured days only, holds the latest of them instead. On a board drawing a
 projection the day card opens below the key, and over a projected day it
-says "projected" and reads the planned load, or "not estimated"
-for a session the engine could not estimate a load for, and carries no line of what was
+says "projected" and reads the planned load, or "no target load"
+for a session whose target gave the engine no load, and carries no line of what was
 done.
 
 The subtitle always carries the as-of day, and the TSB zero rule is

@@ -1650,12 +1650,12 @@ Render :: [].{
 		# the projected state in the text `stride events` and the window's event
 		# card print for the same date (core Load.projected_on); a past horizon
 		# shows the baseline, so it names the baseline's own day
-		nums = "  ${Load.projected_on(if (p.days_away < 0) p.projected_from else p.target_date, p.ctl, p.tsb)} (fatigue ${fmt1(p.atl)}) — ${(p.sessions_projected).to_str()} of ${(p.sessions_considered).to_str()} sessions in the window have an estimated load"
+		nums = "  ${Load.projected_on(if (p.days_away < 0) p.projected_from else p.target_date, p.ctl, p.tsb)} (fatigue ${fmt1(p.atl)}) — ${(p.sessions_projected).to_str()} of ${(p.sessions_considered).to_str()} sessions in the window carry a load from a target"
 		hyp =
 			if (List.is_empty(p.hypothetical)) ""
 			else Str.join_with(List.map(p.hypothetical, |h| "\n  hypothetical: ${h.date} ${h.target_literal}"), "")
 		unpriced =
-			Str.join_with(List.map(p.unprojected, |u| "\n  not estimated: ${u.date} ${unprojected_reason(u.target_literal, u.reason)}"), "")
+			Str.join_with(List.map(p.unprojected, |u| "\n  no load: ${u.date} ${unprojected_reason(u.target_literal, u.reason)}"), "")
 		note =
 			if (!(p.baseline_known)) "\nno computed history to project from — the numbers are decay over zero; with activities on record `stride analyze` builds it, and with none `stride setup` syncs your history"
 			else ""
@@ -1686,7 +1686,7 @@ Render :: [].{
 				if (n == 0) Err(None) else Ok("${n.to_str()} with ${unprojected_reason("", r)}")
 			},
 		)
-		if (List.is_empty(parts)) "" else "\n      not estimated: ${Str.join_with(parts, ", ")}"
+		if (List.is_empty(parts)) "" else "\n      no load: ${Str.join_with(parts, ", ")}"
 	}
 
 	## event targets: the projection as numbers in plain indented rows, its inputs
@@ -1710,7 +1710,7 @@ Render :: [].{
 						"  #${I64.to_str(e.id)}  ${e.event_date}  ${I64.to_str(-e.days_away)}d ago — baseline shown, `stride load` holds the event-day reading  ${e.name}"
 					else {
 						plan_end = if (e.plan_end.known) "\n      plan's last day ${Load.projected_on(e.plan_end.date, e.plan_end.ctl, e.plan_end.tsb)} (fatigue ${fmt1(e.plan_end.atl)}); nothing is planned after it" else ""
-						"  #${I64.to_str(e.id)}  ${e.event_date}  in ${I64.to_str(e.days_away)}d  ${e.name}\n      event day ${Load.projected_on(e.event_date, e.ctl, e.tsb)} (fatigue ${fmt1(e.atl)}) — ${(e.sessions_projected).to_str()} of ${(e.planned_in_window).to_str()} planned sessions have an estimated load${plan_end}${unprojected_tally(e.unprojected)}"
+						"  #${I64.to_str(e.id)}  ${e.event_date}  in ${I64.to_str(e.days_away)}d  ${e.name}\n      event day ${Load.projected_on(e.event_date, e.ctl, e.tsb)} (fatigue ${fmt1(e.atl)}) — ${(e.sessions_projected).to_str()} of ${(e.planned_in_window).to_str()} planned sessions carry a load from a target${plan_end}${unprojected_tally(e.unprojected)}"
 					},
 			)
 			base_note =
@@ -3185,7 +3185,7 @@ expect
 expect Render.events_screen({ projected_from: "2026-08-30", baseline_known: True, ftp_known: True, events: [] }) == "no event targets on file — `stride event add <YYYY-MM-DD> \"<name>\"` records one"
 # an event whose window holds unpriced sessions names why, counted per reason in a
 # fixed order; a window with none adds no line
-expect Render.unprojected_tally([{ date: "2026-09-04", target_literal: "3x12:00@230W", reason: "no_ftp" }, { date: "2026-09-02", target_literal: "", reason: "no_target" }, { date: "2026-09-05", target_literal: "3x12:00@230W", reason: "no_ftp" }]) == "\n      not estimated: 1 with no target, 2 with no FTP from the last 60 days"
+expect Render.unprojected_tally([{ date: "2026-09-04", target_literal: "3x12:00@230W", reason: "no_ftp" }, { date: "2026-09-02", target_literal: "", reason: "no_target" }, { date: "2026-09-05", target_literal: "3x12:00@230W", reason: "no_ftp" }]) == "\n      no load: 1 with no target, 2 with no FTP from the last 60 days"
 expect Render.unprojected_tally([]) == ""
 
 # the verdict line analyze and sync both print, and none before there is form

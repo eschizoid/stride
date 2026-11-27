@@ -8578,7 +8578,7 @@ b_window_agrees! = |ctx| {
 	week = human!(["review", "2001-03-05"])
 	check!("review floors the easy share and the three sum to 100, the split the weeks tile reads as 81/19", Str.contains(week, "intensity  easy 81%  moderate 17%  hard 2%"))?
 	check!("...and names the week's ride by its plain word", Str.contains(week, "  cycling: 1 sessions"))?
-	check!("...and counts the planned sessions it could estimate a load for in words", Str.contains(week, " estimated)  actual ") and !(Str.contains(week, "priced")))?
+	check!("...and counts the planned sessions whose load comes from a target in words", Str.contains(week, " from targets)  actual ") and !(Str.contains(week, "priced")))?
 	# form and ramp: today's form -18.3 and a 3.9 rise over the last 7 days
 	_ = sql!(wctx.db, "INSERT OR REPLACE INTO daily_load (day,tss,ctl,atl,tsb) VALUES ('${ago28}',0.0,30.0,30.0,0.0),('${ago7}',0.0,36.1,40.0,-3.9),('${today}',0.0,40.0,58.3,-18.3);")
 	sum = human!(["summary"])
