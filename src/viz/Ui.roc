@@ -68,6 +68,8 @@ Ui :: [].{
 		# naming the days that range draws
 		proj : List(Db.ProjDay),
 		proj_keys : List({ r : U64, t : Txt }),
+		# the forecast check's line under the key, none or one
+		proj_check : List(Txt),
 		ev_tile_sub : Txt,
 		zero_note : Text.Prepared,
 		ridden_found : Bool,
