@@ -40,13 +40,10 @@ Hud :: [].{
 		5 * (l + 1) * (l + 2) - hours
 	}
 
-	tier : I64 -> Str
-	tier = |l|
-		if (l < 10) "rookie"
-		else if (l < 20) "grinder"
-		else if (l < 30) "engine"
-		else if (l < 40) "machine"
-		else "legend"
+	# what a level measures, in the words the rail's sheet and the career
+	# chip both write beside it
+	trained_text : I64 -> Str
+	trained_text = |hours| "${Db.num_unit(hours, "h")} trained"
 
 	total_hours : List(Db.CareerSport) -> I64
 	total_hours = |sports|
@@ -104,13 +101,14 @@ Hud :: [].{
 	# Fills bottom-up over the first seconds of a session (eased), carries a
 	# pulsing head, and answers on hover with the full sheet. The rail runs
 	# at x 21..25 from rail_top to rail_bot, left of where every view starts
-	# drawing; the level number under its foot is chrome text
-	# (Chrome.rail_level), placed and gated with the rest of the chrome.
+	# drawing; the word "level" and the level number under its foot are
+	# chrome text (Chrome.rail_level), placed and gated with the rest of the
+	# chrome.
 	rail_top : F32
 	rail_top = 40.0
 
 	rail_bot : F32 -> F32
-	rail_bot = |win_h| win_h - 44.0
+	rail_bot = |win_h| win_h - 56.0
 
 	# the rail and the reach of its breathing head, when the athlete has any
 	# hours at all: the box a view's text keeps off
@@ -129,7 +127,7 @@ Hud :: [].{
 		{
 			box,
 			lines: [
-				line("level ${I64.to_str(lvl)} - ${tier(lvl)}", 14.0, Theme.gold_c, bot - 72.0),
+				line("level ${I64.to_str(lvl)} - ${trained_text(hours)}", 14.0, Theme.gold_c, bot - 72.0),
 				line("${Db.num_unit(hours_to_next(hours), "h")} to level ${I64.to_str(lvl + 1)}", 11.0, Theme.ink_muted, bot - 52.0),
 				line("${I64.to_str(streak_weeks(model.heat))} week streak", 11.0, Theme.ink_muted, bot - 36.0),
 			],

@@ -148,13 +148,13 @@ Weeks :: [].{
 				Ok(zw) => {
 					itot = zw.easy + zw.moderate + zw.hard
 					easy_pct = (Fmt.shares(zw.easy, zw.moderate, zw.hard)).easy
-					share = if (itot <= 0) "no polarized time" else if (zw.days < 7) "${hours(itot)}, easy ${I64.to_str(easy_pct)}% so far, ${I64.to_str(zw.days)} of 7 days" else "${hours(itot)}, easy ${I64.to_str(easy_pct)}%"
+					share = if (itot <= 0) "no easy, moderate or hard time" else if (zw.days < 7) "${hours(itot)}, easy ${I64.to_str(easy_pct)}% so far, ${I64.to_str(zw.days)} of 7 days" else "${hours(itot)}, easy ${I64.to_str(easy_pct)}%"
 					[share]
 				}
 				Err(_) => []
 			},
 			match r {
-				Ok(rw) => [Db.num_unit(rw.tss, "load"), "hold ${Db.grouped(F64.round_to_i64_try(Load.hold(rw.ctl_start, rw.days)) ?? 0)}", "ctl ${Fmt.tenths_signed(rw.ramp10)}/wk"]
+				Ok(rw) => [Db.num_unit(rw.tss, "load"), "${Db.grouped(F64.round_to_i64_try(Load.hold(rw.ctl_start, rw.days)) ?? 0)} holds fitness", "fitness ${Fmt.tenths_signed(rw.ramp10)}/wk"]
 				Err(_) => []
 			},
 		])
@@ -232,17 +232,17 @@ expect Weeks.pick("", "2026-11-02") == "2026-11-02" and Weeks.pick("2026-11-02",
 expect {
 	zw = [{ wk: "2026-11-02", days: 7, z1: 3600, z2: 18000, z3: 3600, z4: 0, z5: 0, easy: 21600, moderate: 3600, hard: 0 }]
 	rw = [{ wk: "2026-11-02", days: 7, tss: 393, ctl10: 496, ramp10: 10, ctl_start: 48.6 }]
-	Weeks.week_line("2026-11-02", zw, rw) == "wk of 2026-11-02   7.0 h, easy 85%   393 load   hold 340   ctl +1.0/wk"
-		and Weeks.week_line("2026-11-02", [], rw) == "wk of 2026-11-02   393 load   hold 340   ctl +1.0/wk"
+	Weeks.week_line("2026-11-02", zw, rw) == "wk of 2026-11-02   7.0 h, easy 85%   393 load   340 holds fitness   fitness +1.0/wk"
+		and Weeks.week_line("2026-11-02", [], rw) == "wk of 2026-11-02   393 load   340 holds fitness   fitness +1.0/wk"
 }
 # a week still running is held to its elapsed days, in the line as on the bar
 expect {
 	zw = [{ wk: "2026-11-09", days: 3, z1: 0, z2: 7200, z3: 0, z4: 0, z5: 0, easy: 7200, moderate: 0, hard: 0 }]
 	rw = [{ wk: "2026-11-09", days: 3, tss: 120, ctl10: 495, ramp10: -5, ctl_start: 50.0 }]
-	Weeks.week_line("2026-11-09", zw, rw) == "wk of 2026-11-09   2.0 h, easy 100% so far, 3 of 7 days   120 load   hold 150   ctl -0.5/wk"
+	Weeks.week_line("2026-11-09", zw, rw) == "wk of 2026-11-09   2.0 h, easy 100% so far, 3 of 7 days   120 load   150 holds fitness   fitness -0.5/wk"
 }
 # a week of lifting alone has no polarized time to share
 expect {
 	zw = [{ wk: "2026-11-16", days: 7, z1: 1800, z2: 1800, z3: 0, z4: 0, z5: 0, easy: 0, moderate: 0, hard: 0 }]
-	Weeks.week_line("2026-11-16", zw, []) == "wk of 2026-11-16   no polarized time"
+	Weeks.week_line("2026-11-16", zw, []) == "wk of 2026-11-16   no easy, moderate or hard time"
 }

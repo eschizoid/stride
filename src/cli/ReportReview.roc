@@ -300,12 +300,12 @@ ReportReview :: [].{
 			} else {
 				"intensity  - (no zone data in the week)"
 			}
-		fit = |f| if (f.known) "fitness ${Render.fmt0(f.ctl)} fatigue ${Render.fmt0(f.atl)} form ${Render.fmt0(f.tsb)} (${f.day})" else "-"
+		fit = |f| if (f.known) "fitness ${Render.fmt0(f.ctl)} fatigue ${Render.fmt0(f.atl)} form ${Render.fmt0(f.tsb)} (${f.day})" else "not on record"
 		lines = List.join([
 			[head, "", "sessions"],
 			if (List.is_empty(session_lines)) ["  none planned"] else session_lines,
 			unplanned_lines,
-			["", "load  planned ${Render.fmt0(p.load.planned_total)} (${(p.load.sessions_priced).to_str()} of ${(p.load.sessions_planned).to_str()} priced)  actual ${Render.fmt0(p.load.actual_total)}", intensity, "", "sports"],
+			["", "load  planned ${Render.fmt0(p.load.planned_total)} (${(p.load.sessions_priced).to_str()} of ${(p.load.sessions_planned).to_str()} from targets)  actual ${Render.fmt0(p.load.actual_total)}", intensity, "", "sports"],
 			if (List.is_empty(sport_lines)) ["  none"] else sport_lines,
 			[
 				"",

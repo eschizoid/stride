@@ -1,4 +1,5 @@
 app [Context, program] {
+	core: "../src/core/package.roc",
 	http: "https://github.com/roc-lang/http/releases/download/1.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 	pf: platform "https://github.com/roc-lang/basic-webserver/releases/download/0.22.0/BM2BUXA8mwbcoKPUfRV8cLtsUdnsSBPwjNLPRUJQAQ7Q.tar.zst",
 }
@@ -45,6 +46,7 @@ import pf.Env
 import pf.Server
 import pf.Sleep
 import http.Response
+import core.Words
 
 # `tz` rides on Ctx so every scenario that touches the clock reads the SAME zone the
 # dates were computed in. A second literal lets the two zones drift apart.
@@ -415,7 +417,7 @@ run_all! = || {
 	_ = sh!("rm -rf '${home}'")
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(1582)?
+	checks_ran_exactly!(1590)?
 	Stdout.line!("ALL E2E CHECKS PASS")
 }
 
@@ -2929,8 +2931,8 @@ b_config_ftp! = |ctx| {
 	# `settable` to `derived` passes while the derived rows lose their marker
 	# and every settable key gains a noise suffix.
 	conf_human = stride_human!(ctx.bin, ctx.home, ["config"])
-	check!("...and the human listing marks an unrecognised row", Str.contains(conf_human, "timezon  (unrecognised)"))?
-	check!("...and a derived one", Str.contains(conf_human, "ftp_ride  (derived)"))?
+	check!("...and the human listing marks an unrecognised row", Str.contains(conf_human, "timezon  (unrecognised, stride does not read it)"))?
+	check!("...and a derived one", Str.contains(conf_human, "ftp_ride  (derived from your power history)"))?
 	check!("...and leaves a settable key unmarked, which is what makes a marker mean anything", Str.contains(conf_human, "\ntimezone\n") or Str.starts_with(conf_human, "timezone\n"))?
 	# ...and a marked row can be REMOVED, which is what makes marking honest:
 	# refusing every write left a leftover unreachable — unreadable, unwritable,
@@ -3921,7 +3923,12 @@ b_seed_analyze! = |ctx| {
 	check!("help text documents the flag", Str.contains(help_text_out, "--json"))?
 	# analyze scores each session in TSS or session-RPE load, so the help names
 	# what it computes load, not TSS
-	check!("help text says analyze computes load, not TSS", Str.contains(help_text_out, "compute training metrics (load, zones, CTL/ATL/TSB)"))?
+	check!("help text says analyze computes load, not TSS", Str.contains(help_text_out, "compute training metrics: load, zones, fitness,"))?
+	# the help names each command in a new athlete's words: fitness, fatigue
+	# and form rather than their acronyms, and no internal term at all
+	check!("help text names fitness, fatigue and form in plain words", Str.contains(help_text_out, "projected fitness, fatigue and form on each event") and Str.contains(help_text_out, "fitness, fatigue and form on a date"))?
+	check!("...and says what sync re-reads and what viz tick does", Str.contains(help_text_out, "re-check the\n") and Str.contains(help_text_out, "expire stale ones, set aside all but the newest"))?
+	check!("...and uses no internal term, by the one list the window and the source guards share (${Str.join_with(Words.bare(help_text_out), ", ")})", List.is_empty(Words.bare(help_text_out)))?
 	check!("skill teaches no environment detection", !(Str.contains(skill_text, "CLAUDECODE")) and !(Str.contains(skill_text, "detected automatically")))?
 
 	# ── the JSON contract as a tested artifact ────────────────────
@@ -5010,7 +5017,7 @@ b_seed_analyze! = |ctx| {
 	# this fixture ever gains an unrated strength session, `hint` fires, the count becomes 6,
 	# and losing an unconditional spacer would then still clear 5. Asserting that a specific
 	# section is preceded by a blank line is indifferent to the conditional block entirely.
-	check!("...including the one before `scored by`, which a floor alone cannot hold", Str.trim(sh!("HOME='${ctx.home}' '${ctx.bin}' doctor 2>/dev/null | grep -B1 '^  scored by' | head -1 | wc -c | tr -d ' '")) == "1")?
+	check!("...including the one before `load scored from`, which a floor alone cannot hold", Str.trim(sh!("HOME='${ctx.home}' '${ctx.bin}' doctor 2>/dev/null | grep -B1 '^  load scored from' | head -1 | wc -c | tr -d ' '")) == "1")?
 	_ = sql!(ctx.db, "DELETE FROM activity_segments; INSERT INTO activity_segments SELECT * FROM seg_bak249; DROP TABLE seg_bak249; DELETE FROM activities WHERE id = 944;")
 	check!("...with the segment table restored, so the probe leaves no state behind", Str.trim(sql!(ctx.db, "SELECT COUNT(*) FROM activity_segments;")) == seg_249)?
 	# ...and the POISONED shape for `week`, beside the NULL one above: a date-shaped
@@ -8208,7 +8215,7 @@ b_tte_families! = |ctx| {
 	check!("5:00/km is slower than CS: no limit, the arithmetic flagged as not run", pace_of!(["tte", "pace", "5:00/km", "Run"]) == "4000,240,250,0,below_cs,false,Run,/km")?
 	check!("a mile pace is read in miles, and CS comes back in the caller's unit", strjq!(ctx, ["tte", "pace", "6:00/mi", "Run"], "[(.data.pace_s | round), (.data.speed * 1000 | round), (.data.cs_pace_s | round)] | map(tostring) | join(\",\")") == "360,4470,402")?
 	check!("the pace answer conforms to its schema, in and below the band", validate_schema!(ctx, "tte pace 3:45/km Run", "tte_pace") == "" and validate_schema!(ctx, "tte pace 5:00/km Run", "tte_pace") == "")?
-	check!("...and the human screen reads every pace in the caller's unit", Str.contains(stride_human!(ctx.bin, ctx.home, ["tte", "pace", "3:45/km", "Run"]), "at 3:45/km against CS 4:10/km (Run fit, D′ 240 m from 3 of the 5/10/20-min speed bests over 90d"))?
+	check!("...and the human screen reads every pace in the caller's unit", Str.contains(stride_human!(ctx.bin, ctx.home, ["tte", "pace", "3:45/km", "Run"]), "at 3:45/km against your critical speed (CS) 4:10/km (Run fit, D′ 240 m from 3 of the 5/10/20-min speed bests over 90d"))?
 	swim_cs = stride!(ctx.bin, ctx.home, ["tte", "pace", "1:40/100m", "Swim"])
 	check!("a sport with no CS fit is refused with no_cs_fit, naming that sport", Str.contains(swim_cs, "\"no_cs_fit\"") and Str.contains(swim_cs, "for Swim") and stride_status!(ctx.bin, ctx.home, ["tte", "pace", "1:40/100m", "Swim"]) == 1)?
 	check!("...and the pace fit does not pool a family: TrailRun has no speed bests of its own", Str.contains(stride!(ctx.bin, ctx.home, ["tte", "pace", "3:45/km", "TrailRun"]), "\"no_cs_fit\""))?
@@ -8573,11 +8580,12 @@ b_window_agrees! = |ctx| {
 	week = human!(["review", "2001-03-05"])
 	check!("review floors the easy share and the three sum to 100, the split the weeks tile reads as 81/19", Str.contains(week, "intensity  easy 81%  moderate 17%  hard 2%"))?
 	check!("...and names the week's ride by its plain word", Str.contains(week, "  cycling: 1 sessions"))?
+	check!("...and counts the planned sessions whose load comes from a target in words", Str.contains(week, " from targets)  actual ") and !(Str.contains(week, "priced")))?
 	# form and ramp: today's form -18.3 and a 3.9 rise over the last 7 days
 	_ = sql!(wctx.db, "INSERT OR REPLACE INTO daily_load (day,tss,ctl,atl,tsb) VALUES ('${ago28}',0.0,30.0,30.0,0.0),('${ago7}',0.0,36.1,40.0,-3.9),('${today}',0.0,40.0,58.3,-18.3);")
 	sum = human!(["summary"])
 	check!("summary says \"high modeled fatigue\" at form -18.3, the window chip's words for it", Str.contains(sum, "— high modeled fatigue"))?
-	check!("summary's ramp reads to a tenth and names its span, as the ramp card names its own", Str.contains(sum, "fitness ramp: +3.9 ctl in the last 7 days · +2.5 ctl/wk averaged in the last 28 days"))?
+	check!("summary's ramp reads to a tenth and names its span, as the ramp card names its own", Str.contains(sum, "fitness ramp: +3.9 in the last 7 days · +2.5 a week averaged in the last 28 days"))?
 	# the event card: the plan stops 10 days out and the event is 60 days out
 	_ = sql!(wctx.db, "INSERT INTO planned_sessions (id,created_at,target_date,session_type,detail,rationale,status,skipped_reason,target_literal) VALUES (9911,'2099-01-01','${plan_last}','strength','lift','r','open','','1x45:00@RPE6'); INSERT INTO events (created_at,event_date,name) VALUES ('2099-01-01','${event_day}','Far Race');")
 	proj_line = Str.trim(sh!("HOME='${wctx.home}' STRIDE_FORMAT=human '${wctx.bin}' project ${plan_last} | sed -n 2p | sed 's/ (fatigue.*//'"))
@@ -8892,6 +8900,7 @@ b_viz_caps! = |ctx| {
 	check!("...and the field row verbatim", strjq!(ctx, ["viz"], ".data.fields[0] | .name + \"/\" + .kind + \"/\" + .accepts") == "view/integer/0..7")?
 	# the focus row, judged for the reader. Absent first: no table yet.
 	check!("viz reports no focus when the window never wrote one", strjq!(ctx, ["viz"], ".data.focus | (.present | tostring) + \"/\" + (.live | tostring) + \"/\" + (.age_seconds | tostring)") == "false/false/-1")?
+	check!("...and its human screen says so in words, and names a request as one", Str.contains(stride_human!(ctx.bin, ctx.home, ["viz"]), "focus: none - the window is not open") and Str.contains(stride_human!(ctx.bin, ctx.home, ["viz"]), "window protocol 1, published ") and !(Str.contains(stride_human!(ctx.bin, ctx.home, ["viz"]), "bus protocol")))?
 	_ = sql!(ctx.db, "INSERT INTO viz_capabilities (key, value) VALUES ('focus_staleness_seconds','90');")
 	check!("...and the focus staleness the window published, as a number", strjq!(ctx, ["viz"], ".data.focus_staleness_seconds | tojson") == "90")?
 	_ = sql!(ctx.db, "CREATE TABLE IF NOT EXISTS viz_focus (id INTEGER PRIMARY KEY CHECK (id = 1), updated_at TEXT NOT NULL, view INTEGER NOT NULL, range INTEGER NOT NULL, cursor_day TEXT, trace_day TEXT, ghost_day TEXT, trace_id INTEGER, ghost_id INTEGER);")
@@ -9058,6 +9067,10 @@ b_viz_tick! = |ctx| {
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (5);")
 	check!("the newest of two fresh rows wins", strjq!(ctx, ["viz", "tick"], ".data.view") == "5")?
 	check!("...and the older closed as superseded", Str.trim(sql!(ctx.db, "SELECT status FROM viz_directives WHERE view = 4;")) == "superseded")?
+	# a human tick names the request, and only the fields its row set
+	_ = sql!(ctx.db, "INSERT INTO viz_directives (view) VALUES (9);")
+	tick_human = stride_human!(ctx.bin, ctx.home, ["viz", "tick"])
+	check!("a human tick names the request and only the fields it set, never a -1 id (${tick_human})", Str.contains(tick_human, "tick: request ") and Str.contains(tick_human, " applied (view 9)") and !(Str.contains(tick_human, "-1")))?
 	# the power view's curve: a directive naming any sport family's head, or
 	# pace: and a sport whose effort is its pace, passes the vocabulary - the
 	# headless tick holds no data, so whether the athlete has that curve is
@@ -9074,9 +9087,9 @@ b_viz_tick! = |ctx| {
 	# short is refused by name whatever its value, and the tick still echoes
 	# what was asked
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, short) VALUES (1, 1);")
-	check!("a directive asking for the short rungs is refused by name, its value echoed", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + (.short | tostring) + \"/\" + .error") == "applied_partial/1/short 1 refused: the power view has no short rungs")?
+	check!("a directive asking for the short rungs is refused by name, its value echoed", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + (.short | tostring) + \"/\" + .error") == "applied_partial/1/short 1 refused: the power view shows no duration under 5 minutes")?
 	_ = sql!(ctx.db, "INSERT INTO viz_directives (view, short) VALUES (1, 0);")
-	check!("...and so is one folding them", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/short 0 refused: the power view has no short rungs")?
+	check!("...and so is one folding them", strjq!(ctx, ["viz", "tick"], ".data | .status + \"/\" + .error") == "applied_partial/short 0 refused: the power view shows no duration under 5 minutes")?
 	# pending until reported: a cycle that does not ack leaves the winner
 	# pending, and the next cycle returns the SAME row - a crash between
 	# apply and report retries rather than loses the directive
@@ -9139,6 +9152,13 @@ b_viz_tick! = |ctx| {
 b_doctor! : Ctx => Try({}, _)
 b_doctor! = |ctx| {
 	check!("doctor activities > 0", sfloat(strjq!(ctx, ["doctor"], ".data.activities")) > 0.0)?
+	# the human screen names each scoring step and each dropped sample in
+	# words, never the stored model name or an internal term
+	doc_human = stride_human!(ctx.bin, ctx.home, ["doctor"])
+	check!("doctor names how each load was scored in words", Str.contains(doc_human, "  load scored from:") and Str.contains(doc_human, "implausible heart-rate and power samples dropped (30d)") and !(Str.contains(doc_human, "provenance")) and !(Str.contains(doc_human, "junk")) and !(Str.contains(doc_human, "power_stream:")) and List.is_empty(Words.bare(doc_human)))?
+	# the season table names its fit and its intensity split in words
+	sea_human = stride_human!(ctx.bin, ctx.home, ["season"])
+	check!("season names its fit and intensity split in words", Str.contains(sea_human, "intensity = easy/moderate/hard time %") and Str.contains(sea_human, "fit = how much of the week-to-week scatter") and !(Str.contains(sea_human, "r2")) and !(Str.contains(sea_human, "e/m/h")) and List.is_empty(Words.bare(sea_human)))?
 	# The junk-data watchdog. Every assertion selects its OWN field with jq rather than matching the
 	# whole report, so a number appearing elsewhere cannot satisfy it by accident.
 	# Seeded dated AFTER the fixture activities so they are genuinely the most recent —

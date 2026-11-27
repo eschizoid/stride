@@ -1,6 +1,7 @@
 import rr.Text
 import core.Load
 import core.Series
+import core.Words
 import core.Sports
 import Board
 import Career
@@ -26,6 +27,37 @@ import Trace
 import Ui
 import Weeks
 import Zones
+import "Board.roc" as board_src : Str
+import "Career.roc" as career_src : Str
+import "Chrome.roc" as chrome_src : Str
+import "Curve.roc" as curve_src : Str
+import "Days.roc" as days_src : Str
+import "Db.roc" as db_src : Str
+import "DisplayScale.roc" as display_scale_src : Str
+import "Earcut.roc" as earcut_src : Str
+import "Geo.roc" as geo_src : Str
+import "Heat.roc" as heat_src : Str
+import "Hud.roc" as hud_src : Str
+import "Labels.roc" as labels_src : Str
+import "Map.roc" as map_src : Str
+import "MapNames.roc" as map_names_src : Str
+import "Motion.roc" as motion_src : Str
+import "Mvt.roc" as mvt_src : Str
+import "Pbf.roc" as pbf_src : Str
+import "Plan.roc" as plan_src : Str
+import "Ramp.roc" as ramp_src : Str
+import "Scene.roc" as scene_src : Str
+import "Scroll.roc" as scroll_src : Str
+import "Strength.roc" as strength_src : Str
+import "Table.roc" as table_src : Str
+import "Theme.roc" as theme_src : Str
+import "Tiles.roc" as tiles_src : Str
+import "Trace.roc" as trace_src : Str
+import "Ui.roc" as ui_src : Str
+import "Weeks.roc" as weeks_src : Str
+import "Wrap.roc" as wrap_src : Str
+import "Zones.roc" as zones_src : Str
+import "main.roc" as main_src : Str
 
 Gate :: [].{
 	# ── the label gate ──────────────────────────────────────────────────────
@@ -611,24 +643,77 @@ Gate :: [].{
 	failures = |rule, fixtures| List.join(List.map(fixtures, |f| List.map(rule(f.model), |e| "${f.name}: ${e}")))
 
 	# one scene's failures: two texts that overlap, a text outside its
-	# region, a text over a shape it must keep off, and a text that names a
-	# load TSS
+	# region, a text over a shape it must keep off, and a text whose words
+	# break the wording rule
 	judge : List(Labels.Owned), List(Labels.Mark) -> List(Str)
 	judge = |texts, marks| List.join([Labels.check(texts), Labels.covers(texts, marks), wording(texts)])
 
-	# Every load the window shows is the engine's mixed model: TSS for a
-	# session scored by power or HR, session-RPE load for a rated lift, and
-	# a day's or a week's total blends both. No window string calls one TSS.
-	# A text fails when "tss" stands as a word in it, in any case; a word
-	# that merely holds those letters passes.
+	# The wording rule, in two parts. Every load the window shows is the
+	# engine's mixed model: TSS for a session scored by power or HR,
+	# session-RPE load for a rated lift, and a day's or a week's total blends
+	# both, so no window string calls one TSS. And no window string uses an
+	# internal term bare (core.Words.bare, the list and matcher the source
+	# guard below and the engine's own guard run). A term fails when it
+	# stands as whole words in a text, in any case; a word that merely holds
+	# its letters passes.
 	wording : List(Labels.Owned) -> List(Str)
-	wording = |texts| List.keep_oks(texts, |t| if (names_tss(t.key)) Ok("${t.key} names a load TSS; the window says load") else Err(Clean))
+	wording = |texts|
+		List.join(
+			List.map(
+				texts,
+				|t| List.concat(
+					if (names_tss(t.key)) ["${t.key} names a load TSS; the window says load"] else [],
+					List.map(Words.bare(t.key), |w| "${t.key} uses the internal term ${w}"),
+				),
+			),
+		)
 
 	names_tss : Str -> Bool
-	names_tss = |s| {
-		folded = List.map(Str.to_utf8(s), |b| if (b >= 'A' and b <= 'Z') b + 32 else if ((b >= 'a' and b <= 'z') or (b >= '0' and b <= '9')) b else ' ')
-		List.contains(Str.split_on(Str.from_utf8_lossy(folded), " "), "tss")
-	}
+	names_tss = |s| Words.names(s, "tss")
+
+	# the placement check and the wording rule, for a scene drawn over no
+	# shapes of its own
+	check_words : List(Labels.Owned) -> List(Str)
+	check_words = |texts| List.concat(Labels.check(texts), wording(texts))
+
+	# The modules whose literals hold the window's words, as source text:
+	# every module of src/viz but this gate, whose literals are fixtures.
+	# Db's SQL, the columns its decoders read and the keys its json_
+	# readers read are skipped by core.Words.literals itself.
+	sources : List({ name : Str, src : Str })
+	sources = [
+		{ name: "Board", src: board_src },
+		{ name: "Career", src: career_src },
+		{ name: "Chrome", src: chrome_src },
+		{ name: "Curve", src: curve_src },
+		{ name: "Days", src: days_src },
+		{ name: "Db", src: db_src },
+		{ name: "DisplayScale", src: display_scale_src },
+		{ name: "Earcut", src: earcut_src },
+		{ name: "Geo", src: geo_src },
+		{ name: "Heat", src: heat_src },
+		{ name: "Hud", src: hud_src },
+		{ name: "Labels", src: labels_src },
+		{ name: "Map", src: map_src },
+		{ name: "MapNames", src: map_names_src },
+		{ name: "Motion", src: motion_src },
+		{ name: "Mvt", src: mvt_src },
+		{ name: "Pbf", src: pbf_src },
+		{ name: "Plan", src: plan_src },
+		{ name: "Ramp", src: ramp_src },
+		{ name: "Scene", src: scene_src },
+		{ name: "Scroll", src: scroll_src },
+		{ name: "Strength", src: strength_src },
+		{ name: "Table", src: table_src },
+		{ name: "Theme", src: theme_src },
+		{ name: "Tiles", src: tiles_src },
+		{ name: "Trace", src: trace_src },
+		{ name: "Ui", src: ui_src },
+		{ name: "Weeks", src: weeks_src },
+		{ name: "Wrap", src: wrap_src },
+		{ name: "Zones", src: zones_src },
+		{ name: "main", src: main_src },
+	]
 
 	# a prepared copy the gate stands in for: the string and size it was
 	# prepared from, which is all the scene measures
@@ -749,7 +834,7 @@ Gate :: [].{
 			ev_label: txt(event, 13.0),
 			ev_found: ev != 0,
 			ev_idx: if (ev == 2) List.len(series_days) + List.len(proj) - 1 else List.len(series_days) - 1,
-			ev_warn: txt("event record unreadable", 13.0),
+			ev_warn: txt(Db.event_unreadable_text, 13.0),
 			ev_warn_found: ev == 1,
 			stale_found: Bool.True,
 		}
@@ -783,7 +868,7 @@ Gate :: [].{
 				|sz| {
 					base = empty_model(sz)
 					[
-						{ name: "form with a load error at ${size_name(sz)}", model: { ..base, view: 0, has_error: Bool.True, status: txt("daily_load query failed - analyzed yet?", 16.0) } },
+						{ name: "form with a load error at ${size_name(sz)}", model: { ..base, view: 0, has_error: Bool.True, status: txt(Db.load_error_text, 16.0) } },
 						{ name: "form with no data at ${size_name(sz)}", model: { ..base, view: 0 } },
 						{ name: "form with one day at ${size_name(sz)}", model: { ..base, view: 0, data: [{ ctl: 1.0, atl: 7.0, tsb: -6.0, tss: 50.0 }], days: ["2026-11-26"] } },
 					]
@@ -1569,7 +1654,7 @@ Gate :: [].{
 		else if (v == 4) Plan.no_plan_text
 		else if (state == "an unscored ride") Chrome.no_scored_text
 		else if (v == 1) "no cycling power on record yet - a session recorded with a power meter fills it"
-		else if (v == 6) "no polarized time in the last 12 weeks - an endurance session with heart rate, power or pace fills it"
+		else if (v == 6) "no easy, moderate or hard time in the last 12 weeks - an endurance session with heart rate, power or pace fills it"
 		else if (v == 7) "no load in the last 12 weeks - a session stride analyze scores fills it, then press R"
 		else ""
 
@@ -1807,7 +1892,7 @@ expect {
 		and g.n == 50
 		and List.last(g.days) == Ok("2026-12-02")
 		and (Board.x_at(g, g.n - 1) - (g.left + g.pw)).abs() < 0.01
-		and Board.end_text(g.data, 0) == "CTL ${Db.fmt_f(last.ctl)}"
+		and Board.end_text(g.data, 0) == Db.fmt_f(last.ctl)
 		and List.map(planned, |b| b.day) == List.keep_oks(m.proj, |d| if (d.tss > 0.0) Ok(d.day) else Err(Rest))
 		and List.len(planned) == 14
 		and List.all(bs, |b| b.box.x + b.box.w <= g.left + g.pw + 0.01)
@@ -1940,7 +2025,7 @@ expect Gate.failures(|m| Gate.tip_judge(m, Gate.builtin_measure), Gate.heat_mode
 expect {
 	m = { ..Gate.empty_model({ w: 1280.0, h: 800.0 }), view: 4 }
 	coach = |note| List.keep_if(List.map(Plan.owned({ ..m, bus_note: note }, Gate.measure), |t| t.key), |k| Str.starts_with(k, "'coach:"))
-	coach(NoDirective) == [] and coach(Note("11-12 08:14  ->  plan / 30d")) == ["'coach: 11-12 08:14  ->  plan / 30d'"] and coach(Unreadable) == ["'coach: directives unreadable'"]
+	coach(NoDirective) == [] and coach(Note("11-12 08:14  ->  plan / 30d")) == ["'coach: 11-12 08:14  ->  plan / 30d'"] and coach(Unreadable) == ["'coach: last request unreadable'"]
 }
 
 # the wording rule: "tss" as a word fails in any case and beside any
@@ -1948,6 +2033,16 @@ expect {
 expect Gate.names_tss("74 tss this week") and Gate.names_tss("'85 TSS'") and Gate.names_tss("load (Tss)") and Gate.names_tss("tss")
 expect !(Gate.names_tss("74 load this week")) and !(Gate.names_tss("rtss 40")) and !(Gate.names_tss("stress")) and !(Gate.names_tss("tssb"))
 expect Gate.wording([{ key: "'62 min  85 tss'", box: { x: 0.0, y: 0.0, w: 1.0, h: 1.0 }, region: { x: 0.0, y: 0.0, w: 1.0, h: 1.0 } }]) == ["'62 min  85 tss' names a load TSS; the window says load"]
+# ...and an internal term fails it beside its plain word, while the gloss
+# that shows an acronym's meaning passes
+expect Gate.wording([{ key: "'CTL 46.0'", box: { x: 0.0, y: 0.0, w: 1.0, h: 1.0 }, region: { x: 0.0, y: 0.0, w: 1.0, h: 1.0 } }]) == ["'CTL 46.0' uses the internal term ctl"]
+expect Gate.wording([{ key: "'fitness (CTL) 46.0'", box: { x: 0.0, y: 0.0, w: 1.0, h: 1.0 }, region: { x: 0.0, y: 0.0, w: 1.0, h: 1.0 } }]) == []
+
+# the source guard: no string literal in a module that writes the window's
+# words uses an internal term bare, so a string no fixture reaches is held
+# to the rule too; every module of src/viz but this gate is read
+expect List.join(List.map(Gate.sources, |f| Words.findings(f.name, f.src))) == []
+expect List.len(Gate.sources) == 31
 
 # the map's gate, over every map fixture
 expect Gate.failures(|m| Gate.judge(Map.owned(m, Gate.measure), Map.marks(m, Gate.measure)), Gate.map_models) == []
@@ -2131,11 +2226,11 @@ expect {
 }
 
 # the boot splash's gate: its words at every size and dot count, slow or not
-expect List.join(List.map(Gate.splash_models, |f| List.map(Labels.check(Scene.owned(Chrome.splash(f.model, Gate.measure, f.slow))), |e| "${f.name}: ${e}"))) == []
+expect List.join(List.map(Gate.splash_models, |f| List.map(Gate.check_words(Scene.owned(Chrome.splash(f.model, Gate.measure, f.slow))), |e| "${f.name}: ${e}"))) == []
 
 # the XP rail's sheet holds its lines inside its card for every athlete at
 # every size
-expect List.join(List.map(Gate.board_models, |f| List.map(Labels.check(Scene.owned(Labels.place((Hud.sheet(f.model, Gate.measure)).lines, { boxes: [], segs: [] }))), |e| "${f.name}: ${e}"))) == []
+expect List.join(List.map(Gate.board_models, |f| List.map(Gate.check_words(Scene.owned(Labels.place((Hud.sheet(f.model, Gate.measure)).lines, { boxes: [], segs: [] }))), |e| "${f.name}: ${e}"))) == []
 
 # a route an ocean from the rest leaves the map opening on the rest: every
 # point of the home route lies inside the map at every size

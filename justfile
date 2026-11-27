@@ -68,6 +68,7 @@ test:
     {{roc}} test src/core/Bus.roc
     {{roc}} test src/core/Route.roc
     {{roc}} test src/core/Load.roc
+    {{roc}} test src/core/Words.roc
     # every engine module takes --main: core is imported TRANSITIVELY (Command
     # reaches it through Metrics), and a bare module run carries no package
     # map, so every expect below the import fails to resolve

@@ -124,7 +124,7 @@ Chrome :: [].{
 	}
 
 	# the XP rail's level number under the rail's foot, when the athlete has
-	# any hours at all
+	# any hours at all; the word "level" above it names the gauge
 	rail_level : Ui.Model -> Try(Str, [NoHours])
 	rail_level = |model| {
 		hours = Hud.total_hours(model.career_sports)
@@ -162,7 +162,7 @@ Chrome :: [].{
 				[]
 			}
 		lvl = match rail_level(model) {
-			Ok(t) => [Scene.fixed(measure, Scene.data(t, 10.0, Theme.gold_c), { x: 23.0, y: win.h - 38.0, align: Center }, panel)]
+			Ok(t) => [Scene.fixed(measure, Scene.data("level", 9.0, Theme.ink_muted), { x: 23.0, y: win.h - 50.0, align: Center }, { x: 0.0, y: 0.0, w: win.w, h: win.h }), Scene.fixed(measure, Scene.data(t, 10.0, Theme.gold_c), { x: 23.0, y: win.h - 38.0, align: Center }, panel)]
 			Err(_) => []
 		}
 		List.join([[title, scale], pills, rec, leg, lvl])
