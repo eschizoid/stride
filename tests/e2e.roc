@@ -758,13 +758,15 @@ run_sync! = || {
 	# hazard the queue query's own comment warns about, so it is left knowingly.
 	check!("the 70 seed rows landed", Str.trim(sql!(db, "SELECT count(*) FROM activities WHERE id BETWEEN 901 AND 970;")) == "70")?
 	# the reads earlier syncs in this home spent sit in the same quarter-hour, and
-	# this run needs the window to itself, as it has once the mark passes. It
-	# starts clear of the next mark, past which it would rightly read on in a
-	# fresh window, and is given 120 seconds, past the harness's default command
-	# deadline, which a loaded machine can spend on a window's 95 reads.
+	# this run needs the window to itself, as it has once the mark passes. It is
+	# given 120 seconds, past the harness's default command deadline, which a
+	# loaded machine can spend on a window's 95 reads, and starts further than
+	# that from the next mark, past which it would rightly read on in a fresh
+	# window, so no run the deadline lets finish can cross one.
 	next_window!(db)
-	clear_of_quarter_mark!(60)
-	window_rc = exit_status_within!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>'${be}'", 120)
+	window_secs = 120
+	clear_of_quarter_mark!(window_secs + 10)
+	window_rc = exit_status_within!("HOME='${home}' STRIDE_FORMAT=json STRIDE_API_BASE='${base}' '${bin}' sync >'${bo}' 2>'${be}'", window_secs)
 	# The streams queue holds 72 here, under the 95-read window, so the streams
 	# drain clears it in this one run. A per-run cap would stop it short, and so
 	# would a lowered window; the window's own share is checked right after.
@@ -1802,49 +1804,58 @@ run_pace! = || {
 
 	# ── a shortened window shortens the wait and never the count: with
 	# STRIDE_WINDOW_SECONDS=1 a run still stops at Strava's quarter-hour limit,
-	# and a run a second later, in a fresh short window, asks for nothing. Started
-	# clear of a quarter-hour mark, which would rightly open a fresh window, and
-	# each run given 120 seconds, past the harness's default command deadline,
-	# which a loaded machine can spend on 95 reads.
-	clear_of_quarter_mark!(60)
+	# and a run a second later, in a fresh short window, asks for nothing. The
+	# first run is given 120 seconds, past the harness's default command
+	# deadline, which a loaded machine can spend on 95 reads, and the second,
+	# which reads nothing, that default. Both must land in one quarter-hour, so
+	# the arm starts further from the next mark than the two deadlines together,
+	# and no pair of runs the deadlines let finish can cross one.
+	qc_secs = 120
+	clear_of_quarter_mark!(qc_secs + Cmd.default_timeout_ms // 1000 + 10)
 	qc = seeded!({})
 	_ = sql!("${qc}/.stride/db.sqlite", "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) WITH RECURSIVE seq(x) AS (SELECT 907 UNION ALL SELECT x+1 FROM seq WHERE x<1006) SELECT x,'seed','Ride','2026-08-01T10:00:00Z',3600,1000.0,0.0,NULL FROM seq;")
-	qc_run! = |_| exit_status_within!("HOME='${qc}' STRIDE_FORMAT=json STRIDE_API_BASE='${pbase}' STRIDE_WINDOW_SECONDS=1 '${bin}' sync >'${qc}/out' 2>/dev/null", 120)
-	qc_rc = qc_run!({})
+	qc_sync = "HOME='${qc}' STRIDE_FORMAT=json STRIDE_API_BASE='${pbase}' STRIDE_WINDOW_SECONDS=1 '${bin}' sync >'${qc}/out' 2>/dev/null"
+	qc_rc = exit_status_within!(qc_sync, qc_secs)
 	_ = sh!("sleep 1.2")
-	qc_rc2 = qc_run!({})
+	qc_rc2 = exit_status!(qc_sync)
 	qc_spent = Str.trim(sql!("${qc}/.stride/db.sqlite", "SELECT value FROM config WHERE key = 'strava_reads_today';"))
 	check!("a one-second window still stops at Strava's quarter-hour limit across runs (exit ${qc_rc} then ${qc_rc2}, ${qc_spent} reads)", qc_rc == "0" and qc_rc2 == "0" and qc_spent == "95")?
 	check!("...naming the quarter-hour's next mark, not the short window's", Str.trim(sh!("jq -r '.data.resume_at | test(\"T[0-9]{2}:(00|15|30|45):10Z$\")' '${qc}/out'")) == "true")?
 	check!("...with no limit header ever seen, the documented caps, none stored", Str.trim(sql!("${qc}/.stride/db.sqlite", "SELECT COUNT(*) FROM config WHERE key LIKE 'strava_limit_%';")) == "0")?
 	_ = sh!("rm -rf '${qc}'")
 
-	# ── the limit Strava reports sets the caps, less a margin. A reported 300 a
-	# quarter-hour lets one run make every read 56 activities owe, 113 with the
-	# list's, which the documented 100 would stop at 95. They are under the cap
-	# of 285, so the run completes with all of them whether or not it crosses a
-	# quarter-hour mark. Each read of the header mock costs it a shell, so on a
-	# loaded machine the run can outlast the harness's default command deadline,
-	# which ends it part-way with fewer reads counted; it is given 120 seconds,
-	# and a run still cut short names the deadline in its exit.
+	# ── the limit Strava reports sets the caps, less a margin: a reported 300 a
+	# quarter-hour is a cap of 285, where the documented 100 is one of 95. The
+	# home's 148 activities, and those the list brings, owe a stream and a route
+	# each, and the list's read besides, more than the cap, so the run stops on
+	# it, and its count pins the cap exactly: one held anywhere else, the
+	# documented 95 among them, stops at another count or completes. Each read
+	# of the header mock costs it a shell, so on a loaded machine the run can
+	# outlast the harness's default command deadline; it is given 120 seconds,
+	# and a run still cut short names the deadline in its exit. A mark would
+	# rightly open a fresh quarter-hour mid-run, so the run starts further from
+	# the next one than its deadline.
 	hi = seeded!({})
-	_ = sql!("${hi}/.stride/db.sqlite", "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) WITH RECURSIVE seq(x) AS (SELECT 907 UNION ALL SELECT x+1 FROM seq WHERE x<954) SELECT x,'seed','Ride','2026-08-01T10:00:00Z',3600,1000.0,0.0,NULL FROM seq;")
-	hi_rc = exit_status_within!("HOME='${hi}' STRIDE_FORMAT=json STRIDE_API_BASE='${hibase}' '${bin}' sync >'${hi}/out' 2>/dev/null", 120)
+	_ = sql!("${hi}/.stride/db.sqlite", "INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) WITH RECURSIVE seq(x) AS (SELECT 907 UNION ALL SELECT x+1 FROM seq WHERE x<1048) SELECT x,'seed','Ride','2026-08-01T10:00:00Z',3600,1000.0,0.0,NULL FROM seq;")
 	hi_q! = |q| Str.trim(sql!("${hi}/.stride/db.sqlite", q))
+	check!("the high-limit home holds 148 activities before its sync", hi_q!("SELECT COUNT(*) FROM activities;") == "148")?
+	hi_secs = 120
+	clear_of_quarter_mark!(hi_secs + 10)
+	hi_rc = exit_status_within!("HOME='${hi}' STRIDE_FORMAT=json STRIDE_API_BASE='${hibase}' '${bin}' sync >'${hi}/out' 2>/dev/null", hi_secs)
 	hi_count! = |key| hi_q!("SELECT COALESCE((SELECT value FROM config WHERE key = '${key}'), 'none');")
-	hi_stopped! = |_| Str.trim(sh!("jq -r '.data.stopped' '${hi}/out'"))
-	check!("a reported limit of 300 a quarter-hour lets one run pass 95 reads (exit ${hi_rc}, ${hi_count!("strava_reads_today")} reads)", hi_rc == "0" and hi_stopped!({}) == "complete" and hi_count!("strava_reads_today") == "113")?
+	hi_out! = |q| Str.trim(sh!("jq -r '${q}' '${hi}/out'"))
+	check!("a reported limit of 300 a quarter-hour paces one run to its cap of 285, past 95 (exit ${hi_rc}, ${hi_count!("strava_reads_quarter")} this quarter-hour, ${hi_count!("strava_reads_today")} today)", hi_rc == "0" and hi_out!(".data.stopped") == "budget_reached" and hi_out!(".data.pending_streams + .data.pending_routes > 0") == "true" and hi_count!("strava_reads_quarter") == "285" and hi_count!("strava_reads_today") == "285")?
 	check!("...and the limit it reported is kept for the next run's first read", hi_q!("SELECT group_concat(value, ',') FROM (SELECT value FROM config WHERE key IN ('strava_limit_window', 'strava_limit_day') ORDER BY key DESC);") == "300,3000")?
 	# ...for the app it was reported to: authorized with another app, the same
 	# home paces by the documented caps again, stopping on a quarter-hour of 95
-	# where the kept 300 would have let it complete. Read from the quarter-hour's
+	# where the kept 300 would have let it run on. Read from the quarter-hour's
 	# own count, the one the cap governs: a run that crosses a mark reads up to
 	# 94 before it and 95 after, so the day's count is 95 only for a run clear of
-	# a mark. Seventy-two more activities make the run owe 257 reads, more than
-	# those 189, so it stops on the cap wherever the mark falls.
-	_ = sql!("${hi}/.stride/db.sqlite", "UPDATE config SET value = 'another-app' WHERE key = 'strava_client_id'; DELETE FROM config WHERE key LIKE 'strava_reads_%'; DELETE FROM streams; DELETE FROM routes; INSERT INTO activities (id,name,sport_type,start_local,moving_time,distance,elevation,synced_at) WITH RECURSIVE seq(x) AS (SELECT 955 UNION ALL SELECT x+1 FROM seq WHERE x<1026) SELECT x,'seed','Ride','2026-08-01T10:00:00Z',3600,1000.0,0.0,NULL FROM seq;")
+	# a mark. The same activities owe more reads than those 189, so the run
+	# stops on the cap wherever the mark falls.
+	_ = sql!("${hi}/.stride/db.sqlite", "UPDATE config SET value = 'another-app' WHERE key = 'strava_client_id'; DELETE FROM config WHERE key LIKE 'strava_reads_%'; DELETE FROM streams; DELETE FROM routes;")
 	ia_rc = exit_status_within!("HOME='${hi}' STRIDE_FORMAT=json STRIDE_API_BASE='${pbase}' '${bin}' sync >'${hi}/out' 2>/dev/null", 120)
-	check!("...and another app's run does not inherit it (exit ${ia_rc}, ${hi_count!("strava_reads_quarter")} this quarter-hour, ${hi_count!("strava_reads_today")} today)", ia_rc == "0" and hi_stopped!({}) == "budget_reached" and hi_count!("strava_reads_quarter") == "95")?
+	check!("...and another app's run does not inherit it (exit ${ia_rc}, ${hi_count!("strava_reads_quarter")} this quarter-hour, ${hi_count!("strava_reads_today")} today)", ia_rc == "0" and hi_out!(".data.stopped") == "budget_reached" and hi_count!("strava_reads_quarter") == "95")?
 	_ = sh!("rm -rf '${hi}'")
 
 	# ── a damaged count row is read in the direction that cannot pass a limit,
@@ -2061,7 +2072,7 @@ run_pace! = || {
 	check!("no fixture write errored", Str.is_empty(sqlite_errors!({})))?
 	reset_sqlite_errors!({})
 	tally_is_scoped!({})?
-	checks_ran_exactly!(66)?
+	checks_ran_exactly!(67)?
 	Stdout.line!("PACE E2E CHECKS PASS")
 }
 
@@ -10189,11 +10200,15 @@ next_window! = |db| {
 # Strava's quarter-hour turns at :00, :15, :30 and :45 by the wall clock, and a
 # run that crosses a mark rightly starts a fresh window and reads on in it, so a
 # count that must land in one quarter-hour holds only for runs clear of a mark.
-# Called where such an arm starts, with `secs` its reads need on a loaded
-# machine: that long or more before the next mark it returns at once, and
-# nearer than that it sleeps until just past the mark.
-clear_of_quarter_mark! : I64 => {}
+# Called where such an arm starts, with `secs` the longest its runs may take
+# before their count is read: that long or more before the next mark it
+# returns at once, and nearer than that it sleeps until just past the mark. An
+# arm whose runs are given a deadline passes more than the deadlines summed,
+# so no run allowed to finish crosses a mark. The sleep can outlast the
+# harness's default command deadline, which would end it early and start the
+# arm near the mark, so the shell is given a deadline past the longest sleep.
+clear_of_quarter_mark! : U64 => {}
 clear_of_quarter_mark! = |secs| {
-	_ = sh!("s=$(( $(date +%s) % 900 )); if [ $s -gt ${(900 - secs).to_str()} ]; then sleep $(( 902 - s )); fi")
+	_ = exit_status_within!("s=$(( $(date +%s) % 900 )); if [ $s -gt ${(900 - secs).to_str()} ]; then sleep $(( 902 - s )); fi", secs + 10)
 	{}
 }
