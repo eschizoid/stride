@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.1](https://github.com/eschizoid/stride/compare/v0.26.0...v0.26.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* **viz:** the splash mark floats on the window's background, with no tile seam ([#776](https://github.com/eschizoid/stride/issues/776)) ([7f28fdd](https://github.com/eschizoid/stride/commit/7f28fdd0e23a2d77d71a4a42e9078c4f89d6f4ed))
+
 ## [0.26.0](https://github.com/eschizoid/stride/compare/v0.25.0...v0.26.0) (2026-11-27)
 
 
