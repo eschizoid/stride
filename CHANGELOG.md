@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.26.0](https://github.com/eschizoid/stride/compare/v0.25.0...v0.26.0) (2026-11-27)
+
+
+### Features
+
+* the projection prices every day from targets, the athlete's history or recent training ([#774](https://github.com/eschizoid/stride/issues/774)) ([52a8fe7](https://github.com/eschizoid/stride/commit/52a8fe7990eac6ee53a6fb953e95f75ba3f36ecb))
+
+
+### Bug Fixes
+
+* **cli:** every first-run message points a new athlete to stride setup ([#765](https://github.com/eschizoid/stride/issues/765)) ([f503cf7](https://github.com/eschizoid/stride/commit/f503cf7f66b45ae11ebeb0269e6fc4483da2492f))
+* every view and report says what fills it when it has no data ([#768](https://github.com/eschizoid/stride/issues/768)) ([82630df](https://github.com/eschizoid/stride/commit/82630df44de81579c751ad22d743de28990e7469))
+* plain words for every term a new athlete meets, in the window and the CLI ([#772](https://github.com/eschizoid/stride/issues/772)) ([e50620f](https://github.com/eschizoid/stride/commit/e50620fdbf1d2856a5eb49aa6a5807f52789f503))
+* the window and the CLI agree on units, rounding, labels and names ([#767](https://github.com/eschizoid/stride/issues/767)) ([bae0e8b](https://github.com/eschizoid/stride/commit/bae0e8bb6336dc3797d8e40024da2fb7e933084b))
+* the window and the CLI round a session's minutes alike, and the trace footer fits the smallest window ([#771](https://github.com/eschizoid/stride/issues/771)) ([7d93d55](https://github.com/eschizoid/stride/commit/7d93d55269a29badd408d6994e89044e3a000aa5))
+
 ## [0.25.0](https://github.com/eschizoid/stride/compare/v0.24.0...v0.25.0) (2026-11-26)
 
 
